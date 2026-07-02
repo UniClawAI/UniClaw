@@ -184,10 +184,8 @@ def _build_free_chat_prompt(config: AppConfig) -> str:
 
 
 async def build_system_prompt(config: AppConfig):
-    from uniclaw.tools.session.session import SessionType
-
     # 自由聊天模式:精简提示词,节省 token
-    if config.current_agent.session.session_type == SessionType.FREE_CHAT:
+    if config.is_free_chat:
         return _build_free_chat_prompt(config)
 
     system_prompt = get_base_system_prompt(config)

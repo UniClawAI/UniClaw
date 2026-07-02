@@ -398,16 +398,16 @@ async def get_input(prompt: str, title: str = "输入", config: AppConfig = None
     Returns:
         用户输入的字符串,取消则返回空字符串。
     """
-    from uniclaw.config import RunMode
+    from uniclaw.config import DisplayMode
 
-    mode = config.run_mode if config else RunMode.CONSOLE
+    mode = config.display_mode if config else DisplayMode.CONSOLE
 
-    if config and config.is_wechat:
+    if mode == DisplayMode.WECHAT:
         from uniclaw.wechat.run import wechat_input
 
         return await wechat_input(prompt, title=title, config=config)
 
-    if mode == RunMode.WEBUI:
+    if mode == DisplayMode.WEBUI:
         from uniclaw.webui.ws import web_input
 
         return await web_input(prompt, title=title, config=config)
@@ -437,16 +437,16 @@ async def get_multi_input(questions: list[dict], title: str = "请选择", confi
     """
     import json
 
-    from uniclaw.config import RunMode
+    from uniclaw.config import DisplayMode
 
-    mode = config.run_mode if config else RunMode.CONSOLE
+    mode = config.display_mode if config else DisplayMode.CONSOLE
 
-    if config and config.is_wechat:
+    if mode == DisplayMode.WECHAT:
         from uniclaw.wechat.run import wechat_multi_input
 
         return await wechat_multi_input(questions=questions, title=title, config=config)
 
-    if mode == RunMode.WEBUI:
+    if mode == DisplayMode.WEBUI:
         from uniclaw.webui.ws import web_multi_input
 
         return await web_multi_input(questions=questions, title=title, config=config)

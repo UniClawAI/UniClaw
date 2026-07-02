@@ -5,8 +5,6 @@ from __future__ import annotations
 from collections.abc import Callable, Awaitable
 from typing import TYPE_CHECKING
 
-from uniclaw.config import RunMode
-
 if TYPE_CHECKING:
     from uniclaw.tools.session.session import StreamChunk
 
@@ -73,29 +71,23 @@ def _get_console_player():
 
 
 def _get_on_chunk(config) -> Callable[[StreamChunk], Awaitable[None]] | None:
-    """根据会话类型获取回调函数。"""
-    from uniclaw.tools.session.session import SessionType
-
-    session_type = config.current_agent.session.session_type
-    if session_type == SessionType.WECHAT:
+    """根据界面类型获取回调函数。"""
+    if config.is_wechat:
         return _wechat_callback
-    elif config.run_mode == RunMode.WEBUI:
+    if config.is_webui:
         session_id = config.current_agent.session.id
         return lambda chunk: _webui_callback(chunk, session_id)
-    else:
-        _get_console_player()
-        return _console_callback
+    _get_console_player()
+    return _console_callback
 
 
 async def _finish_stream(config):
     """流式结束后的清理。"""
     global _console_player
-    from uniclaw.tools.session.session import SessionType
 
-    session_type = config.current_agent.session.session_type
-    if session_type == SessionType.WECHAT:
+    if config.is_wechat:
         pass  # 微信模式暂无清理操作
-    elif config.run_mode == RunMode.WEBUI:
+    elif config.is_webui:
         from uniclaw.webui.ws import _broadcast
         session_id = config.current_agent.session.id
         await _broadcast({"event": "audio_end", "session_id": session_id})
@@ -152,7 +144,7 @@ async def tts(
         chunks = astream(message, model_name=model, audio=audio or None, config=config)
         ai_message = await _stream_with_callback(chunks, on_chunk)
         await _finish_stream(config)
-        result_parts.append("已播放" if config.run_mode != RunMode.WEBUI else "已流式发送到前端")
+        result_parts.append("已流式发送到前端" if config.is_webui else "已播放")
     else:
         # 非流式:获取完整音频
         try:

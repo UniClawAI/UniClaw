@@ -1,7 +1,7 @@
 """会话恢复与管理命令"""
 
 from uniclaw.agent import AgentTask
-from uniclaw.config import AppConfig, RunMode
+from uniclaw.config import AppConfig
 from uniclaw.console.ui import err, info, warn
 from uniclaw.tools.session.session import Session
 from uniclaw.tools.session.session_manager import SessionManager
@@ -73,7 +73,7 @@ async def cmd_resume(args: str, config: AppConfig) -> bool:
         if SessionManager.delete_session(session_id):
             await warn(f"已删除会话: {session_id}", config)
             # WebUI 模式:通知前端会话已删除
-            if config.run_mode == RunMode.WEBUI:
+            if config.is_webui:
                 try:
                     from uniclaw.webui.ws import notify_session_deleted
                     await notify_session_deleted(session_id, config.root_dir)
@@ -172,7 +172,7 @@ async def _restore_session(session: Session, task: AgentTask, config: AppConfig 
     old_session_id = task.session.id if task.session else ""
 
     # WebUI 模式:通知前端切换会话
-    if config and config.run_mode == RunMode.WEBUI:
+    if config and config.is_webui:
         try:
             from uniclaw.webui.ws import notify_session_switched
 

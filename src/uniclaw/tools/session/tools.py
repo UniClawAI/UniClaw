@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-from uniclaw.config import RunMode
 from uniclaw.tools.base import tool
 from uniclaw.utils.constants import TOOL_ERROR
 from uniclaw.tools.session.session_manager import SessionManager
@@ -152,7 +151,7 @@ async def session_delete(
     if success:
         await ok(f"✓ 已删除会话: {title}", config)
         # WebUI 模式:通知前端会话已删除
-        if config and config.run_mode == RunMode.WEBUI:
+        if config and config.is_webui:
             try:
                 from uniclaw.webui.ws import notify_session_deleted
                 await notify_session_deleted(session_id, config.root_dir)

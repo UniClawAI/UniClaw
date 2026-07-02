@@ -37,6 +37,14 @@ class RunMode(StrEnum):
     WEBUI = "webui"
 
 
+class DisplayMode(StrEnum):
+    """界面类型(由 session_type + run_mode 共同决定)。"""
+
+    CONSOLE = "console"
+    WECHAT = "wechat"
+    WEBUI = "webui"
+
+
 @dataclass
 class ProviderProfile:
     """单个 LLM 提供商配置。"""
@@ -134,6 +142,28 @@ class AppConfig:
         from uniclaw.tools.session.session import SessionType
 
         return self.current_agent.session.session_type == SessionType.FREE_CHAT
+
+    @property
+    def display_mode(self) -> DisplayMode:
+        """当前界面类型,由 session_type + run_mode 共同决定。"""
+        from uniclaw.tools.session.session import SessionType
+
+        session_type = self.current_agent.session.session_type
+        if session_type == SessionType.WECHAT:
+            return DisplayMode.WECHAT
+        if self.run_mode == RunMode.WEBUI:
+            return DisplayMode.WEBUI
+        return DisplayMode.CONSOLE
+
+    @property
+    def is_console(self) -> bool:
+        """是否为控制台模式。"""
+        return self.display_mode == DisplayMode.CONSOLE
+
+    @property
+    def is_webui(self) -> bool:
+        """是否为 WebUI 模式。"""
+        return self.display_mode == DisplayMode.WEBUI
 
     def create_sub_config(self, name: str, prompt: str) -> AppConfig:
         """创建子代理配置:新 session (同 root_dir),深度+1,复制其他字段。"""
