@@ -85,6 +85,7 @@ def _build_extended_keywords() -> dict[str, list[str]]:
     from .media import ReadMedia
     from .ask import AskUserQuestion
     from .notify import push_notification
+    from .tts.tools import text_to_speech
     from .web_browse.tools import (
         browser_start, browser_close, browser_navigate, browser_click,
         browser_type, browser_screenshot, browser_get_text, browser_evaluate,
@@ -214,6 +215,8 @@ def _build_extended_keywords() -> dict[str, list[str]]:
         # 帮助工具
         list_slash_commands.name: ["命令列表", "斜杠命令", "slash commands", "list commands", "帮助", "help", "命令帮助", "可用命令", "what commands"],
         get_command_help.name: ["命令帮助", "命令用法", "command help", "命令详情", "命令说明", "how to use", "怎么用", "用法"],
+        # TTS 工具
+        text_to_speech.name: ["tts", "语音合成", "文本转语音", "text to speech", "朗读", "语音", "说话", "播放语音", "音频生成", "voice"],
     }
 
 
@@ -259,6 +262,7 @@ def _build_tool_categories() -> dict[str, str]:
     from .media import ReadMedia
     from .ask import AskUserQuestion
     from .notify import push_notification
+    from .tts.tools import text_to_speech
     from .web_browse.tools import (
         browser_start, browser_close, browser_navigate, browser_click,
         browser_type, browser_screenshot, browser_get_text, browser_evaluate,
@@ -324,6 +328,8 @@ def _build_tool_categories() -> dict[str, str]:
         browser_switch_page.name: "浏览器", browser_list_pages.name: "浏览器",
         # 帮助工具
         list_slash_commands.name: "帮助", get_command_help.name: "帮助",
+        # TTS 工具
+        text_to_speech.name: "TTS",
     }
 
 

@@ -128,7 +128,7 @@ def stream(
     tools: list | None = None,
     enable_thinking=True,
     thinking=True,
-    voice: str | None = None,
+    audio: dict | None = None,
     config=None,
 ) -> Iterator[StreamChunk]:
     """流式调用 LLM,每次 yield StreamChunk (delta)。"""
@@ -158,9 +158,10 @@ def stream(
         kwargs["tools"] = openai_tools
     if extra_body:
         kwargs["extra_body"] = extra_body
-    if voice:
+    if audio:
+        audio.setdefault("format", "pcm16")
         kwargs["modalities"] = ["text", "audio"]
-        kwargs["audio"] = {"voice": voice, "format": "pcm16"}
+        kwargs["audio"] = audio
 
     try:
         yield from _stream_inner(client, kwargs)
@@ -267,7 +268,7 @@ async def astream(
     tools: list | None = None,
     enable_thinking=True,
     thinking=True,
-    voice: str | None = None,
+    audio: dict | None = None,
     config=None,
 ) -> AsyncIterator[StreamChunk]:
     """异步流式调用 LLM,每次 yield StreamChunk (delta)。"""
@@ -297,9 +298,10 @@ async def astream(
         kwargs["tools"] = openai_tools
     if extra_body:
         kwargs["extra_body"] = extra_body
-    if voice:
+    if audio:
+        audio.setdefault("format", "pcm16")
         kwargs["modalities"] = ["text", "audio"]
-        kwargs["audio"] = {"voice": voice, "format": "pcm16"}
+        kwargs["audio"] = audio
 
     try:
         async for chunk in _astream_inner(client, kwargs):
@@ -397,7 +399,7 @@ def chat(
     tools: list | None = None,
     enable_thinking=True,
     thinking=True,
-    voice: str | None = None,
+    audio: dict | None = None,
     config=None,
 ) -> AIMessage:
     """同步调用 LLM,返回 AIMessage。"""
@@ -426,9 +428,10 @@ def chat(
         kwargs["tools"] = openai_tools
     if extra_body:
         kwargs["extra_body"] = extra_body
-    if voice:
+    if audio:
+        audio.setdefault("format", "wav")
         kwargs["modalities"] = ["text", "audio"]
-        kwargs["audio"] = {"voice": voice, "format": "wav"}
+        kwargs["audio"] = audio
 
     try:
         response = client.chat.completions.create(**kwargs)
@@ -466,7 +469,7 @@ async def achat(
     tools: list | None = None,
     enable_thinking=True,
     thinking=True,
-    voice: str | None = None,
+    audio: dict | None = None,
     config=None,
 ) -> AIMessage:
     """异步调用 LLM,返回 AIMessage。"""
@@ -495,9 +498,10 @@ async def achat(
         kwargs["tools"] = openai_tools
     if extra_body:
         kwargs["extra_body"] = extra_body
-    if voice:
+    if audio:
+        audio.setdefault("format", "wav")
         kwargs["modalities"] = ["text", "audio"]
-        kwargs["audio"] = {"voice": voice, "format": "wav"}
+        kwargs["audio"] = audio
 
     try:
         response = await client.chat.completions.create(**kwargs)

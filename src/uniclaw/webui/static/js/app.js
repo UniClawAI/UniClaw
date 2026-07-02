@@ -11,6 +11,7 @@ const App = {
         MultiInputDialog.init();
         Sidebar.init();
         MsgNav.init();
+        AudioPlayer.init();
 
         this._bindGlobalEvents();
         this._bindDragHandles();

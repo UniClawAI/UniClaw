@@ -160,9 +160,9 @@ async def _apply_model(model_ref: str, config: AppConfig) -> None:
         config.tts_model = model_ref
         voice = await get_input("请输入语音名称 (回车跳过): ", config=config)
         if voice.strip():
-            config.tts_voice = voice.strip()
+            config.audio = {"voice": voice.strip()}
         save_config(config)
-        await ok(f"✓ 已设为 TTS 模型: {model_ref}" + (f", 语音: {config.tts_voice}" if config.tts_voice else ""), config)
+        await ok(f"✓ 已设为 TTS 模型: {model_ref}" + (f", 语音: {voice.strip()}" if voice.strip() else ""), config)
         await _notify_webui()
 
 
@@ -249,7 +249,8 @@ async def cmd_model(args: str, config: AppConfig) -> bool:
     title = provider_name if provider_name and provider_name in search_providers else "所有"
     prompt_list = [f"\n{title} 可用模型:"]
     if current_tts:
-        prompt_list.append(f"  当前 TTS: {current_tts}" + (f" (语音: {config.tts_voice})" if config.tts_voice else ""))
+        voice = config.audio.get("voice", "") if config.audio else ""
+        prompt_list.append(f"  当前 TTS: {current_tts}" + (f" (语音: {voice})" if voice else ""))
     for i, m in enumerate(all_models, 1):
         tags = []
         if m == current_main:

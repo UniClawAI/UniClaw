@@ -59,7 +59,7 @@ class AppConfig:
     mini_model_name: list[str] = field(default_factory=list)  # mini 模型列表
     multimodal_model_name: list[str] = field(default_factory=list)  # 多模态模型列表
     tts_model: str = ""  # TTS 模型名称
-    tts_voice: str = ""  # TTS 语音名称
+    audio: dict | None = None  # TTS 音频配置 (voice, format 等)
     providers: dict[str, ProviderProfile] = field(
         default_factory=dict
     )  # 多 provider 配置
@@ -151,7 +151,7 @@ class AppConfig:
             mini_model_name=list(self.mini_model_name),
             multimodal_model_name=list(self.multimodal_model_name),
             tts_model=self.tts_model,
-            tts_voice=self.tts_voice,
+            audio=self.audio,
             providers=dict(self.providers),
             temperature=self.temperature,
             max_tokens=self.max_tokens,
@@ -200,7 +200,7 @@ def is_first_launch() -> bool:
     return not has_providers
 
 
-async def run_setup_wizard() -> dict:
+async def run_setup_wizard() -> AppConfig:
     """首次启动引导程序,提示用户填写必要配置并验证连通性。"""
     from uniclaw.commands.model import fetch_openai_models
 
@@ -292,9 +292,10 @@ async def run_setup_wizard() -> dict:
                     "base_url": base_url,
                 }
             }
-            _save_settings_json(data)
+            config = _create_config_from_data(data)
+            save_config(config)
             print(f"\n配置已保存到: {get_config_path()}\n")
-            return data
+            return config
     else:
         print("正在验证 API 连通性...")
         try:
@@ -339,10 +340,40 @@ async def run_setup_wizard() -> dict:
     }
 
     # 保存配置
-    _save_settings_json(data)
+    config = _create_config_from_data(data)
+    save_config(config)
     print(f"\n配置已保存到: {get_config_path()}\n")
 
-    return data
+    return config
+
+
+def _create_config_from_data(data: dict[str, Any]) -> AppConfig:
+    """从原始数据字典创建 AppConfig。"""
+    providers = {}
+    for name, p in data.get("providers", {}).items():
+        providers[name] = ProviderProfile(
+            name=p.get("name", name),
+            protocol=p.get("protocol", "openai"),
+            api_key=p.get("api_key", ""),
+            base_url=p.get("base_url", ""),
+            proxy_url=p.get("proxy_url", ""),
+        )
+    return AppConfig(
+        model_name=data.get("model_name", []),
+        mini_model_name=data.get("mini_model_name", []),
+        multimodal_model_name=data.get("multimodal_model_name", []),
+        tts_model=data.get("tts_model", ""),
+        audio=data.get("audio"),
+        providers=providers,
+        temperature=data.get("temperature", 0.7),
+        max_tokens=data.get("max_tokens"),
+        top_p=data.get("top_p"),
+        proxy_url=data.get("proxy_url", ""),
+        GITHUB_TOKEN=data.get("GITHUB_TOKEN", ""),
+        EXA_API_KEY=data.get("EXA_API_KEY", ""),
+        max_agent_depth=data.get("max_agent_depth", 3),
+        permission_timeout=data.get("permission_timeout", 300),
+    )
 
 
 def _normalize_model_field(value: str | list[str] | None) -> list[str]:
@@ -458,7 +489,7 @@ def load_config(
         mini_model_name=data.get("mini_model_name", []),
         multimodal_model_name=data.get("multimodal_model_name", []),
         tts_model=data.get("tts_model", ""),
-        tts_voice=data.get("tts_voice", ""),
+        audio=data.get("audio"),
         providers=providers,
         temperature=data.get("temperature", 0.7),
         max_tokens=data.get("max_tokens"),
@@ -490,13 +521,6 @@ def create_sub_agent_config(
     return config
 
 
-def _save_settings_json(data: dict[str, Any]) -> None:
-    """保存原始数据到 settings.json。"""
-    path = get_config_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
 def save_config(config: AppConfig) -> None:
     """保存配置到当前生效的 settings.json。
     只持久化 LLM 配置字段,过滤运行时状态。
@@ -506,7 +530,7 @@ def save_config(config: AppConfig) -> None:
         "mini_model_name": config.mini_model_name,
         "multimodal_model_name": config.multimodal_model_name,
         "tts_model": config.tts_model,
-        "tts_voice": config.tts_voice,
+        "audio": config.audio,
         "temperature": config.temperature,
         "max_tokens": config.max_tokens,
         "top_p": config.top_p,

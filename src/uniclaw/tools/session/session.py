@@ -51,7 +51,7 @@ def _estimate_audio_tokens(block: dict) -> int:
         if not data:
             return 100
         audio_bytes = len(data) * 3 / 4
-        duration_seconds = audio_bytes / 16000
+        duration_seconds = audio_bytes / 24000
         return max(50, int(duration_seconds * 10))
     except Exception:
         return 500
@@ -313,7 +313,7 @@ class AIMessage(BaseMessage):
 
         Args:
             path: 输出文件路径,格式由扩展名决定(如 .wav, .flac, .ogg)。
-            sample_rate: 采样率,默认 16000 Hz。
+            sample_rate: 采样率,默认从音频数据中读取。
 
         Returns:
             保存的文件路径。
