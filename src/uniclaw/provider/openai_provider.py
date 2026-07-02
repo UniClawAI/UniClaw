@@ -32,6 +32,7 @@ def _sanitize_surrogates(obj):
         return {k: _sanitize_surrogates(v) for k, v in obj.items()}
     return obj
 
+
 # ── 多模态降级 ─────────────────────────────────────────────────
 
 _MULTIMODAL_TYPES = {"image_url", "input_audio", "video_url"}
@@ -127,6 +128,7 @@ def stream(
     tools: list | None = None,
     enable_thinking=True,
     thinking=True,
+    voice: str | None = None,
     config=None,
 ) -> Iterator[StreamChunk]:
     """流式调用 LLM,每次 yield StreamChunk (delta)。"""
@@ -156,17 +158,18 @@ def stream(
         kwargs["tools"] = openai_tools
     if extra_body:
         kwargs["extra_body"] = extra_body
+    if voice:
+        kwargs["modalities"] = ["text", "audio"]
+        kwargs["audio"] = {"voice": voice, "format": "pcm16"}
 
     try:
         yield from _stream_inner(client, kwargs)
     except Exception as e:
         if is_multimodal_error(e) and p["multimodal_model_name"]:
             try:
-                kwargs["messages"] = (
-                    asyncio.run(
-                        _describe_multimodal(
-                            messages, p["multimodal_model_name"], config=config
-                        )
+                kwargs["messages"] = asyncio.run(
+                    _describe_multimodal(
+                        messages, p["multimodal_model_name"], config=config
                     )
                 )
                 yield from _stream_inner(client, kwargs)
@@ -203,6 +206,10 @@ def _stream_inner(client: OpenAI, kwargs: dict):
             if rc:
                 sc.reasoning_content += rc
 
+            # audio
+            if hasattr(delta, "audio") and delta.audio and delta.audio["data"]:
+                sc.audio = delta.audio["data"]
+
             # tool_calls — 累积,首次获得 name 时标记通知
             if delta.tool_calls:
                 for tc_delta in delta.tool_calls:
@@ -223,8 +230,7 @@ def _stream_inner(client: OpenAI, kwargs: dict):
                         if tc_delta.function.arguments:
                             tc["function"]["arguments"] += tc_delta.function.arguments
                     if tc["function"]["name"] and (
-                        is_new
-                        or (tc_delta.function and tc_delta.function.arguments)
+                        is_new or (tc_delta.function and tc_delta.function.arguments)
                     ):
                         sc.new_tool_call_name = tc["function"]["name"]
                         sc.new_tool_call_args = safe_parse_args(
@@ -261,6 +267,7 @@ async def astream(
     tools: list | None = None,
     enable_thinking=True,
     thinking=True,
+    voice: str | None = None,
     config=None,
 ) -> AsyncIterator[StreamChunk]:
     """异步流式调用 LLM,每次 yield StreamChunk (delta)。"""
@@ -290,16 +297,17 @@ async def astream(
         kwargs["tools"] = openai_tools
     if extra_body:
         kwargs["extra_body"] = extra_body
+    if voice:
+        kwargs["modalities"] = ["text", "audio"]
+        kwargs["audio"] = {"voice": voice, "format": "pcm16"}
 
     try:
         async for chunk in _astream_inner(client, kwargs):
             yield chunk
     except Exception as e:
         if is_multimodal_error(e) and p["multimodal_model_name"]:
-            kwargs["messages"] = (
-                await _describe_multimodal(
-                    messages, p["multimodal_model_name"], config=config
-                )
+            kwargs["messages"] = await _describe_multimodal(
+                messages, p["multimodal_model_name"], config=config
             )
             async for chunk in _astream_inner(client, kwargs):
                 yield chunk
@@ -331,6 +339,10 @@ async def _astream_inner(client: AsyncOpenAI, kwargs: dict):
             if rc:
                 sc.reasoning_content += rc
 
+            # audio
+            if hasattr(delta, "audio") and delta.audio and delta.audio["data"]:
+                sc.audio = delta.audio["data"]
+
             if delta.tool_calls:
                 for tc_delta in delta.tool_calls:
                     idx = tc_delta.index
@@ -350,8 +362,7 @@ async def _astream_inner(client: AsyncOpenAI, kwargs: dict):
                         if tc_delta.function.arguments:
                             tc["function"]["arguments"] += tc_delta.function.arguments
                     if tc["function"]["name"] and (
-                        is_new
-                        or (tc_delta.function and tc_delta.function.arguments)
+                        is_new or (tc_delta.function and tc_delta.function.arguments)
                     ):
                         sc.new_tool_call_name = tc["function"]["name"]
                         sc.new_tool_call_args = safe_parse_args(
@@ -386,6 +397,7 @@ def chat(
     tools: list | None = None,
     enable_thinking=True,
     thinking=True,
+    voice: str | None = None,
     config=None,
 ) -> AIMessage:
     """同步调用 LLM,返回 AIMessage。"""
@@ -414,17 +426,18 @@ def chat(
         kwargs["tools"] = openai_tools
     if extra_body:
         kwargs["extra_body"] = extra_body
+    if voice:
+        kwargs["modalities"] = ["text", "audio"]
+        kwargs["audio"] = {"voice": voice, "format": "wav"}
 
     try:
         response = client.chat.completions.create(**kwargs)
     except Exception as e:
         if is_multimodal_error(e) and p["multimodal_model_name"]:
             try:
-                kwargs["messages"] = (
-                    asyncio.run(
-                        _describe_multimodal(
-                            messages, p["multimodal_model_name"], config=config
-                        )
+                kwargs["messages"] = asyncio.run(
+                    _describe_multimodal(
+                        messages, p["multimodal_model_name"], config=config
                     )
                 )
                 response = client.chat.completions.create(**kwargs)
@@ -435,7 +448,9 @@ def chat(
 
     ai_msg = _response_to_ai_message(response)
     try:
-        asyncio.get_running_loop().create_task(record_usage_async(ai_msg.model_name, ai_msg.usage))
+        asyncio.get_running_loop().create_task(
+            record_usage_async(ai_msg.model_name, ai_msg.usage)
+        )
     except RuntimeError:
         asyncio.run(record_usage_async(ai_msg.model_name, ai_msg.usage))
     return ai_msg
@@ -451,6 +466,7 @@ async def achat(
     tools: list | None = None,
     enable_thinking=True,
     thinking=True,
+    voice: str | None = None,
     config=None,
 ) -> AIMessage:
     """异步调用 LLM,返回 AIMessage。"""
@@ -479,15 +495,16 @@ async def achat(
         kwargs["tools"] = openai_tools
     if extra_body:
         kwargs["extra_body"] = extra_body
+    if voice:
+        kwargs["modalities"] = ["text", "audio"]
+        kwargs["audio"] = {"voice": voice, "format": "wav"}
 
     try:
         response = await client.chat.completions.create(**kwargs)
     except Exception as e:
         if is_multimodal_error(e) and p["multimodal_model_name"]:
-            kwargs["messages"] = (
-                await _describe_multimodal(
-                    messages, p["multimodal_model_name"], config=config
-                )
+            kwargs["messages"] = await _describe_multimodal(
+                messages, p["multimodal_model_name"], config=config
             )
             response = await client.chat.completions.create(**kwargs)
         else:
@@ -546,6 +563,7 @@ def _response_to_ai_message(response) -> AIMessage:
         tool_calls=tool_calls,
         model_name=response.model or "",
         usage=usage,
+        audio=msg.audio.data if msg.audio else None,
     )
     return ai_msg
 

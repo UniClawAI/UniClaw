@@ -1,5 +1,6 @@
 from __future__ import annotations
-
+import base64
+import numpy as np
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
@@ -10,6 +11,8 @@ import uuid
 from uniclaw.utils.message import MessageRole
 from uniclaw.utils.tokens import get_encoder, count_tokens
 from uniclaw.provider.types import Usage
+
+_INT16_MAX = 32768.0  # int16 归一化除数
 
 if TYPE_CHECKING:
     from uniclaw.config import AppConfig
@@ -265,6 +268,61 @@ class AIMessage(BaseMessage):
     usage: Usage | None = None
     reasoning_content: str = ""
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
+    audio: str | None = None
+
+    def audio_to_pcm(self) -> tuple[np.ndarray, int]:
+        """将 base64 音频转换为归一化的 float32 PCM 数组。
+
+        支持 WAV 格式(带 header)和 raw PCM16 格式。
+
+        Returns:
+            (pcm_data, sample_rate) 元组。
+        """
+        import io
+        import soundfile as sf
+
+        if not self.audio:
+            raise ValueError("当前消息没有音频数据")
+        raw_bytes = base64.b64decode(self.audio)
+        # 检测是否为 WAV 格式(以 RIFF 开头)
+        if raw_bytes[:4] == b"RIFF":
+            data, sr = sf.read(io.BytesIO(raw_bytes), dtype="float32")
+            return data, sr
+        # raw PCM16
+        return (
+            np.frombuffer(raw_bytes, dtype=np.int16).astype(np.float32) / _INT16_MAX,
+            24000,
+        )
+
+    def play(self, sample_rate: int | None = None, wait: bool = True) -> None:
+        """播放音频。
+
+        Args:
+            sample_rate: 采样率,默认从音频数据中读取。
+            wait: 是否等待播放完成。
+        """
+        import sounddevice as sd
+
+        pcm, sr = self.audio_to_pcm()
+        sd.play(pcm, samplerate=sample_rate or sr)
+        if wait:
+            sd.wait()
+
+    def save_audio(self, path: str | Path) -> Path:
+        """保存音频到文件。
+
+        Args:
+            path: 输出文件路径,格式由扩展名决定(如 .wav, .flac, .ogg)。
+            sample_rate: 采样率,默认 16000 Hz。
+
+        Returns:
+            保存的文件路径。
+        """
+        if not self.audio:
+            raise ValueError("当前消息没有音频数据")
+        audio_bytes = base64.b64decode(self.audio)
+        with open(path, "wb") as f:
+            f.write(audio_bytes)
 
     @property
     def role(self) -> str:
@@ -342,6 +400,89 @@ class AIMessage(BaseMessage):
         return f"[assistant]:{self.to_content()}"
 
 
+class StreamPlayer:
+    """流式音频播放器,使用队列缓冲实现无缝播放。"""
+
+    def __init__(self, sample_rate: int | None = None):
+        import sounddevice as sd
+        import queue
+
+        # self.sample_rate = sample_rate
+        self._queue: queue.Queue[np.ndarray | None] = queue.Queue()
+        if sample_rate:
+            self._stream = sd.OutputStream(
+                samplerate=sample_rate,
+                channels=1,
+                dtype="float32",
+                callback=self._callback,
+            )
+        else:
+            self._stream = None
+        self._buffer = np.array([], dtype=np.float32)
+        self._finished = False
+        self._start = False
+
+    def _callback(self, outdata, frames, _time, _status):
+        """sounddevice 回调,从缓冲区填充数据。"""
+        import numpy as np
+
+        # 从队列取数据补充缓冲区
+        while len(self._buffer) < frames:
+            try:
+                chunk = self._queue.get_nowait()
+                if chunk is None:
+                    self._finished = True
+                    break
+                self._buffer = np.concatenate([self._buffer, chunk])
+            except Exception:
+                break
+
+        # 填充输出
+        available = min(frames, len(self._buffer))
+        outdata[:available, 0] = self._buffer[:available]
+        if available < frames:
+            outdata[available:, 0] = 0
+        self._buffer = self._buffer[available:]
+
+    def start(self):
+        """开始播放。"""
+        if self._stream:
+            self._stream.start()
+        self._start = True
+
+    def write(self, pcm: np.ndarray, sample_rate: int | None = None):
+        """写入 PCM 数据块。"""
+        import sounddevice as sd
+
+        if sample_rate and self._stream is None:
+            self._stream = sd.OutputStream(
+                samplerate=sample_rate,
+                channels=1,
+                dtype="float32",
+                callback=self._callback,
+            )
+            if self._start:
+                self._stream.start()
+        self._queue.put(pcm.astype(np.float32))
+
+    def stop(self):
+        """停止播放,等待缓冲区播完。"""
+        self._queue.put(None)  # 结束标记
+        while not self._finished:
+            import time
+
+            time.sleep(0.01)
+        self._stream.stop()
+        self._stream.close()
+
+    def __enter__(self):
+        self.start()
+        return self
+
+    def __exit__(self, *args):
+        self.stop()
+
+
 @dataclass
 class StreamChunk(AIMessage):
     """流式 chunk,支持 += 累积。"""
@@ -357,6 +498,8 @@ class StreamChunk(AIMessage):
             self.model_name = other.model_name
         if other.usage:
             self.usage = other.usage
+        if other.audio:
+            self.audio = (self.audio or "") + other.audio
         return self
 
 
@@ -477,6 +620,7 @@ class Session:
     @property
     def is_wechat(self) -> bool:
         return self.session_type == SessionType.WECHAT
+
     _messages: list[UserMessage | AIMessage | ToolCallMessage] = field(
         default_factory=list
     )
@@ -562,7 +706,11 @@ class Session:
             start_time = datetime.now()
         session = cls(
             id=data.get("session_id", ""),
-            root_dir=None if data.get("root_dir") in (None, "None") else Path(data["root_dir"]),
+            root_dir=(
+                None
+                if data.get("root_dir") in (None, "None")
+                else Path(data["root_dir"])
+            ),
             title=data.get("title", ""),
             start_time=start_time,
             session_type=SessionType(data.get("session_type", "console")),

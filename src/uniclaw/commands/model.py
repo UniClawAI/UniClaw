@@ -126,7 +126,8 @@ async def _apply_model(model_ref: str, config: AppConfig) -> None:
         "  [2] 设为 mini 模型\n"
         "  [3] 设为多模态模型\n"
         "  [4] 全部设置\n"
-        "选择 (1-4, 回车取消): ",
+        "  [5] 设为 TTS 模型\n"
+        "选择 (1-5, 回车取消): ",
         config=config,
     )
     choice = choice.strip()
@@ -154,6 +155,14 @@ async def _apply_model(model_ref: str, config: AppConfig) -> None:
         config.multimodal_model_name = _move_to_first(config.multimodal_model_name, model_ref)
         save_config(config)
         await ok(f"✓ 已全部设为: {model_ref}", config)
+        await _notify_webui()
+    elif choice == "5":
+        config.tts_model = model_ref
+        voice = await get_input("请输入语音名称 (回车跳过): ", config=config)
+        if voice.strip():
+            config.tts_voice = voice.strip()
+        save_config(config)
+        await ok(f"✓ 已设为 TTS 模型: {model_ref}" + (f", 语音: {config.tts_voice}" if config.tts_voice else ""), config)
         await _notify_webui()
 
 
@@ -235,9 +244,12 @@ async def cmd_model(args: str, config: AppConfig) -> bool:
     current_main = config.model_name[0] if config.model_name else ""
     current_mini = config.mini_model_name[0] if config.mini_model_name else ""
     current_mm = config.multimodal_model_name[0] if config.multimodal_model_name else ""
+    current_tts = config.tts_model
 
     title = provider_name if provider_name and provider_name in search_providers else "所有"
     prompt_list = [f"\n{title} 可用模型:"]
+    if current_tts:
+        prompt_list.append(f"  当前 TTS: {current_tts}" + (f" (语音: {config.tts_voice})" if config.tts_voice else ""))
     for i, m in enumerate(all_models, 1):
         tags = []
         if m == current_main:
@@ -246,6 +258,8 @@ async def cmd_model(args: str, config: AppConfig) -> bool:
             tags.append("mini")
         if m == current_mm:
             tags.append("多模态")
+        if m == current_tts:
+            tags.append("TTS")
         marker = f" ← {', '.join(tags)}" if tags else ""
         prompt_list.append(f"  [{i}] {m}{marker}")
 

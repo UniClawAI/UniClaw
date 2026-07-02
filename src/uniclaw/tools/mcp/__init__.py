@@ -153,7 +153,7 @@ class MCPManager:
 
     async def load_config(self, config: AppConfig | None = None) -> dict:
         if not self._config_path.exists():
-            # 首次使用，写入内置默认配置
+            # 首次使用,写入内置默认配置
             from .builtin import BUILTIN_MCP_SERVERS
 
             servers = {name: {**srv} for name, srv in BUILTIN_MCP_SERVERS.items()}

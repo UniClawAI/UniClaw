@@ -58,6 +58,8 @@ class AppConfig:
     )  # 主模型列表(第一个为主,后续为 fallback)
     mini_model_name: list[str] = field(default_factory=list)  # mini 模型列表
     multimodal_model_name: list[str] = field(default_factory=list)  # 多模态模型列表
+    tts_model: str = ""  # TTS 模型名称
+    tts_voice: str = ""  # TTS 语音名称
     providers: dict[str, ProviderProfile] = field(
         default_factory=dict
     )  # 多 provider 配置
@@ -148,6 +150,8 @@ class AppConfig:
             model_name=list(self.model_name),
             mini_model_name=list(self.mini_model_name),
             multimodal_model_name=list(self.multimodal_model_name),
+            tts_model=self.tts_model,
+            tts_voice=self.tts_voice,
             providers=dict(self.providers),
             temperature=self.temperature,
             max_tokens=self.max_tokens,
@@ -453,6 +457,8 @@ def load_config(
         model_name=data.get("model_name", []),
         mini_model_name=data.get("mini_model_name", []),
         multimodal_model_name=data.get("multimodal_model_name", []),
+        tts_model=data.get("tts_model", ""),
+        tts_voice=data.get("tts_voice", ""),
         providers=providers,
         temperature=data.get("temperature", 0.7),
         max_tokens=data.get("max_tokens"),
@@ -499,6 +505,8 @@ def save_config(config: AppConfig) -> None:
         "model_name": config.model_name,
         "mini_model_name": config.mini_model_name,
         "multimodal_model_name": config.multimodal_model_name,
+        "tts_model": config.tts_model,
+        "tts_voice": config.tts_voice,
         "temperature": config.temperature,
         "max_tokens": config.max_tokens,
         "top_p": config.top_p,
