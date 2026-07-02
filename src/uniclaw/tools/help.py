@@ -4,7 +4,7 @@ from uniclaw.tools.base import tool
 
 
 @tool
-async def list_slash_commands(config=None) -> str:
+async def list_slash_commands() -> str:
     """列出所有可用的斜杠命令及其简要说明。
     返回命令名称、别名和一句话描述,帮助用户了解有哪些命令可用。
     """
@@ -43,7 +43,7 @@ async def list_slash_commands(config=None) -> str:
 
 
 @tool
-async def get_command_help(command_name: str, config=None) -> str:
+async def get_command_help(command_name: str) -> str:
     """获取指定斜杠命令的详细帮助信息。
     传入命令名称(不含 /),返回该命令的完整说明文档,包括参数、用法示例等。
 
