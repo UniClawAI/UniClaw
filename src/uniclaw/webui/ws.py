@@ -143,6 +143,17 @@ async def _broadcast_attention_clear(session_id: str):
     )
 
 
+def _log_task_error(task: asyncio.Task):
+    """done_callback: 记录未处理的 Task 异常到日志。"""
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        get_logger("webui", Path.cwd()).error(
+            f"未捕获的异步任务异常: {exc}\n{''.join(traceback.format_exception(type(exc), exc, exc.__traceback__))}"
+        )
+
+
 async def _broadcast(data: dict):
     """向所有已连接的 WebSocket 广播消息(前端按 session_id 过滤)。"""
     async with _connected_ws_lock:
@@ -427,7 +438,9 @@ async def _safe_send(ws: WebSocket, data: dict):
     try:
         await ws.send_json(data)
     except Exception:
-        pass
+        get_logger("webui", Path.cwd()).debug(
+            f"WebSocket 发送失败(连接可能已断开): {traceback.format_exc()}"
+        )
 
 
 def _make_output_callback(ws: WebSocket, session_id: str):
@@ -504,7 +517,9 @@ async def _watch_user_queue(session_id: str, config: AppConfig):
     except asyncio.CancelledError:
         pass
     except Exception:
-        pass
+        get_logger("webui", Path.cwd()).warning(
+            f"[{session_id}] _watch_user_queue 异常: {traceback.format_exc()}"
+        )
     finally:
         async with _watch_tasks_lock:
             _watch_tasks.pop(session_id, None)
@@ -522,9 +537,11 @@ async def _start_bridge(session_id: str, config: AppConfig):
         def _on_bridge_done(done_task: asyncio.Task):
             _bridge_tasks.pop(session_id, None)
             # bridge 结束后启动 user_queue 监听
-            asyncio.create_task(_watch_user_queue(session_id, config))
+            wt = asyncio.create_task(_watch_user_queue(session_id, config))
+            wt.add_done_callback(_log_task_error)
 
         t.add_done_callback(_on_bridge_done)
+        t.add_done_callback(_log_task_error)
 
 
 async def handle_ws_message(ws: WebSocket, msg: dict):
@@ -765,7 +782,8 @@ async def websocket_endpoint(ws: WebSocket):
                 f"收到 WS 消息: {data.get('type', 'unknown')}"
             )
             # 并发处理,避免接收循环被阻塞(如 command 等待 input_response 时死锁)
-            asyncio.create_task(handle_ws_message(ws, data))
+            t = asyncio.create_task(handle_ws_message(ws, data))
+            t.add_done_callback(_log_task_error)
     except WebSocketDisconnect:
         pass
     except Exception as e:

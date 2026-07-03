@@ -255,7 +255,7 @@ async def _check_permission(tc: dict, config: AppConfig) -> tuple[bool, str]:
                     abs_dir = Path(d).resolve()
                     if abs_file.is_relative_to(abs_dir):
                         return (True, "")
-            except ValueError, Exception:
+            except (ValueError, Exception):
                 pass
 
     # 所有快速路径都未命中,调用 LLM 检测安全性
@@ -1034,7 +1034,9 @@ class MultiAgent:
 
             await SessionManager.save_session(config)
         except Exception:
-            pass
+            get_logger("agent", config.root_dir).warning(
+                f"保存会话失败:\n{traceback.format_exc()}"
+            )
 
     async def _save_memory(self, config: AppConfig):
         """保存记忆(异步,不阻塞主流程)。"""
@@ -1048,7 +1050,9 @@ class MultiAgent:
                     f"已保存一条新记忆: {memory.name}\n{memory.description}", config
                 )
         except Exception:
-            pass
+            get_logger("agent", config.root_dir).warning(
+                f"保存记忆失败:\n{traceback.format_exc()}"
+            )
 
     async def _run_cleanup(self, task, config: AppConfig):
         """设置最终状态,触发 SESSION_END 钩子,保存会话和记忆,发送 EndEvent。"""
