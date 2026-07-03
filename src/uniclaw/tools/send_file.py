@@ -23,7 +23,9 @@ def _cleanup_expired():
         del _file_downloads[k]
 
 
-def register_download(file_path: Path, file_name: str, expire_minutes: int = DEFAULT_EXPIRE_MINUTES) -> tuple[str, int]:
+def register_download(
+    file_path: Path, file_name: str, expire_minutes: int = DEFAULT_EXPIRE_MINUTES
+) -> tuple[str, int]:
     """注册一个文件下载,返回 (下载ID, 过期时间戳)。"""
     _cleanup_expired()
     file_id = uuid.uuid4().hex[:12]
@@ -44,7 +46,10 @@ def get_download(file_id: str) -> dict | None:
 
 @tool
 async def send_file(
-    file_path: str, file_name: str = "", expire_minutes: int = DEFAULT_EXPIRE_MINUTES, config: AppConfig = None
+    file_path: str,
+    file_name: str = "",
+    expire_minutes: int = DEFAULT_EXPIRE_MINUTES,
+    config: AppConfig = None,
 ) -> str:
     """发送文件给用户。
 
@@ -64,7 +69,10 @@ async def send_file(
 
     p = Path(file_path)
     if not p.is_absolute():
-        p = Path(config.root_dir) / p
+        root_dir = config.root_dir
+        if root_dir is None:
+            return f"{TOOL_ERROR}: 当前会话无工作目录,请使用绝对路径"
+        p = root_dir / p
 
     if not p.exists():
         return f"{TOOL_ERROR}: 文件不存在: {file_path}"

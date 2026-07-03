@@ -11,6 +11,9 @@ async def cmd_undo(args: str, config: AppConfig) -> bool:
     """
     task = config.current_agent
     root_dir = task.session.root_dir
+    if root_dir is None:
+        await err("无法执行 /undo: 当前会话未设置工作目录(root_dir 为 None)", config)
+        return True
     idx = int(args.strip()) if args.strip().isdigit() else 0
     success, message = await apply_checkpoint(root_dir, index=idx)
     if success:

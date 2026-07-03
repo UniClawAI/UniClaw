@@ -242,13 +242,13 @@ def _matches(matcher: Any, payload: dict[str, Any]) -> bool:
 def _hook_input(
     event: HookEvent,
     payload: dict[str, Any],
-    config: "AppConfig | None",
+    config: AppConfig | None,
     task: AgentTask,
 ) -> dict[str, Any]:
-    root_dir = str(task.session.root_dir)
+    root_dir = task.session.root_dir
     return {
         "event": event,
-        "cwd": root_dir,
+        "cwd": str(root_dir) if root_dir else "",
         "session_id": task.session.id,
         "task_id": getattr(task, "id", None),
         "task_name": getattr(task, "name", None),
@@ -293,7 +293,7 @@ async def _run_entries(
             )
             try:
                 timeout = int(timeout)
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 timeout = DEFAULT_HOOK_TIMEOUT_SECONDS
             hook_env = {**env, "UNICLAW_HOOK_EVENT": event}
             start = time.monotonic()

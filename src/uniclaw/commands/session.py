@@ -52,7 +52,11 @@ async def cmd_clear(_args: str, config: AppConfig) -> bool:
     """
     task = config.current_agent
     old_id = task.session.id if config.is_wechat else ""
-    task.session = Session(root_dir=task.session.root_dir, id=old_id, session_type=task.session.session_type)
+    task.session = Session(
+        root_dir=task.session.root_dir,
+        id=old_id,
+        session_type=task.session.session_type,
+    )
 
     if config.is_wechat:
         try:
@@ -104,6 +108,9 @@ async def cmd_export(args: str, config: AppConfig) -> bool:
         export_path = Path(args.strip())
         # 如果是相对路径,转换为绝对路径
         if not export_path.is_absolute():
+            if task.session.root_dir is None:
+                await err("当前会话无工作目录,请使用绝对路径导出", config)
+                return False
             export_path = task.session.root_dir / export_path
         # 根据扩展名决定格式
         use_json = export_path.suffix.lower() == ".json"

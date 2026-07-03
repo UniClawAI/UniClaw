@@ -41,11 +41,13 @@ def _load_llm_safe_prompt(root_dir: Path | None) -> str:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         return data.get("prompt", "").strip()
-    except (json.JSONDecodeError, OSError):
+    except json.JSONDecodeError, OSError:
         return ""
 
 
-def _save_llm_safe_prompt(prompt: str, root_dir: Path):
+def _save_llm_safe_prompt(prompt: str, root_dir: Path | None):
+    if root_dir is None:
+        return
     path = _llm_safe_prompt_path(root_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -53,7 +55,9 @@ def _save_llm_safe_prompt(prompt: str, root_dir: Path):
     )
 
 
-def _clear_llm_safe_prompt(root_dir: Path):
+def _clear_llm_safe_prompt(root_dir: Path | None):
+    if root_dir is None:
+        return
     path = _llm_safe_prompt_path(root_dir)
     if path.exists():
         path.unlink()
@@ -92,6 +96,8 @@ def write_llm_safe_prompt(prompt: str, config: AppConfig = None) -> str:
     Returns:
         str: 保存成功提示
     """
+    if config.root_dir is None:
+        return f"{TOOL_ERROR}: 当前会话无工作目录,无法保存安全策略"
     _save_llm_safe_prompt(prompt, config.root_dir)
     return "已保存 llm_safe_check 注入提示词。"
 
@@ -120,6 +126,8 @@ def edit_llm_safe_prompt(
         str: 操作结果。成功时显示修改前后的预览；失败时返回错误信息。
     """
     try:
+        if config.root_dir is None:
+            return f"{TOOL_ERROR}: 当前会话无工作目录,无法编辑安全策略"
         current_prompt = _load_llm_safe_prompt(config.root_dir)
 
         # 验证旧字符串存在

@@ -970,7 +970,10 @@ async def create_sub_agent(body: SubAgentCreate):
 
     # 创建配置
     from uniclaw.config import RunMode
-    config = create_sub_agent_config(root_dir, name, body.prompt, run_mode=RunMode.WEBUI)
+
+    config = create_sub_agent_config(
+        root_dir, name, body.prompt, run_mode=RunMode.WEBUI
+    )
 
     # 加载 agent 定义
     agent_def = None
@@ -981,9 +984,17 @@ async def create_sub_agent(body: SubAgentCreate):
 
     # 启动子代理并等待结果
     mgr = MultiAgent.get_instance()
-    task = await mgr.start_sub_agent(
-        body.prompt, config, agent_def=agent_def
-    )
+    task = await mgr.start_sub_agent(body.prompt, config, agent_def=agent_def)
+
+    from uniclaw.agent import AgentStatus
+
+    if task.status == AgentStatus.FAILED:
+        return {
+            "task_id": task.id,
+            "name": task.name,
+            "status": "failed",
+            "result": f"启动子代理失败: {task.result}",
+        }
     await mgr.wait(task.id, timeout=600)
 
     return {

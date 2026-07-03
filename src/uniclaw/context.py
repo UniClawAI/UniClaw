@@ -24,7 +24,7 @@ def get_base_system_prompt(config: AppConfig) -> str:
     # 额外工作空间目录
     extra = list(config.workspace)
     extra_text = ""
-    if extra:
+    if extra and root_dir:
         extra.append(root_dir)  # 确保当前目录在工作空间中
         extra_lines = "\n".join(f"  - {d}" for d in extra)
         extra_text = f"\n\n# 额外工作空间目录\n用户已授权你访问以下额外目录(均可读写):\n{extra_lines}\n"
@@ -116,7 +116,7 @@ def get_claude_md(session) -> str:
             f"## CLAUDE.md\n"
             f"项目根目录的指令文件(路径:{claude_md_path}),"
             f"定义项目特定的规范和约束,每次对话自动加载。\n"
-            f"用户要求\"记住项目规范\"、\"添加项目指令\"时,写入此文件。\n"
+            f'用户要求"记住项目规范"、"添加项目指令"时,写入此文件。\n'
             f"建议内容:代码风格、架构规范、工作流程、技术栈、禁止事项。"
         )
         return f"{description}\n\n{safe_content}"

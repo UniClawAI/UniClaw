@@ -3,7 +3,6 @@ import json
 from uniclaw.tools.base import tool
 from uniclaw.utils.constants import TOOL_ERROR
 
-
 VALID_PERMISSION_MODES = ("auto", "manual", "accept-all")
 
 
@@ -20,7 +19,7 @@ def _validate_action(action: str) -> str | None:
     try:
         data = json.loads(action)
     except json.JSONDecodeError as e:
-        return f"{TOOL_ERROR}: JSON 解析失败: {e}\n你传入的值: \"{action}\""
+        return f'{TOOL_ERROR}: JSON 解析失败: {e}\n你传入的值: "{action}"'
     if "type" not in data:
         return f'{TOOL_ERROR}: JSON 缺少 "type" 字段。示例: {{"type": "shell", "command": "ls"}}'
     atype = data["type"]
@@ -108,13 +107,16 @@ def schedule_create(
 
     scheduler = Scheduler.get_instance()
     try:
-        task = scheduler.add_task(name, schedule, action, permission_mode=permission_mode, config=config)
+        task = scheduler.add_task(
+            name, schedule, action, permission_mode=permission_mode, config=config
+        )
     except ValueError as e:
         return f"{TOOL_ERROR}: {e}"
 
+    rd = task.root_dir or "未设置"
     return (
         f"已创建定时任务: {task.id} ({name}, {schedule})\n"
-        f"工作目录: {task.root_dir}\n"
+        f"工作目录: {rd}\n"
         f"如果需要创建任务使用的脚本,放在任务的工作目录里,不要放在当前项目目录中。"
     )
 
@@ -176,23 +178,29 @@ def schedule_monitor(
     if err:
         return err
 
-    action = json.dumps({
-        "type": "monitor",
-        "command": command,
-        "agent": {"agent_type": agent_type, "message": agent_message},
-    }, ensure_ascii=False)
+    action = json.dumps(
+        {
+            "type": "monitor",
+            "command": command,
+            "agent": {"agent_type": agent_type, "message": agent_message},
+        },
+        ensure_ascii=False,
+    )
 
     scheduler = Scheduler.get_instance()
     try:
-        task = scheduler.add_task(name, schedule, action, permission_mode=permission_mode, config=config)
+        task = scheduler.add_task(
+            name, schedule, action, permission_mode=permission_mode, config=config
+        )
     except ValueError as e:
         return f"{TOOL_ERROR}: {e}"
 
+    rd = task.root_dir or "未设置"
     return (
         f"已创建监控任务: {task.id} ({name}, {schedule})\n"
         f"检查命令: {command}\n"
         f"触发条件: 退出码非零\n"
-        f"工作目录: {task.root_dir}\n"
+        f"工作目录: {rd}\n"
         f"如果需要创建检查脚本,放在任务的工作目录里。"
     )
 
@@ -339,7 +347,13 @@ def schedule_monitor_update(
     """
     from .scheduler import Scheduler
 
-    if not command and not agent_message and not agent_type and not schedule and not permission_mode:
+    if (
+        not command
+        and not agent_message
+        and not agent_type
+        and not schedule
+        and not permission_mode
+    ):
         return f"{TOOL_ERROR}: 至少需要提供 command、agent_message、agent_type、schedule 或 permission_mode 之一"
 
     if permission_mode:
@@ -353,6 +367,7 @@ def schedule_monitor_update(
         return f"{TOOL_ERROR}: 任务 '{task_id}' 不存在"
 
     import json
+
     action_data = json.loads(task_data.action)
     agent_data = action_data.get("agent", {})
 
@@ -404,7 +419,15 @@ def schedule_toggle(
 
 def get_tools() -> list:
     """获取调度器工具列表"""
-    return [schedule_create, schedule_monitor, schedule_list, schedule_update, schedule_monitor_update, schedule_remove, schedule_toggle]
+    return [
+        schedule_create,
+        schedule_monitor,
+        schedule_list,
+        schedule_update,
+        schedule_monitor_update,
+        schedule_remove,
+        schedule_toggle,
+    ]
 
 
 def get_all_tools() -> list:

@@ -223,7 +223,7 @@ async def _check_permission(tc: dict, config: AppConfig) -> tuple[bool, str]:
 
                 if abs_file.is_relative_to(get_plans_dir(config).resolve()):
                     return (True, "")
-            except (ValueError, OSError):
+            except ValueError, OSError:
                 pass
 
     # Bash 命令安全检查(安全则直接放行,不安全则继续走后续流程包括 LLM 检测)
@@ -255,7 +255,7 @@ async def _check_permission(tc: dict, config: AppConfig) -> tuple[bool, str]:
                     abs_dir = Path(d).resolve()
                     if abs_file.is_relative_to(abs_dir):
                         return (True, "")
-            except (ValueError, Exception):
+            except ValueError, Exception:
                 pass
 
     # 所有快速路径都未命中,调用 LLM 检测安全性
@@ -364,7 +364,9 @@ class AgentTask:
     event_queue: Optional[asyncio.Queue] = field(default=None, repr=False)
     todolist: Optional[TodoList] = field(default=None, repr=False)
     goal_manager: GoalManager = field(default=None, repr=False)
-    extended_mgr: ExtendedToolManager = field(default_factory=ExtendedToolManager, repr=False)
+    extended_mgr: ExtendedToolManager = field(
+        default_factory=ExtendedToolManager, repr=False
+    )
     allowed_tools_set: Optional[set[str]] = field(default=None, repr=False)
 
     @property
@@ -582,6 +584,10 @@ class MultiAgent:
             f"{base_system_prompt}\n\n{"" if system_prompt is None else system_prompt}"
         )
         if isolation:
+            if root_dir is None:
+                task.status = AgentStatus.FAILED
+                task.result = "isolation需要root_dir(当前为None)"
+                return task
             git_root = await get_git_root(root_dir)
             if not git_root:
                 task.status = AgentStatus.FAILED

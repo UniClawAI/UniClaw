@@ -53,6 +53,7 @@ async def cmd_doctor(_args: str, config: AppConfig) -> bool:
     # 配置文件
     async def _cfg():
         from uniclaw.config import get_config_path
+
         path = get_config_path()
         if path.exists():
             return f"配置文件存在: {path}"
@@ -94,7 +95,8 @@ async def cmd_doctor(_args: str, config: AppConfig) -> bool:
         if not shutil.which("docker"):
             raise FileNotFoundError("Docker 未安装(沙箱功能不可用)")
         proc = await asyncio.create_subprocess_exec(
-            "docker", "info",
+            "docker",
+            "info",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -115,6 +117,8 @@ async def cmd_doctor(_args: str, config: AppConfig) -> bool:
 
     # 工作目录
     async def _ws():
+        if root_dir is None:
+            return "工作目录: 未设置(微信模式下使用进程目录)"
         if not root_dir.exists():
             raise FileNotFoundError(f"工作目录不存在: {root_dir}")
         if not os.access(root_dir, os.W_OK):
@@ -125,8 +129,9 @@ async def cmd_doctor(_args: str, config: AppConfig) -> bool:
 
     # 项目目录
     async def _app():
-        from uniclaw.context import get_app_dir
-        d = get_app_dir(root_dir)
+        from uniclaw.context import get_app_dir, Scope
+
+        d = get_app_dir(root_dir) if root_dir else get_app_dir(Scope.USER)
         if d.exists():
             return f"项目目录: {d}"
         return f"项目目录不存在(首次使用时自动创建): {d}"
@@ -136,6 +141,7 @@ async def cmd_doctor(_args: str, config: AppConfig) -> bool:
     # 技能系统
     async def _skills():
         from uniclaw.tools.skill.loader import load_skills, get_builtin_skills
+
         all_skills = load_skills(root_dir)
         builtin = get_builtin_skills()
         user = [s for s in all_skills if s.source == "user"]
@@ -147,6 +153,7 @@ async def cmd_doctor(_args: str, config: AppConfig) -> bool:
     # MCP 服务
     async def _mcp():
         from uniclaw.tools.mcp import MCPManager
+
         mgr = MCPManager.get_instance()
         servers = mgr.get_servers() if hasattr(mgr, "get_servers") else []
         if not servers:
@@ -158,7 +165,10 @@ async def cmd_doctor(_args: str, config: AppConfig) -> bool:
 
     await info("─" * 50, config)
     total = pass_count + warn_count + fail_count
-    await info(f"\n  总计: {pass_count} 通过, {warn_count} 警告, {fail_count} 失败 / {total} 项\n", config)
+    await info(
+        f"\n  总计: {pass_count} 通过, {warn_count} 警告, {fail_count} 失败 / {total} 项\n",
+        config,
+    )
 
     return True
 

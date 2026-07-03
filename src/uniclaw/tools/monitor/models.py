@@ -7,6 +7,7 @@ from pathlib import Path
 
 class MonitorStatus(StrEnum):
     """监控状态枚举"""
+
     RUNNING = "running"
     MATCHED = "matched"
     STOPPED = "stopped"
@@ -25,7 +26,7 @@ class Monitor:
         description: str,
         timeout: int,
         notify_model: bool = True,
-        cwd: Path = Path(),
+        cwd: Path | None = None,
     ):
         self.id = monitor_id
         self.command = command

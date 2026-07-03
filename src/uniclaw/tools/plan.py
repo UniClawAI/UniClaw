@@ -6,9 +6,13 @@ from uniclaw.tools.shell import Bash
 from uniclaw.tools.fs import Write, Edit
 from uniclaw.tools.ask import AskUserQuestion
 
+
 def get_plans_dir(config: AppConfig) -> Path:
-    """获取项目级计划目录"""
-    return get_app_dir(config.root_dir) / "plans"
+    """获取项目级计划目录,root_dir 为 None 时使用用户级目录。"""
+    from uniclaw.context import Scope
+
+    root = config.root_dir
+    return get_app_dir(root) / "plans" if root else get_app_dir(Scope.USER) / "plans"
 
 
 def get_plan_mode_instructions(config: AppConfig) -> str:
@@ -51,9 +55,7 @@ def enter_plan_mode(config: AppConfig = None) -> str:
     进入后需制定计划并经用户确认,确认后调用 exit_plan_mode 退出并执行。
     """
     config.permission_mode = Permissions.PLAN
-    return (
-        f"已进入计划模式。{get_plan_mode_instructions(config)}"
-    )
+    return f"已进入计划模式。{get_plan_mode_instructions(config)}"
 
 
 @tool

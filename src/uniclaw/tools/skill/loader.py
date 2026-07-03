@@ -147,7 +147,7 @@ def get_builtin_skills() -> list[SkillDef]:
     return list(_BUILTIN_SKILLS)
 
 
-def load_skills(root_dir: Path) -> list[SkillDef]:
+def load_skills(root_dir: Path | None) -> list[SkillDef]:
     skills: list[SkillDef] = []
     skill_keys = set()
     # 加载内置技能
@@ -169,7 +169,7 @@ def load_skills(root_dir: Path) -> list[SkillDef]:
     return skills
 
 
-def find_skill(root_dir: Path, query: str) -> Optional[SkillDef]:
+def find_skill(root_dir: Path | None, query: str) -> Optional[SkillDef]:
     """查找触发器与查询的第一个单词(或整个字符串)匹配的技能。"""
     query = query.strip()
     if not query:

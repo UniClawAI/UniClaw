@@ -11,7 +11,6 @@ from uniclaw.tools.hooks.hook_manager import (
     load_all_hooks_configs,
 )
 
-
 # ── 系统提示词(静态常量,最大化 LLM 缓存命中) ──────────────
 
 _HOOKS_SYSTEM_PROMPT = """\
@@ -130,6 +129,10 @@ def hook_add(
         raise ValueError("hook_add 需要 config 中的 current_agent 来获取 root_dir")
     root_dir = config.root_dir
     cmd_list = [c.strip() for c in commands.strip().split("\n") if c.strip()]
+    if scope == "project" and root_dir is None:
+        return (
+            f"{TOOL_ERROR}: 当前会话无工作目录,无法添加项目级 hook,请使用 scope='user'"
+        )
     root = root_dir if scope == "project" else Scope.USER
     new_id = add_hook(
         event=event,

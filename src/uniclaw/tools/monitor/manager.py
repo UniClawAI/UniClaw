@@ -37,7 +37,7 @@ class MonitorManager:
         timeout: int,
         notify_model: bool = True,
         task=None,
-        cwd: Path = Path(),
+        cwd: Path | None = None,
     ) -> str:
         """启动新进程监控"""
         # 验证正则表达式
@@ -83,7 +83,9 @@ class MonitorManager:
 
         notify_info = ""
         if pattern:
-            notify_info = "(匹配时通知模型+桌面)" if notify_model else "(匹配时仅通知桌面)"
+            notify_info = (
+                "(匹配时通知模型+桌面)" if notify_model else "(匹配时仅通知桌面)"
+            )
         else:
             notify_info = "(仅记录输出)"
 
@@ -148,6 +150,7 @@ class MonitorManager:
         # 1. 发送桌面通知给用户
         try:
             from ..notify import push_notification
+
             desc = f" [{monitor.description}]" if monitor.description else ""
             msg = f"监控{desc}匹配到: {line[:100]}"
             push_notification.invoke({"message": msg, "title": "UniClaw 监控"})
@@ -202,7 +205,11 @@ class MonitorManager:
             if os.name == "nt":
                 # Windows: 用 taskkill /T 杀整棵树, /F 强制
                 proc = await asyncio.create_subprocess_exec(
-                    "taskkill", "/F", "/T", "/PID", str(process.pid),
+                    "taskkill",
+                    "/F",
+                    "/T",
+                    "/PID",
+                    str(process.pid),
                     stdout=asyncio.subprocess.DEVNULL,
                     stderr=asyncio.subprocess.DEVNULL,
                 )
@@ -285,7 +292,9 @@ class MonitorManager:
 
         notify_info = ""
         if new_pattern:
-            notify_info = "(匹配时通知)" if monitor.notify_model else "(匹配时仅通知桌面)"
+            notify_info = (
+                "(匹配时通知)" if monitor.notify_model else "(匹配时仅通知桌面)"
+            )
         else:
             notify_info = "(仅记录输出)"
 

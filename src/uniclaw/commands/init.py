@@ -29,6 +29,8 @@ async def cmd_init(args: str, config: AppConfig) -> str:
 
     task = config.current_agent
     root_dir = task.session.root_dir
+    if root_dir is None:
+        return "无法执行 /init: 当前会话未设置工作目录(root_dir 为 None)"
     project_name = root_dir.name
     claude_md_path = root_dir / "CLAUDE.md"
 

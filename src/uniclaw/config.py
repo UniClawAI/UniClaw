@@ -110,7 +110,8 @@ class AppConfig:
     def get_running_subs(self) -> list["AppConfig"]:
         """获取正在运行的子代理(RUNNING 状态)。"""
         return [
-            sub for sub in self.sub_configs
+            sub
+            for sub in self.sub_configs
             if sub.current_agent and sub.current_agent.status == AgentStatus.RUNNING
         ]
 
@@ -127,7 +128,7 @@ class AppConfig:
         return config if not config.is_sub else None
 
     @property
-    def root_dir(self) -> Path:
+    def root_dir(self) -> Path | None:
         """便捷属性,返回 current_agent.session.root_dir。"""
         return self.current_agent.session.root_dir
 
@@ -422,7 +423,7 @@ def _load_settings_json() -> dict[str, Any]:
     if path.exists():
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
+        except json.JSONDecodeError, OSError:
             pass
 
     # 默认值
@@ -480,7 +481,11 @@ def load_config(
     from uniclaw.tools.session.session import SessionType
 
     if not isinstance(session, Session):
-        session = Session(root_dir=root_dir, id=session, session_type=session_type or SessionType.CONSOLE)
+        session = Session(
+            root_dir=root_dir,
+            id=session,
+            session_type=session_type or SessionType.CONSOLE,
+        )
     elif session_type is not None:
         session.session_type = session_type
     from uniclaw.agent import AgentTask

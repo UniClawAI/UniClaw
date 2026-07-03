@@ -132,16 +132,20 @@ class _FileCompleter(Completer):
         if not task:
             return
 
+        root_dir = task.session.root_dir
+        if root_dir is None:
+            return
+
         # 支持路径分隔符,处理子目录
         if "/" in prefix or "\\" in prefix:
             # 分离目录和文件名部分
             parts = prefix.replace("\\", "/").rsplit("/", 1)
             dir_part = parts[0]
             file_prefix = parts[1] if len(parts) > 1 else ""
-            search_dir = task.session.root_dir / dir_part
+            search_dir = root_dir / dir_part
         else:
             file_prefix = prefix
-            search_dir = task.session.root_dir
+            search_dir = root_dir
 
         # 搜索匹配的文件
         try:
@@ -163,7 +167,7 @@ class _FileCompleter(Completer):
                             else f"{item.stat().st_size:,} bytes"
                         ),
                     )
-        except (OSError, PermissionError):
+        except OSError, PermissionError:
             pass
 
 
@@ -268,7 +272,10 @@ def token_usage_rate(task: AgentTask, config: AppConfig) -> float:
 
 
 async def ask_permission_interactive(
-    desc: str, config: AppConfig, tool_call: dict = None, explanation: str = "",
+    desc: str,
+    config: AppConfig,
+    tool_call: dict = None,
+    explanation: str = "",
     agent_name: str = "",
 ):
     tui: TUIApp | None = TUIApp.get_instance()
@@ -302,9 +309,7 @@ async def ask_permission_interactive(
         _allow_label = "全部接受"
 
     agent_label = f" [子代理: {agent_name}]" if agent_name else ""
-    prompt_text = (
-        f"⚠️{agent_label} 需要您的授权:\n{desc}\n\ny 同意 | a {_allow_label} | 其他输入为拒绝理由"
-    )
+    prompt_text = f"⚠️{agent_label} 需要您的授权:\n{desc}\n\ny 同意 | a {_allow_label} | 其他输入为拒绝理由"
     title = f"权限确认 - {agent_name}" if agent_name else "权限确认"
     text = (await tui.tui_input(prompt_text, title=title)).strip()
 
@@ -469,8 +474,12 @@ class TUIApp:
                     self.print(f"\n{content}")
                 # 用量和模型信息
                 usage = msg.get("usage", {})
-                in_tokens = usage.get("input_tokens", 0) if isinstance(usage, dict) else 0
-                out_tokens = usage.get("output_tokens", 0) if isinstance(usage, dict) else 0
+                in_tokens = (
+                    usage.get("input_tokens", 0) if isinstance(usage, dict) else 0
+                )
+                out_tokens = (
+                    usage.get("output_tokens", 0) if isinstance(usage, dict) else 0
+                )
                 model_name = msg.get("model_name", "")
                 if in_tokens or out_tokens:
                     self.print_verbose(f"   Token: {in_tokens}→{out_tokens}")
@@ -630,7 +639,9 @@ class TUIApp:
             prompt, title, self.config, self.main_input_buffer, self.main_input_win
         )
 
-    async def tui_multi_input(self, questions: list[dict], title: str = "请选择") -> str:
+    async def tui_multi_input(
+        self, questions: list[dict], title: str = "请选择"
+    ) -> str:
         return await self.dialog.tui_multi_input(
             questions, title, self.config, self.main_input_buffer, self.main_input_win
         )
@@ -692,8 +703,10 @@ class TUIApp:
 
         def _get_prompt():
             pct = self._token_pct
-            root_dir_name = self.current_task.session.root_dir.name if self.current_task else Path.cwd().name
-            return HTML(f"<b>[{root_dir_name}] {pct:.0f}% </b>»")
+            rd = self.current_task.session.root_dir if self.current_task else None
+            if rd is None:
+                raise RuntimeError("Console 模式下 root_dir 不能为 None")
+            return HTML(f"<b>[{rd.name}] {pct:.0f}% </b>»")
 
         def _accept_input(buf):
             text = buf.text
@@ -712,7 +725,8 @@ class TUIApp:
 
         input_buffer = Buffer(
             completer=ConditionalCompleter(
-                _UniClawCompleter(lambda: self.current_task), filter=Condition(lambda: not self.dialog.active)
+                _UniClawCompleter(lambda: self.current_task),
+                filter=Condition(lambda: not self.dialog.active),
             ),
             accept_handler=_accept_input,
             complete_while_typing=True,
@@ -860,7 +874,16 @@ class TUIApp:
                 self.session_panel_focused = False
             event.app.invalidate()
 
-        @bindings.add("escape", filter=Condition(lambda: not (self.dialog.active and self.dialog.multi_mode and self.dialog.other_active)))
+        @bindings.add(
+            "escape",
+            filter=Condition(
+                lambda: not (
+                    self.dialog.active
+                    and self.dialog.multi_mode
+                    and self.dialog.other_active
+                )
+            ),
+        )
         def _clear_input(event):
             if self.dialog.active and self.dialog.event is not None:
                 self.dialog.result = "User cancelled permission request"
@@ -977,7 +1000,9 @@ class TUIApp:
             layout=Layout(body, focused_element=input_window),
             key_bindings=bindings,
             full_screen=True,
-            mouse_support=Condition(lambda: self.session_panel_focused or self.dialog.active),
+            mouse_support=Condition(
+                lambda: self.session_panel_focused or self.dialog.active
+            ),
             enable_page_navigation_bindings=False,
         )
 
@@ -1003,7 +1028,9 @@ class TUIApp:
 
         while True:
             try:
-                queued_task, event = await asyncio.wait_for(event_queue.get(), timeout=1.0)
+                queued_task, event = await asyncio.wait_for(
+                    event_queue.get(), timeout=1.0
+                )
             except asyncio.TimeoutError:
                 if agent_task.future is not None and agent_task.future.done():
                     self.config.spinner.stop(wait_id=agent_task.id)
@@ -1012,7 +1039,9 @@ class TUIApp:
                         import traceback
 
                         error_traceback = traceback.format_exc()
-                        get_logger("run", agent_task.session.root_dir).error(error_traceback)
+                        get_logger("run", agent_task.session.root_dir).error(
+                            error_traceback
+                        )
                         self.print(f"\n❌ Agent 线程异常退出: {exc}")
                     else:
                         self.print("\n⚠️ Agent 已结束,但没有收到结束事件。")
@@ -1024,7 +1053,9 @@ class TUIApp:
             agent_prefix = "" if is_main_agent else f"[{queued_task.name}] "
 
             if isinstance(event, ThinkingStartEvent):
-                self.config.spinner.start(f"{agent_prefix}Thinking...", wait_id=queued_task.id)
+                self.config.spinner.start(
+                    f"{agent_prefix}Thinking...", wait_id=queued_task.id
+                )
             elif isinstance(event, ThinkingChunkEvent):
                 if not thinking_stream:
                     self.print_verbose(f"{agent_prefix}💭 [Thinking]")
@@ -1110,7 +1141,11 @@ class TUIApp:
                     self.print_verbose(event.content)
             elif isinstance(event, UserEvent):
                 # 显示用户输入消息(list 内容只显示文本部分,避免输出 base64)
-                display = extract_text(event.content) if isinstance(event.content, list) else event.content
+                display = (
+                    extract_text(event.content)
+                    if isinstance(event.content, list)
+                    else event.content
+                )
                 self.print(f"\n{agent_prefix}👤 {display}", style="fg:white")
             elif isinstance(event, PermissionRequestEvent):
                 self.config.spinner.stop(wait_id=queued_task.id)
@@ -1133,9 +1168,7 @@ class TUIApp:
                 continue
             elif isinstance(event, SlashCommandEvent):
                 self.config.spinner.stop(wait_id=queued_task.id)
-                slash_result = await handle_slash(
-                    event.command, self.config
-                )
+                slash_result = await handle_slash(event.command, self.config)
                 if isinstance(slash_result, str):
                     self.print(slash_result)
                 self.refresh_session_items()
@@ -1177,6 +1210,7 @@ class TUIApp:
 
         # 异步初始化 MCP 工具
         from uniclaw.tools.mcp import MCPManager
+
         await MCPManager.get_instance().refresh()
 
         def on_submit(text: str):

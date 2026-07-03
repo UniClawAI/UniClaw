@@ -327,7 +327,7 @@ def is_safe_tool(name: str) -> bool:
     return name in safe_tools
 
 
-def is_safe_bash(cmd: str, root_dir: Path) -> bool:
+def is_safe_bash(cmd: str, root_dir: Path | None) -> bool:
     """如果命令是只读的且从不需要权限提示,则返回 True。
 
     拒绝包含 shell 链式操作符(;、&&、||、|、反引号、$(…))的命令
@@ -484,7 +484,7 @@ async def llm_safe_check(tc: dict, config: AppConfig) -> tuple[bool, str]:
 
 # 当前环境
 - 平台:{platform.system()}
-- 当前目录:{root_dir}
+- 当前目录:{root_dir or '未设置'}
 {extra_text}
 
 安全的调用(is_safe=true):
@@ -587,7 +587,7 @@ def _load_rules(root_dir: Path | None) -> list:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         return data.get("rules", [])
-    except (json.JSONDecodeError, OSError):
+    except json.JSONDecodeError, OSError:
         return []
 
 
@@ -608,7 +608,9 @@ def extract_bash_prefix(command: str) -> str:
     return parts[0]
 
 
-def add_permission_rule(rule_type: str, pattern: str, root_dir: Path):
+def add_permission_rule(rule_type: str, pattern: str, root_dir: Path | None):
+    if root_dir is None:
+        return
     with _RULES_LOCK:
         rules = _load_rules(root_dir)
         if any(r["type"] == rule_type and r["pattern"] == pattern for r in rules):
@@ -623,7 +625,9 @@ def add_permission_rule(rule_type: str, pattern: str, root_dir: Path):
         _save_rules(rules, root_dir)
 
 
-def remove_permission_rule(rule_type: str, pattern: str, root_dir: Path) -> bool:
+def remove_permission_rule(rule_type: str, pattern: str, root_dir: Path | None) -> bool:
+    if root_dir is None:
+        return False
     with _RULES_LOCK:
         rules = _load_rules(root_dir)
         new_rules = [
@@ -635,11 +639,11 @@ def remove_permission_rule(rule_type: str, pattern: str, root_dir: Path) -> bool
         return True
 
 
-def list_permission_rules(root_dir: Path) -> list:
+def list_permission_rules(root_dir: Path | None) -> list:
     return _load_rules(root_dir)
 
 
-def check_saved_bash_rule(command: str, root_dir: Path) -> bool:
+def check_saved_bash_rule(command: str, root_dir: Path | None) -> bool:
     """检查Bash命令是否匹配用户定义的持久化规则
 
     Args:
@@ -654,7 +658,7 @@ def check_saved_bash_rule(command: str, root_dir: Path) -> bool:
     return any(r["type"] == "bash" and command.startswith(r["pattern"]) for r in rules)
 
 
-def check_saved_tool_rule(tool_name: str, root_dir: Path) -> bool:
+def check_saved_tool_rule(tool_name: str, root_dir: Path | None) -> bool:
     """检查工具名称是否匹配用户定义的持久化规则
 
     Args:

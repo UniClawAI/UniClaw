@@ -10,10 +10,14 @@ async def cmd_cwd(args: str, config: AppConfig) -> bool:
     - <路径>:切换到指定的目录(支持相对路径和绝对路径)
     """
     task = config.current_agent
+    if task.session.root_dir is None:
+        await warn("当前会话不支持工作目录操作(无 root_dir)", config)
+        return True
     if not args.strip():
         await info(f"当前工作目录: {task.session.root_dir}", config)
     else:
         import pathlib
+
         target_path = pathlib.Path(args.strip()).resolve()
         if not target_path.exists():
             await err(f"目录不存在: {args.strip()}", config)
@@ -38,7 +42,9 @@ async def cmd_skills(_args: str, config: AppConfig) -> bool:
     task = config.current_agent
     from uniclaw.tools.skill.loader import load_skills
 
-    skills = load_skills(task.session.root_dir)
+    skills = load_skills(
+        task.session.root_dir
+    )  # root_dir 为 None 时仅跳过项目级 skills
     if not skills:
         await warn("当前没有可用的技能", config)
         return True
@@ -46,7 +52,7 @@ async def cmd_skills(_args: str, config: AppConfig) -> bool:
     groups = {
         "builtin": ("【内置技能】", []),
         "user": ("【用户技能】", []),
-        "project": ("【项目技能】", [])
+        "project": ("【项目技能】", []),
     }
     for skill in skills:
         if skill.source in groups:
@@ -80,6 +86,7 @@ async def cmd_exit(_args: str, config: AppConfig) -> bool:
 async def cmd_usage(_args: str, config: AppConfig) -> bool:
     """显示 Token 使用统计,包括输入/输出 token 数和 API 调用次数。"""
     from uniclaw.utils.usage import format_stats
+
     await info(format_stats(), config)
     return True
 
@@ -121,9 +128,14 @@ async def cmd_help(_args: str, config: AppConfig) -> bool:
     await info("  /model [名称]          - 查看或切换当前使用的模型", config)
     await info("  /config [get|set|reset] - 运行时配置管理", config)
     await info("  /cwd, /cd, /pwd [路径] - 查看或切换工作目录", config)
-    await info("  /add-dir <路径>        - 添加额外工作空间目录(仅当前会话有效)", config)
+    await info(
+        "  /add-dir <路径>        - 添加额外工作空间目录(仅当前会话有效)", config
+    )
     await info("  /usage                 - 查看 Token 使用统计", config)
-    await info("  /cost                  - 查看费用统计(按模型计费,价格来自 OpenRouter)", config)
+    await info(
+        "  /cost                  - 查看费用统计(按模型计费,价格来自 OpenRouter)",
+        config,
+    )
     await info("  /context               - 查看当前上下文 token 构成", config)
     await info("  /skills                - 列出所有可用技能", config)
     await info("  /init                  - 扫描项目并生成/更新 CLAUDE.md", config)
@@ -151,7 +163,7 @@ async def cmd_help(_args: str, config: AppConfig) -> bool:
 
     await info("【定时任务】", config)
     await info("  /schedule list         - 列出所有定时任务", config)
-    await info('  /schedule add <id> <调度> <动作> - 创建定时任务', config)
+    await info("  /schedule add <id> <调度> <动作> - 创建定时任务", config)
     await info("  /schedule remove <id>  - 删除定时任务", config)
     await info("  /schedule enable <id>  - 启用定时任务", config)
     await info("  /schedule disable <id> - 禁用定时任务", config)

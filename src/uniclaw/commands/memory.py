@@ -46,7 +46,10 @@ async def cmd_memory(args: str, config: AppConfig) -> bool:
         return True
 
     # /memory — 列出所有记忆详情(用户级 + 项目级)
-    all_memories = Memory.load_all_memories(task.session.root_dir) + Memory.load_all_memories(Scope.USER)
+    root_dir = task.session.root_dir
+    all_memories = (
+        Memory.load_all_memories(root_dir) if root_dir else []
+    ) + Memory.load_all_memories(Scope.USER)
     if not all_memories:
         await warn("暂无记忆", config)
         return True
@@ -62,8 +65,9 @@ async def cmd_memory(args: str, config: AppConfig) -> bool:
             await info(f"  [{r['type']}] {r['name']}", config)
             await info(f"    {r['description']}", config)
             await info(
-                f"    置信度: {r['confidence']}  来源: {r['source']}  作用域: {r['scope']}"
-            , config)
+                f"    置信度: {r['confidence']}  来源: {r['source']}  作用域: {r['scope']}",
+                config,
+            )
             if r.get("freshness_text"):
                 await info(f"    {r['freshness_text']}", config)
             await info("", config)
@@ -74,7 +78,10 @@ async def cmd_memory(args: str, config: AppConfig) -> bool:
     for mem in all_memories:
         await info(f"  [{mem.type}] {mem.name}", config)
         await info(f"    {mem.description}", config)
-        await info(f"    置信度: {mem.confidence}  来源: {mem.source}  作用域: {mem.scope}", config)
+        await info(
+            f"    置信度: {mem.confidence}  来源: {mem.source}  作用域: {mem.scope}",
+            config,
+        )
         if mem.created:
             await info(f"    创建时间: {mem.created}", config)
         if mem.last_used_at:

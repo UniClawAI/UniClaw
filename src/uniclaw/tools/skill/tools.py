@@ -30,7 +30,7 @@ def clear_active_skill_tools() -> None:
     _active_skill_tools.clear()
 
 
-def get_skill_system_prompt(root_dir: Path) -> str:
+def get_skill_system_prompt(root_dir: Path | None) -> str:
     skills = load_skills(root_dir)
     if not skills:
         return ""
@@ -98,6 +98,7 @@ async def skill_suggest(
 如果没有匹配的技能,直接返回 []。
 """
     from uniclaw.tools.session.session import Session
+
     _session = Session()
     _session.add_user_message(content=task_description)
     wait_id = config.spinner.start("推荐技能...")

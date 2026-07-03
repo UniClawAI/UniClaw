@@ -12,20 +12,24 @@ MAX_LOG_SIZE = 10 * 1024 * 1024  # 10MB
 BACKUP_COUNT = 5
 
 
-def _log_dir_for(git_root: Path) -> str:
-    """根据 git_root 计算日志目录路径。"""
-    return str(get_app_dir(git_root) / "logs")
+def _log_dir_for(root_dir: Path | None) -> str:
+    """根据 root_dir 计算日志目录路径。"""
+    from uniclaw.context import Scope
+
+    if root_dir is None:
+        return str(get_app_dir(Scope.USER) / "logs")
+    return str(get_app_dir(root_dir) / "logs")
 
 
-def get_logger(name: str, git_root: Path) -> logging.Logger:
+def get_logger(name: str, root_dir: Path | None) -> logging.Logger:
     """获取指定名称和工作目录的 logger。
 
-    每个 (name, git_root) 组合对应独立的 logger 和日志文件。
+    每个 (name, root_dir) 组合对应独立的 logger 和日志文件。
     """
-    log_dir = _log_dir_for(git_root)
-    # 用 git_root 的哈希区分不同项目的同名 logger
-    git_root_hash = hashlib.md5(str(git_root).encode()).hexdigest()[:8]
-    logger_name = f"{name}@{git_root_hash}"
+    log_dir = _log_dir_for(root_dir)
+    # 用 root_dir 的哈希区分不同项目的同名 logger
+    root_dir_hash = hashlib.md5(str(root_dir or "default").encode()).hexdigest()[:8]
+    logger_name = f"{name}@{root_dir_hash}"
 
     logger = logging.getLogger(logger_name)
     if logger.handlers:
