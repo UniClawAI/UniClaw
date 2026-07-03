@@ -227,6 +227,7 @@ def is_safe_tool(name: str) -> bool:
     )
     from uniclaw.tools.notify import push_notification
     from uniclaw.tools.registry import search_tools
+    from uniclaw.tools.send_file import send_file
     from uniclaw.tools.computer_use import get_tools as cu_get_tools
     from uniclaw.tools.security.tools import read_llm_safe_prompt
     from uniclaw.tools.web_browse.tools import (
@@ -300,6 +301,7 @@ def is_safe_tool(name: str) -> bool:
         send_message.name,
         push_notification.name,
         search_tools.name,
+        send_file.name,
         # Web Browse 只读工具
         browser_screenshot.name,
         browser_get_text.name,

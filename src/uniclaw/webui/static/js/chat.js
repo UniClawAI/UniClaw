@@ -261,6 +261,13 @@ const Chat = {
         }
         if (name === 'Edit' && content) {
             body.innerHTML += `<div class="tool-result">${this._renderEditDiff(args, content)}</div>`;
+        } else if (name === 'send_file' && content) {
+            const fileHtml = this._renderFileDownload(content);
+            if (fileHtml) {
+                body.innerHTML += `<div class="tool-result"><div class="tool-result-label">输出</div>${fileHtml}</div>`;
+            } else {
+                body.innerHTML += `<div class="tool-result"><div class="tool-result-label">输出</div><pre>${Utils.escapeHtml(content)}</pre></div>`;
+            }
         } else if (content) {
             body.innerHTML += `<div class="tool-result"><div class="tool-result-label">输出</div><pre>${Utils.escapeHtml(content)}</pre></div>`;
         }
@@ -741,8 +748,19 @@ const Chat = {
             } else {
                 body.innerHTML = '';
                 if (msg.args && Object.keys(msg.args).length) body.innerHTML += `<div class="tool-args"><div class="tool-args-label">参数</div><pre>${Utils.escapeHtml(this._formatJson(msg.args))}</pre></div>`;
-                if (msg.name === 'Edit' && msg.content) body.innerHTML += `<div class="tool-result">${this._renderEditDiff(msg.args, msg.content)}</div>`;
-                else if (msg.content) body.innerHTML += `<div class="tool-result"><div class="tool-result-label">输出</div><pre>${Utils.escapeHtml(msg.content)}</pre></div>`;
+                // send_file 工具: 显示下载图标
+                if (msg.name === 'send_file' && msg.content) {
+                    const fileHtml = this._renderFileDownload(msg.content);
+                    if (fileHtml) {
+                        body.innerHTML += `<div class="tool-result"><div class="tool-result-label">输出</div>${fileHtml}</div>`;
+                    } else {
+                        body.innerHTML += `<div class="tool-result"><div class="tool-result-label">输出</div><pre>${Utils.escapeHtml(msg.content)}</pre></div>`;
+                    }
+                } else if (msg.name === 'Edit' && msg.content) {
+                    body.innerHTML += `<div class="tool-result">${this._renderEditDiff(msg.args, msg.content)}</div>`;
+                } else if (msg.content) {
+                    body.innerHTML += `<div class="tool-result"><div class="tool-result-label">输出</div><pre>${Utils.escapeHtml(msg.content)}</pre></div>`;
+                }
             }
         }
     },
@@ -775,6 +793,23 @@ const Chat = {
 
     _fetchAndRenderTodolist(sid) {
         fetch(`/api/config?session_id=${sid}`).then(r => r.json()).then(d => this._renderTodolist(d.todolist)).catch(() => { const a = document.getElementById('todolist-area'); if (a) a.style.display = 'none'; });
+    },
+
+    /** 解析 send_file 工具返回的文件下载标记,生成 HTML */
+    _renderFileDownload(content) {
+        const match = content.match(/\[file_download:([a-f0-9]+):(.+?):(\d+)\]/);
+        if (!match) return null;
+        const fileId = match[1];
+        const fileName = match[2];
+        const expiresAt = parseInt(match[3]);
+        const now = Math.floor(Date.now() / 1000);
+        const expired = now > expiresAt;
+        const expireDate = new Date(expiresAt * 1000);
+        const formattedTime = `${expireDate.getFullYear()}-${String(expireDate.getMonth() + 1).padStart(2, '0')}-${String(expireDate.getDate()).padStart(2, '0')} ${String(expireDate.getHours()).padStart(2, '0')}:${String(expireDate.getMinutes()).padStart(2, '0')}:${String(expireDate.getSeconds()).padStart(2, '0')}`;
+        if (expired) {
+            return `<div class="file-download expired"><span class="file-download-icon">📄</span><span class="file-download-name">${Utils.escapeHtml(fileName)}</span></div>`;
+        }
+        return `<div class="file-download" onclick="window.open('/api/files/download?file_id=${fileId}', '_blank')" title="点击下载\n有效期至: ${formattedTime}"><span class="file-download-icon">📄</span><span class="file-download-name">${Utils.escapeHtml(fileName)}</span></div>`;
     },
 
     _onEnd(msg) {

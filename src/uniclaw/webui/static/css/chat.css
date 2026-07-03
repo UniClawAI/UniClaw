@@ -677,3 +677,39 @@ pre:hover .code-copy-btn {
 .hljs-symbol, .hljs-bullet { color: #c792ea; }
 .hljs-addition { color: #c3e88d; background: rgba(0, 255, 136, 0.05); }
 .hljs-deletion { color: #ff5370; background: rgba(255, 56, 96, 0.05); }
+
+/* ---- 文件下载图标 ---- */
+.file-download {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    cursor: pointer;
+    transition: all var(--duration-fast) var(--ease);
+}
+.file-download:hover {
+    background: var(--accent-dim);
+    border-color: var(--accent);
+}
+.file-download.expired {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+.file-download.expired:hover {
+    background: var(--bg-3);
+    border-color: var(--border);
+}
+.file-download-icon {
+    font-size: 20px;
+    transition: transform var(--duration-fast) var(--ease);
+}
+.file-download:not(.expired):hover .file-download-icon {
+    transform: scale(1.2);
+}
+.file-download-name {
+    font-size: var(--text-sm);
+    color: var(--text-1);
+}

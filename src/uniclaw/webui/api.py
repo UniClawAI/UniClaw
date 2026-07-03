@@ -919,6 +919,40 @@ async def delete_wechat_bot(name: str):
     return {"ok": True}
 
 
+# === 文件下载 ===
+
+
+@router.get("/files/download")
+async def download_file(file_id: str):
+    """通过临时 ID 下载文件。
+
+    Args:
+        file_id: send_file 工具生成的临时下载 ID
+    """
+    from fastapi.responses import FileResponse
+    from uniclaw.tools.send_file import get_download
+
+    download = get_download(file_id)
+    if not download:
+        raise HTTPException(status_code=404, detail="下载链接不存在或已过期")
+
+    file_path = download["path"]
+    file_name = download["name"]
+
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="文件不存在")
+
+    # 限制文件大小 (100MB)
+    if file_path.stat().st_size > 100 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="文件过大(>100MB)")
+
+    return FileResponse(
+        path=str(file_path),
+        filename=file_name,
+        media_type="application/octet-stream",
+    )
+
+
 # === 子代理 ===
 
 

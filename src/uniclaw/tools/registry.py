@@ -99,6 +99,7 @@ def _build_extended_keywords() -> dict[str, list[str]]:
         browser_get_value, browser_get_count, browser_get_box, browser_get_styles,
     )
     from .help import list_slash_commands, get_command_help
+    from .send_file import send_file
 
     # tool.name → 关键词列表(中英文+语义同义词)
     return {
@@ -217,6 +218,7 @@ def _build_extended_keywords() -> dict[str, list[str]]:
         get_command_help.name: ["命令帮助", "命令用法", "command help", "命令详情", "命令说明", "how to use", "怎么用", "用法"],
         # TTS 工具
         text_to_speech.name: ["tts", "语音合成", "文本转语音", "text to speech", "朗读", "语音", "说话", "播放语音", "音频生成", "voice"],
+        send_file.name: ["发送文件", "send file", "文件发送", "下载文件", "download file", "提供文件", "文件下载"],
     }
 
 
@@ -276,6 +278,7 @@ def _build_tool_categories() -> dict[str, str]:
         browser_get_value, browser_get_count, browser_get_box, browser_get_styles,
     )
     from .help import list_slash_commands, get_command_help
+    from .send_file import send_file
 
     # tool.name → 类别
     return {
@@ -330,6 +333,7 @@ def _build_tool_categories() -> dict[str, str]:
         list_slash_commands.name: "帮助", get_command_help.name: "帮助",
         # TTS 工具
         text_to_speech.name: "TTS",
+        send_file.name: "文件发送",
     }
 
 

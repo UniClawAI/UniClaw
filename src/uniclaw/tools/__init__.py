@@ -66,6 +66,7 @@ from .notify import get_tools as notify_get_tools, get_all_tools as notify_get_a
 from .search import get_tools as search_get_tools, get_all_tools as search_get_all_tools
 from .help import get_tools as help_get_tools, get_all_tools as help_get_all_tools
 from .tts.tools import get_tools as tts_get_tools, get_all_tools as tts_get_all_tools
+from .send_file import get_tools as send_file_get_tools, get_all_tools as send_file_get_all_tools
 from .mcp import MCPManager
 from .registry import get_tools as registry_get_tools, init_registry
 
@@ -134,6 +135,7 @@ async def get_tools(config) -> list:
         *search_get_tools(),
         *help_get_tools(),
         *tts_get_tools(config),
+        *send_file_get_tools(),
         *mcp_tools,
     ]
     if not config.is_sub:
@@ -181,5 +183,6 @@ async def get_all_tools() -> list:
         *search_get_all_tools(),
         *help_get_all_tools(),
         *tts_get_all_tools(),
+        *send_file_get_all_tools(),
         *mcp_tools,
     ]

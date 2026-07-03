@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Awaitable
+from uniclaw.utils.constants import TOOL_ERROR
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -186,13 +187,13 @@ async def tts(
     from uniclaw.provider.openai_provider import astream, achat
 
     if not text:
-        return "错误:文本不能为空"
+        return f"{TOOL_ERROR}:文本不能为空"
 
     audio = dict(config.audio)
     model = config.tts_model
 
     if not model:
-        return "错误:未配置 TTS 模型,请先使用 /model 命令设置 TTS 模型"
+        return f"{TOOL_ERROR}:未配置 TTS 模型,请先使用 /model 命令设置 TTS 模型"
 
     message = _build_message(text, style)
     result_parts = []
@@ -214,10 +215,10 @@ async def tts(
                 config=config,
             )
         except Exception as e:
-            return f"错误:TTS 调用失败 - {e}"
+            return f"{TOOL_ERROR}:TTS 调用失败 - {e}"
 
         if not ai_message.audio:
-            return "错误:未获取到音频数据"
+            return f"{TOOL_ERROR}:未获取到音频数据"
 
     # 保存文件
     if save_path and ai_message and ai_message.audio:
