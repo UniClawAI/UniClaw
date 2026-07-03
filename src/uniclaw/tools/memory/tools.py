@@ -76,8 +76,8 @@ def memory_save(
         >>> print(result)
         记忆 '用户偏好' 已保存。
     """
-    # user scope 不需要 root_dir；project scope 需要 root_dir
-    memory_scope: Scope | Path = config.root_dir if scope == "project" else Scope.USER
+    # user scope 不需要 root_dir；project scope 需要 root_dir（无 root_dir 时 fallback 到用户级）
+    memory_scope: Scope | Path = config.root_dir if scope == "project" and config.root_dir else Scope.USER
     memory = Memory(
         name=name,
         description=description,
@@ -155,8 +155,8 @@ def memory_delete(name: str, scope: str, config: AppConfig = None) -> str:
         >>> print(result)
         记忆已删除: '用户偏好' (作用域: user)
     """
-    # user scope 不需要 root_dir；project scope 需要从 config 获取 root_dir
-    memory_scope: Scope | Path = config.root_dir if scope == "project" else Scope.USER
+    # user scope 不需要 root_dir；project scope 需要从 config 获取 root_dir（无 root_dir 时 fallback 到用户级）
+    memory_scope: Scope | Path = config.root_dir if scope == "project" and config.root_dir else Scope.USER
     # 获取记忆文件路径并删除对应的记忆文件
     memory_path = Memory.get_memory_path(memory_scope, name)
     memory_path.unlink()
@@ -201,9 +201,9 @@ def memory_list(scope: str, config: AppConfig = None):
     # config 由框架注入,请勿手动传入
     root_dir = config.root_dir
     if scope == "project":
-        memories = Memory.load_all_memories(scope=root_dir)
+        memories = Memory.load_all_memories(scope=root_dir) if root_dir else Memory.load_all_memories(scope=Scope.USER)
     elif scope == "all":
-        memories = Memory.load_all_memories(scope=root_dir) + Memory.load_all_memories(scope=Scope.USER)
+        memories = Memory.load_all_memories(scope=root_dir) + Memory.load_all_memories(scope=Scope.USER) if root_dir else Memory.load_all_memories(scope=Scope.USER)
     else:
         memories = Memory.load_all_memories(scope=Scope.USER)
     # 处理无记忆的情况,返回友好的提示信息
@@ -258,11 +258,16 @@ async def memory_search(query: str, max_results: int, config: AppConfig = None) 
 
     # 收集所有记忆目录(传给 fts_search 定位数据库文件)
     user_memory_dir = Memory.get_memory_dir(Scope.USER)
-    project_memory_dir = Memory.get_memory_dir(root_dir)
-    memory_dirs = [d for d in [user_memory_dir, project_memory_dir] if d.exists()]
+    memory_dirs = [user_memory_dir]
+    if root_dir:
+        project_memory_dir = Memory.get_memory_dir(root_dir)
+        memory_dirs.append(project_memory_dir)
+    memory_dirs = [d for d in memory_dirs if d.exists()]
 
     # 加载所有记忆(用于 AI fallback 和综合排序)
-    memories = Memory.load_all_memories(scope=root_dir) + Memory.load_all_memories(scope=Scope.USER)
+    memories = Memory.load_all_memories(scope=Scope.USER)
+    if root_dir:
+        memories += Memory.load_all_memories(scope=root_dir)
     if not memories:
         return "未找到匹配的记忆。"
 
