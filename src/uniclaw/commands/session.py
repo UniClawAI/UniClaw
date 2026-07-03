@@ -52,7 +52,7 @@ async def cmd_clear(_args: str, config: AppConfig) -> bool:
     """
     task = config.current_agent
     old_id = task.session.id if config.is_wechat else ""
-    task.session = Session(root_dir=task.session.root_dir, id=old_id)
+    task.session = Session(root_dir=task.session.root_dir, id=old_id, session_type=task.session.session_type)
 
     if config.is_wechat:
         try:

@@ -50,7 +50,9 @@ def _get_user_config(user_id: str) -> AppConfig:
         session = SessionManager.load_session(user_id)
         if session is None:
             session = user_id
-        from uniclaw.tools.session.session import SessionType
+        else:
+            from uniclaw.tools.session.session import SessionType
+            session.session_type = SessionType.WECHAT
 
         config = load_config(session=session, run_mode=RunMode.WECHAT, session_type=SessionType.WECHAT)
         config.current_agent.name = f"wechat-{user_id}"
@@ -290,7 +292,7 @@ def make_handler():
                     user_message if isinstance(user_message, str) else str(user_message)
                 )
                 print(f"[微信] 用户 {user_id} 的 agent 正在运行,消息已排队")
-                await info(msg, "⏳ 已排队,将在当前任务处理间隙自动补充。", config)
+                await info("⏳ 已排队,将在当前任务处理间隙自动补充。", config)
                 return
 
         try:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import os
 import threading
 import uuid
@@ -91,6 +92,7 @@ class IlinkBotClient:
         if self.store.bot_token and not force:
             if on_status:
                 import inspect
+
                 r = on_status("reused", None)
                 if inspect.isawaitable(r):
                     await r
@@ -104,25 +106,21 @@ class IlinkBotClient:
 
         if on_status:
             import inspect
+
             result = on_status("qrcode", qr_url)
             if inspect.isawaitable(result):
                 await result
         else:
             self.print_qrcode(qr_url)
 
-        await self.poll_login(
-            qrcode, poll_interval=poll_interval, on_status=on_status
-        )
+        await self.poll_login(qrcode, poll_interval=poll_interval, on_status=on_status)
 
     def get_updates(self) -> list[IncomingMessage]:
         self._require_login()
         payload = {"get_updates_buf": self.store.sync_buf}
         data = self._post("getupdates", payload, timeout=self.poll_timeout)
         self._check_api(data)
-        self.store.sync_buf = (
-            data.get("get_updates_buf")
-            or self.store.sync_buf
-        )
+        self.store.sync_buf = data.get("get_updates_buf") or self.store.sync_buf
 
         messages = [
             IncomingMessage.from_raw(item)
@@ -137,6 +135,7 @@ class IlinkBotClient:
 
     def run_forever(self, *, interval: float = 0.2) -> None:
         import asyncio
+
         self._require_login()
         self._stop_event.clear()
         while not self._stop_event.is_set():
@@ -229,6 +228,111 @@ class IlinkBotClient:
         self._check_api(data)
         return data
 
+    def reply_file(
+        self,
+        msg: IncomingMessage,
+        file_path: str | Path,
+        *,
+        file_name: str | None = None,
+    ) -> dict[str, Any]:
+        return self.send_file(
+            msg.user_id,
+            file_path,
+            file_name=file_name,
+            context_token=msg.context_token,
+        )
+
+    def send_file(
+        self,
+        user_id: str,
+        file_path: str | Path,
+        *,
+        file_name: str | None = None,
+        context_token: str | None = None,
+    ) -> dict[str, Any]:
+        token = self._context_for(user_id, context_token)
+        media = self._upload_media(user_id, file_path, media_type=3)
+        file_path = Path(file_path)
+        file_item: dict[str, Any] = {
+            "media": {
+                "encrypt_query_param": media["encrypt_query_param"],
+                "aes_key": media["aes_key"],
+                "encrypt_type": 1,
+            },
+            "file_name": file_name or file_path.name,
+            "len": str(file_path.stat().st_size),
+        }
+        payload = {
+            "msg": {
+                "from_user_id": "",
+                "to_user_id": user_id,
+                "client_id": str(uuid.uuid4()),
+                "context_token": token,
+                "message_type": 2,
+                "message_state": 2,
+                "item_list": [
+                    {
+                        "type": int(MessageItemType.FILE),
+                        "file_item": file_item,
+                    }
+                ],
+            }
+        }
+        data = self._post("sendmessage", payload)
+        self._check_api(data)
+        return data
+
+    def reply_voice(
+        self, msg: IncomingMessage, voice_path: str | Path, *, duration_ms: int = 0
+    ) -> dict[str, Any]:
+        return self.send_voice(
+            msg.user_id,
+            voice_path,
+            context_token=msg.context_token,
+            duration_ms=duration_ms,
+        )
+
+    def send_voice(
+        self,
+        user_id: str,
+        voice_path: str | Path,
+        *,
+        context_token: str | None = None,
+        duration_ms: int = 0,
+    ) -> dict[str, Any]:
+        token = self._context_for(user_id, context_token)
+        media = self._upload_media(user_id, voice_path, media_type=4)
+        voice_item: dict[str, Any] = {
+            "media": {
+                "encrypt_query_param": media["encrypt_query_param"],
+                "aes_key": media["aes_key"],
+                "encrypt_type": 1,
+            },
+            "encode_type": 6,
+            "bits_per_sample": 16,
+            "sample_rate": 24000,
+            "playtime": duration_ms,
+        }
+        payload = {
+            "msg": {
+                "from_user_id": "",
+                "to_user_id": user_id,
+                "client_id": str(uuid.uuid4()),
+                "context_token": token,
+                "message_type": 2,
+                "message_state": 2,
+                "item_list": [
+                    {
+                        "type": int(MessageItemType.VOICE),
+                        "voice_item": voice_item,
+                    }
+                ],
+            }
+        }
+        data = self._post("sendmessage", payload)
+        self._check_api(data)
+        return data
+
     def send_typing(
         self, user_id: str, *, context_token: str | None = None
     ) -> dict[str, Any]:
@@ -313,10 +417,9 @@ class IlinkBotClient:
         if not encrypt_query_param:
             try:
                 cdn_data = cdn_resp.json()
-                encrypt_query_param = (
-                    cdn_data.get("encrypt_query_param")
-                    or cdn_data.get("encryptQueryParam")
-                )
+                encrypt_query_param = cdn_data.get(
+                    "encrypt_query_param"
+                ) or cdn_data.get("encryptQueryParam")
             except ValueError:
                 pass
         if not encrypt_query_param:
@@ -328,10 +431,12 @@ class IlinkBotClient:
             "aes_key": encode_aes_key(key),
             "encrypt_query_param": encrypt_query_param,
             "encrypted_file_size": len(encrypted),
+            "cdn_headers": dict(cdn_resp.headers),
         }
 
     async def _dispatch(self, msg: IncomingMessage) -> None:
         import inspect
+
         for handler in self._handlers:
             try:
                 if inspect.iscoroutinefunction(handler):
@@ -363,6 +468,7 @@ class IlinkBotClient:
             on_status: 状态变化回调 (status_name, data) -> None
         """
         import asyncio
+
         retry_count = 0
         max_retries = 3
         last_status = ""
@@ -386,6 +492,7 @@ class IlinkBotClient:
                 last_status = name
                 try:
                     import inspect
+
                     result = on_status(name, status)
                     if inspect.isawaitable(result):
                         await result
@@ -424,6 +531,7 @@ class IlinkBotClient:
 
     async def _get_qrcode_status(self, qrcode: str) -> dict[str, Any]:
         import httpx
+
         async with httpx.AsyncClient() as client:
             resp = await client.get(
                 self._url("get_qrcode_status"),

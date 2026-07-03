@@ -21,7 +21,9 @@ def _build_message(text: str, style: str) -> list[dict]:
 # ── 流式回调 ──────────────────────────────────────────────────
 
 
-async def _stream_with_callback(chunks, on_chunk: Callable[[StreamChunk], Awaitable[None]] | None = None):
+async def _stream_with_callback(
+    chunks, on_chunk: Callable[[StreamChunk], Awaitable[None]] | None = None
+):
     """通用流式处理:累积 chunk 并调用回调。返回累积的 AIMessage。"""
     ai_message = None
     async for chunk in chunks:
@@ -44,16 +46,13 @@ async def _webui_callback(chunk: StreamChunk, session_id: str):
     """WebUI 回调:流式发送音频到前端。"""
     from uniclaw.webui.ws import _broadcast
 
-    await _broadcast({
-        "event": "audio_chunk",
-        "session_id": session_id,
-        "audio": chunk.audio,
-    })
-
-
-async def _wechat_callback(_chunk: StreamChunk):
-    """微信回调:暂不支持流式播放,仅累积。"""
-    pass
+    await _broadcast(
+        {
+            "event": "audio_chunk",
+            "session_id": session_id,
+            "audio": chunk.audio,
+        }
+    )
 
 
 # 控制台播放器实例(延迟初始化)
@@ -65,15 +64,73 @@ def _get_console_player():
     global _console_player
     if _console_player is None:
         from uniclaw.tools.session import StreamPlayer
+
         _console_player = StreamPlayer()
         _console_player.start()
     return _console_player
 
 
+def _pcm_to_wav(
+    pcm: bytes, sample_rate: int = 24000, channels: int = 1, bits: int = 16
+) -> bytes:
+    """给 PCM16 原始数据加上 WAV 文件头。"""
+    import struct
+
+    byte_rate = sample_rate * channels * bits // 8
+    block_align = channels * bits // 8
+    data_size = len(pcm)
+    header = struct.pack(
+        "<4sI4s4sIHHIIHH4sI",
+        b"RIFF",
+        36 + data_size,
+        b"WAVE",
+        b"fmt ",
+        16,
+        1,
+        channels,
+        sample_rate,
+        byte_rate,
+        block_align,
+        bits,
+        b"data",
+        data_size,
+    )
+    return header + pcm
+
+
+async def _send_wechat_voice(_chunk: StreamChunk, config) -> None:
+    """将累积的音频作为文件发送到微信。"""
+    import base64
+    import os
+    import tempfile
+
+    ctx = getattr(config, "wechat_ctx", None)
+    if not ctx:
+        return
+    bot, msg = ctx
+    try:
+        pcm_bytes = base64.b64decode(_chunk.audio)
+        wav_bytes = _pcm_to_wav(pcm_bytes)
+        fd, tmp_path = tempfile.mkstemp(suffix=".wav")
+        try:
+            os.write(fd, wav_bytes)
+        finally:
+            os.close(fd)
+        try:
+            bot.reply_file(msg, tmp_path, file_name="tts.wav")
+        finally:
+            os.unlink(tmp_path)
+    except Exception as e:
+        try:
+            bot.reply_text(msg, f"[TTS] {e}")
+        except Exception:
+            pass
+
+
 def _get_on_chunk(config) -> Callable[[StreamChunk], Awaitable[None]] | None:
-    """根据界面类型获取回调函数。"""
+    """根据界面类型获取回调函数。微信模式无需回调,由 _stream_with_callback 统一累积。"""
     if config.is_wechat:
-        return _wechat_callback
+        return None  # 不需要逐 chunk 回调,流式结束后通过 ai_message 统一发送
     if config.is_webui:
         session_id = config.current_agent.session.id
         return lambda chunk: _webui_callback(chunk, session_id)
@@ -81,14 +138,16 @@ def _get_on_chunk(config) -> Callable[[StreamChunk], Awaitable[None]] | None:
     return _console_callback
 
 
-async def _finish_stream(config):
-    """流式结束后的清理。"""
+async def _finish_stream(config, ai_message=None):
+    """流式结束后的清理与发送。"""
     global _console_player
 
     if config.is_wechat:
-        pass  # 微信模式暂无清理操作
+        if ai_message and ai_message.audio:
+            await _send_wechat_voice(ai_message, config)
     elif config.is_webui:
         from uniclaw.webui.ws import _broadcast
+
         session_id = config.current_agent.session.id
         await _broadcast({"event": "audio_end", "session_id": session_id})
     elif _console_player:
@@ -143,13 +202,16 @@ async def tts(
         on_chunk = _get_on_chunk(config)
         chunks = astream(message, model_name=model, audio=audio or None, config=config)
         ai_message = await _stream_with_callback(chunks, on_chunk)
-        await _finish_stream(config)
-        result_parts.append("已流式发送到前端" if config.is_webui else "已播放")
+        await _finish_stream(config, ai_message)
+        result_parts.append("已播放")
     else:
         # 非流式:获取完整音频
         try:
             ai_message = await achat(
-                message, model_name=model, audio=audio or None, config=config,
+                message,
+                model_name=model,
+                audio=audio or None,
+                config=config,
             )
         except Exception as e:
             return f"错误:TTS 调用失败 - {e}"

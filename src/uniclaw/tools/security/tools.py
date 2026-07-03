@@ -32,7 +32,9 @@ def _llm_safe_prompt_path(root_dir: Path) -> Path:
     return get_app_dir(root_dir) / "llm_safe_prompt.json"
 
 
-def _load_llm_safe_prompt(root_dir: Path) -> str:
+def _load_llm_safe_prompt(root_dir: Path | None) -> str:
+    if root_dir is None:
+        return ""
     path = _llm_safe_prompt_path(root_dir)
     if not path.exists():
         return ""
@@ -128,7 +130,8 @@ def edit_llm_safe_prompt(
         count = current_prompt.count(old_string)
         if count > 1:
             return (
-                f"{TOOL_ERROR}: old_string 出现了 {count} 次。" "请提供更多上下文以使其唯一。"
+                f"{TOOL_ERROR}: old_string 出现了 {count} 次。"
+                "请提供更多上下文以使其唯一。"
             )
 
         # 执行替换

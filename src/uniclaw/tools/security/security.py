@@ -199,7 +199,12 @@ def is_safe_tool(name: str) -> bool:
     from uniclaw.tools.skill.tools import skill_suggest, skill_read
     from uniclaw.tools.sleep import sleep_timer
     from uniclaw.tools.plan import enter_plan_mode, exit_plan_mode
-    from uniclaw.tools.monitor.tools import monitor_list, monitor_output, monitor_get_matched, monitor_update_pattern
+    from uniclaw.tools.monitor.tools import (
+        monitor_list,
+        monitor_output,
+        monitor_get_matched,
+        monitor_update_pattern,
+    )
     from uniclaw.tools.todolist import (
         todolist_create,
         todolist_update,
@@ -225,12 +230,23 @@ def is_safe_tool(name: str) -> bool:
     from uniclaw.tools.computer_use import get_tools as cu_get_tools
     from uniclaw.tools.security.tools import read_llm_safe_prompt
     from uniclaw.tools.web_browse.tools import (
-        browser_screenshot, browser_get_text, browser_get_html,
-        browser_get_attribute, browser_get_elements, browser_get_url, browser_get_title,
+        browser_screenshot,
+        browser_get_text,
+        browser_get_html,
+        browser_get_attribute,
+        browser_get_elements,
+        browser_get_url,
+        browser_get_title,
         browser_toggle_mode,
-        browser_get_value, browser_get_count, browser_get_box, browser_get_styles,
-        browser_scroll_into_view, browser_focus, browser_wait,
-        browser_scroll, browser_list_pages,
+        browser_get_value,
+        browser_get_count,
+        browser_get_box,
+        browser_get_styles,
+        browser_scroll_into_view,
+        browser_focus,
+        browser_wait,
+        browser_scroll,
+        browser_list_pages,
     )
 
     # 使用 .name 属性获取工具的实际名称,构建安全工具集合
@@ -451,7 +467,8 @@ async def llm_safe_check(tc: dict, config: AppConfig) -> tuple[bool, str]:
     extra = list(config.workspace)
     extra_text = ""
     if extra:
-        extra.append(root_dir)
+        if root_dir:
+            extra.append(root_dir)
         extra_lines = "\n".join(f"  - {d}" for d in extra)
         extra_text = f"- 当前空间目录:\n{extra_lines}\n"
 
@@ -559,7 +576,9 @@ def _rules_path(root_dir: Path) -> Path:
     return get_app_dir(root_dir) / "permission_rules.json"
 
 
-def _load_rules(root_dir: Path) -> list:
+def _load_rules(root_dir: Path | None) -> list:
+    if root_dir is None:
+        return []
     path = _rules_path(root_dir)
     if not path.exists():
         return []

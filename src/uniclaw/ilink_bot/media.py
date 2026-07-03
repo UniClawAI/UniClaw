@@ -60,6 +60,30 @@ def silk_to_wav(data: bytes, sample_rate: int = 24000) -> bytes:
     return _pcm_to_wav(pcm, sample_rate=sample_rate)
 
 
+def wav_to_silk(data: bytes, sample_rate: int = 24000) -> bytes:
+    """将 WAV 或 raw PCM 音频转换为 SILK 格式(微信语音)。
+
+    Args:
+        data: WAV 文件字节(带 RIFF header)或 raw PCM16 数据。
+        sample_rate: 采样率,WAV 格式时自动从 header 读取。
+
+    Returns:
+        SILK 编码的音频字节。
+    """
+    if not _HAS_SILK:
+        raise RuntimeError("pysilk 未安装,无法编码 SILK 格式")
+    if data[:4] == b"RIFF":
+        import wave
+
+        with wave.open(io.BytesIO(data)) as wf:
+            sample_rate = wf.getframerate()
+            data = wf.readframes(wf.getnframes())
+    inp = io.BytesIO(data)
+    out = io.BytesIO()
+    pysilk.encode(inp, out, sample_rate=sample_rate, bit_rate=64000, tencent=True)
+    return out.getvalue()
+
+
 def _pcm_to_wav(
     pcm: bytes,
     sample_rate: int = 24000,
@@ -75,7 +99,9 @@ def _pcm_to_wav(
     buf.write(b"WAVE")
     buf.write(b"fmt ")
     buf.write(
-        struct.pack("<IHHIIHH", 16, 1, channels, sample_rate, byte_rate, block_align, bits)
+        struct.pack(
+            "<IHHIIHH", 16, 1, channels, sample_rate, byte_rate, block_align, bits
+        )
     )
     buf.write(b"data")
     buf.write(struct.pack("<I", data_size))

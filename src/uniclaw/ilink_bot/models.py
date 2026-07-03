@@ -52,7 +52,9 @@ class IncomingMessage:
             or ""
         )
         context_token = raw.get("context_token") or raw.get("contextToken") or ""
-        timestamp = _timestamp(raw.get("create_time_ms") or raw.get("createTimeMs") or raw.get("time"))
+        timestamp = _timestamp(
+            raw.get("create_time_ms") or raw.get("createTimeMs") or raw.get("time")
+        )
         items = raw.get("item_list") or raw.get("itemList") or raw.get("items") or []
 
         texts: list[str] = []
@@ -68,13 +70,27 @@ class IncomingMessage:
                 if text_item.get("text"):
                     texts.append(str(text_item["text"]))
             elif item_type == MessageItemType.IMAGE:
-                images.append(_media("image", item.get("image_item") or item.get("imageItem") or {}))
+                images.append(
+                    _media(
+                        "image", item.get("image_item") or item.get("imageItem") or {}
+                    )
+                )
             elif item_type == MessageItemType.VOICE:
-                voices.append(_media("voice", item.get("voice_item") or item.get("voiceItem") or {}))
+                voices.append(
+                    _media(
+                        "voice", item.get("voice_item") or item.get("voiceItem") or {}
+                    )
+                )
             elif item_type == MessageItemType.FILE:
-                files.append(_media("file", item.get("file_item") or item.get("fileItem") or {}))
+                files.append(
+                    _media("file", item.get("file_item") or item.get("fileItem") or {})
+                )
             elif item_type == MessageItemType.VIDEO:
-                videos.append(_media("video", item.get("video_item") or item.get("videoItem") or {}))
+                videos.append(
+                    _media(
+                        "video", item.get("video_item") or item.get("videoItem") or {}
+                    )
+                )
 
         msg_type: MessageType = "unknown"
         present = [bool(texts), bool(images), bool(voices), bool(files), bool(videos)]
@@ -117,11 +133,21 @@ def _media(kind: MessageType, raw: dict[str, Any]) -> MediaContent:
     media = raw.get("media") or {}
     return MediaContent(
         type=kind,
-        url=raw.get("url") or cdn.get("url") or media.get("full_url") or media.get("url"),
+        url=raw.get("url")
+        or cdn.get("url")
+        or media.get("full_url")
+        or media.get("url"),
         file_name=raw.get("file_name") or raw.get("fileName") or raw.get("name"),
         size=raw.get("size") or raw.get("filesize") or raw.get("file_size"),
         md5=raw.get("md5") or raw.get("rawfilemd5"),
-        aes_key=raw.get("aeskey") or cdn.get("aes_key") or cdn.get("aesKey") or media.get("aes_key") or media.get("aesKey"),
-        encrypt_query_param=cdn.get("encrypt_query_param") or cdn.get("encryptQueryParam") or media.get("encrypt_query_param") or media.get("encryptQueryParam"),
+        aes_key=raw.get("aeskey")
+        or cdn.get("aes_key")
+        or cdn.get("aesKey")
+        or media.get("aes_key")
+        or media.get("aesKey"),
+        encrypt_query_param=cdn.get("encrypt_query_param")
+        or cdn.get("encryptQueryParam")
+        or media.get("encrypt_query_param")
+        or media.get("encryptQueryParam"),
         raw=raw,
     )
