@@ -91,6 +91,7 @@ class AppConfig:
     output_callback: (
         "Callable[[str, str], None] | Callable[[str, str], Awaitable[None]] | None"
     ) = field(default=None, repr=False)
+    voice_mode: bool = False  # 语音模式:AI 回复自动 TTS 播放(运行时状态,不持久化)
 
     @property
     def is_sub(self) -> bool:

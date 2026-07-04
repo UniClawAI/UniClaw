@@ -12,6 +12,7 @@ const App = {
         Sidebar.init();
         MsgNav.init();
         AudioPlayer.init();
+        VoiceMode.init();
 
         this._bindGlobalEvents();
         this._bindDragHandles();

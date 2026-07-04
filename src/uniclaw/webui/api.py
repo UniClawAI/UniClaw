@@ -299,6 +299,8 @@ async def get_config(session_id: str):
             "temperature": config.temperature,
             "max_tokens": config.max_tokens,
             "root_dir": config.root_dir,
+            "voice_available": bool(config.tts_model and config.audio),
+            "voice_mode": config.voice_mode,
         }
         # todolist 信息
         todo = config.current_agent.todolist

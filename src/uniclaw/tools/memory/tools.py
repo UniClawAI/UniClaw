@@ -76,7 +76,7 @@ def memory_save(
         >>> print(result)
         记忆 '用户偏好' 已保存。
     """
-    # user scope 不需要 root_dir；project scope 需要 root_dir（无 root_dir 时 fallback 到用户级）
+    # user scope 不需要 root_dir；project scope 需要 root_dir(无 root_dir 时 fallback 到用户级)
     memory_scope: Scope | Path = config.root_dir if scope == "project" and config.root_dir else Scope.USER
     memory = Memory(
         name=name,
@@ -155,7 +155,7 @@ def memory_delete(name: str, scope: str, config: AppConfig = None) -> str:
         >>> print(result)
         记忆已删除: '用户偏好' (作用域: user)
     """
-    # user scope 不需要 root_dir；project scope 需要从 config 获取 root_dir（无 root_dir 时 fallback 到用户级）
+    # user scope 不需要 root_dir；project scope 需要从 config 获取 root_dir(无 root_dir 时 fallback 到用户级)
     memory_scope: Scope | Path = config.root_dir if scope == "project" and config.root_dir else Scope.USER
     # 获取记忆文件路径并删除对应的记忆文件
     memory_path = Memory.get_memory_path(memory_scope, name)

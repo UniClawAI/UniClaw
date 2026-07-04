@@ -502,7 +502,9 @@ const SessionPanel = {
         if (sel) sel.textContent = sessionId || '新会话';
         if (!sessionId || skipFetch) {
             const mel = document.getElementById('status-model'); if (mel) mel.textContent = '-';
-            this._clearContextTimer(); this._updateContextDisplay(null); return;
+            this._clearContextTimer(); this._updateContextDisplay(null);
+            if (typeof VoiceMode !== 'undefined') VoiceMode.reset();
+            return;
         }
         fetch(`/api/sessions/${sessionId}`).then(r => r.ok ? r.json() : null).then(d => { if (d && sel) sel.textContent = d.title || sessionId; }).catch(() => {});
         fetch(`/api/config?session_id=${sessionId}`).then(r => r.json()).then(d => {
@@ -513,6 +515,11 @@ const SessionPanel = {
                 const map = { auto: 'Auto', manual: 'Manual', 'accept-all': 'Accept All', plan: 'Plan' };
                 pel2.textContent = map[d.permission_mode] || d.permission_mode;
                 pel2.className = `perm-mode ${d.permission_mode}`;
+            }
+            // 同步语音模式状态
+            if (typeof VoiceMode !== 'undefined') {
+                VoiceMode.setAvailable(d.voice_available || false);
+                VoiceMode.setEnabled(d.voice_mode || false);
             }
         }).catch(() => {});
         this._fetchContextUsage(sessionId);

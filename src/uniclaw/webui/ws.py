@@ -89,7 +89,13 @@ async def get_or_load_session(session_id: str) -> AppConfig:
     if not session:
         raise ValueError(f"会话 {session_id} 不存在")
     spinner = WebSpinner()
-    config = load_config(root_dir=session.root_dir, spinner=spinner, session=session, run_mode=RunMode.WEBUI, session_type=session.session_type)
+    config = load_config(
+        root_dir=session.root_dir,
+        spinner=spinner,
+        session=session,
+        run_mode=RunMode.WEBUI,
+        session_type=session.session_type,
+    )
     # 初始化 event_queue
     config.current_agent.event_queue = asyncio.Queue()
     session_cache[session_id] = config
@@ -228,12 +234,14 @@ async def bridge_events(session_id: str, config: AppConfig):
                 break
             else:
                 # subagent 结束(depth > 0),通知前端子智能体完成
-                await _broadcast({
-                    "event": "subagent_end",
-                    "session_id": session_id,
-                    "agent_name": agent_name,
-                    "depth": event.depth,
-                })
+                await _broadcast(
+                    {
+                        "event": "subagent_end",
+                        "session_id": session_id,
+                        "agent_name": agent_name,
+                        "depth": event.depth,
+                    }
+                )
             continue
 
         # === 阻塞事件：需要等待前端响应 ===
@@ -300,7 +308,14 @@ async def bridge_events(session_id: str, config: AppConfig):
         # === 流式事件 ===
         elif isinstance(event, ThinkingStartEvent):
             config.spinner.start("Thinking...", wait_id=queued_task.id)
-            await _broadcast({"event": "thinking_start", "session_id": session_id, "is_subagent": is_subagent, "agent_name": agent_name})
+            await _broadcast(
+                {
+                    "event": "thinking_start",
+                    "session_id": session_id,
+                    "is_subagent": is_subagent,
+                    "agent_name": agent_name,
+                }
+            )
 
         elif isinstance(event, ThinkingChunkEvent):
             config.spinner.start("Thinking...", wait_id=queued_task.id)
@@ -317,8 +332,24 @@ async def bridge_events(session_id: str, config: AppConfig):
         elif isinstance(event, TextChunkEvent):
             config.spinner.stop(wait_id=queued_task.id)
             await _broadcast(
-                {"event": "text", "session_id": session_id, "content": event.content, "is_subagent": is_subagent, "agent_name": agent_name}
+                {
+                    "event": "text",
+                    "session_id": session_id,
+                    "content": event.content,
+                    "is_subagent": is_subagent,
+                    "agent_name": agent_name,
+                }
             )
+            # 语音模式: 流式积累文本,按句子边界触发 TTS
+            if (
+                config.voice_mode
+                and config.tts_model
+                and config.audio
+                and not is_subagent
+            ):
+                from uniclaw.tools.tts.tts import tts_enqueue
+
+                tts_enqueue(session_id, event.content, config)
 
         elif isinstance(event, ToolPreparingEvent):
             config.spinner.start(f"'{event.name}'...", wait_id=queued_task.id)
@@ -338,7 +369,11 @@ async def bridge_events(session_id: str, config: AppConfig):
             # subagent 的 UserEvent 不广播(已作为工具参数显示)
             if not is_subagent:
                 await _broadcast(
-                    {"event": "user", "session_id": session_id, "content": event.content}
+                    {
+                        "event": "user",
+                        "session_id": session_id,
+                        "content": event.content,
+                    }
                 )
 
         elif isinstance(event, AssistantEvent):
@@ -356,6 +391,17 @@ async def bridge_events(session_id: str, config: AppConfig):
                     "agent_name": agent_name,
                 }
             )
+            # 语音模式: flush 剩余文本到 TTS 队列
+            if (
+                config.voice_mode
+                and event.content
+                and config.tts_model
+                and config.audio
+                and not is_subagent
+            ):
+                from uniclaw.tools.tts.tts import tts_flush
+
+                await tts_flush(session_id, config)
 
         elif isinstance(event, ToolStartEvent):
             config.spinner.stop(wait_id=queued_task.id)
@@ -559,7 +605,11 @@ async def handle_ws_message(ws: WebSocket, msg: dict):
             spinner = WebSpinner()
             from uniclaw.tools.session.session import SessionType
 
-            config = load_config(spinner=spinner, run_mode=RunMode.WEBUI, session_type=SessionType.FREE_CHAT)
+            config = load_config(
+                spinner=spinner,
+                run_mode=RunMode.WEBUI,
+                session_type=SessionType.FREE_CHAT,
+            )
             session_id = config.current_agent.session.id
             spinner.set_session_id(session_id)
             config.current_agent.event_queue = asyncio.Queue()
@@ -581,7 +631,9 @@ async def handle_ws_message(ws: WebSocket, msg: dict):
         elif root_dir and not session_id:
             # 创建新会话
             spinner = WebSpinner()
-            config = load_config(root_dir=Path(root_dir), spinner=spinner, run_mode=RunMode.WEBUI)
+            config = load_config(
+                root_dir=Path(root_dir), spinner=spinner, run_mode=RunMode.WEBUI
+            )
             session_id = config.current_agent.session.id
             spinner.set_session_id(session_id)
             # 初始化 event_queue
@@ -745,6 +797,26 @@ async def handle_ws_message(ws: WebSocket, msg: dict):
         # 前端通知当前活跃会话：重发待处理请求 + 通知刷新 config
         await _resend_pending_requests(session_id)
         await _notify_config_changed(session_id)
+
+    elif msg_type == "voice_mode":
+        enabled = msg.get("enabled", False)
+        if enabled and (not config.tts_model or not config.audio):
+            await _safe_send(
+                ws,
+                {
+                    "event": "error",
+                    "session_id": session_id,
+                    "message": "TTS 未配置(tts_model 或 audio 为空)",
+                },
+            )
+        else:
+            config.voice_mode = enabled
+            # 关闭语音模式: 清理 TTS 队列
+            if not enabled:
+                from uniclaw.tools.tts.tts import tts_cleanup
+
+                await tts_cleanup(session_id)
+            await _notify_config_changed(session_id)
 
 
 def _build_content_with_files(content: str, files: list[dict]) -> Any:

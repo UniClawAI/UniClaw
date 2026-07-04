@@ -83,7 +83,7 @@ const Chat = {
         if (view === this._currentView) return;
         this._currentView = view;
         const btn = document.getElementById('history-toggle');
-        // 显示可切换到的视图图标：当前 compact 显示 history 图标，反之亦然
+        // 显示可切换到的视图图标：当前 compact 显示 history 图标,反之亦然
         if (btn) btn.innerHTML = view === 'compact' ? icon('history') : icon('save');
         this._renderCurrentView();
     },
@@ -941,7 +941,7 @@ const Chat = {
 
     _stopSpinnerTimer() { if (this._spinnerTimer) { clearInterval(this._spinnerTimer); this._spinnerTimer = null; } },
 
-    /** 编辑用户消息：删除该消息及之后的所有消息，将内容放入输入框 */
+    /** 编辑用户消息：删除该消息及之后的所有消息,将内容放入输入框 */
     async _onEditUserMessage(btn) {
         const msgEl = btn.closest('.message.user');
         if (!msgEl) return;
@@ -958,7 +958,7 @@ const Chat = {
         const sid = this.currentSessionId;
         if (!sid) return;
 
-        // 根据当前视图决定 source，获取对应消息列表长度
+        // 根据当前视图决定 source,获取对应消息列表长度
         const source = this._currentView === 'history' ? 'history' : 'messages';
         const msgList = source === 'history' ? this._historyData : this._compactData;
         const totalMessages = msgList?.length || 0;
@@ -973,7 +973,7 @@ const Chat = {
             count = sessionMessages.length - sessionMessages.indexOf(msgEl);
         }
         if (count <= 0) return;
-        if (!confirm(`将删除此消息及后续 ${count - 1} 条消息，确认？`)) return;
+        if (!confirm(`将删除此消息及后续 ${count - 1} 条消息,确认？`)) return;
 
         try {
             const resp = await fetch(`/api/sessions/${sid}/messages`, {

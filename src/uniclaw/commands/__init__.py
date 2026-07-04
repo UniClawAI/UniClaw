@@ -23,6 +23,7 @@ from uniclaw.commands.overseer import cmd_overseer
 from uniclaw.commands.goal import cmd_goal
 from uniclaw.commands.checkpoint import cmd_checkpoint
 from uniclaw.commands.undo import cmd_undo
+from uniclaw.commands.voice import cmd_voice
 
 # 导入子命令列表
 from uniclaw.commands import session as _session_mod
@@ -89,6 +90,7 @@ COMMANDS["goal"] = cmd_goal
 COMMANDS["checkpoint"] = cmd_checkpoint
 COMMANDS["cp"] = cmd_checkpoint
 COMMANDS["undo"] = cmd_undo
+COMMANDS["voice"] = cmd_voice
 
 
 async def handle_slash(line: str, config: AppConfig) -> Union[bool, str]:

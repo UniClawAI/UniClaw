@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable, Awaitable
 from uniclaw.utils.constants import TOOL_ERROR
+from uniclaw.utils.logger import get_logger
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from uniclaw.tools.session.session import StreamChunk
+    from uniclaw.config import AppConfig
 
 
 def _build_message(text: str, style: str) -> list[dict]:
@@ -43,7 +46,7 @@ async def _console_callback(chunk: StreamChunk):
     _console_player.write(pcm, sample_rate=sr)
 
 
-async def _webui_callback(chunk: StreamChunk, session_id: str):
+async def _webui_callback(chunk: StreamChunk, session_id: str, stream_id: str):
     """WebUI 回调:流式发送音频到前端。"""
     from uniclaw.webui.ws import _broadcast
 
@@ -51,6 +54,7 @@ async def _webui_callback(chunk: StreamChunk, session_id: str):
         {
             "event": "audio_chunk",
             "session_id": session_id,
+            "stream_id": stream_id,
             "audio": chunk.audio,
         }
     )
@@ -128,18 +132,20 @@ async def _send_wechat_voice(_chunk: StreamChunk, config) -> None:
             pass
 
 
-def _get_on_chunk(config) -> Callable[[StreamChunk], Awaitable[None]] | None:
+def _get_on_chunk(
+    config, stream_id: str = ""
+) -> Callable[[StreamChunk], Awaitable[None]] | None:
     """根据界面类型获取回调函数。微信模式无需回调,由 _stream_with_callback 统一累积。"""
     if config.is_wechat:
         return None  # 不需要逐 chunk 回调,流式结束后通过 ai_message 统一发送
     if config.is_webui:
         session_id = config.current_agent.session.id
-        return lambda chunk: _webui_callback(chunk, session_id)
+        return lambda chunk: _webui_callback(chunk, session_id, stream_id)
     _get_console_player()
     return _console_callback
 
 
-async def _finish_stream(config, ai_message=None):
+async def _finish_stream(config, ai_message=None, stream_id: str = ""):
     """流式结束后的清理与发送。"""
     global _console_player
 
@@ -150,10 +156,108 @@ async def _finish_stream(config, ai_message=None):
         from uniclaw.webui.ws import _broadcast
 
         session_id = config.current_agent.session.id
-        await _broadcast({"event": "audio_end", "session_id": session_id})
+        await _broadcast(
+            {"event": "audio_end", "session_id": session_id, "stream_id": stream_id}
+        )
     elif _console_player:
         _console_player.stop()
         _console_player = None
+
+
+# ── 语音模式: 流式 TTS 队列 ───────────────────────────────────
+
+# 句子结束标点
+_SENTENCE_ENDS = set(".!?。！？\n;；")
+
+# per-session 状态
+_tts_queues: dict[str, "TTSQueue"] = {}
+_tts_accumulators: dict[str, str] = {}
+
+
+class TTSQueue:
+    """per-session TTS 队列,顺序处理语音段,保证音频不重叠。"""
+
+    def __init__(self, session_id: str, config: AppConfig):
+        self._session_id = session_id
+        self._queue: asyncio.Queue[str | None] = asyncio.Queue()
+        self._config = config
+        self._task: asyncio.Task | None = None
+
+    async def _process(self):
+        while True:
+            try:
+                text = await asyncio.wait_for(self._queue.get(), timeout=300)
+            except asyncio.TimeoutError:
+                break  # 5 分钟无新段,自动退出
+            if text is None:
+                break
+            try:
+                await tts(text=text, play=True, config=self._config)
+            except Exception as e:
+                get_logger("tts").warning(f"TTS 队列处理失败: {e}")
+        # 自然退出: 清理 per-session 状态
+        _tts_queues.pop(self._session_id, None)
+        _tts_accumulators.pop(self._session_id, None)
+
+    def start(self):
+        if self._task is None or self._task.done():
+            self._task = asyncio.create_task(self._process())
+
+    async def put(self, text: str):
+        await self._queue.put(text)
+
+    async def stop(self):
+        await self._queue.put(None)
+        if self._task:
+            try:
+                await asyncio.wait_for(self._task, timeout=10)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                pass
+
+
+def get_tts_queue(session_id: str, config: AppConfig) -> TTSQueue:
+    """获取或创建 per-session TTS 队列。"""
+    if session_id not in _tts_queues:
+        q = TTSQueue(session_id, config)
+        _tts_queues[session_id] = q
+    q = _tts_queues[session_id]
+    q.start()
+    return q
+
+
+def tts_enqueue(session_id: str, chunk_text: str, config: AppConfig):
+    """流式文本入队:积累文本,从后往前找最后一个句子边界切分。"""
+    acc = _tts_accumulators.get(session_id, "") + chunk_text
+
+    if len(acc) >= 30:
+        # 从后往前找最后一个句子边界
+        for i in range(len(acc) - 1, 20, -1):
+            if acc[i] in _SENTENCE_ENDS:
+                text = acc[: i + 1].strip()
+                remainder = acc[i + 1 :].lstrip()
+                if text:
+                    _tts_accumulators[session_id] = remainder
+                    queue = get_tts_queue(session_id, config)
+                    asyncio.create_task(queue.put(text))
+                    return
+
+    _tts_accumulators[session_id] = acc
+
+
+async def tts_flush(session_id: str, config: AppConfig):
+    """flush 剩余积累文本到 TTS 队列(AssistantEvent 时调用)。"""
+    acc = _tts_accumulators.pop(session_id, "").strip()
+    if acc:
+        queue = get_tts_queue(session_id, config)
+        await queue.put(acc)
+
+
+async def tts_cleanup(session_id: str):
+    """清理 per-session TTS 队列(EndEvent 时调用)。"""
+    _tts_accumulators.pop(session_id, None)
+    queue = _tts_queues.pop(session_id, None)
+    if queue:
+        await queue.stop()
 
 
 # ── 主函数 ────────────────────────────────────────────────────
@@ -200,10 +304,13 @@ async def tts(
 
     if play:
         # 流式播放
-        on_chunk = _get_on_chunk(config)
+        import uuid
+
+        stream_id = uuid.uuid4().hex[:8]
+        on_chunk = _get_on_chunk(config, stream_id)
         chunks = astream(message, model_name=model, audio=audio or None, config=config)
         ai_message = await _stream_with_callback(chunks, on_chunk)
-        await _finish_stream(config, ai_message)
+        await _finish_stream(config, ai_message, stream_id)
         result_parts.append("已播放")
     else:
         # 非流式:获取完整音频

@@ -1082,6 +1082,15 @@ class TUIApp:
                 text_stream = True
                 self.output_lines[-1].append(("", event.content))
                 self.app.invalidate()
+                # 语音模式: 流式积累文本,按句子边界触发 TTS
+                if (
+                    self.config.voice_mode
+                    and self.config.tts_model
+                    and self.config.audio
+                ):
+                    from uniclaw.tools.tts.tts import tts_enqueue
+
+                    tts_enqueue(queued_task.session.id, event.content, self.config)
             elif isinstance(event, AssistantEvent):
                 self.config.spinner.stop(wait_id=queued_task.id)
                 thinking_stream = False
@@ -1101,6 +1110,16 @@ class TUIApp:
                         if args_str:
                             self.print_verbose(f"{agent_prefix}      参数: {args_str}")
                 self.print_verbose(f"{agent_prefix}   模型: {event.model_name}")
+                # 语音模式: flush 剩余文本到 TTS 队列
+                if (
+                    self.config.voice_mode
+                    and event.content
+                    and self.config.tts_model
+                    and self.config.audio
+                ):
+                    from uniclaw.tools.tts.tts import tts_flush
+
+                    await tts_flush(queued_task.session.id, self.config)
             elif isinstance(event, ToolPreparingEvent):
                 args_display = format_args_for_display(event.args, max_length=10)
                 self.config.spinner.start(
