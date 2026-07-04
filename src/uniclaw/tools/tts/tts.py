@@ -64,7 +64,7 @@ def _get_console_player():
     """获取或创建控制台播放器。"""
     global _console_player
     if _console_player is None:
-        from uniclaw.tools.session import StreamPlayer
+        from uniclaw.tools.tts.player import StreamPlayer
 
         _console_player = StreamPlayer()
         _console_player.start()
