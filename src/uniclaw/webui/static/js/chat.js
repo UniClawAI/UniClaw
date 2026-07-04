@@ -180,7 +180,7 @@ const Chat = {
         el.innerHTML = `
             <div class="msg-avatar user">${icon('send')}</div>
             <div class="msg-body">
-                <div class="msg-content"><button class="msg-delete-btn" onclick="Chat._onEditUserMessage(this)" title="删除并重新编辑">${icon('close')}</button><div class="markdown-body">${Utils.renderMarkdown(content)}</div></div>
+                <div class="msg-content"><button class="msg-delete-btn" onclick="Chat._onEditUserMessage(this)" title="删除并重新编辑">${icon('close')}</button><div class="msg-text-aligner"><div class="markdown-body">${Utils.renderMarkdown(content)}</div></div></div>
             </div>`;
         c.appendChild(el);
         Utils.addCopyButtons(el);
@@ -195,7 +195,7 @@ const Chat = {
         el.className = 'message user';
         el.dataset.rawContent = content || '';
         let html = `<div class="msg-avatar user">${icon('send')}</div><div class="msg-body">`;
-        if (content) html += `<div class="msg-content"><button class="msg-delete-btn" onclick="Chat._onEditUserMessage(this)" title="删除并重新编辑">${icon('close')}</button><div class="markdown-body">${Utils.renderMarkdown(content)}</div></div>`;
+        if (content) html += `<div class="msg-content"><button class="msg-delete-btn" onclick="Chat._onEditUserMessage(this)" title="删除并重新编辑">${icon('close')}</button><div class="msg-text-aligner"><div class="markdown-body">${Utils.renderMarkdown(content)}</div></div></div>`;
         html += '<div class="image-grid">';
         imageUrls.forEach(url => { html += `<img src="${url}" onclick="Chat._showLightbox('${url}')" />`; });
         html += '</div>';
