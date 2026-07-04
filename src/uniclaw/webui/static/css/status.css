@@ -206,7 +206,8 @@
 
 /* ---- 输入弹窗样式覆盖 ---- */
 #input-dialog-modal .modal-content {
-    max-width: 480px;
+    max-width: 720px;
+    transition: width 0.15s ease;
 }
 .input-dialog-prompt {
     background: var(--bg-inset);
@@ -217,8 +218,9 @@
     font-size: var(--text-sm);
     color: var(--text-1);
     white-space: pre-wrap;
-    max-height: 150px;
+    word-break: break-all;
     overflow-y: auto;
+    transition: height 0.15s ease;
 }
 
 /* ---- 新建项目弹窗 ---- */
