@@ -418,7 +418,7 @@ def _normalize_model_field(value: str | list[str] | None) -> list[str]:
     return [v for v in value if v]
 
 
-_AUDIO_EXTENSIONS = {".mp3", ".wav", ".ogg", ".flac", ".aac", ".m4a", ".wma", ".opus", ".mpeg", ".mpga"}
+_AUDIO_EXTENSIONS = {".mp3", ".wav"}
 
 
 def _resolve_audio_voice(audio: dict | None) -> dict | None:
@@ -435,7 +435,7 @@ def _resolve_audio_voice(audio: dict | None) -> dict | None:
     if p.suffix.lower() not in _AUDIO_EXTENSIONS:
         return audio
     b64 = base64.b64encode(p.read_bytes()).decode()
-    mime = "audio/mpeg" if p.suffix.lower() in {".mp3", ".mpeg", ".mpga"} else f"audio/{p.suffix.lstrip('.').lower()}"
+    mime = f"audio/{p.suffix.lstrip('.').lower()}"
     audio["voice"] = f"data:{mime};base64,{b64}"
     return audio
 
