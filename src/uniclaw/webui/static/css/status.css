@@ -77,6 +77,11 @@
     filter: brightness(1.2);
 }
 
+/* 语音模式状态 */
+.status-voice {
+    transition: all var(--duration-fast, 0.15s) var(--ease, ease);
+}
+
 /* 上下文使用率 */
 .context-usage-bar {
     display: flex;

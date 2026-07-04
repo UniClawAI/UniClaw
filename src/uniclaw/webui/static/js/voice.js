@@ -9,9 +9,8 @@ const VoiceMode = {
     /** 初始化 */
     init() {
         WS.on('config_changed', (msg) => this._onConfigChanged(msg));
-        const btn = document.getElementById('voice-toggle');
-        if (btn) btn.onclick = () => this.toggle();
-        console.log('[Voice] 语音模式已初始化');
+        const statusBtn = document.getElementById('status-voice');
+        if (statusBtn) statusBtn.onclick = () => this.toggle();
     },
 
     /** 设置 TTS 可用性(由 session 切换时调用) */
@@ -55,12 +54,17 @@ const VoiceMode = {
             .catch(() => {});
     },
 
-    /** 更新按钮 UI */
+    /** 更新状态栏 UI */
     _updateUI() {
-        const btn = document.getElementById('voice-toggle');
-        if (!btn) return;
-        btn.classList.toggle('active', this._enabled);
-        btn.style.display = this._available ? '' : 'none';
+        const status = document.getElementById('status-voice');
+        if (status) {
+            status.style.display = this._available ? '' : 'none';
+            status.title = this._enabled ? '语音模式: 开启 (/voice)' : '语音模式: 关闭 (/voice)';
+            const iconOn = document.getElementById('voice-icon-on');
+            const iconOff = document.getElementById('voice-icon-off');
+            if (iconOn) iconOn.style.display = this._enabled ? '' : 'none';
+            if (iconOff) iconOff.style.display = this._enabled ? 'none' : '';
+        }
     },
 
     /** 重置状态(会话切换时调用) */
