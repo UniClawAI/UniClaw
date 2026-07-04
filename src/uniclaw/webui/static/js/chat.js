@@ -67,8 +67,11 @@ const Chat = {
             this._compactData = data.messages || null;
             const toggle = document.getElementById('history-toggle');
             const hasDiff = this._historyData && this._compactData && this._historyData.length !== this._compactData.length;
-            if (toggle) { toggle.style.display = hasDiff ? '' : 'none'; }
-            this._currentView = 'history';
+            if (toggle) {
+                toggle.style.display = hasDiff ? '' : 'none';
+                if (hasDiff) toggle.innerHTML = icon('history'); // compact 视图下显示 history 图标
+            }
+            this._currentView = 'compact';
             this._renderCurrentView();
             this._fetchAndRenderTodolist(sessionId);
         } catch (e) {
@@ -80,7 +83,8 @@ const Chat = {
         if (view === this._currentView) return;
         this._currentView = view;
         const btn = document.getElementById('history-toggle');
-        if (btn) btn.textContent = view === 'history' ? icon('history') : icon('save');
+        // 显示可切换到的视图图标：当前 compact 显示 history 图标，反之亦然
+        if (btn) btn.innerHTML = view === 'compact' ? icon('history') : icon('save');
         this._renderCurrentView();
     },
 
@@ -101,24 +105,27 @@ const Chat = {
         const toolResults = {};
         messages.forEach(m => { if (m.role === 'tool' && m.tool_call_id) toolResults[m.tool_call_id] = m; });
 
-        messages.forEach(msg => {
+        messages.forEach((msg, msgIdx) => {
             const role = msg.role;
             if (role === 'system') {
                 this._appendSystemMessage(this._extractText(msg.content));
             } else if (role === 'user') {
                 const text = this._extractText(msg.content);
                 const images = this._extractImages(msg.content);
+                let el;
                 if (text.startsWith('[system]')) {
                     if (text.includes('(用户执行Shell命令)')) this._appendShellResultFromHistory(text);
                     else if (images.length > 0) this._appendSystemMessageWithImages(text, images);
                     else this._appendSystemMessage(text);
                 } else if (images.length > 0) {
-                    this._appendUserMessageWithImages(text, images);
+                    el = this._appendUserMessageWithImages(text, images);
                 } else {
-                    this._appendUserMessage(text);
+                    el = this._appendUserMessage(text);
                 }
+                if (el) el.dataset.msgIdx = msgIdx;
             } else if (role === 'assistant') {
                 const el = this._appendAssistantMessage('');
+                el.closest('.message').dataset.msgIdx = msgIdx;
                 const body = el.querySelector('.markdown-body');
                 if (msg.reasoning_content) this._appendThinkingBlock(el, msg.reasoning_content, true, body);
                 if (body && msg.content) { body.innerHTML = Utils.renderMarkdown(msg.content); Utils.addCopyButtons(body); }
@@ -169,10 +176,11 @@ const Chat = {
         this._saveScrollState();
         const el = document.createElement('div');
         el.className = 'message user';
+        el.dataset.rawContent = content;
         el.innerHTML = `
             <div class="msg-avatar user">${icon('send')}</div>
             <div class="msg-body">
-                <div class="msg-content"><div class="markdown-body">${Utils.renderMarkdown(content)}</div></div>
+                <div class="msg-content"><button class="msg-delete-btn" onclick="Chat._onEditUserMessage(this)" title="删除并重新编辑">${icon('close')}</button><div class="markdown-body">${Utils.renderMarkdown(content)}</div></div>
             </div>`;
         c.appendChild(el);
         Utils.addCopyButtons(el);
@@ -185,8 +193,9 @@ const Chat = {
         this._saveScrollState();
         const el = document.createElement('div');
         el.className = 'message user';
+        el.dataset.rawContent = content || '';
         let html = `<div class="msg-avatar user">${icon('send')}</div><div class="msg-body">`;
-        if (content) html += `<div class="msg-content"><div class="markdown-body">${Utils.renderMarkdown(content)}</div></div>`;
+        if (content) html += `<div class="msg-content"><button class="msg-delete-btn" onclick="Chat._onEditUserMessage(this)" title="删除并重新编辑">${icon('close')}</button><div class="markdown-body">${Utils.renderMarkdown(content)}</div></div>`;
         html += '<div class="image-grid">';
         imageUrls.forEach(url => { html += `<img src="${url}" onclick="Chat._showLightbox('${url}')" />`; });
         html += '</div>';
@@ -931,4 +940,68 @@ const Chat = {
     },
 
     _stopSpinnerTimer() { if (this._spinnerTimer) { clearInterval(this._spinnerTimer); this._spinnerTimer = null; } },
+
+    /** 编辑用户消息：删除该消息及之后的所有消息，将内容放入输入框 */
+    async _onEditUserMessage(btn) {
+        const msgEl = btn.closest('.message.user');
+        if (!msgEl) return;
+
+        const content = msgEl.dataset.rawContent || '';
+        const container = document.getElementById('chat-messages');
+        const allMessages = Array.from(container.querySelectorAll('.message'));
+        const domIndex = allMessages.indexOf(msgEl);
+        if (domIndex < 0) return;
+
+        // 从 dataset 获取消息在后端列表中的真实索引
+        const msgIdx = parseInt(msgEl.dataset.msgIdx, 10);
+
+        const sid = this.currentSessionId;
+        if (!sid) return;
+
+        // 根据当前视图决定 source，获取对应消息列表长度
+        const source = this._currentView === 'history' ? 'history' : 'messages';
+        const msgList = source === 'history' ? this._historyData : this._compactData;
+        const totalMessages = msgList?.length || 0;
+
+        // 要删除的数量：从该消息索引到末尾
+        // msgIdx 不存在时(实时消息) fallback 到 DOM 计数
+        let count;
+        if (!isNaN(msgIdx) && totalMessages > 0) {
+            count = totalMessages - msgIdx;
+        } else {
+            const sessionMessages = allMessages.filter(el => !el.classList.contains('system-message'));
+            count = sessionMessages.length - sessionMessages.indexOf(msgEl);
+        }
+        if (count <= 0) return;
+        if (!confirm(`将删除此消息及后续 ${count - 1} 条消息，确认？`)) return;
+
+        try {
+            const resp = await fetch(`/api/sessions/${sid}/messages`, {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ count, source }),
+            });
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({}));
+                Utils.showToast(err.detail || '删除失败', 'error');
+                return;
+            }
+
+            // 从 DOM 中移除该消息及之后的所有消息
+            for (let i = allMessages.length - 1; i >= domIndex; i--) {
+                allMessages[i].remove();
+            }
+
+            // 将内容放入输入框
+            const input = document.getElementById('chat-input');
+            if (input) {
+                input.value = content;
+                input.focus();
+                input.style.height = 'auto';
+                input.style.height = Math.min(input.scrollHeight, 150) + 'px';
+            }
+        } catch (e) {
+            Utils.showToast('删除失败: ' + e.message, 'error');
+        }
+    },
 };

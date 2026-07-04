@@ -102,6 +102,39 @@
     text-align: right;
 }
 
+/* 用户消息 — 删除按钮(msg-content 右上角小叉) */
+.message.user .msg-delete-btn {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    width: 20px;
+    height: 20px;
+    padding: 2px;
+    border: none;
+    border-radius: var(--r-xs);
+    background: rgba(0, 0, 0, 0.15);
+    color: var(--text-2);
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity var(--duration-fast) var(--ease), background var(--duration-fast) var(--ease);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10;
+    flex-shrink: 0;
+}
+.message.user:hover .msg-delete-btn {
+    opacity: 1;
+}
+.message.user .msg-delete-btn:hover {
+    background: var(--neon-pink);
+    color: #fff;
+}
+.message.user .msg-delete-btn svg {
+    width: 12px;
+    height: 12px;
+}
+
 /* ---- Markdown 渲染 ---- */
 .msg-content .markdown-body {
     font-size: var(--text-md);

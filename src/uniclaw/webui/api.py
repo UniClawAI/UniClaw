@@ -17,6 +17,7 @@ from uniclaw.webui.models import (
     GitCommit,
     GitStage,
     HookUpdate,
+    MessageDelete,
     PermissionRuleDelete,
     SessionMove,
     SessionRename,
@@ -259,6 +260,23 @@ async def generate_title(session_id: str):
         SessionManager.update_title(session_id, title)
         return {"title": title}
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/sessions/{session_id}/messages")
+async def delete_messages(session_id: str, body: MessageDelete):
+    """删除会话末尾指定数量的消息。"""
+    try:
+        config = await get_or_load_session(session_id)
+        session = config.current_agent.session
+        deleted = session.delete_messages(body.count, source=body.source)
+        # 保存到文件
+        await SessionManager.save_session(config)
+        return {"ok": True, "deleted": deleted}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        get_logger("webui", Path.cwd()).error(f"删除消息失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

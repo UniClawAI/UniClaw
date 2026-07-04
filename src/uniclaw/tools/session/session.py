@@ -690,7 +690,7 @@ class Session:
                     f"的结果与之前调用完全相同,已省略。"
                 )
             self.dedup_cache.add(dedup_key)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             pass
         return None
 
@@ -944,6 +944,54 @@ class Session:
         self._messages.clear()
         self.history.clear()
         self.dedup_cache.clear()
+
+    def delete_messages(self, count: int, source: str = "messages") -> int:
+        """从末尾删除指定数量的消息。返回实际删除数量。
+
+        Args:
+            count: 要删除的消息数量
+            source: 消息来源
+                - "messages": 从 _messages 末尾删除,同步 history
+                - "history": 从 history 末尾删除,同步 _messages
+
+        Returns:
+            实际删除的消息数量
+        """
+        if count <= 0:
+            return 0
+        if source == "history":
+            return self._delete_tail_from_history(count)
+        return self._delete_tail_from_messages(count)
+
+    def _delete_tail_from_messages(self, count: int) -> int:
+        """从 _messages 末尾删除,同步 history。"""
+        count = min(count, len(self._messages))
+        if count <= 0:
+            return 0
+        del self._messages[len(self._messages) - count :]
+        # _messages 尾部与 history 尾部对齐,按数量从 history 末尾截掉
+        if len(self.history) >= count:
+            del self.history[len(self.history) - count :]
+        else:
+            self.history.clear()
+        return count
+
+    def _delete_tail_from_history(self, count: int) -> int:
+        """从 history 末尾删除,同步 _messages。"""
+        count = min(count, len(self.history))
+        if count <= 0:
+            return 0
+        del self.history[len(self.history) - count :]
+        # _messages 尾部与 history 尾部对齐,按数量从 _messages 末尾截掉
+        keep = len(self._messages) - count
+        if keep < 2:
+            # 剩余不足 2 条(compaction 摘要对),无法正常运行,
+            # 直接用 history 替换 _messages
+            self._messages.clear()
+            self._messages.extend(self.history)
+        else:
+            del self._messages[keep:]
+        return count
 
     def replace_messages(self, messages: list[dict[str, Any]]) -> None:
         """用原始 dict 列表整体替换消息。"""
