@@ -8,7 +8,6 @@
 
 from __future__ import annotations
 
-import base64
 import json
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -418,9 +417,6 @@ def _normalize_model_field(value: str | list[str] | None) -> list[str]:
     return [v for v in value if v]
 
 
-_AUDIO_EXTENSIONS = {".mp3", ".wav"}
-
-
 def _resolve_audio_voice(audio: dict | None) -> dict | None:
     """若 audio.voice 是本地音频文件路径，转为 data URI。"""
     if not audio or not isinstance(audio.get("voice"), str):
@@ -429,14 +425,12 @@ def _resolve_audio_voice(audio: dict | None) -> dict | None:
     # 已经是 data URI 或 URL，跳过
     if voice.startswith("data:") or "://" in voice:
         return audio
-    p = Path(voice)
-    if not p.is_file():
-        return audio
-    if p.suffix.lower() not in _AUDIO_EXTENSIONS:
-        return audio
-    b64 = base64.b64encode(p.read_bytes()).decode()
-    mime = f"audio/{p.suffix.lstrip('.').lower()}"
-    audio["voice"] = f"data:{mime};base64,{b64}"
+    from uniclaw.utils.audio import voice_file_to_data_uri
+
+    try:
+        audio["voice"] = voice_file_to_data_uri(voice)
+    except (FileNotFoundError, ValueError):
+        pass
     return audio
 
 
