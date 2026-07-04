@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -417,6 +418,28 @@ def _normalize_model_field(value: str | list[str] | None) -> list[str]:
     return [v for v in value if v]
 
 
+_AUDIO_EXTENSIONS = {".mp3", ".wav", ".ogg", ".flac", ".aac", ".m4a", ".wma", ".opus", ".mpeg", ".mpga"}
+
+
+def _resolve_audio_voice(audio: dict | None) -> dict | None:
+    """若 audio.voice 是本地音频文件路径，转为 data URI。"""
+    if not audio or not isinstance(audio.get("voice"), str):
+        return audio
+    voice: str = audio["voice"]
+    # 已经是 data URI 或 URL，跳过
+    if voice.startswith("data:") or "://" in voice:
+        return audio
+    p = Path(voice)
+    if not p.is_file():
+        return audio
+    if p.suffix.lower() not in _AUDIO_EXTENSIONS:
+        return audio
+    b64 = base64.b64encode(p.read_bytes()).decode()
+    mime = "audio/mpeg" if p.suffix.lower() in {".mp3", ".mpeg", ".mpga"} else f"audio/{p.suffix.lstrip('.').lower()}"
+    audio["voice"] = f"data:{mime};base64,{b64}"
+    return audio
+
+
 def _load_settings_json() -> dict[str, Any]:
     """从 settings.json 读取原始数据。"""
     data: dict[str, Any] = {}
@@ -450,6 +473,9 @@ def _load_settings_json() -> dict[str, Any]:
     # mini_model_name 默认等于 model_name
     if data["model_name"] and not data["mini_model_name"]:
         data["mini_model_name"] = list(data["model_name"])
+
+    # audio.voice 文件路径转 data URI
+    data["audio"] = _resolve_audio_voice(data.get("audio"))
 
     return data
 
