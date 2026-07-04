@@ -215,7 +215,7 @@ def is_safe_tool(name: str) -> bool:
     from uniclaw.tools.ask import AskUserQuestion
     from uniclaw.tools.session.tools import session_list, session_detail
     from uniclaw.tools.session.recall import recall_history, get_history_range
-    from uniclaw.tools.hooks.tools import hook_read
+    from uniclaw.tools.hooks.tools import hook_docs, hook_read
     from uniclaw.tools.multi_agent.tools import (
         list_agent_tasks,
         check_agent_result,
@@ -288,6 +288,7 @@ def is_safe_tool(name: str) -> bool:
         session_detail.name,
         recall_history.name,
         get_history_range.name,
+        hook_docs.name,
         hook_read.name,
         read_llm_safe_prompt.name,
         list_agent_tasks.name,

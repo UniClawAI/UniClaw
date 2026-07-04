@@ -79,7 +79,7 @@ def _build_extended_keywords() -> dict[str, list[str]]:
         read_llm_safe_prompt, write_llm_safe_prompt,
         edit_llm_safe_prompt, clear_llm_safe_prompt,
     )
-    from .hooks.tools import hook_read, hook_add, hook_remove
+    from .hooks.tools import hook_docs, hook_read, hook_add, hook_remove
     from .sandbox import RunCode
     from .sleep import sleep_timer, wait
     from .media import ReadMedia
@@ -158,6 +158,7 @@ def _build_extended_keywords() -> dict[str, list[str]]:
         write_llm_safe_prompt.name: ["写入安全", "write safe prompt"],
         edit_llm_safe_prompt.name: ["编辑安全", "edit safe prompt"],
         clear_llm_safe_prompt.name: ["清除安全", "clear safe prompt"],
+        hook_docs.name: ["hook文档", "hook docs", "hook说明", "hook帮助", "hook帮助文档", "钩子文档"],
         hook_read.name: ["读取钩子", "hook", "查看钩子", "读取hook", "read hook"],
         hook_add.name: ["添加钩子", "add hook", "创建钩子", "create hook"],
         hook_remove.name: ["删除钩子", "remove hook", "移除钩子"],
@@ -258,7 +259,7 @@ def _build_tool_categories() -> dict[str, str]:
         read_llm_safe_prompt, write_llm_safe_prompt,
         edit_llm_safe_prompt, clear_llm_safe_prompt,
     )
-    from .hooks.tools import hook_read, hook_add, hook_remove
+    from .hooks.tools import hook_docs, hook_read, hook_add, hook_remove
     from .sandbox import RunCode
     from .sleep import sleep_timer, wait
     from .media import ReadMedia
@@ -307,7 +308,7 @@ def _build_tool_categories() -> dict[str, str]:
         mcp_list_servers.name: "MCP管理",
         read_llm_safe_prompt.name: "安全管理", write_llm_safe_prompt.name: "安全管理",
         edit_llm_safe_prompt.name: "安全管理", clear_llm_safe_prompt.name: "安全管理",
-        hook_read.name: "Hook管理", hook_add.name: "Hook管理", hook_remove.name: "Hook管理",
+        hook_docs.name: "Hook管理", hook_read.name: "Hook管理", hook_add.name: "Hook管理", hook_remove.name: "Hook管理",
         RunCode.name: "沙箱",
         sleep_timer.name: "睡眠/等待", wait.name: "睡眠/等待",
         ReadMedia.name: "媒体",
