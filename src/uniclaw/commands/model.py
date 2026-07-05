@@ -257,7 +257,7 @@ async def cmd_model(args: str, config: AppConfig) -> bool:
     prompt_list = [f"\n{title} 可用模型:"]
     if current_tts:
         voice = config.audio.get("voice", "") if config.audio else ""
-        prompt_list.append(f"  当前 TTS: {current_tts}" + (f" (语音: {voice})" if voice else ""))
+        prompt_list.append(f"  当前 TTS: {current_tts}" + (f" (语音: {voice})" if voice and len(voice) < 20 else ""))
     if current_asr:
         prompt_list.append(f"  当前 ASR: {current_asr}")
     for i, m in enumerate(all_models, 1):
