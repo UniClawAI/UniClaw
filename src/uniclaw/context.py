@@ -259,7 +259,7 @@ async def build_system_prompt(config: AppConfig):
     # Computer Use — 中频变化(启用/禁用时变化)
     from uniclaw.tools.computer_use import get_cu_system_prompt
 
-    cu_prompt = get_cu_system_prompt()
+    cu_prompt = get_cu_system_prompt(config)
     if cu_prompt:
         system_prompt += cu_prompt
 

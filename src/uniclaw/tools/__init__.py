@@ -146,7 +146,7 @@ async def get_tools(config) -> list:
                 *ask_get_tools(),
                 *security_get_tools(),
                 *hooks_get_tools(),
-                *computer_use_get_tools(),
+                *computer_use_get_tools(config),
                 sleep_timer,  # sleep_timer 仅主 agent 可用
             ]
         )

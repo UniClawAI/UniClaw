@@ -99,9 +99,9 @@ async def launch():
 
     await Scheduler.get_instance().start()
 
-    # 注册 Computer Use 全局快捷键 (Ctrl+Shift+C)
-    from uniclaw.tools.computer_use import register_global_hotkey
+    # 注册 Computer Use 紧急停止热键 (Ctrl+U)
+    from uniclaw.tools.computer_use import register_emergency_hotkey
 
-    register_global_hotkey()
+    register_emergency_hotkey()
 
     await repl_run(config, initial_output=initial_output)

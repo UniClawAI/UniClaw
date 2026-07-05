@@ -48,9 +48,10 @@ def _build_extended_keywords() -> dict[str, list[str]]:
     from .fs import ReadPDF
     from .shell import search_files_with_everything
     from .computer_use import (
-        screenshot, mouse_move, mouse_click, mouse_double_click,
-        mouse_drag, mouse_scroll, keyboard_type, keyboard_type_unicode,
-        keyboard_press, keyboard_key_down, keyboard_key_up, locate_on_screen,
+        cu_screenshot, cu_mouse_move, cu_mouse_click, cu_mouse_double_click,
+        cu_mouse_drag, cu_mouse_scroll, cu_keyboard_type, cu_keyboard_type_unicode,
+        cu_keyboard_press, cu_keyboard_key_down, cu_keyboard_key_up, cu_locate_on_screen,
+        cu_get_elements, cu_find_element, cu_interact,
     )
     from .multi_agent.tools import (
         sub_agent_create, send_message, agent_close, check_agent_result,
@@ -105,18 +106,21 @@ def _build_extended_keywords() -> dict[str, list[str]]:
     return {
         ReadPDF.name: ["pdf", "PDF", "文档", "阅读PDF", "read pdf", "parse pdf"],
         search_files_with_everything.name: ["everything", "文件搜索", "快速搜索", "es", "file search"],
-        screenshot.name: ["截图", "屏幕", "screenshot", "截屏", "屏幕截图", "capture screen"],
-        mouse_move.name: ["鼠标移动", "mouse", "移动鼠标", "move mouse", "cursor"],
-        mouse_click.name: ["点击", "click", "鼠标点击", "单击", "tap"],
-        mouse_double_click.name: ["双击", "double click", "鼠标双击"],
-        mouse_drag.name: ["拖拽", "drag", "拖动", "鼠标拖拽", "drag and drop"],
-        mouse_scroll.name: ["滚动", "scroll", "滚轮", "鼠标滚动", "wheel"],
-        keyboard_type.name: ["输入", "type", "键盘输入", "打字", "input text", "typing"],
-        keyboard_type_unicode.name: ["unicode输入", "中文输入", "unicode type"],
-        keyboard_press.name: ["按键", "press", "键盘按键", "快捷键", "hotkey", "key press"],
-        keyboard_key_down.name: ["按下", "key down", "键盘按下"],
-        keyboard_key_up.name: ["松开", "key up", "键盘松开"],
-        locate_on_screen.name: ["定位", "locate", "屏幕定位", "查找图片", "find on screen", "template match"],
+        cu_screenshot.name: ["截图", "屏幕", "screenshot", "截屏", "屏幕截图", "capture screen"],
+        cu_mouse_move.name: ["鼠标移动", "mouse", "移动鼠标", "move mouse", "cursor"],
+        cu_mouse_click.name: ["点击", "click", "鼠标点击", "单击", "tap"],
+        cu_mouse_double_click.name: ["双击", "double click", "鼠标双击"],
+        cu_mouse_drag.name: ["拖拽", "drag", "拖动", "鼠标拖拽", "drag and drop"],
+        cu_mouse_scroll.name: ["滚动", "scroll", "滚轮", "鼠标滚动", "wheel"],
+        cu_keyboard_type.name: ["输入", "type", "键盘输入", "打字", "input text", "typing"],
+        cu_keyboard_type_unicode.name: ["unicode输入", "中文输入", "unicode type"],
+        cu_keyboard_press.name: ["按键", "press", "键盘按键", "快捷键", "hotkey", "key press"],
+        cu_keyboard_key_down.name: ["按下", "key down", "键盘按下"],
+        cu_keyboard_key_up.name: ["松开", "key up", "键盘松开"],
+        cu_locate_on_screen.name: ["定位", "locate", "屏幕定位", "查找图片", "find on screen", "template match"],
+        cu_get_elements.name: ["UI元素", "元素列表", "控件", "按钮", "输入框", "get elements", "list elements", "UI tree", "accessibility", "交互元素"],
+        cu_find_element.name: ["查找元素", "find element", "搜索控件", "查找控件", "定位元素", "search element"],
+        cu_interact.name: ["操作元素", "点击元素", "interact", "click element", "invoke", "focus", "UI操作", "控件操作"],
         sub_agent_create.name: ["创建代理", "子代理", "sub agent", "create agent", "多智能体", "spawn agent"],
         send_message.name: ["发送消息", "send message", "代理消息", "message agent"],
         agent_close.name: ["关闭代理", "close agent", "停止代理", "kill agent"],
@@ -228,9 +232,10 @@ def _build_tool_categories() -> dict[str, str]:
     from .fs import ReadPDF
     from .shell import search_files_with_everything
     from .computer_use import (
-        screenshot, mouse_move, mouse_click, mouse_double_click,
-        mouse_drag, mouse_scroll, keyboard_type, keyboard_type_unicode,
-        keyboard_press, keyboard_key_down, keyboard_key_up, locate_on_screen,
+        cu_screenshot, cu_mouse_move, cu_mouse_click, cu_mouse_double_click,
+        cu_mouse_drag, cu_mouse_scroll, cu_keyboard_type, cu_keyboard_type_unicode,
+        cu_keyboard_press, cu_keyboard_key_down, cu_keyboard_key_up, cu_locate_on_screen,
+        cu_get_elements, cu_find_element, cu_interact,
     )
     from .multi_agent.tools import (
         sub_agent_create, send_message, agent_close, check_agent_result,
@@ -285,11 +290,12 @@ def _build_tool_categories() -> dict[str, str]:
     return {
         ReadPDF.name: "文件系统",
         search_files_with_everything.name: "Shell",
-        screenshot.name: "计算机操作", mouse_move.name: "计算机操作", mouse_click.name: "计算机操作",
-        mouse_double_click.name: "计算机操作", mouse_drag.name: "计算机操作", mouse_scroll.name: "计算机操作",
-        keyboard_type.name: "计算机操作", keyboard_type_unicode.name: "计算机操作",
-        keyboard_press.name: "计算机操作", keyboard_key_down.name: "计算机操作",
-        keyboard_key_up.name: "计算机操作", locate_on_screen.name: "计算机操作",
+        cu_screenshot.name: "计算机操作", cu_mouse_move.name: "计算机操作", cu_mouse_click.name: "计算机操作",
+        cu_mouse_double_click.name: "计算机操作", cu_mouse_drag.name: "计算机操作", cu_mouse_scroll.name: "计算机操作",
+        cu_keyboard_type.name: "计算机操作", cu_keyboard_type_unicode.name: "计算机操作",
+        cu_keyboard_press.name: "计算机操作", cu_keyboard_key_down.name: "计算机操作",
+        cu_keyboard_key_up.name: "计算机操作", cu_locate_on_screen.name: "计算机操作",
+        cu_get_elements.name: "计算机操作", cu_find_element.name: "计算机操作", cu_interact.name: "计算机操作",
         sub_agent_create.name: "多智能体", send_message.name: "多智能体", agent_close.name: "多智能体",
         check_agent_result.name: "多智能体", list_agent_tasks.name: "多智能体",
         agent_discuss.name: "多智能体", list_agent_definitions.name: "多智能体", get_agent_definition.name: "多智能体",

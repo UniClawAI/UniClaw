@@ -93,6 +93,7 @@ class AppConfig:
         "Callable[[str, str], None] | Callable[[str, str], Awaitable[None]] | None"
     ) = field(default=None, repr=False)
     voice_mode: bool = False  # 语音模式:AI 回复自动 TTS 播放(运行时状态,不持久化)
+    computer_use_enabled: bool = False  # Computer Use 模式(运行时状态,不持久化)
 
     @property
     def is_sub(self) -> bool:
@@ -421,11 +422,11 @@ def _normalize_model_field(value: str | list[str] | None) -> list[str]:
 
 
 def _resolve_audio_voice(audio: dict | None) -> dict | None:
-    """若 audio.voice 是本地音频文件路径，转为 data URI。"""
+    """若 audio.voice 是本地音频文件路径,转为 data URI。"""
     if not audio or not isinstance(audio.get("voice"), str):
         return audio
     voice: str = audio["voice"]
-    # 已经是 data URI 或 URL，跳过
+    # 已经是 data URI 或 URL,跳过
     if voice.startswith("data:") or "://" in voice:
         return audio
     from uniclaw.utils.audio import voice_file_to_data_uri

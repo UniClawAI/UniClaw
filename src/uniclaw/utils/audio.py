@@ -44,7 +44,7 @@ def voice_file_to_data_uri(file_path: str) -> str:
         raise FileNotFoundError(f"音频文件不存在: {file_path}")
     ext = p.suffix.lower()
     if ext not in {".mp3", ".wav"}:
-        raise ValueError(f"不支持的音频格式: {ext}，仅支持 mp3/wav")
+        raise ValueError(f"不支持的音频格式: {ext},仅支持 mp3/wav")
     b64 = base64.b64encode(p.read_bytes()).decode()
     return f"data:audio/{ext.lstrip('.')};base64,{b64}"
 
@@ -63,7 +63,7 @@ async def asr(
     Args:
         file_path: 音频文件路径。
         config: AppConfig 实例。
-        asr_options: ASR 选项，如 {"language": "zh"}。默认 {"language": "zh"}。
+        asr_options: ASR 选项,如 {"language": "zh"}。默认 {"language": "zh"}。
 
     Returns:
         识别出的文字。
@@ -77,7 +77,7 @@ async def asr(
 
     asr_model = getattr(config, "asr_model", "")
     if not asr_model:
-        raise ValueError("asr_model 未配置，请通过 /model 命令设置 ASR 模型")
+        raise ValueError("asr_model 未配置,请通过 /model 命令设置 ASR 模型")
 
     p = Path(file_path)
     if not p.is_file():

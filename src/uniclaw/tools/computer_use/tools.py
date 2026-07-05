@@ -1,9 +1,8 @@
-"""Computer Use 工具 - 提供屏幕截图、鼠标和键盘控制功能"""
+"""Computer Use 工具 — 提供屏幕截图、鼠标、键盘控制和桌面 UI 自动化功能。"""
 
 import asyncio
 import base64
 import io
-import threading
 from typing import Optional
 
 import mss
@@ -17,118 +16,66 @@ pyautogui.PAUSE = 0.1
 pyautogui.FAILSAFE = True
 
 
-def get_cu_system_prompt() -> str:
-    """返回 Computer Use 模式的系统提示词,包含核心工作流程和使用说明。"""
-    if not is_enabled():
+def get_cu_system_prompt(config) -> str:
+    """返回 Computer Use 模式的系统提示词。"""
+    if not config.computer_use_enabled:
         return ""
     return f"""
 # Computer Use 模式
 你现在拥有完整的计算机控制能力,可以直接操作鼠标、键盘和屏幕。
 
-## 核心工作流程
-1. 用 `{screenshot.name}` 截取屏幕,了解当前状态和坐标
-2. 分析截图中目标元素的精确坐标位置
-3. 使用鼠标/键盘工具执行操作
-4. 再次截图验证操作是否成功,失败则调整坐标重试
+## ⚠️ 必须遵守的操作顺序
+**禁止直接截图猜坐标。** 每次操作桌面应用前,必须先用 `{cu_get_elements.name}` 获取元素列表,
+再用 `{cu_interact.name}` 操作。截图仅作为最后手段。
 
-## 关键规则
-- **截图是唯一视觉来源**:无法"记住"位置,每次都要重新截图
-- **点击前后必须截图**:确认坐标后再点击,点击后验证结果
-- 截图上的红色十字标记是当前鼠标位置,利用它定位和调整坐标
-- 不要假设屏幕分辨率,以截图中显示的实际分辨率为准
+1. `{cu_get_elements.name}` → 获取可交互元素列表
+2. `{cu_find_element.name}` → 精确查找某个元素的详细信息
+3. `{cu_interact.name}` → 操作元素(click/invoke/focus/type)
+4. `{cu_get_elements.name}` → 验证操作结果
+
+**重要:** 通过 `{cu_get_elements.name}` / `{cu_find_element.name}` 找到的元素,
+必须用 `{cu_interact.name}` 操作,不要用 `{cu_mouse_click.name}` / `{cu_mouse_double_click.name}`。
+因为 `{cu_interact.name}` 通过 API 直接操作元素,不受窗口遮挡影响;
+坐标点击则会被遮挡窗口拦截导致失败。
+
+## 降级方案(仅当上述工具返回错误时)
+如果 cu_get_elements 返回错误或空结果,才使用截图+坐标:
+1. `{cu_screenshot.name}` 截图 → 分析坐标 → `{cu_mouse_move.name}` + `{cu_mouse_click.name}`
+2. 不确定坐标时用"试探法":移动鼠标 → 截图 → 观察十字标记 → 调整
 
 ## 操作提示
 - 坐标系统:左上角 (0,0),向右为 x+,向下为 y+
-- 点击:先 `{mouse_move.name}` 移动,再 `{mouse_click.name}` 点击
-- 输入英文用 `{keyboard_type.name}`,输入中文用 `{keyboard_type_unicode.name}`
-- 组合键:`{keyboard_press.name}("ctrl+c")`
-
-## 坐标定位技巧
-不确定坐标时使用"试探法":
-1. 估算坐标 → `{mouse_move.name}` 移动鼠标 → `{screenshot.name}` 截图
-2. 观察十字标记与目标的距离,增减 x/y 坐标
-3. 重复移动-截图-调整,直到十字标记精确对准目标中心再点击
+- 输入英文用 `{cu_keyboard_type.name}`,输入中文用 `{cu_keyboard_type_unicode.name}`
+- 组合键:`{cu_keyboard_press.name}("ctrl+c")`
 """
 
 
-class _ComputerUseState:
-    """管理 computer use 的启用/禁用状态"""
-
-    def __init__(self):
-        self._enabled = False
-        self._lock = threading.Lock()
-        self._hotkey_registered = False
-
-    @property
-    def enabled(self) -> bool:
-        with self._lock:
-            return self._enabled
-
-    def enable(self) -> bool:
-        with self._lock:
-            if self._enabled:
-                return False
-            self._enabled = True
-            return True
-
-    def disable(self) -> bool:
-        with self._lock:
-            if not self._enabled:
-                return False
-            self._enabled = False
-            return True
-
-    def toggle(self) -> bool:
-        with self._lock:
-            self._enabled = not self._enabled
-            return self._enabled
-
-
-_state = _ComputerUseState()
+# ── 紧急停止热键 ───────────────────────────────────────────────────
 _hotkey_listener = None
-
-
-def is_enabled() -> bool:
-    """检查 computer use 是否已启用"""
-    return _state.enabled
-
-
-def enable_computer_use() -> bool:
-    """启用 computer use"""
-    return _state.enable()
-
-
-def disable_computer_use() -> bool:
-    """禁用 computer use"""
-    return _state.disable()
-
-
-def toggle_computer_use() -> bool:
-    """切换 computer use 状态"""
-    result = _state.toggle()
-    # 刷新 TUI 状态栏
+def _emergency_stop():
+    """紧急停止:仅取消启用了 Computer Write 工具的 agent 任务。"""
     try:
-        from uniclaw.console.run import TUIApp
+        from uniclaw.agent import MultiAgent
 
-        app = TUIApp.get_instance()
-        if app and app.app:
-            app.app.invalidate()
+        cu_write_names = {t.name for t in WRITE_TOOLS}
+        ma = MultiAgent.get_instance()
+        for task in ma.list_tasks():
+            if task.allowed_tools_set & cu_write_names:
+                task.cancel_event.set()
     except Exception:
         pass
-    return result
 
 
-def register_global_hotkey() -> bool:
-    """注册系统级全局快捷键 Ctrl+U 切换 Computer Use(跨平台 pynput)"""
+def register_emergency_hotkey() -> bool:
+    """注册 Ctrl+U 紧急停止热键(全局,不依赖 config)。"""
     global _hotkey_listener
-    if _state._hotkey_registered:
+    if _hotkey_listener is not None:
         return True
-
     try:
         from pynput import keyboard
 
         def _on_activate():
-            toggle_computer_use()
+            _emergency_stop()
 
         hotkey = keyboard.HotKey(
             keyboard.HotKey.parse("<ctrl>+u"),
@@ -145,14 +92,13 @@ def register_global_hotkey() -> bool:
         listener.daemon = True
         listener.start()
         _hotkey_listener = listener
-        _state._hotkey_registered = True
         return True
     except Exception:
         return False
 
 
-def unregister_global_hotkey():
-    """注销系统级全局快捷键"""
+def unregister_emergency_hotkey():
+    """注销紧急停止热键。"""
     global _hotkey_listener
     if _hotkey_listener is not None:
         try:
@@ -160,8 +106,6 @@ def unregister_global_hotkey():
         except Exception:
             pass
         _hotkey_listener = None
-        _state._hotkey_registered = False
-
 
 # ── screenshot 同步实现 ────────────────────────────────────────────
 
@@ -253,10 +197,14 @@ def _screenshot_impl(
 
 
 @tool
-async def screenshot(
+async def cu_screenshot(
     region: Optional[str] = None, path: Optional[str] = None
 ) -> list[dict] | str:
-    """截取屏幕截图并返回图像数据供 LLM 分析。截图上会标记当前鼠标位置。
+    """截取屏幕截图并返回图像数据。
+
+    ⚠️ 观察屏幕上有什么元素请使用 cu_get_elements 或 cu_find_element,
+    本工具仅用于:需要视觉判断的场景(如看图片内容、验证渲染效果、
+    游戏画面等无法通过结构化元素发现获取的信息)。
 
     Args:
         region: 可选的截图区域,格式为 "x,y,width,height"(如 "100,200,800,600")。
@@ -274,7 +222,7 @@ async def screenshot(
 
 
 @tool
-def mouse_move(x: int, y: int, duration: float = 0.5) -> str:
+def cu_mouse_move(x: int, y: int, duration: float = 0.5) -> str:
     """移动鼠标到指定位置。
 
     Args:
@@ -290,7 +238,7 @@ def mouse_move(x: int, y: int, duration: float = 0.5) -> str:
 
 
 @tool
-def mouse_click(
+def cu_mouse_click(
     x: int,
     y: int,
     button: str = "left",
@@ -315,7 +263,7 @@ def mouse_click(
 
 
 @tool
-def mouse_double_click(x: int, y: int, button: str = "left") -> str:
+def cu_mouse_double_click(x: int, y: int, button: str = "left") -> str:
     """在指定位置双击鼠标。
 
     Args:
@@ -331,7 +279,7 @@ def mouse_double_click(x: int, y: int, button: str = "left") -> str:
 
 
 @tool
-def mouse_drag(
+def cu_mouse_drag(
     start_x: int,
     start_y: int,
     end_x: int,
@@ -358,7 +306,9 @@ def mouse_drag(
 
 
 @tool
-def mouse_scroll(clicks: int, x: Optional[int] = None, y: Optional[int] = None) -> str:
+def cu_mouse_scroll(
+    clicks: int, x: Optional[int] = None, y: Optional[int] = None
+) -> str:
     """滚动鼠标滚轮。
 
     Args:
@@ -379,7 +329,7 @@ def mouse_scroll(clicks: int, x: Optional[int] = None, y: Optional[int] = None) 
 
 
 @tool
-def keyboard_type(text: str, interval: float = 0.05) -> str:
+def cu_keyboard_type(text: str, interval: float = 0.05) -> str:
     """模拟键盘输入英文文本。仅支持 ASCII 字符,不要传入中文或其他非 ASCII 字符。
 
     Args:
@@ -394,7 +344,7 @@ def keyboard_type(text: str, interval: float = 0.05) -> str:
 
 
 @tool
-def keyboard_type_unicode(text: str, interval: float = 0.05) -> str:
+def cu_keyboard_type_unicode(text: str, interval: float = 0.05) -> str:
     """模拟键盘输入 Unicode 文本(支持中文等非 ASCII 字符)。
 
     Args:
@@ -410,7 +360,7 @@ def keyboard_type_unicode(text: str, interval: float = 0.05) -> str:
 
 
 @tool
-def keyboard_press(keys: str) -> str:
+def cu_keyboard_press(keys: str) -> str:
     """按下键盘按键或组合键。
 
     Args:
@@ -429,7 +379,7 @@ def keyboard_press(keys: str) -> str:
 
 
 @tool
-def keyboard_key_down(key: str) -> str:
+def cu_keyboard_key_down(key: str) -> str:
     """按下并保持键盘按键。
 
     Args:
@@ -443,7 +393,7 @@ def keyboard_key_down(key: str) -> str:
 
 
 @tool
-def keyboard_key_up(key: str) -> str:
+def cu_keyboard_key_up(key: str) -> str:
     """释放键盘按键。
 
     Args:
@@ -457,7 +407,7 @@ def keyboard_key_up(key: str) -> str:
 
 
 @tool
-def locate_on_screen(image_path: str, confidence: float = 0.8) -> str:
+def cu_locate_on_screen(image_path: str, confidence: float = 0.8) -> str:
     """在屏幕上查找指定图像的位置。
 
     Args:
@@ -478,30 +428,37 @@ def locate_on_screen(image_path: str, confidence: float = 0.8) -> str:
         return f"{TOOL_ERROR}: {e}"
 
 
+# ── desktop UI 工具(从平台后端导入)─────────────────────────────────
+from .automation import cu_get_elements, cu_find_element, cu_interact
+
+
 # 只读工具(安全,始终可用)
 READONLY_TOOLS = [
-    screenshot,
-    locate_on_screen,
+    cu_screenshot,
+    cu_locate_on_screen,
+    cu_get_elements,
+    cu_find_element,
 ]
 
 # 写入工具(需要启用 computer use 才可用)
 WRITE_TOOLS = [
-    mouse_move,
-    mouse_click,
-    mouse_double_click,
-    mouse_drag,
-    mouse_scroll,
-    keyboard_type,
-    keyboard_type_unicode,
-    keyboard_press,
-    keyboard_key_down,
-    keyboard_key_up,
+    cu_mouse_move,
+    cu_mouse_click,
+    cu_mouse_double_click,
+    cu_mouse_drag,
+    cu_mouse_scroll,
+    cu_keyboard_type,
+    cu_keyboard_type_unicode,
+    cu_keyboard_press,
+    cu_keyboard_key_down,
+    cu_keyboard_key_up,
+    cu_interact,
 ]
 
 
-def get_tools() -> list:
+def get_tools(config) -> list:
     """获取 computer use 工具列表(根据启用状态返回)"""
-    if is_enabled():
+    if config.computer_use_enabled:
         return READONLY_TOOLS + WRITE_TOOLS
     return READONLY_TOOLS
 

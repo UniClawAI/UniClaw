@@ -345,7 +345,7 @@ async def transcribe_audio(body: AsrRequest):
     from uniclaw.utils.audio import asr as asr_func
     from uniclaw.config import load_config
 
-    # 使用任意 session 的 config，或新建默认 config
+    # 使用任意 session 的 config,或新建默认 config
     config = None
     for _, cached_config in session_cache.items():
         config = cached_config
@@ -354,7 +354,7 @@ async def transcribe_audio(body: AsrRequest):
         config = load_config()
 
     if not config.asr_model:
-        raise HTTPException(status_code=400, detail="asr_model 未配置，请通过 /model 命令设置 ASR 模型")
+        raise HTTPException(status_code=400, detail="asr_model 未配置,请通过 /model 命令设置 ASR 模型")
 
     import base64
     import tempfile

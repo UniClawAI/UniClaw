@@ -743,17 +743,15 @@ class TUIApp:
         self.main_input_win = input_window
 
         def _get_status_bar():
-            from uniclaw.tools.computer_use import is_enabled
-
             mode = config.permission_mode
             label = mode.value if isinstance(mode, Permissions) else str(mode)
             parts = [
                 f" <ansigreen>permission: {label}</ansigreen>",
                 f"  <ansidim>(Shift+Tab 切换)</ansidim>",
             ]
-            if is_enabled():
+            if config.computer_use_enabled:
                 parts.append("  <ansiyellow>ComputerUse: ON</ansiyellow>")
-                parts.append("  <ansidim>(Ctrl+U 切换)</ansidim>")
+                parts.append("  <ansidim>(Ctrl+U 紧急停止)</ansidim>")
             return HTML("".join(parts))
 
         status_bar = Window(

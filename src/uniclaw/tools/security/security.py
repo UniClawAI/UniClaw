@@ -228,7 +228,7 @@ def is_safe_tool(name: str) -> bool:
     from uniclaw.tools.notify import push_notification
     from uniclaw.tools.registry import search_tools
     from uniclaw.tools.send_file import send_file
-    from uniclaw.tools.computer_use import get_tools as cu_get_tools
+    from uniclaw.tools.computer_use import cu_screenshot, cu_locate_on_screen, cu_get_elements, cu_find_element
     from uniclaw.tools.security.tools import read_llm_safe_prompt
     from uniclaw.tools.web_browse.tools import (
         browser_screenshot,
@@ -321,9 +321,12 @@ def is_safe_tool(name: str) -> bool:
         browser_wait.name,
         browser_scroll.name,
         browser_list_pages.name,
+        # Computer Use 只读工具
+        cu_screenshot.name,
+        cu_locate_on_screen.name,
+        cu_get_elements.name,
+        cu_find_element.name,
     ]
-    for cu_tool in cu_get_tools():
-        safe_tools.append(cu_tool.name)
 
     return name in safe_tools
 
