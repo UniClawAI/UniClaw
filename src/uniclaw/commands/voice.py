@@ -20,7 +20,9 @@ async def cmd_voice(args: str, config: AppConfig) -> bool:
     elif args in ("off", "0", "false"):
         config.voice_mode = False
     elif args == "":
-        config.voice_mode = not config.voice_mode
+        mode = "开启" if config.voice_mode else "关闭"
+        await info(f"语音模式当前: {mode}", config)
+        return True
     else:
         await info("用法: /voice [on|off]", config)
         return True
