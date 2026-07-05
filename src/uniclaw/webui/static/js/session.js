@@ -520,6 +520,7 @@ const SessionPanel = {
             if (typeof VoiceMode !== 'undefined') {
                 VoiceMode.setAvailable(d.voice_available || false);
                 VoiceMode.setEnabled(d.voice_mode || false);
+                VoiceMode.setAsrAvailable(d.asr_available || false);
             }
         }).catch(() => {});
         this._fetchContextUsage(sessionId);

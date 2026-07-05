@@ -67,6 +67,7 @@ class AppConfig:
     mini_model_name: list[str] = field(default_factory=list)  # mini 模型列表
     multimodal_model_name: list[str] = field(default_factory=list)  # 多模态模型列表
     tts_model: str = ""  # TTS 模型名称
+    asr_model: str = ""  # ASR 模型名称
     audio: dict | None = None  # TTS 音频配置 (voice, format 等)
     providers: dict[str, ProviderProfile] = field(
         default_factory=dict
@@ -183,6 +184,7 @@ class AppConfig:
             mini_model_name=list(self.mini_model_name),
             multimodal_model_name=list(self.multimodal_model_name),
             tts_model=self.tts_model,
+            asr_model=self.asr_model,
             audio=self.audio,
             providers=dict(self.providers),
             temperature=self.temperature,
@@ -395,6 +397,7 @@ def _create_config_from_data(data: dict[str, Any]) -> AppConfig:
         mini_model_name=data.get("mini_model_name", []),
         multimodal_model_name=data.get("multimodal_model_name", []),
         tts_model=data.get("tts_model", ""),
+        asr_model=data.get("asr_model", ""),
         audio=data.get("audio"),
         providers=providers,
         temperature=data.get("temperature", 0.7),
@@ -545,6 +548,7 @@ def load_config(
         mini_model_name=data.get("mini_model_name", []),
         multimodal_model_name=data.get("multimodal_model_name", []),
         tts_model=data.get("tts_model", ""),
+        asr_model=data.get("asr_model", ""),
         audio=data.get("audio"),
         providers=providers,
         temperature=data.get("temperature", 0.7),
@@ -586,6 +590,7 @@ def save_config(config: AppConfig) -> None:
         "mini_model_name": config.mini_model_name,
         "multimodal_model_name": config.multimodal_model_name,
         "tts_model": config.tts_model,
+        "asr_model": config.asr_model,
         "audio": config.audio,
         "temperature": config.temperature,
         "max_tokens": config.max_tokens,

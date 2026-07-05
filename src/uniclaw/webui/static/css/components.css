@@ -821,3 +821,23 @@ textarea.input {
     font-size: var(--text-xs);
     color: var(--text-3);
 }
+
+/* ============================================================
+   Mic Button (语音输入)
+   ============================================================ */
+.mic-btn {
+    transition: color 0.2s, background 0.2s;
+}
+.mic-btn.recording {
+    color: var(--neon-pink);
+    animation: mic-pulse 1s ease-in-out infinite;
+}
+.mic-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+@keyframes mic-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+}

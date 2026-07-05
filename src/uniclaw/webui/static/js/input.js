@@ -11,6 +11,9 @@ const Input = {
     _history: [],
     _historyIdx: -1,
     _suppressAutoComplete: false,
+    _recording: false,
+    _mediaRecorder: null,
+    _audioChunks: [],
 
     init() {
         const input = document.getElementById('chat-input');
@@ -39,6 +42,8 @@ const Input = {
         input.addEventListener('blur', () => setTimeout(() => this._hideCompletion(), 150));
         attachBtn.onclick = () => fileInput.click();
         fileInput.onchange = e => this._onFilesSelected(e.target.files);
+        const micBtn = document.getElementById('mic-btn');
+        if (micBtn) micBtn.onclick = () => this.toggleMic();
     },
 
     send() {
@@ -71,6 +76,107 @@ const Input = {
         this._historyIdx = -1;
         input.value = ''; input.style.height = 'auto';
         this.attachedFiles = []; this._updateFilePreview(); this._hideCompletion();
+    },
+
+    /** 切换语音录音 */
+    async toggleMic() {
+        const micBtn = document.getElementById('mic-btn');
+        if (!micBtn) return;
+
+        if (this._recording) {
+            // 停止录音
+            if (this._mediaRecorder && this._mediaRecorder.state === 'recording') {
+                this._mediaRecorder.stop();
+            }
+            return;
+        }
+
+        // 检查浏览器支持
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            Utils.showToast('浏览器不支持录音');
+            return;
+        }
+
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            this._audioChunks = [];
+            const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+                ? 'audio/webm;codecs=opus' : 'audio/webm';
+            this._mediaRecorder = new MediaRecorder(stream, { mimeType });
+
+            this._mediaRecorder.ondataavailable = (e) => {
+                if (e.data.size > 0) this._audioChunks.push(e.data);
+            };
+
+            this._mediaRecorder.onstop = async () => {
+                // 停止所有音轨
+                stream.getTracks().forEach(t => t.stop());
+                micBtn.classList.remove('recording');
+                micBtn.title = '语音输入';
+                this._recording = false;
+
+                if (!this._audioChunks.length) return;
+
+                const blob = new Blob(this._audioChunks, { type: mimeType });
+                this._audioChunks = [];
+
+                // 转为 base64
+                const reader = new FileReader();
+                reader.onload = async () => {
+                    const base64 = reader.result.split(',')[1];
+                    const format = mimeType.includes('webm') ? 'webm' : 'wav';
+                    await this._sendAsr(base64, format);
+                };
+                reader.readAsDataURL(blob);
+            };
+
+            this._mediaRecorder.start();
+            this._recording = true;
+            micBtn.classList.add('recording');
+            micBtn.title = '点击停止录音';
+        } catch (err) {
+            console.error('录音失败:', err);
+            Utils.showToast('录音失败: ' + (err.message || '请授权麦克风权限'));
+        }
+    },
+
+    /** 发送音频到后端 ASR */
+    async _sendAsr(audioBase64, format) {
+        const micBtn = document.getElementById('mic-btn');
+        const input = document.getElementById('chat-input');
+        const prevPlaceholder = input.placeholder;
+
+        try {
+            if (micBtn) micBtn.disabled = true;
+            input.placeholder = '识别中...';
+            input.value = '';
+
+            const resp = await fetch('/api/asr', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ audio: audioBase64, format }),
+            });
+
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({ detail: '识别失败' }));
+                Utils.showToast('ASR 失败: ' + (err.detail || resp.statusText));
+                return;
+            }
+
+            const data = await resp.json();
+            if (data.text) {
+                input.value = data.text;
+                input.style.height = 'auto';
+                input.style.height = Math.min(input.scrollHeight, 150) + 'px';
+                input.focus();
+            }
+        } catch (err) {
+            console.error('ASR 请求失败:', err);
+            Utils.showToast('ASR 请求失败: ' + err.message);
+        } finally {
+            if (micBtn) micBtn.disabled = false;
+            input.placeholder = prevPlaceholder;
+        }
     },
 
     _onFilesSelected(files) {

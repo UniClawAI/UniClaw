@@ -206,3 +206,10 @@ class MessageDelete(BaseModel):
         default="messages",
         description="消息来源: 'messages'(_messages) 或 'history'(完整历史)",
     )
+
+
+class AsrRequest(BaseModel):
+    """语音识别请求。"""
+
+    audio: str = Field(description="Base64 编码的音频数据")
+    format: str = Field(default="webm", description="音频格式: webm/wav/mp3")

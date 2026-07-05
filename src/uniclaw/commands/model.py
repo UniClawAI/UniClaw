@@ -127,7 +127,8 @@ async def _apply_model(model_ref: str, config: AppConfig) -> None:
         "  [3] 设为多模态模型\n"
         "  [4] 全部设置\n"
         "  [5] 设为 TTS 模型\n"
-        "选择 (1-5, 回车取消): ",
+        "  [6] 设为 ASR 模型\n"
+        "选择 (1-6, 回车取消): ",
         config=config,
     )
     choice = choice.strip()
@@ -163,6 +164,11 @@ async def _apply_model(model_ref: str, config: AppConfig) -> None:
             config.audio = {"voice": voice.strip()}
         save_config(config)
         await ok(f"✓ 已设为 TTS 模型: {model_ref}" + (f", 语音: {voice.strip()}" if voice.strip() else ""), config)
+        await _notify_webui()
+    elif choice == "6":
+        config.asr_model = model_ref
+        save_config(config)
+        await ok(f"✓ 已设为 ASR 模型: {model_ref}", config)
         await _notify_webui()
 
 
@@ -245,12 +251,15 @@ async def cmd_model(args: str, config: AppConfig) -> bool:
     current_mini = config.mini_model_name[0] if config.mini_model_name else ""
     current_mm = config.multimodal_model_name[0] if config.multimodal_model_name else ""
     current_tts = config.tts_model
+    current_asr = config.asr_model
 
     title = provider_name if provider_name and provider_name in search_providers else "所有"
     prompt_list = [f"\n{title} 可用模型:"]
     if current_tts:
         voice = config.audio.get("voice", "") if config.audio else ""
         prompt_list.append(f"  当前 TTS: {current_tts}" + (f" (语音: {voice})" if voice else ""))
+    if current_asr:
+        prompt_list.append(f"  当前 ASR: {current_asr}")
     for i, m in enumerate(all_models, 1):
         tags = []
         if m == current_main:
@@ -261,6 +270,8 @@ async def cmd_model(args: str, config: AppConfig) -> bool:
             tags.append("多模态")
         if m == current_tts:
             tags.append("TTS")
+        if m == current_asr:
+            tags.append("ASR")
         marker = f" ← {', '.join(tags)}" if tags else ""
         prompt_list.append(f"  [{i}] {m}{marker}")
 

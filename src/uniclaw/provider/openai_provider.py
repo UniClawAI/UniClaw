@@ -129,6 +129,7 @@ def stream(
     enable_thinking=True,
     thinking=True,
     audio: dict | None = None,
+    asr_options: dict | None = None,
     config=None,
 ) -> Iterator[StreamChunk]:
     """流式调用 LLM,每次 yield StreamChunk (delta)。"""
@@ -141,6 +142,8 @@ def stream(
         p["openai_api_base"], p["openai_api_key"], p["proxy_url"]
     )
     extra_body = build_extra_body(p["openai_api_base"], enable_thinking, thinking)
+    if asr_options:
+        extra_body["asr_options"] = asr_options
     openai_tools = [t.to_openai_schema() for t in tools] if tools else None
 
     # 清理消息中的孤立代理码点,避免 OpenAI SDK JSON 序列化失败
@@ -269,6 +272,7 @@ async def astream(
     enable_thinking=True,
     thinking=True,
     audio: dict | None = None,
+    asr_options: dict | None = None,
     config=None,
 ) -> AsyncIterator[StreamChunk]:
     """异步流式调用 LLM,每次 yield StreamChunk (delta)。"""
@@ -281,6 +285,8 @@ async def astream(
         p["openai_api_base"], p["openai_api_key"], p["proxy_url"]
     )
     extra_body = build_extra_body(p["openai_api_base"], enable_thinking, thinking)
+    if asr_options:
+        extra_body["asr_options"] = asr_options
     openai_tools = [t.to_openai_schema() for t in tools] if tools else None
 
     # 清理消息中的孤立代理码点,避免 OpenAI SDK JSON 序列化失败
@@ -400,6 +406,7 @@ def chat(
     enable_thinking=True,
     thinking=True,
     audio: dict | None = None,
+    asr_options: dict | None = None,
     config=None,
 ) -> AIMessage:
     """同步调用 LLM,返回 AIMessage。"""
@@ -412,6 +419,8 @@ def chat(
         p["openai_api_base"], p["openai_api_key"], p["proxy_url"]
     )
     extra_body = build_extra_body(p["openai_api_base"], enable_thinking, thinking)
+    if asr_options:
+        extra_body["asr_options"] = asr_options
     openai_tools = [t.to_openai_schema() for t in tools] if tools else None
 
     # 清理消息中的孤立代理码点,避免 OpenAI SDK JSON 序列化失败
@@ -470,6 +479,7 @@ async def achat(
     enable_thinking=True,
     thinking=True,
     audio: dict | None = None,
+    asr_options: dict | None = None,
     config=None,
 ) -> AIMessage:
     """异步调用 LLM,返回 AIMessage。"""
@@ -482,6 +492,8 @@ async def achat(
         p["openai_api_base"], p["openai_api_key"], p["proxy_url"]
     )
     extra_body = build_extra_body(p["openai_api_base"], enable_thinking, thinking)
+    if asr_options:
+        extra_body["asr_options"] = asr_options
     openai_tools = [t.to_openai_schema() for t in tools] if tools else None
 
     # 清理消息中的孤立代理码点,避免 OpenAI SDK JSON 序列化失败

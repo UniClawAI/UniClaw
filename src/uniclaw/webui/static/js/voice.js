@@ -5,6 +5,8 @@ const VoiceMode = {
     _enabled: false,
     /** TTS 是否可用(config 中 tts_model + audio 已配置) */
     _available: false,
+    /** ASR 是否可用(config 中 asr_model 已配置) */
+    _asrAvailable: false,
 
     /** 初始化 */
     init() {
@@ -17,6 +19,12 @@ const VoiceMode = {
     setAvailable(available) {
         this._available = available;
         this._updateUI();
+    },
+
+    /** 设置 ASR 可用性(由 session 切换时调用) */
+    setAsrAvailable(available) {
+        this._asrAvailable = available;
+        this._updateMicBtn();
     },
 
     /** 设置语音模式状态(由 session 切换时调用) */
@@ -49,7 +57,9 @@ const VoiceMode = {
             .then(d => {
                 this._available = d.voice_available || false;
                 this._enabled = d.voice_mode || false;
+                this._asrAvailable = d.asr_available || false;
                 this._updateUI();
+                this._updateMicBtn();
             })
             .catch(() => {});
     },
@@ -67,9 +77,19 @@ const VoiceMode = {
         }
     },
 
+    /** 更新麦克风按钮显隐(ASR 可用性) */
+    _updateMicBtn() {
+        const micBtn = document.getElementById('mic-btn');
+        if (micBtn) {
+            micBtn.style.display = this._asrAvailable ? '' : 'none';
+        }
+    },
+
     /** 重置状态(会话切换时调用) */
     reset() {
         this._enabled = false;
+        this._asrAvailable = false;
         this._updateUI();
+        this._updateMicBtn();
     },
 };
