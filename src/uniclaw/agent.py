@@ -68,7 +68,7 @@ class ReturnEvent:
 
 @dataclass
 class UserEvent:
-    content: str
+    content: str | list[dict[str, Any]]
 
 
 @dataclass
@@ -391,6 +391,12 @@ class AgentTask:
         self.cancel_event.clear()
         text_parts = []
         for msg in messages:
+            # 多模态消息(list): 提取文本部分参与合并
+            if isinstance(msg, list):
+                text = extract_text(msg)
+                if text:
+                    text_parts.append(text)
+                continue
             stripped = msg.strip()
             if stripped.startswith("!"):
                 # !!cmd → 控制台命令(不注入 session)；!cmd → 聊天区命令(注入 session)
@@ -1005,6 +1011,10 @@ class MultiAgent:
                 )
                 # 将多模态内容作为 user 消息,让 LLM 能看到图片/音频/视频
                 task.session.add_message(MessageRole.USER, tool_resp_content)
+                # 广播给前端,让流式输出期间也能显示图片
+                await self.send_event_to_user(
+                    UserEvent(tool_resp_content), config
+                )
             else:
                 # TOOL 消息 content 必须是 str,非 str 内容需转换
                 final_content = (
