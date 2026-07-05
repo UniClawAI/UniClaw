@@ -19,7 +19,6 @@ from collections.abc import AsyncIterator, Iterator
 from uniclaw.provider.types import Usage
 from uniclaw.tools.session.session import AIMessage, StreamChunk
 
-
 # ── 客户端构建 ─────────────────────────────────────────────────
 
 
@@ -69,7 +68,10 @@ def _extract_anthropic_media_url(block: dict) -> tuple[str, str]:
         if source.get("type") == "url":
             return source.get("url", ""), "image"
         if source.get("type") == "base64":
-            return f"data:{source.get('media_type', 'image/png')};base64,{source.get('data', '')}", "image"
+            return (
+                f"data:{source.get('media_type', 'image/png')};base64,{source.get('data', '')}",
+                "image",
+            )
     return "", ""
 
 
@@ -115,9 +117,9 @@ def stream(
     messages,
     model_name: str = "",
     multimodal_model_name: str | None = None,
-    temperature=0.7,
-    max_tokens=5000,
-    top_p=0.9,
+    temperature=None,
+    max_tokens=None,
+    top_p=None,
     tools: list | None = None,
     enable_thinking=True,
     thinking=True,
@@ -128,28 +130,37 @@ def stream(
         config,
         model_name=model_name,
         multimodal_model_name=multimodal_model_name,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        top_p=top_p,
     )
     # Anthropic 使用自己的 key 和 base_url
     api_key = p.get("anthropic_api_key") or p["openai_api_key"]
-    base_url = p.get("anthropic_base_url") or p.get("base_url") or "https://api.anthropic.com"
+    base_url = (
+        p.get("anthropic_base_url") or p.get("base_url") or "https://api.anthropic.com"
+    )
 
     client = _build_anthropic_client(base_url, api_key, p["proxy_url"])
     anthropic_messages = messages
     anthropic_tools = [t.to_anthropic_schema() for t in tools] if tools else None
 
+    resolved_max_tokens = p["max_tokens"]
     kwargs = dict(
         model=p["model_name"],
         messages=anthropic_messages,
-        max_tokens=max_tokens,
-        temperature=temperature,
-        top_p=top_p,
+        max_tokens=resolved_max_tokens,
+        temperature=p["temperature"],
+        top_p=p["top_p"],
     )
     if system_prompt:
         kwargs["system"] = system_prompt
     if anthropic_tools:
         kwargs["tools"] = anthropic_tools
     if enable_thinking and thinking:
-        kwargs["thinking"] = {"type": "enabled", "budget_tokens": max((max_tokens or 8192) // 2, 1024)}
+        kwargs["thinking"] = {
+            "type": "enabled",
+            "budget_tokens": max((resolved_max_tokens or 8192) // 2, 1024),
+        }
         kwargs["temperature"] = 1.0  # Anthropic 要求 thinking 时 temperature=1.0
 
     try:
@@ -158,7 +169,9 @@ def stream(
         if _is_multimodal_error(e) and p["multimodal_model_name"]:
             try:
                 kwargs["messages"] = asyncio.run(
-                    _describe_multimodal(messages, p["multimodal_model_name"], config=config)
+                    _describe_multimodal(
+                        messages, p["multimodal_model_name"], config=config
+                    )
                 )
                 yield from _stream_inner(client, kwargs)
             except RuntimeError:
@@ -237,7 +250,9 @@ def _stream_inner(client: anthropic.Anthropic, kwargs: dict):
             elif event.type == "message_start":
                 message = event.message
                 if hasattr(message, "model") and message.model:
-                    sc.model_name = message.message if hasattr(message, "message") else ""
+                    sc.model_name = (
+                        message.message if hasattr(message, "message") else ""
+                    )
 
             # 只在有内容时 yield
             if sc.content or sc.reasoning_content or sc.new_tool_call_name or sc.usage:
@@ -255,9 +270,9 @@ async def astream(
     messages,
     model_name: str = "",
     multimodal_model_name: str | None = None,
-    temperature=0.7,
-    max_tokens=5000,
-    top_p=0.9,
+    temperature=None,
+    max_tokens=None,
+    top_p=None,
     tools: list | None = None,
     enable_thinking=True,
     thinking=True,
@@ -268,27 +283,36 @@ async def astream(
         config,
         model_name=model_name,
         multimodal_model_name=multimodal_model_name,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        top_p=top_p,
     )
     api_key = p.get("anthropic_api_key") or p["openai_api_key"]
-    base_url = p.get("anthropic_base_url") or p.get("base_url") or "https://api.anthropic.com"
+    base_url = (
+        p.get("anthropic_base_url") or p.get("base_url") or "https://api.anthropic.com"
+    )
 
     client = _build_async_anthropic_client(base_url, api_key, p["proxy_url"])
     anthropic_messages = messages
     anthropic_tools = [t.to_anthropic_schema() for t in tools] if tools else None
 
+    resolved_max_tokens = p["max_tokens"]
     kwargs = dict(
         model=p["model_name"],
         messages=anthropic_messages,
-        max_tokens=max_tokens,
-        temperature=temperature,
-        top_p=top_p,
+        max_tokens=resolved_max_tokens,
+        temperature=p["temperature"],
+        top_p=p["top_p"],
     )
     if system_prompt:
         kwargs["system"] = system_prompt
     if anthropic_tools:
         kwargs["tools"] = anthropic_tools
     if enable_thinking and thinking:
-        kwargs["thinking"] = {"type": "enabled", "budget_tokens": max((max_tokens or 8192) // 2, 1024)}
+        kwargs["thinking"] = {
+            "type": "enabled",
+            "budget_tokens": max((resolved_max_tokens or 8192) // 2, 1024),
+        }
         kwargs["temperature"] = 1.0
 
     try:
@@ -369,9 +393,9 @@ def chat(
     messages,
     model_name: str = "",
     multimodal_model_name: str | None = None,
-    temperature=0.7,
-    max_tokens=5000,
-    top_p=0.9,
+    temperature=None,
+    max_tokens=None,
+    top_p=None,
     tools: list | None = None,
     enable_thinking=True,
     thinking=True,
@@ -382,27 +406,36 @@ def chat(
         config,
         model_name=model_name,
         multimodal_model_name=multimodal_model_name,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        top_p=top_p,
     )
     api_key = p.get("anthropic_api_key") or p["openai_api_key"]
-    base_url = p.get("anthropic_base_url") or p.get("base_url") or "https://api.anthropic.com"
+    base_url = (
+        p.get("anthropic_base_url") or p.get("base_url") or "https://api.anthropic.com"
+    )
 
     client = _build_anthropic_client(base_url, api_key, p["proxy_url"])
     anthropic_messages = messages
     anthropic_tools = [t.to_anthropic_schema() for t in tools] if tools else None
 
+    resolved_max_tokens = p["max_tokens"]
     kwargs = dict(
         model=p["model_name"],
         messages=anthropic_messages,
-        max_tokens=max_tokens,
-        temperature=temperature,
-        top_p=top_p,
+        max_tokens=resolved_max_tokens,
+        temperature=p["temperature"],
+        top_p=p["top_p"],
     )
     if system_prompt:
         kwargs["system"] = system_prompt
     if anthropic_tools:
         kwargs["tools"] = anthropic_tools
     if enable_thinking and thinking:
-        kwargs["thinking"] = {"type": "enabled", "budget_tokens": max((max_tokens or 8192) // 2, 1024)}
+        kwargs["thinking"] = {
+            "type": "enabled",
+            "budget_tokens": max((resolved_max_tokens or 8192) // 2, 1024),
+        }
         kwargs["temperature"] = 1.0
 
     try:
@@ -411,7 +444,9 @@ def chat(
         if _is_multimodal_error(e) and p["multimodal_model_name"]:
             try:
                 kwargs["messages"] = asyncio.run(
-                    _describe_multimodal(messages, p["multimodal_model_name"], config=config)
+                    _describe_multimodal(
+                        messages, p["multimodal_model_name"], config=config
+                    )
                 )
                 response = client.messages.create(**kwargs)
             except RuntimeError:
@@ -421,7 +456,9 @@ def chat(
 
     ai_msg = _response_to_ai_message(response)
     try:
-        asyncio.get_running_loop().create_task(record_usage_async(ai_msg.model_name, ai_msg.usage))
+        asyncio.get_running_loop().create_task(
+            record_usage_async(ai_msg.model_name, ai_msg.usage)
+        )
     except RuntimeError:
         asyncio.run(record_usage_async(ai_msg.model_name, ai_msg.usage))
     return ai_msg
@@ -432,9 +469,9 @@ async def achat(
     messages,
     model_name: str = "",
     multimodal_model_name: str | None = None,
-    temperature=0.7,
-    max_tokens=5000,
-    top_p=0.9,
+    temperature=None,
+    max_tokens=None,
+    top_p=None,
     tools: list | None = None,
     enable_thinking=True,
     thinking=True,
@@ -445,27 +482,36 @@ async def achat(
         config,
         model_name=model_name,
         multimodal_model_name=multimodal_model_name,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        top_p=top_p,
     )
     api_key = p.get("anthropic_api_key") or p["openai_api_key"]
-    base_url = p.get("anthropic_base_url") or p.get("base_url") or "https://api.anthropic.com"
+    base_url = (
+        p.get("anthropic_base_url") or p.get("base_url") or "https://api.anthropic.com"
+    )
 
     client = _build_async_anthropic_client(base_url, api_key, p["proxy_url"])
     anthropic_messages = messages
     anthropic_tools = [t.to_anthropic_schema() for t in tools] if tools else None
 
+    resolved_max_tokens = p["max_tokens"]
     kwargs = dict(
         model=p["model_name"],
         messages=anthropic_messages,
-        max_tokens=max_tokens,
-        temperature=temperature,
-        top_p=top_p,
+        max_tokens=resolved_max_tokens,
+        temperature=p["temperature"],
+        top_p=p["top_p"],
     )
     if system_prompt:
         kwargs["system"] = system_prompt
     if anthropic_tools:
         kwargs["tools"] = anthropic_tools
     if enable_thinking and thinking:
-        kwargs["thinking"] = {"type": "enabled", "budget_tokens": max((max_tokens or 8192) // 2, 1024)}
+        kwargs["thinking"] = {
+            "type": "enabled",
+            "budget_tokens": max((resolved_max_tokens or 8192) // 2, 1024),
+        }
         kwargs["temperature"] = 1.0
 
     try:
@@ -497,14 +543,16 @@ def _response_to_ai_message(response) -> AIMessage:
         elif block.type == "thinking":
             reasoning += block.thinking
         elif block.type == "tool_use":
-            tool_calls.append({
-                "id": block.id,
-                "type": "function",
-                "function": {
-                    "name": block.name,
-                    "arguments": json.dumps(block.input) if block.input else "{}",
-                },
-            })
+            tool_calls.append(
+                {
+                    "id": block.id,
+                    "type": "function",
+                    "function": {
+                        "name": block.name,
+                        "arguments": json.dumps(block.input) if block.input else "{}",
+                    },
+                }
+            )
 
     usage = None
     if response.usage:

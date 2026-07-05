@@ -122,9 +122,9 @@ def stream(
     messages,
     model_name: str = "",
     multimodal_model_name: str | None = None,
-    temperature=0.7,
-    max_tokens=5000,
-    top_p=0.9,
+    temperature=None,
+    max_tokens=None,
+    top_p=None,
     tools: list | None = None,
     enable_thinking=True,
     thinking=True,
@@ -137,6 +137,9 @@ def stream(
         config,
         model_name=model_name,
         multimodal_model_name=multimodal_model_name,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        top_p=top_p,
     )
     client = _build_openai_client(
         p["openai_api_base"], p["openai_api_key"], p["proxy_url"]
@@ -152,9 +155,9 @@ def stream(
     kwargs = dict(
         model=p["model_name"],
         messages=messages,
-        temperature=temperature,
-        max_tokens=max_tokens,
-        top_p=top_p,
+        temperature=p["temperature"],
+        max_tokens=p["max_tokens"],
+        top_p=p["top_p"],
         stream=True,
     )
     if openai_tools:
@@ -265,9 +268,9 @@ async def astream(
     messages,
     model_name: str = "",
     multimodal_model_name: str | None = None,
-    temperature=0.7,
-    max_tokens=5000,
-    top_p=0.9,
+    temperature=None,
+    max_tokens=None,
+    top_p=None,
     tools: list | None = None,
     enable_thinking=True,
     thinking=True,
@@ -280,6 +283,9 @@ async def astream(
         config,
         model_name=model_name,
         multimodal_model_name=multimodal_model_name,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        top_p=top_p,
     )
     client = _build_async_openai_client(
         p["openai_api_base"], p["openai_api_key"], p["proxy_url"]
@@ -295,9 +301,9 @@ async def astream(
     kwargs = dict(
         model=p["model_name"],
         messages=messages,
-        temperature=temperature,
-        max_tokens=max_tokens,
-        top_p=top_p,
+        temperature=p["temperature"],
+        max_tokens=p["max_tokens"],
+        top_p=p["top_p"],
         stream=True,
     )
     if openai_tools:
@@ -399,9 +405,9 @@ def chat(
     messages,
     model_name: str = "",
     multimodal_model_name: str | None = None,
-    temperature=0.7,
-    max_tokens=5000,
-    top_p=0.9,
+    temperature=None,
+    max_tokens=None,
+    top_p=None,
     tools: list | None = None,
     enable_thinking=True,
     thinking=True,
@@ -414,6 +420,9 @@ def chat(
         config,
         model_name=model_name,
         multimodal_model_name=multimodal_model_name,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        top_p=top_p,
     )
     client = _build_openai_client(
         p["openai_api_base"], p["openai_api_key"], p["proxy_url"]
@@ -429,9 +438,9 @@ def chat(
     kwargs = dict(
         model=p["model_name"],
         messages=messages,
-        temperature=temperature,
-        max_tokens=max_tokens,
-        top_p=top_p,
+        temperature=p["temperature"],
+        max_tokens=p["max_tokens"],
+        top_p=p["top_p"],
     )
     if openai_tools:
         kwargs["tools"] = openai_tools
@@ -472,9 +481,9 @@ async def achat(
     messages,
     model_name: str = "",
     multimodal_model_name: str | None = None,
-    temperature=0.7,
-    max_tokens=5000,
-    top_p=0.9,
+    temperature=None,
+    max_tokens=None,
+    top_p=None,
     tools: list | None = None,
     enable_thinking=True,
     thinking=True,
@@ -487,6 +496,9 @@ async def achat(
         config,
         model_name=model_name,
         multimodal_model_name=multimodal_model_name,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        top_p=top_p,
     )
     client = _build_async_openai_client(
         p["openai_api_base"], p["openai_api_key"], p["proxy_url"]
@@ -502,9 +514,9 @@ async def achat(
     kwargs = dict(
         model=p["model_name"],
         messages=messages,
-        temperature=temperature,
-        max_tokens=max_tokens,
-        top_p=top_p,
+        temperature=p["temperature"],
+        max_tokens=p["max_tokens"],
+        top_p=p["top_p"],
     )
     if openai_tools:
         kwargs["tools"] = openai_tools

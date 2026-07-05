@@ -6,6 +6,7 @@ from uniclaw.provider.thought_parser import ThoughtParser
 from uniclaw.provider.types import Effort, Protocol, Usage
 
 from typing import TYPE_CHECKING
+
 if TYPE_CHECKING:
     from uniclaw.tools.session.session import AIMessage, StreamChunk
 

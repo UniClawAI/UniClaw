@@ -54,9 +54,7 @@ _http_client_cache: dict[str, httpx.Client] = TTLCache(maxsize=8, ttl=3600)
 _async_http_client_cache: dict[str, httpx.AsyncClient] = TTLCache(maxsize=8, ttl=3600)
 
 
-def create_http_client(
-    base_url: str, proxy_url: str = ""
-) -> httpx.Client | None:
+def create_http_client(base_url: str, proxy_url: str = "") -> httpx.Client | None:
     """创建带代理的同步 HTTP 客户端(带缓存)。"""
     if "://127.0.0.1" in base_url:
         return None
@@ -85,7 +83,9 @@ def create_async_http_client(
 # ── 参数解析 ───────────────────────────────────────────────────
 
 
-def parse_model_ref(ref: str, providers: dict[str, ProviderProfile]) -> tuple[str | None, str]:
+def parse_model_ref(
+    ref: str, providers: dict[str, ProviderProfile]
+) -> tuple[str | None, str]:
     """解析 provider/model 格式的模型引用。
 
     第一个 '/' 前为 provider 名(需在 providers 中),后面全部为模型名。
@@ -135,12 +135,24 @@ def resolve_params(config: AppConfig | None = None, **kwargs):
     if config is not None:
         defaults = {
             "model_name": config.model_name[0] if config.model_name else "",
-            "multimodal_model_name": config.multimodal_model_name[0] if config.multimodal_model_name else None,
+            "multimodal_model_name": (
+                config.multimodal_model_name[0]
+                if config.multimodal_model_name
+                else None
+            ),
             "proxy_url": config.proxy_url,
+            "temperature": config.temperature,
+            "max_tokens": config.max_tokens,
+            "top_p": config.top_p,
         }
         for key, val in defaults.items():
-            if not kwargs.get(key):
-                kwargs[key] = val
+            # temperature/max_tokens/top_p 用 is None 判断,因为 0 也是合法值
+            if key in ("temperature", "max_tokens", "top_p"):
+                if kwargs.get(key) is None:
+                    kwargs[key] = val
+            else:
+                if not kwargs.get(key):
+                    kwargs[key] = val
 
     # 从 model_name 解析 provider profile
     model_name = kwargs.get("model_name", "")
@@ -197,6 +209,7 @@ def build_extra_body(
 
 # ── 消息格式转换 ───────────────────────────────────────────────
 
+
 def safe_parse_args(arguments: str) -> dict:
     """尝试解析工具参数 JSON,不完整时返回空 dict。"""
     if not arguments:
@@ -206,7 +219,7 @@ def safe_parse_args(arguments: str) -> dict:
 
         result = json.loads(arguments)
         return result if isinstance(result, dict) else {}
-    except (json.JSONDecodeError, TypeError):
+    except json.JSONDecodeError, TypeError:
         return {}
 
 
@@ -228,7 +241,6 @@ def is_multimodal_error(e: Exception) -> bool:
             "video_url",
         )
     )
-
 
 
 # ── 用量记录 ───────────────────────────────────────────────────

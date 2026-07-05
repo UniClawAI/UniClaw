@@ -3,6 +3,7 @@ config.py 模块的单元测试
 
 测试配置加载、保存和管理功能
 """
+
 import pytest
 import json
 import tempfile
@@ -16,7 +17,6 @@ from uniclaw.config import (
     get_config_path,
     is_first_launch,
     _load_settings_json,
-    _save_settings_json,
     save_config,
     load_config,
     create_sub_agent_config,
@@ -44,7 +44,7 @@ class TestAppConfig:
         assert config.mini_model_name == []
         assert config.multimodal_model_name == []
         assert config.providers == {}
-        assert config.temperature == 0.7
+        assert config.temperature is None
         assert config.max_tokens is None
         assert config.top_p is None
         assert config.proxy_url == ""
@@ -60,8 +60,16 @@ class TestAppConfig:
     def test_custom_values(self):
         """测试自定义值"""
         from uniclaw.config import ProviderProfile
+
         config = AppConfig(
-            providers={"test": ProviderProfile(name="test", protocol="openai", api_key="test-key", base_url="https://api.test.com/v1")},
+            providers={
+                "test": ProviderProfile(
+                    name="test",
+                    protocol="openai",
+                    api_key="test-key",
+                    base_url="https://api.test.com/v1",
+                )
+            },
             model_name=["gpt-4"],
             temperature=0.5,
             permission_mode=Permissions.MANUAL,
@@ -85,17 +93,27 @@ class TestAppConfig:
     def test_create_sub_config(self):
         """测试创建子配置"""
         from uniclaw.config import ProviderProfile
+
         config = AppConfig()
         mock_session = MagicMock()
         mock_session.root_dir = Path("/test/root")
         mock_agent = MagicMock()
         mock_agent.session = mock_session
         config.current_agent = mock_agent
-        config.providers = {"test": ProviderProfile(name="test", protocol="openai", api_key="test-key", base_url="https://api.test.com/v1")}
+        config.providers = {
+            "test": ProviderProfile(
+                name="test",
+                protocol="openai",
+                api_key="test-key",
+                base_url="https://api.test.com/v1",
+            )
+        }
         config.model_name = ["gpt-4"]
 
-        with patch("uniclaw.tools.session.session.Session") as MockSession, \
-             patch("uniclaw.agent.AgentTask") as MockAgentTask:
+        with (
+            patch("uniclaw.tools.session.session.Session") as MockSession,
+            patch("uniclaw.agent.AgentTask") as MockAgentTask,
+        ):
             MockSession.return_value = MagicMock()
             MockAgentTask.return_value = MagicMock()
 
@@ -153,7 +171,9 @@ class TestIsFirstLaunch:
         with patch("uniclaw.config.get_config_path") as mock_get_path:
             mock_path = MagicMock()
             mock_path.exists.return_value = True
-            mock_path.read_text.return_value = '{"providers": {"default": {"api_key": "sk-test"}}}'
+            mock_path.read_text.return_value = (
+                '{"providers": {"default": {"api_key": "sk-test"}}}'
+            )
             mock_get_path.return_value = mock_path
 
             assert is_first_launch() is False
@@ -215,7 +235,12 @@ class TestLoadSettingsJson:
         """测试从文件加载"""
         test_data = {
             "providers": {
-                "mimo": {"name": "mimo", "protocol": "openai", "api_key": "test-key", "base_url": "https://api.test.com/v1"}
+                "mimo": {
+                    "name": "mimo",
+                    "protocol": "openai",
+                    "api_key": "test-key",
+                    "base_url": "https://api.test.com/v1",
+                }
             },
             "model_name": "gpt-4",
         }
@@ -241,7 +266,7 @@ class TestLoadSettingsJson:
             with patch.dict("os.environ", {}, clear=True):
                 result = _load_settings_json()
                 assert "temperature" in result
-                assert result["temperature"] == 0.7
+                assert result["temperature"] is None
 
     def test_invalid_json(self):
         """测试无效 JSON"""
@@ -270,9 +295,11 @@ class TestLoadSettingsJson:
         with patch("uniclaw.config.get_config_path") as mock_get_path:
             mock_path = MagicMock()
             mock_path.exists.return_value = True
-            mock_path.read_text.return_value = json.dumps({
-                "model_name": "gpt-4",
-            })
+            mock_path.read_text.return_value = json.dumps(
+                {
+                    "model_name": "gpt-4",
+                }
+            )
             mock_get_path.return_value = mock_path
 
             result = _load_settings_json()
@@ -304,8 +331,16 @@ class TestSaveConfig:
     def test_save_config(self):
         """测试保存配置"""
         from uniclaw.config import ProviderProfile
+
         config = AppConfig(
-            providers={"test": ProviderProfile(name="test", protocol="openai", api_key="test-key", base_url="https://api.test.com/v1")},
+            providers={
+                "test": ProviderProfile(
+                    name="test",
+                    protocol="openai",
+                    api_key="test-key",
+                    base_url="https://api.test.com/v1",
+                )
+            },
             model_name=["gpt-4"],
             temperature=0.5,
         )
@@ -348,10 +383,12 @@ class TestLoadConfig:
             "temperature": 0.5,
         }
 
-        with patch("uniclaw.tools.session.session.Session") as MockSession, \
-             patch("uniclaw.agent.AgentTask") as MockAgentTask, \
-             patch("uniclaw.tools.todolist.TodoList") as MockTodoList, \
-             patch("uniclaw.config._load_settings_json") as mock_load:
+        with (
+            patch("uniclaw.tools.session.session.Session") as MockSession,
+            patch("uniclaw.agent.AgentTask") as MockAgentTask,
+            patch("uniclaw.tools.todolist.TodoList") as MockTodoList,
+            patch("uniclaw.config._load_settings_json") as mock_load,
+        ):
             MockSession.return_value = MagicMock()
             MockAgentTask.return_value = MagicMock()
             MockTodoList.return_value = MagicMock()

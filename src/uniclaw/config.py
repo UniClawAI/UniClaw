@@ -72,7 +72,7 @@ class AppConfig:
     providers: dict[str, ProviderProfile] = field(
         default_factory=dict
     )  # 多 provider 配置
-    temperature: float = 0.7
+    temperature: float | None = None
     max_tokens: int | None = None
     top_p: float | None = None
     proxy_url: str = ""
@@ -400,7 +400,7 @@ def _create_config_from_data(data: dict[str, Any]) -> AppConfig:
         asr_model=data.get("asr_model", ""),
         audio=data.get("audio"),
         providers=providers,
-        temperature=data.get("temperature", 0.7),
+        temperature=data.get("temperature"),
         max_tokens=data.get("max_tokens"),
         top_p=data.get("top_p"),
         proxy_url=data.get("proxy_url", ""),
@@ -450,7 +450,7 @@ def _load_settings_json() -> dict[str, Any]:
     # 默认值
     defaults = {
         "providers": {},
-        "temperature": 0.7,
+        "temperature": None,
         "max_tokens": None,
         "top_p": None,
         "max_agent_depth": 3,
@@ -551,7 +551,7 @@ def load_config(
         asr_model=data.get("asr_model", ""),
         audio=data.get("audio"),
         providers=providers,
-        temperature=data.get("temperature", 0.7),
+        temperature=data.get("temperature"),
         max_tokens=data.get("max_tokens"),
         top_p=data.get("top_p"),
         proxy_url=data.get("proxy_url", ""),

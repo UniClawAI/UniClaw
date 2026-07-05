@@ -22,9 +22,9 @@ def stream(
     *,
     model_name: str = "",
     multimodal_model_name: str | None = None,
-    temperature=0.7,
-    max_tokens=5000,
-    top_p=0.9,
+    temperature=None,
+    max_tokens=None,
+    top_p=None,
     tools: list | None = None,
     enable_thinking=True,
     thinking=True,
@@ -52,7 +52,9 @@ def stream(
     else:
         from uniclaw.provider import openai_provider
 
-        messages = [{"role": "system", "content": system_prompt}] + session.to_openai_messages()
+        messages = [
+            {"role": "system", "content": system_prompt}
+        ] + session.to_openai_messages()
         yield from openai_provider.stream(
             messages,
             model_name=model_name,
@@ -73,9 +75,9 @@ async def astream(
     *,
     model_name: str = "",
     multimodal_model_name: str | None = None,
-    temperature=0.7,
-    max_tokens=5000,
-    top_p=0.9,
+    temperature=None,
+    max_tokens=None,
+    top_p=None,
     tools: list | None = None,
     enable_thinking=True,
     thinking=True,
@@ -104,7 +106,9 @@ async def astream(
     else:
         from uniclaw.provider import openai_provider
 
-        messages = [{"role": "system", "content": system_prompt}] + session.to_openai_messages()
+        messages = [
+            {"role": "system", "content": system_prompt}
+        ] + session.to_openai_messages()
         async for chunk in openai_provider.astream(
             messages,
             model_name=model_name,
@@ -126,9 +130,9 @@ def chat(
     *,
     model_name: str = "",
     multimodal_model_name: str | None = None,
-    temperature=0.7,
-    max_tokens=5000,
-    top_p=0.9,
+    temperature=None,
+    max_tokens=None,
+    top_p=None,
     tools: list | None = None,
     enable_thinking=True,
     thinking=True,
@@ -156,7 +160,9 @@ def chat(
     else:
         from uniclaw.provider import openai_provider
 
-        messages = [{"role": "system", "content": system_prompt}] + session.to_openai_messages()
+        messages = [
+            {"role": "system", "content": system_prompt}
+        ] + session.to_openai_messages()
         return openai_provider.chat(
             messages,
             model_name=model_name,
@@ -177,9 +183,9 @@ async def achat(
     *,
     model_name: str = "",
     multimodal_model_name: str | None = None,
-    temperature=0.7,
-    max_tokens=5000,
-    top_p=0.9,
+    temperature=None,
+    max_tokens=None,
+    top_p=None,
     tools: list | None = None,
     enable_thinking=True,
     thinking=True,
@@ -207,7 +213,9 @@ async def achat(
     else:
         from uniclaw.provider import openai_provider
 
-        messages = [{"role": "system", "content": system_prompt}] + session.to_openai_messages()
+        messages = [
+            {"role": "system", "content": system_prompt}
+        ] + session.to_openai_messages()
         return await openai_provider.achat(
             messages,
             model_name=model_name,
