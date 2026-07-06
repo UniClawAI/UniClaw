@@ -927,8 +927,10 @@ class MultiAgent:
                         tool_resp_content = await tool.func(**kwargs)
                     else:
                         tool_resp_content = tool.func(**kwargs)
-                    # 标记扩展工具已使用(LRU:移到最前,防止被淘汰)
-                    task.extended_mgr.touch(tc_name)
+                    # 标记扩展工具已使用(LRU:移到最前,防止被淘汰),核心工具不参与能量管理
+                    from uniclaw.tools.registry import CORE_TOOL_NAMES
+                    if tc_name not in CORE_TOOL_NAMES:
+                        task.extended_mgr.touch(tc_name)
                     if isinstance(tool_resp_content, str):
                         tool_resp_content = truncate_text_by_lines(tool_resp_content)
                     # 只读工具去重:结果与之前相同且较大时省略

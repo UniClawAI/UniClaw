@@ -136,6 +136,7 @@ async def get_tools(config) -> list:
         *help_get_tools(),
         *tts_get_tools(config),
         *send_file_get_tools(),
+        *registry_get_tools(),
         *mcp_tools,
     ]
     if not config.is_sub:

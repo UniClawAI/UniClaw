@@ -482,13 +482,15 @@ class ExtendedToolManager:
 
     def touch(self, tool: Tool | str):
         """工具被使用或搜索命中:移到 MRU 端并恢复满能量。
-        传入 Tool 对象时同时加入待加载队列(新工具首次加载)。"""
+        传入 Tool 对象时同时加入待加载队列(新工具首次加载)。核心工具不参与能量管理。"""
         if isinstance(tool, str):
             name = tool
         else:
             name = tool.name
-            if name not in self.loaded:
+            if name not in self.loaded and name not in CORE_TOOL_NAMES:
                 self.pending_tools.append(tool)
+        if name in CORE_TOOL_NAMES:
+            return
         try:
             self.loaded.remove(name)
         except ValueError:
@@ -503,6 +505,7 @@ class ExtendedToolManager:
         for name in names:
             if name in self.loaded:
                 self.loaded.remove(name)
+                print(f"evict {name}")
             self.energy.pop(name, None)
         self.pending_evicted.update(names)
 
@@ -628,6 +631,10 @@ def search_tools(query: str, config=None) -> str:
 def get_tools() -> list:
     """获取 search_tools 元工具。"""
     return [search_tools]
+
+
+# search_tools 是元工具,始终可用,不参与能量管理
+CORE_TOOL_NAMES.add(search_tools.name)
 
 
 async def get_registry_system_prompt(config=None) -> str:
