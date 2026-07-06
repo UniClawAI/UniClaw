@@ -41,8 +41,8 @@ async def cmd_btw(args: str, config: AppConfig) -> bool:
         response = await achat(
             system_content,
             _session,
-            temperature=0.7,
-            max_tokens=2000,
+            temperature=None,
+            max_tokens=None,
             enable_thinking=False,
             thinking=False,
             config=config,

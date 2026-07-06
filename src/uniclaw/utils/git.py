@@ -492,7 +492,7 @@ refactor: 统一配置加载逻辑
             enable_thinking=False,
             thinking=False,
             config=config,
-            temperature=0.3,
+            temperature=None,
             max_tokens=500,
         )
         return {"message": resp.content.strip()}

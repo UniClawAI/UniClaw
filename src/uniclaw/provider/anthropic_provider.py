@@ -161,7 +161,6 @@ def stream(
             "type": "enabled",
             "budget_tokens": max((resolved_max_tokens or 8192) // 2, 1024),
         }
-        kwargs["temperature"] = 1.0  # Anthropic 要求 thinking 时 temperature=1.0
 
     try:
         yield from _stream_inner(client, kwargs)
@@ -313,7 +312,6 @@ async def astream(
             "type": "enabled",
             "budget_tokens": max((resolved_max_tokens or 8192) // 2, 1024),
         }
-        kwargs["temperature"] = 1.0
 
     try:
         async for chunk in _astream_inner(client, kwargs):
@@ -436,7 +434,6 @@ def chat(
             "type": "enabled",
             "budget_tokens": max((resolved_max_tokens or 8192) // 2, 1024),
         }
-        kwargs["temperature"] = 1.0
 
     try:
         response = client.messages.create(**kwargs)
@@ -512,7 +509,6 @@ async def achat(
             "type": "enabled",
             "budget_tokens": max((resolved_max_tokens or 8192) // 2, 1024),
         }
-        kwargs["temperature"] = 1.0
 
     try:
         response = await client.messages.create(**kwargs)
