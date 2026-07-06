@@ -22,6 +22,7 @@ from uniclaw.webui.models import (
     PermissionRuleDelete,
     SessionMove,
     SessionRename,
+    SettingsUpdate,
     SubAgentCreate,
     WechatBotCreate,
 )
@@ -340,6 +341,145 @@ async def update_config(body: ConfigUpdate):
         return {"ok": True}
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+def _mask_key(key: str) -> str:
+    """脱敏 API key:保留前 4 + 后 4 字符,中间用 **** 替代。"""
+    if not key or len(key) <= 8:
+        return "****"
+    return key[:4] + "****" + key[-4:]
+
+
+def _read_settings_raw() -> tuple[Path, dict]:
+    """读取 settings.json 原始数据(不做归一化)。"""
+    from uniclaw.config import get_config_path
+
+    path = get_config_path()
+    data: dict = {}
+    if path.exists():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            pass
+    return path, data
+
+
+@router.get("/settings")
+async def get_settings():
+    """读取全局 settings.json(API key 脱敏)。"""
+    path, data = _read_settings_raw()
+
+    # 脱敏 providers 中的 api_key
+    providers = data.get("providers", {})
+    masked_providers = {}
+    for name, p in providers.items():
+        masked_providers[name] = {
+            **p,
+            "api_key": _mask_key(p.get("api_key", "")),
+        }
+
+    def _norm_model(v):
+        """归一化 model 字段为 list。"""
+        if v is None:
+            return []
+        if isinstance(v, str):
+            return [v] if v else []
+        return list(v) if isinstance(v, list) else []
+
+    return {
+        "config_path": str(path),
+        "model_name": _norm_model(data.get("model_name")),
+        "mini_model_name": _norm_model(data.get("mini_model_name")),
+        "multimodal_model_name": _norm_model(data.get("multimodal_model_name")),
+        "tts_model": data.get("tts_model", "") or "",
+        "asr_model": data.get("asr_model", "") or "",
+        "temperature": data.get("temperature"),
+        "max_tokens": data.get("max_tokens"),
+        "top_p": data.get("top_p"),
+        "proxy_url": data.get("proxy_url", "") or "",
+        "GITHUB_TOKEN": _mask_key(data.get("GITHUB_TOKEN", "")),
+        "EXA_API_KEY": _mask_key(data.get("EXA_API_KEY", "")),
+        "max_agent_depth": data.get("max_agent_depth", 2),
+        "permission_timeout": data.get("permission_timeout", 300),
+        "providers": masked_providers,
+    }
+
+
+@router.put("/settings")
+async def update_settings(body: SettingsUpdate):
+    """保存全局 settings.json。"""
+    import json
+
+    # 读取原始配置,用于恢复未修改的脱敏 key
+    path, original = _read_settings_raw()
+    original_providers = original.get("providers", {})
+    original_github = original.get("GITHUB_TOKEN", "")
+    original_exa = original.get("EXA_API_KEY", "")
+
+    # 恢复脱敏的 API key
+    providers = {}
+    for name, p in body.providers.items():
+        api_key = p.api_key
+        # 如果 key 包含 **** 且原 provider 存在,恢复原始值
+        if "****" in api_key and name in original_providers:
+            api_key = original_providers[name].get("api_key", "")
+        providers[name] = {
+            "name": p.name or name,
+            "protocol": p.protocol,
+            "api_key": api_key,
+            "base_url": p.base_url,
+        }
+        if p.proxy_url:
+            providers[name]["proxy_url"] = p.proxy_url
+
+    # 恢复脱敏的 token
+    github_token = body.GITHUB_TOKEN
+    if "****" in github_token:
+        github_token = original_github
+    exa_key = body.EXA_API_KEY
+    if "****" in exa_key:
+        exa_key = original_exa
+
+    # 验证模型名的 provider 前缀
+    provider_names = set(providers.keys())
+    for field_name in ("model_name", "mini_model_name", "multimodal_model_name"):
+        models = getattr(body, field_name)
+        for m in models:
+            if "/" not in m:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"{field_name} 格式错误：'{m}' 必须是 'provider/model' 格式",
+                )
+            prefix = m.split("/", 1)[0]
+            if prefix not in provider_names:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"{field_name} 中的 '{m}' 引用了不存在的 provider '{prefix}'",
+                )
+
+    cleaned = {
+        "model_name": body.model_name,
+        "mini_model_name": body.mini_model_name,
+        "multimodal_model_name": body.multimodal_model_name,
+        "tts_model": body.tts_model,
+        "asr_model": body.asr_model,
+        "temperature": body.temperature,
+        "max_tokens": body.max_tokens,
+        "top_p": body.top_p,
+        "proxy_url": body.proxy_url,
+        "GITHUB_TOKEN": github_token,
+        "EXA_API_KEY": exa_key,
+        "max_agent_depth": body.max_agent_depth,
+        "permission_timeout": body.permission_timeout,
+        "providers": providers,
+    }
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(cleaned, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+    return {"ok": True, "config_path": str(path)}
 
 
 @router.post("/asr")

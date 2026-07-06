@@ -24,6 +24,10 @@ const App = {
         // 初始化修改密码弹窗
         this._initChangePwd();
 
+        // 设置按钮
+        const settingsBtn = document.getElementById('settings-btn');
+        if (settingsBtn) settingsBtn.addEventListener('click', () => Settings.open());
+
         WS.connect();
         Chat.init();
         Input.init();

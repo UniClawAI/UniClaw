@@ -214,3 +214,67 @@ class AsrRequest(BaseModel):
 
     audio: str = Field(description="Base64 编码的音频数据")
     format: str = Field(default="webm", description="音频格式: webm/wav/mp3")
+
+
+class ProviderConfig(BaseModel):
+    """单个 Provider 配置。"""
+
+    name: str = ""
+    protocol: str = "openai"
+    api_key: str = ""
+    base_url: str = ""
+    proxy_url: str = ""
+
+    @field_validator("protocol")
+    @classmethod
+    def validate_protocol(cls, v: str) -> str:
+        if v not in ("openai", "anthropic"):
+            raise ValueError('协议必须是 "openai" 或 "anthropic"')
+        return v
+
+
+class SettingsUpdate(BaseModel):
+    """全局 settings.json 更新。"""
+
+    model_name: list[str] = Field(default_factory=list)
+    mini_model_name: list[str] = Field(default_factory=list)
+    multimodal_model_name: list[str] = Field(default_factory=list)
+    tts_model: str = ""
+    asr_model: str = ""
+    temperature: float | None = None
+    max_tokens: int | None = None
+    top_p: float | None = None
+    proxy_url: str = ""
+    GITHUB_TOKEN: str = ""
+    EXA_API_KEY: str = ""
+    max_agent_depth: int = 2
+    permission_timeout: int = 300
+    providers: dict[str, ProviderConfig] = Field(default_factory=dict)
+
+    @field_validator("temperature")
+    @classmethod
+    def validate_temperature(cls, v: float | None) -> float | None:
+        if v is not None and (v < 0 or v > 2):
+            raise ValueError("温度必须在 0-2 之间")
+        return v
+
+    @field_validator("max_tokens")
+    @classmethod
+    def validate_max_tokens(cls, v: int | None) -> int | None:
+        if v is not None and (v < 1 or v > 1000000):
+            raise ValueError("max_tokens 必须在 1-1000000 之间")
+        return v
+
+    @field_validator("max_agent_depth")
+    @classmethod
+    def validate_depth(cls, v: int) -> int:
+        if v < 1 or v > 20:
+            raise ValueError("max_agent_depth 必须在 1-20 之间")
+        return v
+
+    @field_validator("permission_timeout")
+    @classmethod
+    def validate_timeout(cls, v: int) -> int:
+        if v < 1 or v > 3600:
+            raise ValueError("permission_timeout 必须在 1-3600 之间")
+        return v

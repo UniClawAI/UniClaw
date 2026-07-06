@@ -102,8 +102,8 @@ class AppConfig:
 
     # === Agent 引用 (必填,session 通过 current_agent.session 访问) ===
     current_agent: AgentTask = field(default=None)  # type: ignore[assignment]
-    parent_config: "AppConfig" | None = field(default=None, repr=False)
-    sub_configs: list["AppConfig"] = field(default_factory=list, repr=False)
+    parent_config: AppConfig | None = field(default=None, repr=False)
+    sub_configs: list[AppConfig] = field(default_factory=list, repr=False)
 
     @property
     def parent_agent(self) -> "AgentTask | None":
@@ -407,7 +407,7 @@ def _create_config_from_data(data: dict[str, Any]) -> AppConfig:
         proxy_url=data.get("proxy_url", ""),
         GITHUB_TOKEN=data.get("GITHUB_TOKEN", ""),
         EXA_API_KEY=data.get("EXA_API_KEY", ""),
-        max_agent_depth=data.get("max_agent_depth", 3),
+        max_agent_depth=data.get("max_agent_depth", 2),
         permission_timeout=data.get("permission_timeout", 300),
     )
 
@@ -454,7 +454,7 @@ def _load_settings_json() -> dict[str, Any]:
         "temperature": None,
         "max_tokens": None,
         "top_p": None,
-        "max_agent_depth": 3,
+        "max_agent_depth": 2,
         "permission_timeout": 300,
     }
     for k, v in defaults.items():
@@ -558,7 +558,7 @@ def load_config(
         proxy_url=data.get("proxy_url", ""),
         GITHUB_TOKEN=data.get("GITHUB_TOKEN", ""),
         EXA_API_KEY=data.get("EXA_API_KEY", ""),
-        max_agent_depth=data.get("max_agent_depth", 3),
+        max_agent_depth=data.get("max_agent_depth", 2),
         permission_timeout=data.get("permission_timeout", 300),
     )
 

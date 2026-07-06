@@ -40,8 +40,12 @@
         </symbol>
     </svg>
 
-    <!-- 右上角用户菜单 -->
-    <div id="user-menu" style="position:fixed;top:12px;right:16px;z-index:100">
+    <!-- 右上角设置 + 用户菜单 -->
+    <div id="top-right-controls" style="position:fixed;top:12px;right:16px;z-index:100;display:flex;align-items:center;gap:4px">
+        <button id="settings-btn" class="btn-icon" title="设置" style="opacity:0.7">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+        </button>
+    <div id="user-menu" style="position:relative">
         <button id="user-menu-btn" class="btn-icon" title="用户菜单" style="opacity:0.7">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
         </button>
@@ -55,6 +59,7 @@
                 登出
             </button>
         </div>
+    </div>
     </div>
 
     <div id="app">
@@ -274,6 +279,125 @@
                 </div>
             </div>
         </div>
+
+        <!-- 设置弹窗 -->
+        <div id="settings-modal" class="modal-overlay hidden">
+            <div class="modal-content settings-modal-content">
+                <div class="modal-title" style="justify-content:space-between">
+                    <span style="display:flex;align-items:center;gap:8px">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="20" height="20"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+                        设置
+                    </span>
+                    <span id="settings-config-path" style="font-size:var(--text-xs);color:var(--text-3);font-weight:normal"></span>
+                </div>
+                <div class="modal-body settings-body">
+                    <!-- Providers -->
+                    <div class="settings-section">
+                        <div class="settings-section-title">
+                            Providers
+                            <button id="settings-add-provider" class="btn btn-secondary btn-sm" style="margin-left:auto">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+                                添加
+                            </button>
+                        </div>
+                        <div id="settings-providers"></div>
+                    </div>
+
+                    <!-- 模型配置 -->
+                    <div class="settings-section">
+                        <div class="settings-section-title">模型配置</div>
+                        <div class="settings-grid">
+                            <div class="form-group">
+                                <label>主模型 (model_name)</label>
+                                <input type="text" id="settings-model-name" class="input" placeholder="provider/model, 逗号分隔多个" />
+                                <span class="settings-field-hint">格式: provider_name/model_id，多个用逗号分隔</span>
+                            </div>
+                            <div class="form-group">
+                                <label>轻量模型 (mini_model_name)</label>
+                                <input type="text" id="settings-mini-model" class="input" placeholder="provider/model, 逗号分隔多个" />
+                            </div>
+                            <div class="form-group">
+                                <label>多模态模型 (multimodal_model_name)</label>
+                                <input type="text" id="settings-multimodal-model" class="input" placeholder="provider/model, 逗号分隔多个" />
+                            </div>
+                            <div class="form-group">
+                                <label>TTS 模型</label>
+                                <input type="text" id="settings-tts-model" class="input" placeholder="tts 模型名" />
+                            </div>
+                            <div class="form-group">
+                                <label>ASR 模型</label>
+                                <input type="text" id="settings-asr-model" class="input" placeholder="asr 模型名" />
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 生成参数 -->
+                    <div class="settings-section">
+                        <div class="settings-section-title">生成参数</div>
+                        <div class="settings-grid settings-grid-3">
+                            <div class="form-group">
+                                <label>Temperature</label>
+                                <input type="number" id="settings-temperature" class="input" step="0.1" min="0" max="2" placeholder="留空使用默认" />
+                            </div>
+                            <div class="form-group">
+                                <label>Max Tokens</label>
+                                <input type="number" id="settings-max-tokens" class="input" min="1" max="1000000" placeholder="留空使用默认" />
+                            </div>
+                            <div class="form-group">
+                                <label>Top P</label>
+                                <input type="number" id="settings-top-p" class="input" step="0.1" min="0" max="1" placeholder="留空使用默认" />
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 其他配置 -->
+                    <div class="settings-section">
+                        <div class="settings-section-title">其他</div>
+                        <div class="settings-grid">
+                            <div class="form-group">
+                                <label>全局代理 (proxy_url)</label>
+                                <input type="text" id="settings-proxy" class="input" placeholder="http://proxy:port" />
+                            </div>
+                            <div class="form-group">
+                                <label>GitHub Token</label>
+                                <div class="settings-key-input-wrap">
+                                    <input type="password" id="settings-github-token" class="input" placeholder="ghp_..." />
+                                    <button class="btn-icon settings-eye-btn" onclick="Settings._toggleEye('settings-github-token')" title="显示/隐藏">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label>Exa API Key</label>
+                                <div class="settings-key-input-wrap">
+                                    <input type="password" id="settings-exa-key" class="input" placeholder="EXA_API_KEY" />
+                                    <button class="btn-icon settings-eye-btn" onclick="Settings._toggleEye('settings-exa-key')" title="显示/隐藏">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label>最大子代理深度</label>
+                                <input type="number" id="settings-max-depth" class="input" min="1" max="20" />
+                            </div>
+                            <div class="form-group">
+                                <label>权限超时 (秒)</label>
+                                <input type="number" id="settings-perm-timeout" class="input" min="1" max="3600" />
+                            </div>
+                        </div>
+                    </div>
+
+                    <p id="settings-error" style="color:var(--red);font-size:var(--text-sm);min-height:18px"></p>
+                </div>
+                <div class="modal-actions">
+                    <button class="btn btn-secondary" onclick="Settings.close()">取消</button>
+                    <button id="settings-save-btn" class="btn btn-primary">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+                        保存
+                    </button>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- JS -->
@@ -291,6 +415,7 @@
     <script src="/static/js/nav.js"></script>
     <script src="/static/js/audio.js?v=tts-seq-2"></script>
     <script src="/static/js/voice.js"></script>
+    <script src="/static/js/settings.js"></script>
     <script src="/static/js/app.js"></script>
 
     <!-- 加载遮罩 -->

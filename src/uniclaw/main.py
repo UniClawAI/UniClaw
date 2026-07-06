@@ -31,14 +31,11 @@ def main():
     )
     args = parser.parse_args()
 
-    # 首次启动引导(console 和 wechat 共用)
-    if is_first_launch():
-        asyncio.run(run_setup_wizard())
-
     # 后台预加载 tiktoken 编码器,避免首次调用时同步下载阻塞事件循环
     def _preload_tiktoken():
         try:
             import tiktoken
+
             tiktoken.get_encoding("cl100k_base")
             tiktoken.get_encoding("o200k_base")
         except Exception:
@@ -73,6 +70,9 @@ def main():
     if args.mode == "webui":
         asyncio.run(launch(host=args.host, port=args.port))
     else:
+        # 首次启动引导(console 和 wechat 共用)
+        if is_first_launch():
+            asyncio.run(run_setup_wizard())
         asyncio.run(launch())
 
 
