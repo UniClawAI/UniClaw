@@ -164,7 +164,7 @@ async def _mcp_add(
     await ok(f"✓ 已添加 MCP 服务器: {name}", config)
     await info("正在刷新 MCP 工具...", config)
     manager.refresh()
-    tools_count = len(manager.get_mcp_tools())
+    tools_count = len(await manager.get_mcp_tools())
     await ok(f"✓ 已加载 {tools_count} 个 MCP 工具", config)
     return True
 
@@ -443,6 +443,6 @@ async def _mcp_refresh(manager, config: AppConfig = None) -> bool:
     """
     await info("正在刷新 MCP 工具...", config)
     manager.refresh()
-    tools_count = len(manager.get_mcp_tools())
+    tools_count = len(await manager.get_mcp_tools())
     await ok(f"✓ 已加载 {tools_count} 个 MCP 工具", config)
     return True
