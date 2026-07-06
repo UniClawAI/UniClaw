@@ -24,14 +24,25 @@ def get_cu_system_prompt(config) -> str:
 # Computer Use 模式
 你现在拥有完整的计算机控制能力,可以直接操作鼠标、键盘和屏幕。
 
-## ⚠️ 必须遵守的操作顺序
-**禁止直接截图猜坐标。** 每次操作桌面应用前,必须先用 `{cu_get_elements.name}` 获取元素列表,
-再用 `{cu_interact.name}` 操作。截图仅作为最后手段。
+## ⚠️ 核心原则:先观察,再操作
 
-1. `{cu_get_elements.name}` → 获取可交互元素列表
-2. `{cu_find_element.name}` → 精确查找某个元素的详细信息
-3. `{cu_interact.name}` → 操作元素(click/invoke/focus/type)
-4. `{cu_get_elements.name}` → 验证操作结果
+**不要想当然。** 你无法"记住"屏幕上有什么——每次需要操作前,
+必须用 `{cu_get_elements.name}` 实际查看当前界面状态。
+
+**禁止凭想象操作。** 不要假设"某个按钮应该在某个位置"或"上次看到过这个元素所以现在还在"。
+窗口可能被关闭、覆盖、弹出对话框、页面已跳转。唯一可信的是实时查询结果。
+
+## ⚠️ 必须遵守的操作顺序
+每次操作桌面应用前,按以下步骤执行:
+
+1. **探测** → `{cu_get_elements.name}(max_depth=1)` 列出顶层窗口,确认目标窗口存在
+2. **深入** → `{cu_get_elements.name}(scope_name="窗口标题", max_depth=5)` 获取目标窗口内的元素
+3. **精确定位** → `{cu_find_element.name}` 查看某个元素的详细信息
+4. **操作** → `{cu_interact.name}` 执行 click/invoke/focus/type
+5. **验证** → `{cu_get_elements.name}` 确认操作是否生效(界面是否变化)
+
+**逐层查找,不要贪多。** 一次查太多元素会返回大量无关信息。
+先用 `max_depth=1` 看窗口列表,再用 `scope_name` 聚焦到目标窗口深入查找。
 
 **重要:** 通过 `{cu_get_elements.name}` / `{cu_find_element.name}` 找到的元素,
 必须用 `{cu_interact.name}` 操作,不要用 `{cu_mouse_click.name}` / `{cu_mouse_double_click.name}`。

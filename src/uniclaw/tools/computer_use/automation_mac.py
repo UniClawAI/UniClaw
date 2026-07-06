@@ -318,13 +318,23 @@ def _format_label(element) -> str:
 def cu_get_elements(
     max_depth: int = DEFAULT_MAX_DEPTH,
 ) -> str:
-    """获取当前焦点应用中所有可交互的 UI 元素列表(macOS Accessibility)。
+    """获取当前焦点应用中可交互的 UI 元素(macOS Accessibility)。
 
-    通过 Apple Accessibility API 遍历当前应用的 UI 树,返回按钮、
-    输入框、菜单等元素的角色、标题和屏幕位置。
+    推荐逐层查找法,避免一次返回过多无关元素:
+
+    第一步 — 浅层探测(设 max_depth=1~2):
+      cu_get_elements(max_depth=1)
+      → 返回顶层容器(窗口、面板、工具栏),确定目标区域。
+
+    第二步 — 深入目标区域(设 max_depth=4~6):
+      cu_get_elements(max_depth=5)
+      → 遍历更深层级,找到具体的按钮、输入框等。
+
+    如果元素太多,可配合 cu_find_element(name=...) 精确定位。
 
     Args:
         max_depth: UI 树遍历深度,越小越快,默认 5。
+            第一步探测用 1~2,深入查找用 4~6。
 
     Returns:
         可交互元素的结构化列表。

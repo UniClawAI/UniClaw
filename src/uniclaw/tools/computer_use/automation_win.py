@@ -9,24 +9,6 @@ from uniclaw.tools.base import tool
 
 from uniclaw.utils.constants import TOOL_ERROR
 
-# 可交互控件类型集合
-_INTERACTIVE_TYPES = {
-    auto.ControlType.ButtonControl,
-    auto.ControlType.EditControl,
-    auto.ControlType.ComboBoxControl,
-    auto.ControlType.CheckBoxControl,
-    auto.ControlType.RadioButtonControl,
-    auto.ControlType.TabItemControl,
-    auto.ControlType.TreeItemControl,
-    auto.ControlType.ListItemControl,
-    auto.ControlType.MenuItemControl,
-    auto.ControlType.HyperlinkControl,
-    auto.ControlType.SliderControl,
-    auto.ControlType.SpinnerControl,
-    auto.ControlType.SplitButtonControl,
-    auto.ControlType.CalendarControl,
-}
-
 # ControlType 数值 → 可读名称(去掉 "Control" 后缀)
 _TYPE_NAMES = {
     auto.ControlType.ButtonControl: "Button",
@@ -64,9 +46,9 @@ _TYPE_NAMES = {
 }
 
 # 默认最大遍历深度
-DEFAULT_MAX_DEPTH = 5
+DEFAULT_MAX_DEPTH = 3
 # 最大返回元素数
-MAX_ELEMENTS = 200
+MAX_ELEMENTS = 300
 
 
 def _get_type_name(control_type: int) -> str:
@@ -92,31 +74,6 @@ def _get_type_name(control_type: int) -> str:
     if full_name.endswith("Control"):
         return full_name[:-7]
     return full_name
-
-
-def _is_interactive(control) -> bool:
-    """
-    判断控件是否为可交互类型。
-
-    根据控件的 ControlType 判断其是否属于可交互控件。
-    预定义的可交互类型(如按钮、编辑框、复选框等)直接判定为可交互；
-    对于 CustomControl 类型,若其具有 AutomationId 或 Name,也视为可交互。
-
-    Args:
-        control: uiautomation 控件对象,需具备 ControlType、AutomationId、Name 属性。
-
-    Returns:
-        bool: 若控件为可交互类型返回 True,否则返回 False。
-    """
-    ct = control.ControlType
-    # 若控件类型在预定义的可交互类型集合中,直接返回 True
-    if ct in _INTERACTIVE_TYPES:
-        return True
-    # 自定义控件(CustomControl)若携带 AutomationId 或 Name,
-    # 说明开发者为其赋予了可识别身份,也视为可交互
-    if ct == auto.ControlType.CustomControl and (control.AutomationId or control.Name):
-        return True
-    return False
 
 
 def _get_states(control) -> list[str]:
@@ -163,23 +120,28 @@ def get_interactive_elements(
     max_depth: int = DEFAULT_MAX_DEPTH,
     scope_name: Optional[str] = None,
 ) -> str:
-    """从桌面根节点获取所有可交互元素列表。
+    """从桌面根节点获取 UI 元素列表(不做角色过滤,返回所有控件)。
+
+    只跳过完全空的控件(无名称、无 AutomationId、无屏幕位置)。
+    返回结果包含按钮、输入框、文本标签、面板、树节点等所有控件,
+    避免过滤导致关键信息丢失。
 
     Args:
-        max_depth: 最大遍历深度,默认 5。
-        scope_name: 可选的窗口名称,限定在某个窗口范围内遍历。
+        max_depth: 最大遍历深度,默认 3。探测窗口用 1,深入查找用 3~5。
+        scope_name: 限定在某个窗口/容器范围内遍历(按标题子串匹配)。
 
     Returns:
-        格式化的元素列表文本。
+        格式化的元素列表文本(按窗口分组)。
     """
     root = auto.GetRootControl()
 
     # 限定在某个范围内
     if scope_name:
         try:
-            scope = root.FindFirstControl(
-                maxSearchSeconds=3,
-                Name=scope_name,
+            scope = auto.FindControl(
+                root,
+                lambda ctrl, depth: scope_name in (ctrl.Name or ""),
+                maxDepth=max_depth,
             )
             if scope:
                 root = scope
@@ -188,14 +150,14 @@ def get_interactive_elements(
         except Exception as e:
             return f"{TOOL_ERROR}: 查找窗口失败: {e}"
 
-    # 遍历 UI 树
+    # 遍历 UI 树 — 返回所有控件
     elements = []
     try:
-        for control, depth in auto.WalkControl(root, maxDepth=max_depth, includeTop=False):
+        for control, depth in auto.WalkControl(
+            root, maxDepth=max_depth, includeTop=False
+        ):
             if len(elements) >= MAX_ELEMENTS:
                 break
-            if not _is_interactive(control):
-                continue
 
             try:
                 name = control.Name or ""
@@ -218,6 +180,7 @@ def get_interactive_elements(
             except Exception:
                 pass
 
+            # 跳过完全空的控件(无名称、无ID、无位置)
             if not rect and not name and not aid:
                 continue
 
@@ -226,22 +189,26 @@ def get_interactive_elements(
             # 记录所属窗口名
             try:
                 win_ctrl = control
-                while win_ctrl and win_ctrl.ControlType != auto.ControlType.WindowControl:
+                while (
+                    win_ctrl and win_ctrl.ControlType != auto.ControlType.WindowControl
+                ):
                     win_ctrl = win_ctrl.GetParentControl()
                 window_name = win_ctrl.Name if win_ctrl else ""
             except Exception:
                 window_name = ""
 
-            elements.append({
-                "index": len(elements),
-                "type": type_name,
-                "name": name,
-                "automation_id": aid,
-                "rect": rect,
-                "states": states,
-                "depth": depth,
-                "window": window_name,
-            })
+            elements.append(
+                {
+                    "index": len(elements),
+                    "type": type_name,
+                    "name": name,
+                    "automation_id": aid,
+                    "rect": rect,
+                    "states": states,
+                    "depth": depth,
+                    "window": window_name,
+                }
+            )
     except Exception as e:
         return f"{TOOL_ERROR}: 遍历 UI 树失败: {e}"
 
@@ -262,7 +229,7 @@ def get_interactive_elements(
             if el["name"]:
                 parts.append(f'name="{el["name"]}"')
             if el["automation_id"]:
-                parts.append(f'id="{el["automation_id"]}"')
+                parts.append(f'automation_id="{el["automation_id"]}"')
             if el["rect"]:
                 l, t, w, h = el["rect"]
                 parts.append(f"bounds=({l},{t},{w}x{h})")
@@ -275,6 +242,163 @@ def get_interactive_elements(
     if len(result) > 50000:
         return result[:50000] + f"\n\n...已省略 {len(result) - 50000} 个字符"
     return result
+
+
+def _get_native_handle(ctrl) -> int:
+    """获取控件所属父窗口的原生 HWND。
+
+    沿 UIA 树向上找到父窗口(WindowControl),它必定有窗口句柄。
+    """
+    try:
+        last_hwnd = 0
+        parent = ctrl.GetParentControl()
+        while parent:
+            try:
+                if parent.ControlType == auto.ControlType.WindowControl:
+                    last_hwnd = int(parent.NativeWindowHandle)
+                ctrl = parent
+                parent = ctrl.GetParentControl()
+            except Exception:
+                pass
+        return last_hwnd
+    except Exception as e:
+        print(e)
+    return 0
+
+
+def _get_top_level_hwnd(hwnd: int) -> int:
+    """沿 HWND 父链走到最顶级窗口。"""
+    import ctypes
+
+    user32 = ctypes.windll.user32
+    while hwnd:
+        parent = user32.GetParent(hwnd)
+        if not parent:
+            break
+        hwnd = parent
+    return hwnd
+
+
+def _get_window_title(hwnd: int) -> str:
+    """获取指定 HWND 的窗口标题。"""
+    import ctypes
+
+    buf = ctypes.create_unicode_buffer(256)
+    ctypes.windll.user32.GetWindowTextW(hwnd, buf, 256)
+    return buf.value
+
+
+def _activate_window(hwnd: int) -> None:
+    """激活指定窗口。最小化时先恢复,再通过 Alt 按键 + SetForegroundWindow 激活。"""
+    import ctypes
+
+    user32 = ctypes.windll.user32
+    SW_RESTORE = 9
+
+    # 已经是前台窗口则跳过
+    if user32.GetForegroundWindow() == hwnd:
+        return
+
+    # 最小化的窗口先恢复
+    if user32.IsIconic(hwnd):
+        user32.ShowWindow(hwnd, SW_RESTORE)
+
+    # 模拟 Alt 按键获取输入权限,再激活
+    VK_MENU = 0x12
+    KEYEVENTF_EXTENDEDKEY = 0x01
+    KEYEVENTF_KEYUP = 0x02
+    user32.keybd_event(VK_MENU, 0, KEYEVENTF_EXTENDEDKEY, 0)
+    user32.keybd_event(VK_MENU, 0, KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP, 0)
+    user32.SetForegroundWindow(hwnd)
+
+
+def _check_occluded(ctrl) -> Optional[str]:
+    """用 WindowFromPoint 检测元素中心点是否被其他窗口遮挡。
+
+    Returns:
+        None 表示未被遮挡;否则返回错误消息。
+    """
+    import ctypes
+
+    try:
+        r = ctrl.BoundingRectangle
+        if not r or r.width() <= 0 or r.height() <= 0:
+            return None  # 无法获取位置,跳过遮挡检测
+
+        # 元素中心点
+        cx = int((r.left + r.right) / 2)
+        cy = int((r.top + r.bottom) / 2)
+
+        user32 = ctypes.windll.user32
+        # WindowFromPoint 在 64 位下接收 c_int64 而非 POINT 结构体
+        packed_point = ctypes.c_int64(cx | (cy << 32))
+
+        # 获取元素所属顶层窗口句柄
+        ctrl_hwnd = _get_native_handle(ctrl)
+        if not ctrl_hwnd:
+            return None  # 无法获取,放行
+
+        # 被其他窗口遮挡,尝试激活所属窗口
+        try:
+            _activate_window(ctrl_hwnd)
+            import time
+
+            time.sleep(0.3)
+        except Exception:
+            pass
+
+        # 重新检测
+        hwnd_at_point = user32.WindowFromPoint(packed_point)
+        if hwnd_at_point:
+            top_at_point = _get_top_level_hwnd(hwnd_at_point)
+            if top_at_point == ctrl_hwnd:
+                return None  # 聚焦后已解除遮挡
+            # 获取遮挡窗口标题
+            blocker_title = _get_window_title(top_at_point)
+            blocker_info = f'("{blocker_title}")' if blocker_title else ""
+            return f"{TOOL_ERROR}: 元素 {_element_label(ctrl)} 被窗口{blocker_info}遮挡,请先关闭或最小化该窗口"
+
+        return f"{TOOL_ERROR}: 元素 {_element_label(ctrl)} 被遮挡且无法识别遮挡窗口"
+    except Exception:
+        return None  # 检测失败时不阻塞操作
+
+
+def _ensure_visible(ctrl) -> Optional[str]:
+    """确保控件可见且未被遮挡。
+
+    检查顺序:离屏 → 边界矩形 → 遮挡(WindowFromPoint)。
+
+    Returns:
+        None 表示可见可操作;否则返回错误/警告消息。
+    """
+    # 1. 离屏检查
+    try:
+        if ctrl.IsOffscreen:
+            hwnd = _get_native_handle(ctrl)
+            if hwnd:
+                _activate_window(hwnd)
+                import time
+
+                time.sleep(0.3)
+            if ctrl.IsOffscreen:
+                return f"{TOOL_ERROR}: 元素 {_element_label(ctrl)} 不在屏幕上(最小化或滚动出视野)"
+    except Exception:
+        pass
+
+    # 2. 边界矩形检查
+    try:
+        r = ctrl.BoundingRectangle
+        if not r or r.width() <= 0 or r.height() <= 0:
+            return None  # 无法获取位置,跳过后续检查
+    except Exception:
+        pass
+
+    # 3. 遮挡检查
+    occluded = _check_occluded(ctrl)
+    if occluded:
+        return occluded
+
+    return None
 
 
 def find_element(
@@ -296,20 +420,19 @@ def find_element(
         return f"{TOOL_ERROR}: 必须提供 name 或 automation_id"
 
     root = auto.GetRootControl()
+    ct = _resolve_control_type(control_type) if control_type else None
 
-    # 构建搜索参数
-    kwargs = {"maxSearchSeconds": 5}
-    if name:
-        kwargs["Name"] = name
-    if automation_id:
-        kwargs["AutomationId"] = automation_id
-    if control_type:
-        ct = _resolve_control_type(control_type)
-        if ct:
-            kwargs["ControlType"] = ct
+    def _match(ctrl, depth):
+        if name and name not in (ctrl.Name or ""):
+            return False
+        if automation_id and automation_id != (ctrl.AutomationId or ""):
+            return False
+        if ct and ctrl.ControlType != ct:
+            return False
+        return True
 
     try:
-        ctrl = root.FindFirstControl(**kwargs)
+        ctrl = auto.FindControl(root, _match, maxDepth=20)
         if not ctrl:
             return f"{TOOL_ERROR}: 未找到匹配的元素"
 
@@ -324,8 +447,6 @@ def interact(
     control_type: Optional[str] = None,
     action: str = "click",
     type_text: Optional[str] = None,
-    x: Optional[int] = None,
-    y: Optional[int] = None,
 ) -> str:
     """与桌面 UI 元素交互。
 
@@ -335,50 +456,53 @@ def interact(
         control_type: 控件类型名称。
         action: 操作类型 — click/invoke/focus/type。
         type_text: 要输入的文本(action="type" 时使用)。
-        x: 降级坐标 x(UIA 找不到时使用)。
-        y: 降级坐标 y(UIA 找不到时使用)。
 
     Returns:
         操作结果消息。
     """
-    import pyautogui
-
+    action = action.lower()
     # 尝试 UIA 定位
     ctrl = None
     if name or automation_id:
         root = auto.GetRootControl()
-        kwargs = {"maxSearchSeconds": 3}
-        if name:
-            kwargs["Name"] = name
-        if automation_id:
-            kwargs["AutomationId"] = automation_id
-        if control_type:
-            ct = _resolve_control_type(control_type)
-            if ct:
-                kwargs["ControlType"] = ct
+        ct = _resolve_control_type(control_type) if control_type else None
+
+        def _match(c, d):
+            if name and name not in (c.Name or ""):
+                return False
+            if automation_id and automation_id != (c.AutomationId or ""):
+                return False
+            if ct and c.ControlType != ct:
+                return False
+            return True
+
         try:
-            ctrl = root.FindFirstControl(**kwargs)
+            ctrl = auto.FindControl(root, _match, maxDepth=20)
         except Exception:
             ctrl = None
 
     # UIA 未找到,降级到坐标
     if ctrl is None:
-        if x is not None and y is not None:
-            return _fallback_action(x, y, action, type_text)
-        return f"{TOOL_ERROR}: 未找到匹配的元素,且未提供降级坐标"
+        return f"{TOOL_ERROR}: 未找到匹配的元素"
 
     # 执行 UIA 操作
     try:
+        # 点击/调用前检查元素可见性
+        if action in ("click", "invoke"):
+            warn = _ensure_visible(ctrl)
+            if warn:
+                return warn
+
         if action == "click":
-            ctrl.ClickInput()
+            ctrl.Click()
             return f"已点击元素: {_element_label(ctrl)}"
         elif action == "invoke":
             try:
-                ctrl.Invoke()
+                pattern = ctrl.GetPattern(auto.PatternId.InvokePattern)
+                pattern.Invoke()
                 return f"已调用元素: {_element_label(ctrl)}"
             except Exception:
-                # 降级到 ClickInput
-                ctrl.ClickInput()
+                ctrl.Click()
                 return f"已点击元素(Invoke 不支持): {_element_label(ctrl)}"
         elif action == "focus":
             ctrl.SetFocus()
@@ -388,10 +512,11 @@ def interact(
                 return f"{TOOL_ERROR}: action='type' 时必须提供 type_text"
             ctrl.SetFocus()
             import time
+
             time.sleep(0.1)
             # 优先使用 ValuePattern
             try:
-                vp = ctrl.GetValuePattern()
+                vp = ctrl.GetPattern(auto.PatternId.ValuePattern)
                 vp.SetValue(type_text)
                 return f"已通过 ValuePattern 输入文本到: {_element_label(ctrl)}"
             except Exception:
@@ -400,33 +525,11 @@ def interact(
             ctrl.SendKeys(type_text)
             return f"已通过 SendKeys 输入文本到: {_element_label(ctrl)}"
         else:
-            return f"{TOOL_ERROR}: 不支持的操作 '{action}',可选: click/invoke/focus/type"
+            return (
+                f"{TOOL_ERROR}: 不支持的操作 '{action}',可选: click/invoke/focus/type"
+            )
     except Exception as e:
         return f"{TOOL_ERROR}: 操作失败: {e}"
-
-
-def _fallback_action(x: int, y: int, action: str, type_text: Optional[str]) -> str:
-    """坐标降级操作。"""
-    import pyautogui
-
-    if action == "click":
-        pyautogui.click(x, y)
-        return f"已降级到坐标点击: ({x}, {y})"
-    elif action == "invoke":
-        pyautogui.click(x, y)
-        return f"已降级到坐标点击(invoke): ({x}, {y})"
-    elif action == "focus":
-        pyautogui.click(x, y)
-        return f"已降级到坐标点击(focus): ({x}, {y})"
-    elif action == "type":
-        pyautogui.click(x, y)
-        if type_text:
-            import time
-            time.sleep(0.1)
-            pyautogui.typewrite(type_text, interval=0.05)
-        return f"已降级到坐标输入: ({x}, {y})"
-    else:
-        return f"{TOOL_ERROR}: 不支持的操作 '{action}'"
 
 
 def _element_label(ctrl) -> str:
@@ -570,17 +673,32 @@ def cu_get_elements(
     max_depth: int = DEFAULT_MAX_DEPTH,
     scope_name: Optional[str] = None,
 ) -> str:
-    """获取桌面上所有可交互的 UI 元素列表(Windows UI Automation)。
+    """获取桌面上的 UI 元素(Windows UI Automation)。
 
-    从桌面根节点遍历所有窗口,返回按钮、输入框、菜单等元素的名称、
-    类型、AutomationId、屏幕位置和所属窗口。按窗口分组显示。
+    返回所有控件(按钮、输入框、文本标签、面板、树节点等),
+    跳过完全空的控件。
+
+    推荐逐层查找法,避免一次返回过多无关元素:
+
+    第一步 — 列出顶层窗口(设 max_depth=1):
+      cu_get_elements(max_depth=1)
+      → 返回桌面下所有窗口标题,确定目标窗口名称。
+
+    第二步 — 深入目标窗口(设 scope_name + 较大 max_depth):
+      cu_get_elements(scope_name="窗口标题", max_depth=5)
+      → 只遍历该窗口内部,返回其中的所有控件。
+
+    如果第二步元素仍然太多,可以再次缩小 scope_name 到某个子容器
+    (如工具栏、面板),进一步聚焦。
 
     Args:
-        max_depth: UI 树遍历深度,越小越快,默认 5。
-        scope_name: 限定在某个窗口范围内遍历(按窗口标题匹配)。
+        max_depth: UI 树遍历深度,越小越快,默认 3。
+            第一步探测用 1,深入查找用 3~5。
+        scope_name: 限定在某个窗口/容器范围内遍历(按标题子串匹配)。
+            从第一步结果中选取目标窗口名填入。
 
     Returns:
-        可交互元素的结构化列表(按窗口分组)。
+        UI 元素的结构化列表(按窗口分组),包含类型、名称、位置等信息。
     """
     return get_interactive_elements(max_depth, scope_name)
 
@@ -614,8 +732,6 @@ def cu_interact(
     control_type: Optional[str] = None,
     action: str = "click",
     type_text: Optional[str] = None,
-    x: Optional[int] = None,
-    y: Optional[int] = None,
 ) -> str:
     """与 Windows 桌面应用中的 UI 元素交互。
 
@@ -628,10 +744,8 @@ def cu_interact(
         control_type: 控件类型,如 "Button"、"Edit"。
         action: 操作类型 — click(点击)、invoke(调用)、focus(聚焦)、type(输入文本)。
         type_text: 要输入的文本,仅 action="type" 时使用。
-        x: 降级坐标 x,UIA 找不到元素时使用鼠标点击。
-        y: 降级坐标 y,UIA 找不到元素时使用鼠标点击。
 
     Returns:
         操作结果消息。
     """
-    return interact(name, automation_id, control_type, action, type_text, x, y)
+    return interact(name, automation_id, control_type, action, type_text)
