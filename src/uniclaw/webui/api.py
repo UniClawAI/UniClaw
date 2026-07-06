@@ -303,6 +303,7 @@ async def get_config(session_id: str):
             "voice_available": bool(config.tts_model and config.audio),
             "voice_mode": config.voice_mode,
             "asr_available": bool(config.asr_model),
+            "computer_use_enabled": config.computer_use_enabled,
         }
         # todolist 信息
         todo = config.current_agent.todolist
@@ -330,6 +331,8 @@ async def update_config(body: ConfigUpdate):
             from uniclaw.config import Permissions
 
             config.permission_mode = Permissions(body.permission_mode)
+        if body.computer_use_enabled is not None:
+            config.computer_use_enabled = body.computer_use_enabled
         if body.temperature is not None:
             config.temperature = body.temperature
         if body.max_tokens is not None:

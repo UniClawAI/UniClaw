@@ -50,6 +50,7 @@ class ConfigUpdate(BaseModel):
     permission_mode: str | None = None
     temperature: float | None = None
     max_tokens: int | None = None
+    computer_use_enabled: bool | None = None
 
     @field_validator("temperature")
     @classmethod

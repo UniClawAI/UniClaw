@@ -522,9 +522,33 @@ const SessionPanel = {
                 VoiceMode.setEnabled(d.voice_mode || false);
                 VoiceMode.setAsrAvailable(d.asr_available || false);
             }
+            // Computer Use 状态
+            const cuEl = document.getElementById('status-cu');
+            if (cuEl) {
+                cuEl.style.display = '';
+                cuEl.classList.toggle('active', d.computer_use_enabled);
+                cuEl.title = d.computer_use_enabled ? 'Computer Use 已启用 (点击关闭)' : 'Computer Use 已关闭 (点击启用)';
+                cuEl.onclick = () => this._toggleComputerUse(!d.computer_use_enabled);
+            }
         }).catch(() => {});
         this._fetchContextUsage(sessionId);
         this._startContextTimer(sessionId);
+    },
+
+    async _toggleComputerUse(enabled) {
+        const sid = this.activeSessionId;
+        if (!sid) return;
+        try {
+            await fetch('/api/config', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: sid, computer_use_enabled: enabled }),
+            });
+            Utils.showToast(enabled ? 'Computer Use 已启用 (下条消息生效)' : 'Computer Use 已关闭 (下条消息生效)');
+            this._updateStatusBar(this.activeProjectDir, sid);
+        } catch (_) {
+            Utils.showError('切换失败');
+        }
     },
 
     _fetchContextUsage(sid) {

@@ -77,6 +77,24 @@
     filter: brightness(1.2);
 }
 
+/* Computer Use 状态 */
+.status-cu {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: var(--r-full);
+    background: var(--bg-inset);
+    color: var(--text-3);
+    cursor: pointer;
+    transition: all var(--duration-fast, 0.15s) var(--ease, ease);
+}
+.status-cu.active {
+    background: var(--neon-purple-dim, rgba(168, 85, 247, 0.15));
+    color: var(--neon-purple, #a855f7);
+}
+.status-cu:hover {
+    filter: brightness(1.2);
+}
+
 /* 语音模式状态 */
 .status-voice {
     transition: all var(--duration-fast, 0.15s) var(--ease, ease);
