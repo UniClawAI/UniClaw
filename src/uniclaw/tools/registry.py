@@ -450,7 +450,7 @@ class ToolRegistry:
 # ── search_tools 元工具 ──────────────────────────────────────
 
 MAX_LOADED_EXTENDED = 25  # 扩展工具最大加载数量
-EXTENDED_TOOL_ENERGY_MAX = 10  # 扩展工具初始能量,每轮对话-1,被调用/搜索到恢复,为0时卸载
+EXTENDED_TOOL_ENERGY_MAX = 30  # 扩展工具初始能量,每轮对话-1,被调用/搜索到恢复,为0时卸载
 
 
 class ExtendedToolManager:
