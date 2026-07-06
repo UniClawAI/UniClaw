@@ -15,7 +15,9 @@
 - 💬 **微信集成**: 支持通过 iLink Bot 协议接入微信,实现移动端交互
 - 🧠 **记忆系统**: 持久化记忆管理,支持用户偏好、项目信息和反馈记录
 - 👥 **多智能体协作**: 全异步架构支持创建和管理多个专业智能体,实现任务分工协作和智能体间通信
-- 🖥️ **计算机控制**: 屏幕截图、鼠标/键盘自动化操作,支持全局热键 (Ctrl+U) 切换
+- 🖥️ **计算机控制**: 屏幕截图、鼠标/键盘自动化操作,支持全局热键 (Ctrl+U) 切换,`/cu` 命令一键开关
+- 🔊 **语音合成**: TTS 文本转语音,支持多种风格/情绪/方言控制,`/voice` 命令切换语音模式
+- 📤 **文件发送**: AI 可将生成的文件发送给用户,WebUI 提供下载链接,微信直接发送
 - 📋 **任务清单**: 任务分解与跟踪,支持自动进度管理和状态流转
 - ⏰ **定时任务**: 支持创建和管理周期性或一次性定时任务,支持权限模式配置和 monitor 监控类型(命令退出码触发 agent)
 - 🔄 **后台进程**: 启动和管理后台进程(异步实现),支持输入/输出流控制
@@ -261,6 +263,7 @@ UniClaw 的斜杠命令支持子命令自动补全,输入命令后按空格会�
 | `/task` | `list`, `output`, `stop`, `matched` |
 | `/overseer` | `start`, `stop` |
 | `/checkpoint` | `create`, `pop`, `apply`, `delete`, `diff` |
+| `/goal` | `clear`, `status` |
 | `/export` | `markdown`, `json` |
 
 #### 使用示例
@@ -640,6 +643,8 @@ monitor_start("npm run dev", name="开发服务器")
 | `/btw` | 附带信息,不影响当前对话流程 | `/btw 这段代码很好` |
 | `/name` | 为当前会话命名 | `/name 重构讨论` |
 | `/overseer` | 监工模式,自动审核任务执行质量 | `/overseer` |
+| `/voice` | 切换语音模式(需配置 TTS) | `/voice on`、`/voice off` |
+| `/cu` | 切换 Computer Use 模式 | `/cu on`、`/cu off` |
 | `/exit` 或 `/quit` | 退出程序 | `/exit` |
 
 > 💡 **提示**: 所有命令在控制台和微信模式下都可用。输入 `/help` 可查看完整的命令列表,输入 `/<命令> help` 可查看特定命令的详细说明(如 `/memory help`)。未匹配到内置命令时,会自动回退到技能查找系统。
@@ -1040,6 +1045,30 @@ UniClaw 提供了丰富的内置工具,AI 助手可以自动调用这些工具�
   - Linux: 使用 notify-send
   - 适用于任务完成、长时间运行后的结果提醒等场景
 
+#### 语音合成工具 🔊
+
+- **text_to_speech** - 文本转语音(需配置 `tts_model` 和 `audio`)
+  - 支持风格标签: 在文本中嵌入 `(开心)你好` `(唱歌)歌词` 等风格控制
+  - 支持基础情绪(开心/悲伤/愤怒)、复合情绪(怅然/欣慰/无奈)
+  - 支持语调(温柔/高冷/活泼)、音色(磁性/醇厚/清亮)
+  - 支持方言(东北话/四川话/粤语)和角色扮演
+  - 支持音频标签: `[笑声]` `[呼吸]` `[停顿]` 等细粒度控制
+  - 可保存为文件或直接播放
+
+> 💡 **提示**: 语音模式可通过 `/voice on|off` 命令切换。配置 `tts_model` 和 `audio` 后自动启用。
+
+#### 文件发送工具 📤
+
+- **send_file** - 发送文件给用户
+  - WebUI 模式: 生成临时下载链接(默认 30 分钟有效)
+  - 微信模式: 通过 Bot 直接发送文件
+  - Console 模式: 不支持(忽略)
+
+#### AI 自助帮助工具 📖
+
+- **list_slash_commands** - 列出所有可用的斜杠命令及其简要说明
+- **get_command_help** - 获取指定斜杠命令的详细帮助信息(参数、用法示例等)
+
 #### 计划模式工具 📝
 
 - **enter_plan_mode** - 进入计划模式,AI 暂不执行工具调用,仅规划方案
@@ -1108,7 +1137,7 @@ UniClaw/
     │   ├── types.py        # Provider/Effort 枚举,StreamChunk,AIMessage
     │   └── common.py       # get_provider(),compare_urls()
     │
-    ├── commands/           # 斜杠命令系统 📝 (22 个命令 + 6 个别名)
+    ├── commands/           # 斜杠命令系统 📝 (28 个命令 + 6 个别名)
     │   ├── __init__.py     # 命令注册中心(COMMANDS dict)
     │   ├── session.py      # 会话管理(clear/compact/export)
     │   ├── resume.py       # 会话恢复(list/del/search/fork) 💬
@@ -1129,7 +1158,9 @@ UniClaw/
     │   ├── overseer.py     # 监工模式
     │   ├── goal.py         # 目标停止条件 🎯
     │   ├── checkpoint.py   # Git 检查点
-    │   └── undo.py         # 撤销文件编辑
+    │   ├── undo.py         # 撤销文件编辑
+    │   ├── voice.py        # 语音模式切换 🔊
+    │   └── cu.py           # Computer Use 模式切换 🖥️
     │
     ├── console/            # 控制台交互界面(prompt_toolkit REPL)
     │   ├── launcher.py     # 控制台启动器
@@ -1173,7 +1204,10 @@ UniClaw/
     │   ├── todolist/       # 任务清单 + 监工 + 目标系统 📋
     │   ├── monitor/        # 后台进程管理(异步) 🔄
     │   ├── session/        # 会话持久化 + 历史消息检索 + 自动保存 💬
-    │   └── hooks/          # Hook 系统 🪝
+    │   ├── hooks/          # Hook 系统 🪝
+    │   ├── tts/            # 语音合成(TTS) 🔊
+    │   ├── help.py         # AI 自助帮助工具 📖
+    │   └── send_file.py    # 文件发送工具 📤
     │
     ├── utils/              # 实用工具
     │   ├── checkpoint.py   # 文件快照检查点系统
@@ -1197,7 +1231,7 @@ UniClaw/
 
 采用核心/扩展工具分层架构,对齐 Anthropic 的 `defer_loading` 模式：
 
-- **核心工具** (19 个): 始终加载完整 schema,是 prompt 缓存的稳定前缀
+- **核心工具** (18 个): 始终加载完整 schema,是 prompt 缓存的稳定前缀
   - 文件系统: `Read`, `Write`, `Edit`, `Glob`
   - Shell: `Bash`, `Grep`
   - Web: `webFetch`, `webSearch`, `platform_search`
@@ -1788,6 +1822,38 @@ A: 使用 `/task` 命令管理后台任务，后台任务由 AI 通过 `monitor_
 - 启动开发服务器：`monitor_start("npm run dev", name="开发服务器")`
 - 后台构建项目：`monitor_start("cargo build", watch_pattern="Finished")`
 - 下载大文件：`monitor_start("curl -O https://example.com/file.zip")`
+
+### Q: 如何使用语音模式？
+
+A: 语音模式需要配置 TTS 模型和音频设备：
+
+1. **配置 TTS**: 在 `settings.json` 中配置 `tts_model` 和 `audio`
+2. **切换模式**: 使用 `/voice on` 开启语音模式,`/voice off` 关闭
+3. **查看状态**: `/voice` 查看当前语音模式状态
+
+语音模式下 AI 的回复会自动转换为语音播放。支持多种风格控制(开心/悲伤/温柔等)和方言(东北话/四川话/粤语)。
+
+### Q: Computer Use 模式是什么？
+
+A: Computer Use 模式允许 AI 直接控制您的计算机：
+
+- **屏幕截图**: AI 可以截取屏幕内容进行分析
+- **鼠标控制**: 移动、点击、拖拽等操作
+- **键盘控制**: 输入文本、按键等
+
+使用 `/cu on` 开启,`/cu off` 关闭。开启后可通过 **Ctrl+U** 全局热键快速切换。
+
+> ⚠️ **安全提示**: Computer Use 模式下 AI 可以直接操作您的计算机,请在可信环境中使用。
+
+### Q: 如何让 AI 发送文件给我？
+
+A: AI 可以通过 `send_file` 工具将文件发送给您：
+
+- **WebUI 模式**: AI 会生成临时下载链接,点击即可下载(默认 30 分钟有效)
+- **微信模式**: AI 会通过微信直接发送文件
+- **Console 模式**: 暂不支持文件发送
+
+示例对话: "帮我生成一个 Python 脚本,然后发送给我"
 
 ## 📄 许可证
 
