@@ -9,8 +9,13 @@ const WS = {
 
     /** 连接 WebSocket */
     connect() {
+        const token = localStorage.getItem('uniclaw_token');
+        if (!token) {
+            window.location.href = '/login.html';
+            return;
+        }
         const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const url = `${protocol}//${location.host}/ws`;
+        const url = `${protocol}//${location.host}/ws?token=${encodeURIComponent(token)}`;
         this.socket = new WebSocket(url);
 
         this.socket.onopen = () => {
@@ -30,11 +35,18 @@ const WS = {
             }
         };
 
-        this.socket.onclose = () => {
+        this.socket.onclose = (e) => {
             console.log('[WS] 连接断开');
             this.connected = false;
             this._updateStatus(false);
             this._emit('disconnected');
+            // 认证失败,跳转登录页
+            if (e.code === 4001) {
+                localStorage.removeItem('uniclaw_token');
+                document.cookie = 'uniclaw_token=;path=/;max-age=0';
+                window.location.href = '/login.html';
+                return;
+            }
             this._scheduleReconnect();
         };
 
@@ -88,6 +100,7 @@ const WS = {
     /** 自动重连 */
     _scheduleReconnect() {
         if (this.reconnectTimer) return;
+        if (!localStorage.getItem('uniclaw_token')) return;
         this.reconnectTimer = setTimeout(() => {
             this.reconnectTimer = null;
             console.log('[WS] 尝试重连...');

@@ -1,7 +1,29 @@
 /* app.js — 应用主入口 */
 
 const App = {
-    init() {
+    async init() {
+        // 认证检查：无 token 或 token 无效则跳转登录页
+        const token = localStorage.getItem('uniclaw_token');
+        if (!token) {
+            window.location.href = '/login.html';
+            return;
+        }
+        try {
+            const resp = await fetch('/api/auth/me', {
+                headers: { 'Authorization': 'Bearer ' + token }
+            });
+            if (!resp.ok) {
+                localStorage.removeItem('uniclaw_token');
+                window.location.href = '/login.html';
+                return;
+            }
+        } catch (e) {
+            // 网络错误,仍尝试连接(可能是中间件未就绪）
+        }
+
+        // 初始化修改密码弹窗
+        this._initChangePwd();
+
         WS.connect();
         Chat.init();
         Input.init();
@@ -21,6 +43,49 @@ const App = {
 
         Utils.hideLoading();
         console.log('[App] UniClaw WebUI 已初始化');
+    },
+
+    /** SHA-256 哈希（密码不过明文） */
+    async _sha256(str) {
+        const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+        return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+    },
+
+    /** 初始化修改密码弹窗逻辑 */
+    _initChangePwd() {
+        const btn = document.getElementById('change-pwd-confirm-btn');
+        if (!btn) return;
+        btn.addEventListener('click', async () => {
+            const newPwd = document.getElementById('new-pwd-input').value;
+            const confirm = document.getElementById('new-pwd-confirm').value;
+            const errEl = document.getElementById('change-pwd-error');
+            errEl.textContent = '';
+            if (newPwd.length < 6) { errEl.textContent = '密码至少 6 位'; return; }
+            if (newPwd !== confirm) { errEl.textContent = '两次输入不一致'; return; }
+            try {
+                const hashedPwd = await this._sha256(newPwd);
+                const token = localStorage.getItem('uniclaw_token');
+                const resp = await fetch('/api/auth/change-password', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + token,
+                    },
+                    body: JSON.stringify({ new_password: hashedPwd })
+                });
+                if (!resp.ok) {
+                    const data = await resp.json();
+                    errEl.textContent = data.detail || '修改失败';
+                    return;
+                }
+                document.getElementById('change-pwd-modal').classList.add('hidden');
+                document.getElementById('new-pwd-input').value = '';
+                document.getElementById('new-pwd-confirm').value = '';
+                Utils.showToast('密码已修改');
+            } catch (e) {
+                errEl.textContent = '网络错误';
+            }
+        });
     },
 
     _bindGlobalEvents() {
@@ -49,6 +114,19 @@ const App = {
             document.getElementById('status-model').textContent = '未连接';
             Utils.showError('连接断开,正在重连...');
         });
+
+        // 用户菜单下拉
+        const menuBtn = document.getElementById('user-menu-btn');
+        const menuDropdown = document.getElementById('user-menu-dropdown');
+        if (menuBtn && menuDropdown) {
+            menuBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                menuDropdown.style.display = menuDropdown.style.display === 'none' ? 'block' : 'none';
+            });
+            document.addEventListener('click', () => {
+                menuDropdown.style.display = 'none';
+            });
+        }
     },
 
     _bindDragHandles() {

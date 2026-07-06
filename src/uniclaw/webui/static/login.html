@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UniClaw — 登录</title>
+    <link rel="icon" href="/assets/logo.png" type="image/png">
+    <link rel="stylesheet" href="/static/css/variables.css">
+    <link rel="stylesheet" href="/static/css/auth.css">
+</head>
+<body>
+    <div class="auth-card">
+        <div class="auth-logo">
+            <div style="font-size:48px;margin-bottom:12px">🦞</div>
+            <h1>UniClaw</h1>
+            <p id="subtitle">智能代理系统</p>
+        </div>
+
+        <form class="auth-form" id="authForm">
+            <div class="form-group">
+                <label for="username">用户名</label>
+                <input type="text" id="username" name="username" placeholder="请输入用户名" autocomplete="username" required>
+            </div>
+
+            <div class="form-group">
+                <label for="password">密码</label>
+                <input type="password" id="password" name="password" placeholder="请输入密码" autocomplete="current-password" required>
+            </div>
+
+            <div class="form-group" id="confirmGroup" style="display:none;">
+                <label for="confirmPassword">确认密码</label>
+                <input type="password" id="confirmPassword" name="confirmPassword" placeholder="再次输入密码" autocomplete="new-password">
+            </div>
+
+            <p class="error-msg" id="errorMsg"></p>
+
+            <button type="submit" class="btn-submit" id="submitBtn">登录</button>
+        </form>
+
+        <p class="mode-hint" id="modeHint"></p>
+    </div>
+
+    <script>
+    (function() {
+        const form = document.getElementById('authForm');
+        const usernameInput = document.getElementById('username');
+        const passwordInput = document.getElementById('password');
+        const confirmGroup = document.getElementById('confirmGroup');
+        const confirmInput = document.getElementById('confirmPassword');
+        const submitBtn = document.getElementById('submitBtn');
+        const errorMsg = document.getElementById('errorMsg');
+        const subtitle = document.getElementById('subtitle');
+        const modeHint = document.getElementById('modeHint');
+
+        let isRegisterMode = false;
+
+        /** SHA-256 哈希（密码不过明文） */
+        async function sha256(str) {
+            const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+            return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+        }
+
+        // 检查是否已有账号
+        async function checkStatus() {
+            try {
+                const resp = await fetch('/api/auth/status');
+                const data = await resp.json();
+
+                if (data.has_user) {
+                    // 登录模式
+                    isRegisterMode = false;
+                    subtitle.textContent = '智能代理系统';
+                    submitBtn.textContent = '登录';
+                    confirmGroup.style.display = 'none';
+                    confirmInput.required = false;
+                    modeHint.textContent = '';
+                    document.title = 'UniClaw — 登录';
+                } else {
+                    // 注册模式(首次）
+                    isRegisterMode = true;
+                    subtitle.textContent = '首次使用,请创建管理员账号';
+                    submitBtn.textContent = '创建账号';
+                    confirmGroup.style.display = 'flex';
+                    confirmInput.required = true;
+                    modeHint.textContent = '';
+                    document.title = 'UniClaw — 创建账号';
+                }
+            } catch (e) {
+                errorMsg.textContent = '无法连接到服务器';
+            }
+        }
+
+        // 提交表单
+        form.addEventListener('submit', async function(e) {
+            e.preventDefault();
+            errorMsg.textContent = '';
+
+            const username = usernameInput.value.trim();
+            const password = passwordInput.value;
+
+            if (!username || !password) {
+                errorMsg.textContent = '请输入用户名和密码';
+                return;
+            }
+
+            if (isRegisterMode) {
+                const confirm = confirmInput.value;
+                if (password !== confirm) {
+                    errorMsg.textContent = '两次输入的密码不一致';
+                    return;
+                }
+                if (password.length < 6) {
+                    errorMsg.textContent = '密码至少 6 位';
+                    return;
+                }
+            }
+
+            submitBtn.disabled = true;
+            submitBtn.textContent = isRegisterMode ? '创建中...' : '登录中...';
+
+            try {
+                const hashedPwd = await sha256(password);
+                const endpoint = isRegisterMode ? '/api/auth/register' : '/api/auth/login';
+                const resp = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password: hashedPwd })
+                });
+
+                const data = await resp.json();
+
+                if (!resp.ok) {
+                    errorMsg.textContent = data.detail || '操作失败';
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = isRegisterMode ? '创建账号' : '登录';
+                    return;
+                }
+
+                // 保存 token
+                localStorage.setItem('uniclaw_token', data.token);
+                // 跳转主页
+                window.location.href = '/';
+
+            } catch (e) {
+                errorMsg.textContent = '网络错误,请重试';
+                submitBtn.disabled = false;
+                submitBtn.textContent = isRegisterMode ? '创建账号' : '登录';
+            }
+        });
+
+        // 页面加载时检查状态
+        // 如果已有 token,先验证是否有效
+        async function init() {
+            const token = localStorage.getItem('uniclaw_token');
+            if (token) {
+                try {
+                    const resp = await fetch('/api/auth/me', {
+                        headers: { 'Authorization': 'Bearer ' + token }
+                    });
+                    if (resp.ok) {
+                        // token 有效,直接跳转主页
+                        window.location.href = '/';
+                        return;
+                    }
+                } catch (e) {
+                    // token 无效,继续显示登录页
+                }
+                localStorage.removeItem('uniclaw_token');
+            }
+            checkStatus();
+        }
+
+        init();
+    })();
+    </script>
+</body>
+</html>
