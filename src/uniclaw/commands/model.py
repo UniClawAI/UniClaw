@@ -212,15 +212,20 @@ async def cmd_model(args: str, config: AppConfig) -> bool:
             model_keyword = args  # provider 不存在,整体作为关键词
         search_providers = config.providers
 
-    # 收集模型列表
-    all_models: list[str] = []
-    for name, profile in search_providers.items():
+    # 并发获取所有 provider 的模型列表
+    import asyncio
+
+    async def _fetch(name: str, profile) -> list[str]:
         try:
             models = await _fetch_provider_models(profile)
             models.sort()
-            all_models.extend(f"{name}/{m}" for m in models)
+            return [f"{name}/{m}" for m in models]
         except Exception:
-            pass
+            return []
+
+    tasks = [_fetch(name, p) for name, p in search_providers.items()]
+    results = await asyncio.gather(*tasks)
+    all_models = [m for group in results for m in group]
 
     if not all_models:
         await warn("未找到可用模型,请使用 /model <provider>/<模型名称> 直接指定", config)
