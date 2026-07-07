@@ -386,8 +386,16 @@ async def get_settings():
             return [v] if v else []
         return list(v) if isinstance(v, list) else []
 
+    # 判断是项目级还是用户级配置
+    try:
+        path.relative_to(Path.cwd())
+        config_level = "project"
+    except ValueError:
+        config_level = "user"
+
     return {
         "config_path": str(path),
+        "config_level": config_level,
         "model_name": _norm_model(data.get("model_name")),
         "mini_model_name": _norm_model(data.get("mini_model_name")),
         "multimodal_model_name": _norm_model(data.get("multimodal_model_name")),

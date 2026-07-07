@@ -69,7 +69,8 @@ const Settings = {
     _render() {
         const d = this._data;
 
-        document.getElementById('settings-config-path').textContent = d.config_path || '';
+        const levelText = d.config_level === 'project' ? 'project' : 'user';
+        document.getElementById('settings-config-path').textContent = levelText;
 
         // providers
         this._providers = {};
@@ -92,8 +93,8 @@ const Settings = {
 
         // 其他
         document.getElementById('settings-proxy').value = d.proxy_url || '';
-        document.getElementById('settings-github-token').value = d.GITHUB_TOKEN || '';
-        document.getElementById('settings-exa-key').value = d.EXA_API_KEY || '';
+        document.getElementById('settings-github-token').value = '';
+        document.getElementById('settings-exa-key').value = '';
         document.getElementById('settings-max-depth').value = d.max_agent_depth ?? 2;
         document.getElementById('settings-perm-timeout').value = d.permission_timeout ?? 300;
     },
@@ -241,7 +242,13 @@ const Settings = {
 
         // 绑定点击事件
         dropdown.querySelectorAll('.combo-item').forEach(item => {
+            // 阻止 mousedown 防止 input 失焦导致 dropdown 重新渲染
+            item.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+            });
             item.addEventListener('click', (e) => {
+                e.preventDefault();
                 e.stopPropagation();
                 const value = item.dataset.value;
                 if (item.classList.contains('selected')) {
@@ -251,7 +258,6 @@ const Settings = {
                 }
                 const input = container.querySelector('.combo-input');
                 input.value = '';
-                input.focus();
                 this._renderDropdown(container, '');
             });
         });
@@ -275,6 +281,9 @@ const Settings = {
     _addTag(container, value) {
         const isMulti = container.dataset.multi === 'true';
         const selectedEl = container.querySelector('.combo-selected');
+
+        // 同步表单中的最新 providers（用户可能改了名称）
+        this._syncProviders();
 
         // 验证：非自定义输入必须存在于模型列表中
         if (!this._isValidModel(value, container)) {
@@ -407,6 +416,9 @@ const Settings = {
         const container = document.getElementById('settings-providers');
         container.innerHTML = '';
 
+        // 添加按钮（始终绑定）
+        document.getElementById('settings-add-provider').onclick = () => this._addProvider();
+
         const names = Object.keys(this._providers);
         if (names.length === 0) {
             container.innerHTML = '<div style="color:var(--text-3);font-size:var(--text-sm);padding:8px 0">暂无 Provider，点击上方"添加"按钮创建</div>';
@@ -472,8 +484,6 @@ const Settings = {
 
             container.appendChild(card);
         }
-
-        document.getElementById('settings-add-provider').onclick = () => this._addProvider();
     },
 
     _addProvider() {
@@ -585,8 +595,8 @@ const Settings = {
             max_tokens: maxTokens !== '' ? parseInt(maxTokens) : null,
             top_p: topP !== '' ? parseFloat(topP) : null,
             proxy_url: document.getElementById('settings-proxy').value.trim(),
-            GITHUB_TOKEN: document.getElementById('settings-github-token').value,
-            EXA_API_KEY: document.getElementById('settings-exa-key').value,
+            GITHUB_TOKEN: document.getElementById('settings-github-token').value || this._data.GITHUB_TOKEN || '',
+            EXA_API_KEY: document.getElementById('settings-exa-key').value || this._data.EXA_API_KEY || '',
             max_agent_depth: parseInt(document.getElementById('settings-max-depth').value) || 3,
             permission_timeout: parseInt(document.getElementById('settings-perm-timeout').value) || 300,
             providers,
@@ -639,19 +649,14 @@ const Settings = {
         return div.innerHTML;
     },
 
-    /** 从当前表单的 providers 刷新模型列表 */
-    async _refreshModels() {
-        const refreshBtn = document.getElementById('settings-refresh-models');
-        refreshBtn.disabled = true;
-        refreshBtn.textContent = '刷新中...';
-
-        // 从表单收集当前 providers
-        const currentProviders = {};
+    /** 从表单同步最新的 providers 到 this._providers */
+    _syncProviders() {
+        const providers = {};
         const cards = document.querySelectorAll('.settings-provider-card');
         for (const card of cards) {
             const name = card.querySelector('.settings-p-name').value.trim();
             if (!name) continue;
-            currentProviders[name] = {
+            providers[name] = {
                 name,
                 protocol: card.querySelector('.settings-p-protocol').value,
                 api_key: card.querySelector('.settings-p-key').value,
@@ -659,7 +664,16 @@ const Settings = {
                 proxy_url: card.querySelector('.settings-p-proxy').value.trim(),
             };
         }
+        this._providers = providers;
+    },
 
+    /** 从当前表单的 providers 刷新模型列表 */
+    async _refreshModels() {
+        const refreshBtn = document.getElementById('settings-refresh-models');
+        refreshBtn.disabled = true;
+        refreshBtn.textContent = '刷新中...';
+
+        this._syncProviders();
         const proxyUrl = document.getElementById('settings-proxy').value.trim();
 
         try {
@@ -670,7 +684,7 @@ const Settings = {
                     'Content-Type': 'application/json',
                     'Authorization': 'Bearer ' + token,
                 },
-                body: JSON.stringify({ providers: currentProviders, proxy_url: proxyUrl }),
+                body: JSON.stringify({ providers: this._providers, proxy_url: proxyUrl }),
             });
             if (resp.ok) {
                 const data = await resp.json();
