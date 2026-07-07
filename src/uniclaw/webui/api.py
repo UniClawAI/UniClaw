@@ -416,13 +416,17 @@ async def update_settings(body: SettingsUpdate):
     original_github = original.get("GITHUB_TOKEN", "")
     original_exa = original.get("EXA_API_KEY", "")
 
-    # 恢复脱敏的 API key
+    # 恢复脱敏的 API key（通过 masked key 的前4后4字符匹配原始 key）
+    masked_to_original: dict[str, str] = {}
+    for p in original_providers.values():
+        orig_key = p.get("api_key", "")
+        if orig_key:
+            masked_to_original[_mask_key(orig_key)] = orig_key
     providers = {}
     for name, p in body.providers.items():
         api_key = p.api_key
-        # 如果 key 包含 **** 且原 provider 存在,恢复原始值
-        if "****" in api_key and name in original_providers:
-            api_key = original_providers[name].get("api_key", "")
+        if "****" in api_key:
+            api_key = masked_to_original.get(api_key, api_key)
         providers[name] = {
             "name": p.name or name,
             "protocol": p.protocol,
