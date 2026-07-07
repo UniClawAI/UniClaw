@@ -482,6 +482,69 @@ async def update_settings(body: SettingsUpdate):
     return {"ok": True, "config_path": str(path)}
 
 
+@router.post("/models")
+async def list_models(body: dict):
+    """从各 provider 获取可用模型列表(使用前端传入的 providers)。
+
+    body 格式: {"providers": {name: {protocol, api_key, base_url, proxy_url}, ...}, "proxy_url": "..."}
+    api_key 中的 **** 脱敏值会从 settings.json 恢复。
+    """
+    import asyncio
+    from uniclaw.commands.model import fetch_openai_models, fetch_anthropic_models
+
+    _, original = _read_settings_raw()
+    original_providers = original.get("providers", {})
+    global_proxy = body.get("proxy_url") or original.get("proxy_url") or ""
+
+    raw_providers = body.get("providers", {})
+    # 恢复脱敏的 api_key（通过 masked key 的前4后4字符匹配原始 key）
+    masked_to_original: dict[str, str] = {}
+    for p in original_providers.values():
+        orig_key = p.get("api_key", "")
+        if orig_key:
+            masked_to_original[_mask_key(orig_key)] = orig_key
+    providers: dict[str, dict] = {}
+    for name, p in raw_providers.items():
+        api_key = p.get("api_key", "")
+        if "****" in api_key:
+            api_key = masked_to_original.get(api_key, api_key)
+        providers[name] = {**p, "api_key": api_key}
+
+    all_models: list[dict] = []
+    providers_info: dict[str, dict] = {}
+
+    async def _fetch(name: str, p: dict) -> list[dict]:
+        protocol = (p.get("protocol") or "openai").lower()
+        base_url = p.get("base_url") or ""
+        api_key = p.get("api_key") or ""
+        proxy = p.get("proxy_url") or global_proxy or ""
+        if not base_url or not api_key:
+            return []
+        try:
+            if protocol == "anthropic":
+                ids = await fetch_anthropic_models(base_url, api_key, proxy)
+            else:
+                ids = await fetch_openai_models(base_url, api_key, proxy)
+            ids.sort()
+            return [{"id": mid, "provider": name} for mid in ids]
+        except Exception:
+            return []
+
+    tasks = [_fetch(name, p) for name, p in providers.items()]
+    if tasks:
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for result in results:
+            if isinstance(result, list):
+                all_models.extend(result)
+
+    # 标记无法获取模型列表的 provider 为 allow_custom
+    fetched_providers = {m["provider"] for m in all_models}
+    for name in providers:
+        providers_info[name] = {"allow_custom": name not in fetched_providers}
+
+    return {"models": all_models, "providers_info": providers_info}
+
+
 @router.post("/asr")
 async def transcribe_audio(body: AsrRequest):
     """语音识别：将音频转为文字。"""

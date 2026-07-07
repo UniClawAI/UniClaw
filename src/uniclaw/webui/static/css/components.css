@@ -1003,6 +1003,200 @@ textarea.input {
     height: 12px;
 }
 
+/* Combo 下拉选择组件 */
+.combo-container {
+    position: relative;
+    min-height: 36px;
+    background: var(--bg-inset);
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    padding: 4px 8px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+    cursor: text;
+    transition: border-color var(--duration-fast) var(--ease);
+}
+
+.combo-container:hover {
+    border-color: var(--border-hover);
+}
+
+.combo-container:focus-within {
+    border-color: var(--border-focus);
+    box-shadow: 0 0 0 2px var(--accent-dim);
+}
+
+.combo-selected {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    flex: 0 0 100%;
+}
+
+.combo-selected:empty {
+    display: none;
+}
+
+.combo-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: var(--accent-dim);
+    color: var(--text-accent);
+    border: 1px solid var(--accent-dim);
+    border-radius: var(--r-xs);
+    padding: 2px 6px;
+    font-size: var(--text-xs);
+    font-family: var(--font-mono);
+    white-space: nowrap;
+    user-select: none;
+}
+
+.combo-tag .combo-tag-drag {
+    cursor: grab;
+    opacity: 0.5;
+    font-size: 10px;
+    line-height: 1;
+}
+
+.combo-tag .combo-tag-drag:hover {
+    opacity: 1;
+}
+
+.combo-tag .combo-tag-remove {
+    cursor: pointer;
+    opacity: 0.6;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    transition: opacity 0.15s, background 0.15s;
+}
+
+.combo-tag .combo-tag-remove:hover {
+    opacity: 1;
+    background: var(--red-dim);
+    color: var(--red);
+}
+
+.combo-input-wrap {
+    position: relative;
+    flex: 0 0 100%;
+    min-width: 80px;
+}
+
+.combo-input {
+    width: 100%;
+    border: none;
+    outline: none;
+    background: transparent;
+    color: var(--text-0);
+    font-size: var(--text-sm);
+    font-family: inherit;
+    padding: 2px 0;
+}
+
+.combo-input::placeholder {
+    color: var(--text-3);
+}
+
+.combo-dropdown {
+    display: none;
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    max-height: 240px;
+    overflow-y: auto;
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    z-index: 100;
+}
+
+.combo-dropdown.open {
+    display: block;
+}
+
+.combo-dropdown-group {
+    padding: 4px 0;
+}
+
+.combo-dropdown-group-label {
+    padding: 4px 10px;
+    font-size: var(--text-xs);
+    color: var(--text-3);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.combo-item {
+    padding: 6px 10px;
+    font-size: var(--text-sm);
+    color: var(--text-1);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: background var(--duration-fast) var(--ease);
+}
+
+.combo-item:hover {
+    background: var(--bg-4);
+}
+
+.combo-item.selected {
+    color: var(--text-3);
+}
+
+.combo-item.selected::after {
+    content: '✓';
+    margin-left: auto;
+    color: var(--accent);
+    font-size: var(--text-xs);
+}
+
+.combo-item .combo-item-provider {
+    font-size: var(--text-xs);
+    color: var(--text-3);
+    margin-left: auto;
+}
+
+.combo-item.selected .combo-item-provider {
+    display: none;
+}
+
+.combo-empty {
+    padding: 10px;
+    text-align: center;
+    color: var(--text-3);
+    font-size: var(--text-sm);
+}
+
+.combo-input-hint {
+    padding: 4px 10px;
+    font-size: var(--text-xs);
+    color: var(--text-3);
+    border-top: 1px solid var(--border);
+    font-style: italic;
+}
+
+/* 拖拽排序样式 */
+.combo-tag.dragging {
+    opacity: 0.4;
+}
+
+.combo-tag.drag-over {
+    border-color: var(--accent);
+    background: var(--accent-glow);
+}
+
 /* 响应式 */
 @media (max-width: 640px) {
     .settings-grid {

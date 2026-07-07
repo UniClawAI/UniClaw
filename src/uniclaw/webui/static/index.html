@@ -305,28 +305,64 @@
 
                     <!-- 模型配置 -->
                     <div class="settings-section">
-                        <div class="settings-section-title">模型配置</div>
+                        <div class="settings-section-title">
+                            模型配置
+                            <button id="settings-refresh-models" class="btn btn-secondary btn-sm" style="margin-left:auto" title="刷新模型列表">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
+                                刷新
+                            </button>
+                        </div>
                         <div class="settings-grid">
                             <div class="form-group">
                                 <label>主模型 (model_name)</label>
-                                <input type="text" id="settings-model-name" class="input" placeholder="provider/model, 逗号分隔多个" />
-                                <span class="settings-field-hint">格式: provider_name/model_id，多个用逗号分隔</span>
+                                <div class="combo-container" id="settings-model-name" data-multi="true">
+                                    <div class="combo-selected"></div>
+                                    <div class="combo-input-wrap">
+                                        <input type="text" class="combo-input" placeholder="搜索模型..." />
+                                        <div class="combo-dropdown"></div>
+                                    </div>
+                                </div>
+                                <span class="settings-field-hint">第一个为主模型，后续为降级模型，可拖拽排序</span>
                             </div>
                             <div class="form-group">
                                 <label>轻量模型 (mini_model_name)</label>
-                                <input type="text" id="settings-mini-model" class="input" placeholder="provider/model, 逗号分隔多个" />
+                                <div class="combo-container" id="settings-mini-model" data-multi="true">
+                                    <div class="combo-selected"></div>
+                                    <div class="combo-input-wrap">
+                                        <input type="text" class="combo-input" placeholder="搜索模型..." />
+                                        <div class="combo-dropdown"></div>
+                                    </div>
+                                </div>
                             </div>
                             <div class="form-group">
                                 <label>多模态模型 (multimodal_model_name)</label>
-                                <input type="text" id="settings-multimodal-model" class="input" placeholder="provider/model, 逗号分隔多个" />
+                                <div class="combo-container" id="settings-multimodal-model" data-multi="true">
+                                    <div class="combo-selected"></div>
+                                    <div class="combo-input-wrap">
+                                        <input type="text" class="combo-input" placeholder="搜索模型..." />
+                                        <div class="combo-dropdown"></div>
+                                    </div>
+                                </div>
                             </div>
                             <div class="form-group">
                                 <label>TTS 模型</label>
-                                <input type="text" id="settings-tts-model" class="input" placeholder="tts 模型名" />
+                                <div class="combo-container" id="settings-tts-model" data-multi="false">
+                                    <div class="combo-selected"></div>
+                                    <div class="combo-input-wrap">
+                                        <input type="text" class="combo-input" placeholder="搜索模型..." />
+                                        <div class="combo-dropdown"></div>
+                                    </div>
+                                </div>
                             </div>
                             <div class="form-group">
                                 <label>ASR 模型</label>
-                                <input type="text" id="settings-asr-model" class="input" placeholder="asr 模型名" />
+                                <div class="combo-container" id="settings-asr-model" data-multi="false">
+                                    <div class="combo-selected"></div>
+                                    <div class="combo-input-wrap">
+                                        <input type="text" class="combo-input" placeholder="搜索模型..." />
+                                        <div class="combo-dropdown"></div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>

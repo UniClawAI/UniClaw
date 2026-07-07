@@ -1,10 +1,13 @@
-/* settings.js — 全局设置弹窗 */
+/* settings.js — 全局设置弹窗（含 combo 下拉选择组件） */
 
 const Settings = {
-    _data: null,   // 从后端加载的原始数据
-    _providers: {}, // 当前编辑中的 providers
+    _data: null,        // 从后端加载的原始数据
+    _providers: {},     // 当前编辑中的 providers
+    _models: [],        // 从 /api/models 获取的模型列表
+    _providersInfo: {}, // 各 provider 的额外信息（如 allow_custom）
 
-    /** 打开设置弹窗 */
+    // ── 打开 / 关闭 ──────────────────────────────────────
+
     async open() {
         const modal = document.getElementById('settings-modal');
         const errEl = document.getElementById('settings-error');
@@ -13,33 +16,59 @@ const Settings = {
 
         try {
             const token = localStorage.getItem('uniclaw_token');
-            const resp = await fetch('/api/settings', {
-                headers: { 'Authorization': 'Bearer ' + token },
-            });
-            if (!resp.ok) {
-                const d = await resp.json();
+            const authHeaders = { 'Authorization': 'Bearer ' + token };
+
+            // 先加载 settings
+            const settingsResp = await fetch('/api/settings', { headers: authHeaders });
+            if (!settingsResp.ok) {
+                const d = await settingsResp.json();
                 errEl.textContent = d.detail || '加载失败';
                 return;
             }
-            this._data = await resp.json();
+            this._data = await settingsResp.json();
+
+            // 用 settings 中的 providers 请求模型列表
+            try {
+                const modelsResp = await fetch('/api/models', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', ...authHeaders },
+                    body: JSON.stringify({
+                        providers: this._data.providers || {},
+                        proxy_url: this._data.proxy_url || '',
+                    }),
+                });
+                if (modelsResp.ok) {
+                    const modelsData = await modelsResp.json();
+                    this._models = modelsData.models || [];
+                    this._providersInfo = modelsData.providers_info || {};
+                } else {
+                    this._models = [];
+                    this._providersInfo = {};
+                }
+            } catch {
+                this._models = [];
+                this._providersInfo = {};
+            }
+
             this._render();
         } catch (e) {
             errEl.textContent = '网络错误: ' + e.message;
         }
     },
 
-    /** 关闭弹窗 */
     close() {
         document.getElementById('settings-modal').classList.add('hidden');
         this._data = null;
         this._providers = {};
+        this._models = [];
+        this._providersInfo = {};
     },
 
-    /** 将数据渲染到表单 */
+    // ── 渲染表单 ─────────────────────────────────────────
+
     _render() {
         const d = this._data;
 
-        // config path
         document.getElementById('settings-config-path').textContent = d.config_path || '';
 
         // providers
@@ -49,12 +78,12 @@ const Settings = {
         }
         this._renderProviders();
 
-        // 模型字段：list → 逗号分隔字符串
-        document.getElementById('settings-model-name').value = (d.model_name || []).join(', ');
-        document.getElementById('settings-mini-model').value = (d.mini_model_name || []).join(', ');
-        document.getElementById('settings-multimodal-model').value = (d.multimodal_model_name || []).join(', ');
-        document.getElementById('settings-tts-model').value = d.tts_model || '';
-        document.getElementById('settings-asr-model').value = d.asr_model || '';
+        // 模型字段：初始化 combo 组件
+        this._initCombo('settings-model-name', d.model_name || []);
+        this._initCombo('settings-mini-model', d.mini_model_name || []);
+        this._initCombo('settings-multimodal-model', d.multimodal_model_name || []);
+        this._initCombo('settings-tts-model', d.tts_model ? [d.tts_model] : []);
+        this._initCombo('settings-asr-model', d.asr_model ? [d.asr_model] : []);
 
         // 生成参数
         document.getElementById('settings-temperature').value = d.temperature ?? '';
@@ -69,7 +98,311 @@ const Settings = {
         document.getElementById('settings-perm-timeout').value = d.permission_timeout ?? 300;
     },
 
-    /** 渲染 provider 卡片列表 */
+    // ── Combo 组件 ────────────────────────────────────────
+
+    /** 初始化一个 combo 容器 */
+    _initCombo(containerId, selectedValues) {
+        const container = document.getElementById(containerId);
+        if (!container) return;
+
+        const isMulti = container.dataset.multi === 'true';
+        const input = container.querySelector('.combo-input');
+        const dropdown = container.querySelector('.combo-dropdown');
+        const selectedEl = container.querySelector('.combo-selected');
+
+        // 清空
+        selectedEl.innerHTML = '';
+        input.value = '';
+        dropdown.innerHTML = '';
+        dropdown.classList.remove('open');
+
+        // 渲染已选标签
+        for (const val of selectedValues) {
+            if (val) this._addTag(container, val);
+        }
+
+        // 点击容器聚焦输入框
+        container.addEventListener('click', () => input.focus());
+
+        // 输入过滤
+        input.addEventListener('input', () => {
+            this._renderDropdown(container, input.value.trim());
+            dropdown.classList.add('open');
+        });
+
+        // 聚焦时打开下拉
+        input.addEventListener('focus', () => {
+            this._renderDropdown(container, input.value.trim());
+            dropdown.classList.add('open');
+        });
+
+        // 键盘事件
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                const text = input.value.trim();
+                if (text) {
+                    const added = this._addTag(container, text);
+                    if (added) {
+                        input.value = '';
+                        dropdown.classList.remove('open');
+                    }
+                }
+            } else if (e.key === 'Escape') {
+                dropdown.classList.remove('open');
+            } else if (e.key === 'Backspace' && !input.value) {
+                // 删除最后一个标签
+                const tags = selectedEl.querySelectorAll('.combo-tag');
+                if (tags.length > 0) {
+                    const last = tags[tags.length - 1];
+                    this._removeTag(container, last.dataset.value);
+                }
+            }
+        });
+
+        // 点击外部关闭下拉
+        document.addEventListener('click', (e) => {
+            if (!container.contains(e.target)) {
+                dropdown.classList.remove('open');
+            }
+        });
+    },
+
+    /** 渲染下拉列表 */
+    _renderDropdown(container, filter) {
+        const dropdown = container.querySelector('.combo-dropdown');
+        const selected = this._getComboValues(container);
+        const selectedSet = new Set(selected);
+        const isTtsAsr = ['settings-tts-model', 'settings-asr-model'].includes(container.id);
+        const filterLower = filter.toLowerCase();
+
+        // TTS/ASR: 只显示 OpenAI 协议的模型
+        let availableModels = this._models;
+        if (isTtsAsr) {
+            availableModels = this._models.filter(m => {
+                const info = this._providersInfo[m.provider];
+                return info && !info.allow_custom;
+            });
+        }
+
+        // 过滤
+        const filtered = filterLower
+            ? availableModels.filter(m => {
+                const fullId = m.provider + '/' + m.id;
+                return m.id.toLowerCase().includes(filterLower) ||
+                       m.provider.toLowerCase().includes(filterLower) ||
+                       fullId.toLowerCase().includes(filterLower);
+            })
+            : availableModels;
+
+        // 按 provider 分组
+        const groups = {};
+        for (const m of filtered) {
+            if (!groups[m.provider]) groups[m.provider] = [];
+            groups[m.provider].push(m);
+        }
+
+        // 构建 HTML
+        let html = '';
+        for (const [provider, models] of Object.entries(groups)) {
+            html += `<div class="combo-dropdown-group">`;
+            html += `<div class="combo-dropdown-group-label">${this._esc(provider)}</div>`;
+            for (const m of models) {
+                const fullId = provider + '/' + m.id;
+                const isSelected = selectedSet.has(fullId);
+                html += `<div class="combo-item${isSelected ? ' selected' : ''}" data-value="${this._esc(fullId)}">`;
+                html += `<span>${this._esc(m.id)}</span>`;
+                if (!isSelected) {
+                    html += `<span class="combo-item-provider">${this._esc(provider)}</span>`;
+                }
+                html += `</div>`;
+            }
+            html += `</div>`;
+        }
+
+        // 判断是否允许自定义输入
+        const allowCustom = this._allowCustomInput(container);
+        if (filter && allowCustom) {
+            // 检查是否已有完全匹配
+            const exactMatch = availableModels.some(m => {
+                const fullId = m.provider + '/' + m.id;
+                return fullId.toLowerCase() === filterLower;
+            });
+            if (!exactMatch) {
+                html += `<div class="combo-input-hint">按 Enter 添加自定义模型: ${this._esc(filter)}</div>`;
+            }
+        }
+
+        if (!html) {
+            html = `<div class="combo-empty">${filter ? '无匹配模型' : '暂无可用模型'}</div>`;
+        }
+
+        dropdown.innerHTML = html;
+
+        // 绑定点击事件
+        dropdown.querySelectorAll('.combo-item').forEach(item => {
+            item.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const value = item.dataset.value;
+                if (item.classList.contains('selected')) {
+                    this._removeTag(container, value);
+                } else {
+                    this._addTag(container, value);
+                }
+                const input = container.querySelector('.combo-input');
+                input.value = '';
+                input.focus();
+                this._renderDropdown(container, '');
+            });
+        });
+    },
+
+    /** 判断当前 combo 是否允许自定义输入 */
+    _allowCustomInput(container) {
+        const isTtsAsr = ['settings-tts-model', 'settings-asr-model'].includes(container.id);
+        if (isTtsAsr) {
+            // TTS/ASR：仅 OpenAI 协议，不允许自定义输入
+            return false;
+        }
+        // 主模型/轻量/多模态：只要有任一 provider 是 allow_custom（Anthropic）就允许
+        for (const info of Object.values(this._providersInfo)) {
+            if (info.allow_custom) return true;
+        }
+        return false;
+    },
+
+    /** 添加标签，返回是否成功添加 */
+    _addTag(container, value) {
+        const isMulti = container.dataset.multi === 'true';
+        const selectedEl = container.querySelector('.combo-selected');
+
+        // 验证：非自定义输入必须存在于模型列表中
+        if (!this._isValidModel(value, container)) {
+            return false;
+        }
+
+        // 单选模式：替换
+        if (!isMulti) {
+            selectedEl.innerHTML = '';
+        }
+
+        // 检查重复
+        const existing = selectedEl.querySelectorAll('.combo-tag');
+        for (const tag of existing) {
+            if (tag.dataset.value === value) return false;
+        }
+
+        // 创建标签
+        const tag = document.createElement('div');
+        tag.className = 'combo-tag';
+        tag.dataset.value = value;
+        tag.draggable = isMulti;
+
+        let tagHtml = '';
+        if (isMulti) {
+            tagHtml += `<span class="combo-tag-drag" title="拖拽排序">⋮⋮</span>`;
+        }
+        tagHtml += `<span class="combo-tag-text">${this._esc(this._formatModelDisplay(value))}</span>`;
+        tagHtml += `<span class="combo-tag-remove" title="移除">✕</span>`;
+        tag.innerHTML = tagHtml;
+
+        // 删除按钮
+        tag.querySelector('.combo-tag-remove').addEventListener('click', (e) => {
+            e.stopPropagation();
+            this._removeTag(container, value);
+        });
+
+        // 拖拽排序（多选模式）
+        if (isMulti) {
+            tag.addEventListener('dragstart', (e) => {
+                tag.classList.add('dragging');
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', value);
+            });
+            tag.addEventListener('dragend', () => tag.classList.remove('dragging'));
+            tag.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+                tag.classList.add('drag-over');
+            });
+            tag.addEventListener('dragleave', () => tag.classList.remove('drag-over'));
+            tag.addEventListener('drop', (e) => {
+                e.preventDefault();
+                tag.classList.remove('drag-over');
+                const fromValue = e.dataTransfer.getData('text/plain');
+                if (fromValue && fromValue !== value) {
+                    this._reorderTag(container, fromValue, value);
+                }
+            });
+        }
+
+        selectedEl.appendChild(tag);
+        return true;
+    },
+
+    /** 移除标签 */
+    _removeTag(container, value) {
+        const selectedEl = container.querySelector('.combo-selected');
+        const tags = selectedEl.querySelectorAll('.combo-tag');
+        for (const tag of tags) {
+            if (tag.dataset.value === value) {
+                tag.remove();
+                break;
+            }
+        }
+    },
+
+    /** 拖拽排序：将 fromValue 移动到 toValue 前面 */
+    _reorderTag(container, fromValue, toValue) {
+        const selectedEl = container.querySelector('.combo-selected');
+        const tags = Array.from(selectedEl.querySelectorAll('.combo-tag'));
+        const fromTag = tags.find(t => t.dataset.value === fromValue);
+        const toTag = tags.find(t => t.dataset.value === toValue);
+        if (fromTag && toTag) {
+            selectedEl.insertBefore(fromTag, toTag);
+        }
+    },
+
+    /** 验证模型名是否有效 */
+    _isValidModel(value, container) {
+        // 格式检查
+        if (!value.includes('/')) return false;
+
+        const providerName = value.split('/')[0];
+
+        // 检查是否存在于已配置的 providers
+        if (!this._providers[providerName]) return false;
+
+        const info = this._providersInfo[providerName];
+        const isTtsAsr = ['settings-tts-model', 'settings-asr-model'].includes(container.id);
+
+        // TTS/ASR：仅允许 OpenAI 协议（非 allow_custom）的 provider
+        if (isTtsAsr && info && info.allow_custom) return false;
+
+        // allow_custom 的 provider：自由输入
+        if (info && info.allow_custom) return true;
+
+        // 非 allow_custom 的 provider：必须在模型列表中
+        const modelId = value.split('/').slice(1).join('/');
+        return this._models.some(m => m.provider === providerName && m.id === modelId);
+    },
+
+    /** 格式化模型显示名 */
+    _formatModelDisplay(value) {
+        // 显示完整的 provider/model
+        return value;
+    },
+
+    /** 获取 combo 中所有已选值（按 DOM 顺序） */
+    _getComboValues(container) {
+        const selectedEl = container.querySelector('.combo-selected');
+        return Array.from(selectedEl.querySelectorAll('.combo-tag'))
+            .map(tag => tag.dataset.value)
+            .filter(Boolean);
+    },
+
+    // ── Provider 渲染（保持原逻辑） ──────────────────────
+
     _renderProviders() {
         const container = document.getElementById('settings-providers');
         container.innerHTML = '';
@@ -140,13 +473,10 @@ const Settings = {
             container.appendChild(card);
         }
 
-        // 添加按钮
         document.getElementById('settings-add-provider').onclick = () => this._addProvider();
     },
 
-    /** 添加新 provider */
     _addProvider() {
-        // 生成唯一名称
         let baseName = 'new-provider';
         let name = baseName;
         let i = 1;
@@ -164,7 +494,6 @@ const Settings = {
         };
         this._renderProviders();
 
-        // 滚动到底部并聚焦名称输入
         const container = document.getElementById('settings-providers');
         const lastCard = container.lastElementChild;
         if (lastCard) {
@@ -177,7 +506,8 @@ const Settings = {
         }
     },
 
-    /** 从表单收集数据并保存 */
+    // ── 保存 ──────────────────────────────────────────────
+
     async save() {
         const errEl = document.getElementById('settings-error');
         errEl.textContent = '';
@@ -198,7 +528,6 @@ const Settings = {
                 return;
             }
 
-            // 如果名称变了，检查冲突
             if (newName !== oldName && providers[newName]) {
                 errEl.textContent = `Provider 名称 "${newName}" 重复`;
                 return;
@@ -213,11 +542,12 @@ const Settings = {
             };
         }
 
-        // 解析模型名
-        const parseModels = (str) => str.split(',').map(s => s.trim()).filter(Boolean);
-        const modelName = parseModels(document.getElementById('settings-model-name').value);
-        const miniModel = parseModels(document.getElementById('settings-mini-model').value);
-        const multimodalModel = parseModels(document.getElementById('settings-multimodal-model').value);
+        // 从 combo 收集模型列表
+        const modelName = this._getComboValues(document.getElementById('settings-model-name'));
+        const miniModel = this._getComboValues(document.getElementById('settings-mini-model'));
+        const multimodalModel = this._getComboValues(document.getElementById('settings-multimodal-model'));
+        const ttsValues = this._getComboValues(document.getElementById('settings-tts-model'));
+        const asrValues = this._getComboValues(document.getElementById('settings-asr-model'));
 
         // 验证模型名的 provider 前缀
         const providerNames = new Set(Object.keys(providers));
@@ -225,6 +555,8 @@ const Settings = {
             ...modelName.map(m => ({ field: '主模型', value: m })),
             ...miniModel.map(m => ({ field: '轻量模型', value: m })),
             ...multimodalModel.map(m => ({ field: '多模态模型', value: m })),
+            ...ttsValues.map(m => ({ field: 'TTS 模型', value: m })),
+            ...asrValues.map(m => ({ field: 'ASR 模型', value: m })),
         ];
         for (const { field, value } of allModels) {
             if (!value.includes('/')) {
@@ -247,8 +579,8 @@ const Settings = {
             model_name: modelName,
             mini_model_name: miniModel,
             multimodal_model_name: multimodalModel,
-            tts_model: document.getElementById('settings-tts-model').value.trim(),
-            asr_model: document.getElementById('settings-asr-model').value.trim(),
+            tts_model: ttsValues[0] || '',
+            asr_model: asrValues[0] || '',
             temperature: temperature !== '' ? parseFloat(temperature) : null,
             max_tokens: maxTokens !== '' ? parseInt(maxTokens) : null,
             top_p: topP !== '' ? parseFloat(topP) : null,
@@ -292,7 +624,8 @@ const Settings = {
         }
     },
 
-    /** 切换密码可见性 */
+    // ── 工具方法 ──────────────────────────────────────────
+
     _toggleEye(inputId) {
         const input = document.getElementById(inputId);
         if (input) {
@@ -300,11 +633,71 @@ const Settings = {
         }
     },
 
-    /** HTML 转义 */
     _esc(str) {
         const div = document.createElement('div');
         div.textContent = str;
         return div.innerHTML;
+    },
+
+    /** 从当前表单的 providers 刷新模型列表 */
+    async _refreshModels() {
+        const refreshBtn = document.getElementById('settings-refresh-models');
+        refreshBtn.disabled = true;
+        refreshBtn.textContent = '刷新中...';
+
+        // 从表单收集当前 providers
+        const currentProviders = {};
+        const cards = document.querySelectorAll('.settings-provider-card');
+        for (const card of cards) {
+            const name = card.querySelector('.settings-p-name').value.trim();
+            if (!name) continue;
+            currentProviders[name] = {
+                name,
+                protocol: card.querySelector('.settings-p-protocol').value,
+                api_key: card.querySelector('.settings-p-key').value,
+                base_url: card.querySelector('.settings-p-url').value.trim(),
+                proxy_url: card.querySelector('.settings-p-proxy').value.trim(),
+            };
+        }
+
+        const proxyUrl = document.getElementById('settings-proxy').value.trim();
+
+        try {
+            const token = localStorage.getItem('uniclaw_token');
+            const resp = await fetch('/api/models', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ' + token,
+                },
+                body: JSON.stringify({ providers: currentProviders, proxy_url: proxyUrl }),
+            });
+            if (resp.ok) {
+                const data = await resp.json();
+                this._models = data.models || [];
+                this._providersInfo = data.providers_info || {};
+            }
+        } catch {
+            // 静默失败
+        }
+
+        // 重新渲染所有 combo（保留已选值）
+        const comboIds = [
+            'settings-model-name',
+            'settings-mini-model',
+            'settings-multimodal-model',
+            'settings-tts-model',
+            'settings-asr-model',
+        ];
+        for (const id of comboIds) {
+            const container = document.getElementById(id);
+            if (!container) continue;
+            const savedValues = this._getComboValues(container);
+            this._initCombo(id, savedValues);
+        }
+
+        refreshBtn.disabled = false;
+        refreshBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg> 刷新`;
     },
 };
 
@@ -312,6 +705,9 @@ const Settings = {
 document.addEventListener('DOMContentLoaded', () => {
     const saveBtn = document.getElementById('settings-save-btn');
     if (saveBtn) saveBtn.addEventListener('click', () => Settings.save());
+
+    const refreshBtn = document.getElementById('settings-refresh-models');
+    if (refreshBtn) refreshBtn.addEventListener('click', () => Settings._refreshModels());
 
     // ESC 关闭
     document.getElementById('settings-modal')?.addEventListener('click', (e) => {
