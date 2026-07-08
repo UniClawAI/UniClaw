@@ -337,6 +337,8 @@ async def _astream_inner(client: AsyncOpenAI, kwargs: dict):
     response = await client.chat.completions.create(**kwargs)
     async for chunk in response:
         sc = StreamChunk()
+        if chunk is None:
+            continue
 
         if chunk.choices:
             delta = chunk.choices[0].delta
