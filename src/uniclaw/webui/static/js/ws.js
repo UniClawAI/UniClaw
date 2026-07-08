@@ -10,12 +10,10 @@ const WS = {
     /** 连接 WebSocket */
     connect() {
         const token = localStorage.getItem('uniclaw_token');
-        if (!token) {
-            window.location.href = '/login.html';
-            return;
-        }
         const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const url = `${protocol}//${location.host}/ws?token=${encodeURIComponent(token)}`;
+        // 可信 IP 可以不带 token 连接，后端会自动放行
+        const tokenParam = token ? `?token=${encodeURIComponent(token)}` : '';
+        const url = `${protocol}//${location.host}/ws${tokenParam}`;
         this.socket = new WebSocket(url);
 
         this.socket.onopen = () => {

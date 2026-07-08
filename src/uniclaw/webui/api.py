@@ -272,7 +272,9 @@ async def delete_messages(session_id: str, body: MessageDelete):
         config = await get_or_load_session(session_id)
         session = config.current_agent.session
         # 根据 from_idx 计算要删除的数量
-        source_list = session._messages if body.source == "messages" else session.history
+        source_list = (
+            session._messages if body.source == "messages" else session.history
+        )
         count = len(source_list) - body.from_idx
         deleted = session.delete_messages(count, source=body.source)
         # 保存到文件
@@ -413,6 +415,7 @@ async def get_settings():
         "EXA_API_KEY": _mask_key(data.get("EXA_API_KEY", "")),
         "max_agent_depth": data.get("max_agent_depth", 2),
         "permission_timeout": data.get("permission_timeout", 300),
+        "trusted_ips": data.get("trusted_ips", []) or [],
         "providers": masked_providers,
     }
 
@@ -420,7 +423,6 @@ async def get_settings():
 @router.put("/settings")
 async def update_settings(body: SettingsUpdate):
     """保存全局 settings.json。"""
-    import json
 
     # 读取原始配置,用于恢复未修改的脱敏 key
     path, original = _read_settings_raw()
@@ -487,6 +489,7 @@ async def update_settings(body: SettingsUpdate):
         "EXA_API_KEY": exa_key,
         "max_agent_depth": body.max_agent_depth,
         "permission_timeout": body.permission_timeout,
+        "trusted_ips": body.trusted_ips,
         "providers": providers,
     }
 
@@ -494,9 +497,7 @@ async def update_settings(body: SettingsUpdate):
     cleaned["audio"] = body.audio if body.audio else None
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(cleaned, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    path.write_text(json.dumps(cleaned, ensure_ascii=False, indent=2), encoding="utf-8")
 
     return {"ok": True, "config_path": str(path)}
 
@@ -579,7 +580,9 @@ async def transcribe_audio(body: AsrRequest):
         config = load_config()
 
     if not config.asr_model:
-        raise HTTPException(status_code=400, detail="asr_model 未配置,请通过 /model 命令设置 ASR 模型")
+        raise HTTPException(
+            status_code=400, detail="asr_model 未配置,请通过 /model 命令设置 ASR 模型"
+        )
 
     import base64
     import tempfile

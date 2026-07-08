@@ -2,20 +2,23 @@
 
 const App = {
     async init() {
-        // 认证检查：无 token 或 token 无效则跳转登录页
+        // 认证检查：尝试调 /api/auth/me，可信 IP 无需 token 也能通过
         const token = localStorage.getItem('uniclaw_token');
-        if (!token) {
-            window.location.href = '/login.html';
-            return;
-        }
         try {
-            const resp = await fetch('/api/auth/me', {
-                headers: { 'Authorization': 'Bearer ' + token }
-            });
+            const headers = token ? { 'Authorization': 'Bearer ' + token } : {};
+            const resp = await fetch('/api/auth/me', { headers });
             if (!resp.ok) {
-                localStorage.removeItem('uniclaw_token');
-                window.location.href = '/login.html';
-                return;
+                // 401 = 未登录（非可信 IP 且无有效 token）
+                if (resp.status === 401) {
+                    localStorage.removeItem('uniclaw_token');
+                    window.location.href = '/login.html';
+                    return;
+                }
+                // 404 = 无用户（首次使用，需要注册）
+                if (resp.status === 404) {
+                    window.location.href = '/login.html';
+                    return;
+                }
             }
         } catch (e) {
             // 网络错误,仍尝试连接(可能是中间件未就绪）

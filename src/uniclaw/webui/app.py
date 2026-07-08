@@ -1,7 +1,7 @@
 """FastAPI 应用实例。"""
 
 from __future__ import annotations
-
+import json
 import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -30,15 +30,32 @@ _AUTH_WHITELIST = (
 )
 
 
+def _is_trusted_ip(ip: str) -> bool:
+    """检查 IP 是否在可信列表中。"""
+    from uniclaw.config import get_config_path
+
+    try:
+        path = get_config_path()
+        if not path.exists():
+            return False
+        data = json.loads(path.read_text(encoding="utf-8"))
+        trusted = data.get("trusted_ips", []) or []
+        return ip in trusted
+    except Exception:
+        return False
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理。"""
     # 启动时初始化微信 BotManager
     from uniclaw.ilink_bot.manager import BotManager
+
     manager = BotManager()
     # 注册消息处理器(复用微信模式)
     if not manager._handlers:
         from uniclaw.wechat.run import make_handler
+
         handler = make_handler()
         manager.on_message(handler)
     # 启动已登录 bot 的消息轮询
@@ -67,13 +84,18 @@ app.add_middleware(
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
-    """拦截未登录请求,白名单路径放行。"""
+    """拦截未登录请求,白名单路径和可信 IP 放行。"""
     path = request.url.path
 
     # 白名单路径放行
     for prefix in _AUTH_WHITELIST:
         if path.startswith(prefix) or path == prefix:
             return await call_next(request)
+
+    # 可信 IP 放行
+    client_ip = request.client.host if request.client else ""
+    if _is_trusted_ip(client_ip):
+        return await call_next(request)
 
     # 提取 token(header 或 cookie）
     token = None
@@ -132,8 +154,11 @@ async def auth_register(req: _AuthRequest):
         token = auth.create_token(req.username)
         resp = JSONResponse(content={"token": token, "username": req.username})
         resp.set_cookie(
-            "uniclaw_token", token,
-            httponly=True, samesite="lax", max_age=86400,
+            "uniclaw_token",
+            token,
+            httponly=True,
+            samesite="lax",
+            max_age=86400,
         )
         return resp
     except Exception as e:
@@ -159,8 +184,11 @@ async def auth_login(req: _AuthRequest):
     token = auth.create_token(req.username)
     resp = JSONResponse(content={"token": token, "username": req.username})
     resp.set_cookie(
-        "uniclaw_token", token,
-        httponly=True, samesite="lax", max_age=86400,
+        "uniclaw_token",
+        token,
+        httponly=True,
+        samesite="lax",
+        max_age=86400,
     )
     return resp
 

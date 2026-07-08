@@ -253,6 +253,7 @@ class SettingsUpdate(BaseModel):
     EXA_API_KEY: str = ""
     max_agent_depth: int = 2
     permission_timeout: int = 300
+    trusted_ips: list[str] = Field(default_factory=list)  # 可信 IP 列表,跳过登录认证
     providers: dict[str, ProviderConfig] = Field(default_factory=dict)
 
     @field_validator("temperature")

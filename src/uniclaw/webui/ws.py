@@ -859,17 +859,21 @@ def _build_content_with_files(content: str, files: list[dict]) -> Any:
 
 
 async def websocket_endpoint(ws: WebSocket):
-    """WebSocket 入口(需要 JWT 认证）。"""
-    # 从 query param 提取 token
-    token = ws.query_params.get("token", "")
-    if not token:
-        await ws.close(code=4001, reason="未提供认证 token")
-        return
-    from uniclaw.webui.auth import verify_token
-    username = verify_token(token)
-    if not username:
-        await ws.close(code=4001, reason="认证 token 无效或已过期")
-        return
+    """WebSocket 入口(需要 JWT 认证,可信 IP 跳过）。"""
+    # 可信 IP 跳过认证
+    client_ip = ws.client.host if ws.client else ""
+    from uniclaw.webui.app import _is_trusted_ip
+    if not _is_trusted_ip(client_ip):
+        # 从 query param 提取 token
+        token = ws.query_params.get("token", "")
+        if not token:
+            await ws.close(code=4001, reason="未提供认证 token")
+            return
+        from uniclaw.webui.auth import verify_token
+        username = verify_token(token)
+        if not username:
+            await ws.close(code=4001, reason="认证 token 无效或已过期")
+            return
 
     await ws.accept()
     async with _connected_ws_lock:

@@ -101,6 +101,7 @@ const Settings = {
         document.getElementById('settings-exa-key').value = d.EXA_API_KEY || '';
         document.getElementById('settings-max-depth').value = d.max_agent_depth ?? 2;
         document.getElementById('settings-perm-timeout').value = d.permission_timeout ?? 300;
+        document.getElementById('settings-trusted-ips').value = (d.trusted_ips || []).join(', ');
     },
 
     // ── Combo 组件 ────────────────────────────────────────
@@ -608,6 +609,10 @@ const Settings = {
             EXA_API_KEY: document.getElementById('settings-exa-key').value || this._data.EXA_API_KEY || '',
             max_agent_depth: parseInt(document.getElementById('settings-max-depth').value) || 3,
             permission_timeout: parseInt(document.getElementById('settings-perm-timeout').value) || 300,
+            trusted_ips: document.getElementById('settings-trusted-ips').value
+                .split(/[,，\s]+/)
+                .map(s => s.trim())
+                .filter(Boolean),
             providers,
         };
 
