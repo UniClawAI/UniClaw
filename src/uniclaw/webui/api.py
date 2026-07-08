@@ -404,6 +404,7 @@ async def get_settings():
         "multimodal_model_name": _norm_model(data.get("multimodal_model_name")),
         "tts_model": data.get("tts_model", "") or "",
         "asr_model": data.get("asr_model", "") or "",
+        "audio": data.get("audio") or None,
         "temperature": data.get("temperature"),
         "max_tokens": data.get("max_tokens"),
         "top_p": data.get("top_p"),
@@ -488,6 +489,9 @@ async def update_settings(body: SettingsUpdate):
         "permission_timeout": body.permission_timeout,
         "providers": providers,
     }
+
+    # audio 配置：直接透传 dict
+    cleaned["audio"] = body.audio if body.audio else None
 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(

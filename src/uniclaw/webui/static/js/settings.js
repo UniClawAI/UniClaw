@@ -86,6 +86,10 @@ const Settings = {
         this._initCombo('settings-tts-model', d.tts_model ? [d.tts_model] : []);
         this._initCombo('settings-asr-model', d.asr_model ? [d.asr_model] : []);
 
+        // 音频配置
+        const audioEl = document.getElementById('settings-audio');
+        audioEl.value = d.audio ? JSON.stringify(d.audio, null, 2) : '';
+
         // 生成参数
         document.getElementById('settings-temperature').value = d.temperature ?? '';
         document.getElementById('settings-max-tokens').value = d.max_tokens ?? '';
@@ -585,12 +589,17 @@ const Settings = {
         const maxTokens = document.getElementById('settings-max-tokens').value;
         const topP = document.getElementById('settings-top-p').value;
 
+        // 解析 audio JSON（可能返回 undefined 表示格式错误）
+        const audio = this._parseAudio(errEl);
+        if (audio === undefined) return;
+
         const body = {
             model_name: modelName,
             mini_model_name: miniModel,
             multimodal_model_name: multimodalModel,
             tts_model: ttsValues[0] || '',
             asr_model: asrValues[0] || '',
+            audio: audio,
             temperature: temperature !== '' ? parseFloat(temperature) : null,
             max_tokens: maxTokens !== '' ? parseInt(maxTokens) : null,
             top_p: topP !== '' ? parseFloat(topP) : null,
@@ -635,6 +644,23 @@ const Settings = {
     },
 
     // ── 工具方法 ──────────────────────────────────────────
+
+    /** 解析 audio textarea 为 dict，空或无效返回 null */
+    _parseAudio(errEl) {
+        const raw = document.getElementById('settings-audio').value.trim();
+        if (!raw) return null;
+        try {
+            const obj = JSON.parse(raw);
+            if (typeof obj !== 'object' || obj === null || Array.isArray(obj)) {
+                if (errEl) errEl.textContent = 'audio 必须是 JSON 对象';
+                return undefined;
+            }
+            return obj;
+        } catch (e) {
+            if (errEl) errEl.textContent = 'audio JSON 格式错误: ' + e.message;
+            return undefined;
+        }
+    },
 
     _toggleEye(inputId) {
         const input = document.getElementById(inputId);

@@ -386,6 +386,18 @@
                         </div>
                     </div>
 
+                    <!-- 音频配置 -->
+                    <div class="settings-section">
+                        <div class="settings-section-title">音频配置</div>
+                        <div class="settings-grid">
+                            <div class="form-group" style="grid-column:1/-1">
+                                <label>Audio 配置 (JSON)</label>
+                                <textarea id="settings-audio" class="input" rows="4" placeholder='{"voice": "alloy", "format": "wav"}'></textarea>
+                                <span class="settings-field-hint">TTS 音频参数，JSON 格式。常用字段: voice (语音名称/本地文件路径)、format (pcm16/wav/mp3/opus/flac/aac)、speed (语速 0.25~4.0)。未知字段也会透传给 API</span>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- 其他配置 -->
                     <div class="settings-section">
                         <div class="settings-section-title">其他</div>
