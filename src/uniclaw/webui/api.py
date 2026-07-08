@@ -271,7 +271,10 @@ async def delete_messages(session_id: str, body: MessageDelete):
     try:
         config = await get_or_load_session(session_id)
         session = config.current_agent.session
-        deleted = session.delete_messages(body.count, source=body.source)
+        # 根据 from_idx 计算要删除的数量
+        source_list = session._messages if body.source == "messages" else session.history
+        count = len(source_list) - body.from_idx
+        deleted = session.delete_messages(count, source=body.source)
         # 保存到文件
         await SessionManager.save_session(config)
         return {"ok": True, "deleted": deleted}

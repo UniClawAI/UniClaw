@@ -368,13 +368,18 @@ async def bridge_events(session_id: str, config: AppConfig):
         elif isinstance(event, UserEvent):
             # subagent 的 UserEvent 不广播(已作为工具参数显示)
             if not is_subagent:
-                await _broadcast(
-                    {
-                        "event": "user",
-                        "session_id": session_id,
-                        "content": event.content,
-                    }
-                )
+                msg = {
+                    "event": "user",
+                    "session_id": session_id,
+                    "content": event.content,
+                }
+                # 附带消息在后端列表中的索引，供前端删除功能使用
+                try:
+                    session = config.current_agent.session
+                    msg["msg_idx"] = len(session._messages) - 1
+                except Exception:
+                    pass
+                await _broadcast(msg)
 
         elif isinstance(event, AssistantEvent):
             config.spinner.stop(wait_id=queued_task.id)
@@ -448,6 +453,15 @@ async def bridge_events(session_id: str, config: AppConfig):
                 out = await Bash.func(event.command, config=config)
             except Exception as e:
                 out = f"命令执行失败: {e}"
+            # 计算 msg_idx: drain_user_queue 会在 send_event_to_user 返回后
+            # 调用 session.add_message 将消息添加到 _messages 末尾，
+            # 此时 add_message 尚未执行，所以当前 len 即为即将添加的索引。
+            shell_msg_idx = -1
+            if event.source == "chat":
+                try:
+                    shell_msg_idx = len(config.current_agent.session._messages)
+                except Exception:
+                    pass
             await _broadcast(
                 {
                     "event": "shell_result",
@@ -456,6 +470,7 @@ async def bridge_events(session_id: str, config: AppConfig):
                     "output": out,
                     "success": True,
                     "source": event.source,
+                    "msg_idx": shell_msg_idx,
                 }
             )
             event.content = out
@@ -751,6 +766,7 @@ async def handle_ws_message(ws: WebSocket, msg: dict):
                     "output": output,
                     "success": True,
                     "source": source,
+                    "msg_idx": len(task.session._messages) - 1 if source == "chat" else -1,
                 },
             )
 

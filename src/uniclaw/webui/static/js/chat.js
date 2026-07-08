@@ -114,7 +114,7 @@ const Chat = {
                 const images = this._extractImages(msg.content);
                 let el;
                 if (text.startsWith('[system]')) {
-                    if (text.includes('(用户执行Shell命令)')) this._appendShellResultFromHistory(text);
+                    if (text.includes('(用户执行Shell命令)')) el = this._appendShellResultFromHistory(text, msgIdx);
                     else if (images.length > 0) this._appendSystemMessageWithImages(text, images);
                     else this._appendSystemMessage(text);
                 } else if (images.length > 0) {
@@ -411,12 +411,16 @@ const Chat = {
 
     _onUser(msg) {
         if (!msg || !this.currentSessionId || msg.session_id !== this.currentSessionId) return;
+        let el;
         if (Array.isArray(msg.content)) {
             const text = this._extractText(msg.content);
             const images = this._extractImages(msg.content);
             if (text.startsWith('[system]')) {
-                if (images.length > 0) this._appendSystemMessageWithImages(text, images);
-                else this._appendSystemMessage(text);
+                // Shell 命令消息已由 _onShellResult 渲染(带格式化)，跳过避免重复
+                if (text.includes('(用户执行Shell命令)')) return;
+                if (images.length > 0) { this._appendSystemMessageWithImages(text, images); return; }
+                el = this._appendSystemMessage(text);
+                if (el && msg.msg_idx != null) el.dataset.msgIdx = msg.msg_idx;
                 return;
             }
             if (images.length > 0) {
@@ -431,11 +435,15 @@ const Chat = {
         } else if (typeof msg.content === 'string') {
             const text = msg.content;
             if (text.startsWith('[system]')) {
-                this._appendSystemMessage(text);
+                // Shell 命令消息已由 _onShellResult 渲染(带格式化)，跳过避免重复
+                if (text.includes('(用户执行Shell命令)')) return;
+                el = this._appendSystemMessage(text);
             } else {
-                this._appendUserMessage(text);
+                el = this._appendUserMessage(text);
             }
         }
+        // 后端广播的 msg_idx 赋给元素，供删除功能精确定位
+        if (el && msg.msg_idx != null) el.dataset.msgIdx = msg.msg_idx;
     },
 
     /** 追加带图片的系统消息 */
@@ -844,15 +852,18 @@ const Chat = {
 
     _onShellResult(msg) {
         if (msg.source === 'console' || !msg || msg.session_id !== this.currentSessionId) return;
-        this._renderShellResult(msg.command || '', msg.output || '');
+        const el = this._renderShellResult(msg.command || '', msg.output || '');
+        if (el && msg.msg_idx >= 0) el.dataset.msgIdx = msg.msg_idx;
     },
 
-    _appendShellResultFromHistory(text) {
+    _appendShellResultFromHistory(text, msgIdx) {
         const lines = text.replace(/^\[system\]\s*\(用户执行Shell命令\)\s*\n?/, '').split('\n');
         let cmd = '', output = '';
         if (lines.length > 0 && lines[0].startsWith('$ ')) { cmd = lines[0].substring(2); output = lines.slice(1).join('\n'); }
         else output = lines.join('\n');
-        this._renderShellResult(cmd, output);
+        const el = this._renderShellResult(cmd, output);
+        if (el && msgIdx != null) el.dataset.msgIdx = msgIdx;
+        return el;
     },
 
     _renderShellResult(cmd, output) {
@@ -860,9 +871,11 @@ const Chat = {
         this._saveScrollState();
         const el = document.createElement('div');
         el.className = 'system-message';
+        el.dataset.shellMsg = '1'; // 标记：对应后端一条 user 消息，计算删除数量时需计入
         el.innerHTML = `<div style="font-family:var(--font-mono);font-size:var(--text-sm);text-align:left;max-width:900px;margin:0 auto"><div style="color:var(--neon-cyan);margin-bottom:2px">$ ${Utils.escapeHtml(cmd)}</div><pre style="margin:0;white-space:pre-wrap;background:var(--bg-inset);padding:8px 12px;border-radius:var(--r-sm)">${Utils.escapeHtml(output)}</pre></div>`;
         c.appendChild(el);
         this._scrollToBottom();
+        return el;
     },
 
     _onCommandOutput(msg) {
@@ -947,39 +960,25 @@ const Chat = {
         if (!msgEl) return;
 
         const content = msgEl.dataset.rawContent || '';
-        const container = document.getElementById('chat-messages');
-        const allMessages = Array.from(container.querySelectorAll('.message'));
-        const domIndex = allMessages.indexOf(msgEl);
-        if (domIndex < 0) return;
-
-        // 从 dataset 获取消息在后端列表中的真实索引
-        const msgIdx = parseInt(msgEl.dataset.msgIdx, 10);
 
         const sid = this.currentSessionId;
         if (!sid) return;
 
-        // 根据当前视图决定 source,获取对应消息列表长度
-        const source = this._currentView === 'history' ? 'history' : 'messages';
-        const msgList = source === 'history' ? this._historyData : this._compactData;
-        const totalMessages = msgList?.length || 0;
-
-        // 要删除的数量：从该消息索引到末尾
-        // msgIdx 不存在时(实时消息) fallback 到 DOM 计数
-        let count;
-        if (!isNaN(msgIdx) && totalMessages > 0) {
-            count = totalMessages - msgIdx;
-        } else {
-            const sessionMessages = allMessages.filter(el => !el.classList.contains('system-message'));
-            count = sessionMessages.length - sessionMessages.indexOf(msgEl);
+        const msgIdx = parseInt(msgEl.dataset.msgIdx, 10);
+        if (isNaN(msgIdx)) {
+            Utils.showToast('消息索引未知，请刷新页面后重试', 'warn');
+            return;
         }
-        if (count <= 0) return;
-        if (!confirm(`将删除此消息及后续 ${count - 1} 条消息,确认？`)) return;
+
+        if (!confirm('将删除此消息及后续所有消息，确认？')) return;
+
+        const source = this._currentView === 'history' ? 'history' : 'messages';
 
         try {
             const resp = await fetch(`/api/sessions/${sid}/messages`, {
                 method: 'DELETE',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ count, source }),
+                body: JSON.stringify({ from_idx: msgIdx, source }),
             });
             if (!resp.ok) {
                 const err = await resp.json().catch(() => ({}));
@@ -987,10 +986,19 @@ const Chat = {
                 return;
             }
 
-            // 从 DOM 中移除该消息及之后的所有消息
-            for (let i = allMessages.length - 1; i >= domIndex; i--) {
-                allMessages[i].remove();
-            }
+            // 重新加载会话数据并刷新视图，确保前端与后端完全同步
+            try {
+                const sessResp = await fetch(`/api/sessions/${sid}`);
+                if (sessResp.ok) {
+                    const data = await sessResp.json();
+                    this._historyData = data.history || null;
+                    this._compactData = data.messages || null;
+                    const toggle = document.getElementById('history-toggle');
+                    const hasDiff = this._historyData && this._compactData && this._historyData.length !== this._compactData.length;
+                    if (toggle) toggle.style.display = hasDiff ? '' : 'none';
+                    this._renderCurrentView();
+                }
+            } catch (_) { /* 刷新失败不影响删除结果 */ }
 
             // 将内容放入输入框
             const input = document.getElementById('chat-input');

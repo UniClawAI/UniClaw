@@ -200,12 +200,15 @@ class HookUpdate(BaseModel):
 
 
 class MessageDelete(BaseModel):
-    """删除消息(从末尾截掉指定数量)。"""
+    """删除消息(从指定索引到末尾)。"""
 
-    count: int = Field(ge=1, description="要删除的消息数量")
     source: str = Field(
         default="messages",
         description="消息来源: 'messages'(_messages) 或 'history'(完整历史)",
+    )
+    from_idx: int = Field(
+        default=-1,
+        description="起始索引(含)。后端自动计算 count = len - from_idx。-1 表示删除全部。",
     )
 
 

@@ -57,7 +57,7 @@ const Input = {
         if (text.startsWith('!')) {
             if (!sid) { Utils.showToast('请先创建会话'); return; }
             const cmd = text.substring(1).trim();
-            if (cmd) { WS.send({ type: 'shell', session_id: sid, command: cmd, source: 'chat' }); Chat._appendUserMessage(`$ ${cmd}`); }
+            if (cmd) { WS.send({ type: 'shell', session_id: sid, command: cmd, source: 'chat' }); }
         } else if (text.startsWith('/')) {
             const cmdName = text.substring(1).trim().split(/\s+/)[0].toLowerCase();
             if (cmdName === 'clear' || cmdName === 'cls') { if (rootDir === '__free__') SessionPanel.createFreeChat(); else SessionPanel.createSession(rootDir); input.value = ''; input.style.height = 'auto'; return; }
