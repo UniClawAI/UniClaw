@@ -63,7 +63,7 @@ const Input = {
             if (cmdName === 'clear' || cmdName === 'cls') { if (rootDir === '__free__') SessionPanel.createFreeChat(); else SessionPanel.createSession(rootDir); input.value = ''; input.style.height = 'auto'; return; }
             if (!sid) { Utils.showToast('请先创建会话'); return; }
             WS.send({ type: 'command', session_id: sid, command: text });
-            Chat._appendUserMessage(text);
+            Chat._appendSystemMessage(text);
         } else {
             const msg = { type: 'chat', content: text, files: this.attachedFiles.map(f => ({ name: f.name, data: f.data, mime: f.mime })) };
             if (sid) msg.session_id = sid;
