@@ -97,8 +97,8 @@ const Settings = {
 
         // 其他
         document.getElementById('settings-proxy').value = d.proxy_url || '';
-        document.getElementById('settings-github-token').value = '';
-        document.getElementById('settings-exa-key').value = '';
+        document.getElementById('settings-github-token').value = d.GITHUB_TOKEN || '';
+        document.getElementById('settings-exa-key').value = d.EXA_API_KEY || '';
         document.getElementById('settings-max-depth').value = d.max_agent_depth ?? 2;
         document.getElementById('settings-perm-timeout').value = d.permission_timeout ?? 300;
     },
