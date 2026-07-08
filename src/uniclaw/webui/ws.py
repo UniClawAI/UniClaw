@@ -253,7 +253,7 @@ async def bridge_events(session_id: str, config: AppConfig):
                 f"[{session_id}] 权限请求: tool={_tn}, args={_ta}, raw_tool_call_keys={list(event.tool_call.keys())}"
             )
             _created_at = int(time.time())
-            _timeout = 300
+            _timeout = config.permission_timeout if config else 300
             permission_msg = {
                 "event": "permission_request",
                 "id": req_id,
@@ -282,7 +282,7 @@ async def bridge_events(session_id: str, config: AppConfig):
             await _broadcast(permission_msg)
 
             try:
-                response = await asyncio.wait_for(perm_future, timeout=300)
+                response = await asyncio.wait_for(perm_future, timeout=_timeout)
             except asyncio.TimeoutError:
                 response = {"approved": False, "reason": "权限请求超时"}
             finally:
@@ -933,7 +933,7 @@ async def web_input(prompt: str, title: str = "输入", config=None) -> str:
         return ""
     req_id = f"input_{uuid.uuid4().hex[:8]}"
     _created_at = int(time.time())
-    _timeout = 300
+    _timeout = config.permission_timeout if config else 300
     input_msg = {
         "event": "input_request",
         "id": req_id,
@@ -976,7 +976,7 @@ async def web_multi_input(
         return ""
     req_id = f"input_{uuid.uuid4().hex[:8]}"
     _created_at = int(time.time())
-    _timeout = 300
+    _timeout = config.permission_timeout if config else 300
     input_msg = {
         "event": "multi_input_request",
         "id": req_id,
