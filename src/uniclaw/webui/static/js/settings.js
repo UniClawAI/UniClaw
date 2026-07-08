@@ -756,6 +756,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ESC 关闭
     document.getElementById('settings-modal')?.addEventListener('click', (e) => {
-        if (e.target.id === 'settings-modal') Settings.close();
+        // 不再点击外部关闭，只保留 ESC 关闭
     });
 });

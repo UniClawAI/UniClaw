@@ -211,7 +211,6 @@ const Utils = {
             const cleanup = (result) => { overlay.remove(); resolve(result); };
             overlay.querySelector('.confirm-cancel').onclick = () => cleanup(false);
             overlay.querySelector('.confirm-ok').onclick = () => cleanup(true);
-            overlay.addEventListener('click', e => { if (e.target === overlay) cleanup(false); });
         });
     },
 
