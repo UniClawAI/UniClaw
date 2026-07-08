@@ -21,7 +21,6 @@ class StreamPlayer:
         else:
             self._stream = None
         self._buffer = np.array([], dtype=np.float32)
-        self._finished = False
         self._start = False
 
     def _callback(self, outdata, frames, _time, _status):
@@ -31,7 +30,7 @@ class StreamPlayer:
             try:
                 chunk = self._queue.get_nowait()
                 if chunk is None:
-                    self._finished = True
+                    self._start = False
                     break
                 self._buffer = np.concatenate([self._buffer, chunk])
             except Exception:
@@ -67,8 +66,11 @@ class StreamPlayer:
 
     def stop(self):
         """停止播放,等待缓冲区播完。"""
+        if self._stream is None:
+            self._start = False
+            return
         self._queue.put(None)  # 结束标记
-        while not self._finished:
+        while self._start:
             import time
 
             time.sleep(0.01)
