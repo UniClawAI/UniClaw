@@ -607,7 +607,7 @@ class Session:
                     f"的结果与之前调用完全相同,已省略。"
                 )
             self.dedup_cache.add(dedup_key)
-        except TypeError, ValueError:
+        except (TypeError, ValueError):
             pass
         return None
 

@@ -219,7 +219,7 @@ def safe_parse_args(arguments: str) -> dict:
 
         result = json.loads(arguments)
         return result if isinstance(result, dict) else {}
-    except json.JSONDecodeError, TypeError:
+    except (json.JSONDecodeError, TypeError):
         return {}
 
 

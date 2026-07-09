@@ -228,7 +228,7 @@ def is_first_launch() -> bool:
         return True
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError, OSError:
+    except (json.JSONDecodeError, OSError):
         return True
     has_providers = bool(data.get("providers")) and any(
         p.get("api_key") for p in data.get("providers", {}).values()
@@ -446,7 +446,7 @@ def _load_settings_json() -> dict[str, Any]:
     if path.exists():
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError, OSError:
+        except (json.JSONDecodeError, OSError):
             pass
 
     # 默认值

@@ -591,7 +591,7 @@ def _load_rules(root_dir: Path | None) -> list:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         return data.get("rules", [])
-    except json.JSONDecodeError, OSError:
+    except (json.JSONDecodeError, OSError):
         return []
 
 

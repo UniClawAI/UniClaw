@@ -41,7 +41,7 @@ def _load_llm_safe_prompt(root_dir: Path | None) -> str:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         return data.get("prompt", "").strip()
-    except json.JSONDecodeError, OSError:
+    except (json.JSONDecodeError, OSError):
         return ""
 
 

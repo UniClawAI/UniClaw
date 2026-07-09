@@ -223,7 +223,7 @@ async def _check_permission(tc: dict, config: AppConfig) -> tuple[bool, str]:
 
                 if abs_file.is_relative_to(get_plans_dir(config).resolve()):
                     return (True, "")
-            except ValueError, OSError:
+            except (ValueError, OSError):
                 pass
 
     # Bash 命令安全检查(安全则直接放行,不安全则继续走后续流程包括 LLM 检测)
@@ -586,9 +586,8 @@ class MultiAgent:
         if registry_ctx:
             base_system_prompt += f"\n\n{registry_ctx}"
         # 用户传递的系统提示词放在最后
-        system_prompt = (
-            f"{base_system_prompt}\n\n{"" if system_prompt is None else system_prompt}"
-        )
+        system_prompt = f"{base_system_prompt}\n\n{'' if system_prompt is None else system_prompt}"
+        
         if isolation:
             if root_dir is None:
                 task.status = AgentStatus.FAILED

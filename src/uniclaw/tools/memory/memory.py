@@ -2,6 +2,7 @@
 记忆数据模型定义
 """
 
+from __future__ import annotations
 from datetime import datetime
 import os
 import re
@@ -179,6 +180,7 @@ class Memory:
                 # 同步 FTS5 索引
                 try:
                     from .fts import index_memory
+
                     index_memory(self)
                 except Exception:
                     pass
@@ -201,6 +203,7 @@ class Memory:
         # 同步 FTS5 索引
         try:
             from .fts import index_memory
+
             index_memory(self)
         except Exception:
             pass  # FTS 索引失败不影响保存

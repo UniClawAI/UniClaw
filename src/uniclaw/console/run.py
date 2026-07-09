@@ -167,7 +167,7 @@ class _FileCompleter(Completer):
                             else f"{item.stat().st_size:,} bytes"
                         ),
                     )
-        except OSError, PermissionError:
+        except (OSError, PermissionError):
             pass
 
 

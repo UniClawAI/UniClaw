@@ -1,3 +1,4 @@
+from __future__ import annotations
 import asyncio
 import json
 import logging
@@ -56,7 +57,9 @@ async def _connect_mcp(connection: dict):
         if headers:
             import httpx
 
-            async with httpx.AsyncClient(headers=headers, timeout=timeout) as http_client:
+            async with httpx.AsyncClient(
+                headers=headers, timeout=timeout
+            ) as http_client:
                 async with streamable_http_client(
                     url=connection["url"],
                     http_client=http_client,
@@ -121,12 +124,14 @@ async def _discover_tools_async(server_name: str, connection: dict) -> list[Tool
                 full_name = f"{server_name}_{mcp_tool.name}"
                 schema = mcp_tool.inputSchema or {"type": "object", "properties": {}}
                 caller = _make_mcp_caller(server_name, mcp_tool.name, connection)
-                tools.append(Tool(
-                    name=full_name,
-                    description=mcp_tool.description or "",
-                    func=caller,
-                    parameters=schema,
-                ))
+                tools.append(
+                    Tool(
+                        name=full_name,
+                        description=mcp_tool.description or "",
+                        func=caller,
+                        parameters=schema,
+                    )
+                )
     return tools
 
 
@@ -142,7 +147,9 @@ class MCPManager:
         self._client = None
         self.server2tools: dict[str, list] = {}
         self._initialized = False
-        self._registered_mcp_names: set[str] = set()  # 已注册到 ToolRegistry 的 MCP 工具名
+        self._registered_mcp_names: set[str] = (
+            set()
+        )  # 已注册到 ToolRegistry 的 MCP 工具名
 
     @classmethod
     def get_instance(cls) -> "MCPManager":
@@ -187,7 +194,9 @@ class MCPManager:
             servers.append(entry)
         return servers
 
-    async def get_server(self, name: str, config: AppConfig | None = None) -> dict | None:
+    async def get_server(
+        self, name: str, config: AppConfig | None = None
+    ) -> dict | None:
         await self.load_config(config)
         conn = self._config.get("servers", {}).get(name)
         if conn is None:
@@ -221,7 +230,9 @@ class MCPManager:
         await self.refresh(config)
         return True
 
-    async def update_server(self, name: str, connection: dict, config: AppConfig | None = None) -> bool:
+    async def update_server(
+        self, name: str, connection: dict, config: AppConfig | None = None
+    ) -> bool:
         await self.load_config(config)
         if name not in self._config["servers"]:
             return False
@@ -232,7 +243,9 @@ class MCPManager:
         await self.refresh(config)
         return True
 
-    async def toggle_server(self, name: str, enabled: bool, config: AppConfig | None = None) -> bool:
+    async def toggle_server(
+        self, name: str, enabled: bool, config: AppConfig | None = None
+    ) -> bool:
         await self.load_config(config)
         if name not in self._config["servers"]:
             return False
@@ -267,7 +280,9 @@ class MCPManager:
                     timeout=conn.get("timeout", 15),
                 )
                 self.server2tools[server_name] = tools
-                await ok(f"MCP [{server_name}] 连接成功,发现 {len(tools)} 个工具", config)
+                await ok(
+                    f"MCP [{server_name}] 连接成功,发现 {len(tools)} 个工具", config
+                )
             except asyncio.TimeoutError:
                 await err(f"MCP [{server_name}] 连接超时", config)
                 self.server2tools[server_name] = []
@@ -275,9 +290,9 @@ class MCPManager:
                 await err(f"MCP [{server_name}] 连接失败: {e}", config)
                 self.server2tools[server_name] = []
 
-        await asyncio.gather(*[
-            _try_discover(name, conn) for name, conn in connections.items()
-        ])
+        await asyncio.gather(
+            *[_try_discover(name, conn) for name, conn in connections.items()]
+        )
         self._client = True
         return self._client
 
@@ -286,7 +301,9 @@ class MCPManager:
             await self.refresh()
         return [tool for tools in self.server2tools.values() for tool in tools]
 
-    async def test_connection(self, connection: dict, config: AppConfig | None = None) -> bool:
+    async def test_connection(
+        self, connection: dict, config: AppConfig | None = None
+    ) -> bool:
         """测试单个 MCP 连接是否可用"""
         timeout = connection.get("timeout", 15)
         try:

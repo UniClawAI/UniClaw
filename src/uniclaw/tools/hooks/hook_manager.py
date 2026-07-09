@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import fnmatch
 import json
@@ -293,7 +295,7 @@ async def _run_entries(
             )
             try:
                 timeout = int(timeout)
-            except TypeError, ValueError:
+            except (TypeError, ValueError):
                 timeout = DEFAULT_HOOK_TIMEOUT_SECONDS
             hook_env = {**env, "UNICLAW_HOOK_EVENT": event}
             start = time.monotonic()
