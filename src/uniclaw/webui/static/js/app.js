@@ -2,26 +2,26 @@
 
 const App = {
     async init() {
-        // 认证检查：尝试调 /api/auth/me，可信 IP 无需 token 也能通过
+        // 认证检查：尝试调 /api/auth/me,可信 IP 无需 token 也能通过
         const token = localStorage.getItem('uniclaw_token');
         try {
             const headers = token ? { 'Authorization': 'Bearer ' + token } : {};
             const resp = await fetch('/api/auth/me', { headers });
             if (!resp.ok) {
-                // 401 = 未登录（非可信 IP 且无有效 token）
+                // 401 = 未登录(非可信 IP 且无有效 token)
                 if (resp.status === 401) {
                     localStorage.removeItem('uniclaw_token');
                     window.location.href = '/login.html';
                     return;
                 }
-                // 404 = 无用户（首次使用，需要注册）
+                // 404 = 无用户(首次使用,需要注册)
                 if (resp.status === 404) {
                     window.location.href = '/login.html';
                     return;
                 }
             }
         } catch (e) {
-            // 网络错误,仍尝试连接(可能是中间件未就绪）
+            // 网络错误,仍尝试连接(可能是中间件未就绪)
         }
 
         // 初始化修改密码弹窗
@@ -52,7 +52,7 @@ const App = {
         console.log('[App] UniClaw WebUI 已初始化');
     },
 
-    /** SHA-256 哈希（密码不过明文） */
+    /** SHA-256 哈希(密码不过明文) */
     async _sha256(str) {
         const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
         return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');

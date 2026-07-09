@@ -5,50 +5,70 @@
 
 /* ---- 文件树 ---- */
 .file-tree {
-    padding: 8px 0;
-}
-.file-item {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 5px 14px;
-    cursor: pointer;
+    padding: 4px 0;
     font-size: var(--text-sm);
-    color: var(--text-1);
-    transition: all var(--duration-fast) var(--ease);
     user-select: none;
 }
-.file-item:hover {
+.tree-node {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 10px;
+    cursor: pointer;
+    color: var(--text-1);
+    transition: background var(--duration-fast) var(--ease);
+    border-radius: 0;
+}
+.tree-node:hover {
     background: var(--bg-3);
 }
-.file-item.directory {
-    font-weight: 500;
+.tree-toggle {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-3);
+    transition: transform var(--duration-fast) var(--ease);
 }
-.file-item .file-icon {
+.tree-toggle svg {
+    width: 12px;
+    height: 12px;
+}
+.tree-toggle.expanded {
+    transform: rotate(90deg);
+}
+.tree-toggle.placeholder {
+    visibility: hidden;
+}
+.tree-icon {
     width: 14px;
     height: 14px;
     flex-shrink: 0;
-}
-.file-item .file-icon.folder {
-    color: var(--neon-yellow);
-}
-.file-item .file-icon.file {
     color: var(--text-3);
 }
-.file-item .file-name {
+.tree-icon.folder {
+    color: var(--neon-yellow);
+}
+.tree-icon svg {
+    width: 14px;
+    height: 14px;
+}
+.tree-name {
     flex: 1;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
-.file-children {
+.tree-node.dir .tree-name {
+    font-weight: 500;
+}
+.tree-children {
     display: none;
 }
-.file-item.expanded + .file-children {
+.tree-children.open {
     display: block;
-}
-.file-indent {
-    padding-left: 16px;
 }
 
 /* ---- 控制台 ---- */

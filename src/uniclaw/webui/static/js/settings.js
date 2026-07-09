@@ -1,10 +1,10 @@
-/* settings.js — 全局设置弹窗（含 combo 下拉选择组件） */
+/* settings.js — 全局设置弹窗(含 combo 下拉选择组件) */
 
 const Settings = {
     _data: null,        // 从后端加载的原始数据
     _providers: {},     // 当前编辑中的 providers
     _models: [],        // 从 /api/models 获取的模型列表
-    _providersInfo: {}, // 各 provider 的额外信息（如 allow_custom）
+    _providersInfo: {}, // 各 provider 的额外信息(如 allow_custom)
 
     // ── 打开 / 关闭 ──────────────────────────────────────
 
@@ -272,22 +272,22 @@ const Settings = {
     _allowCustomInput(container) {
         const isTtsAsr = ['settings-tts-model', 'settings-asr-model'].includes(container.id);
         if (isTtsAsr) {
-            // TTS/ASR：仅 OpenAI 协议，不允许自定义输入
+            // TTS/ASR：仅 OpenAI 协议,不允许自定义输入
             return false;
         }
-        // 主模型/轻量/多模态：只要有任一 provider 是 allow_custom（Anthropic）就允许
+        // 主模型/轻量/多模态：只要有任一 provider 是 allow_custom(Anthropic)就允许
         for (const info of Object.values(this._providersInfo)) {
             if (info.allow_custom) return true;
         }
         return false;
     },
 
-    /** 添加标签，返回是否成功添加 */
+    /** 添加标签,返回是否成功添加 */
     _addTag(container, value) {
         const isMulti = container.dataset.multi === 'true';
         const selectedEl = container.querySelector('.combo-selected');
 
-        // 同步表单中的最新 providers（用户可能改了名称）
+        // 同步表单中的最新 providers(用户可能改了名称)
         this._syncProviders();
 
         // 验证：非自定义输入必须存在于模型列表中
@@ -326,7 +326,7 @@ const Settings = {
             this._removeTag(container, value);
         });
 
-        // 拖拽排序（多选模式）
+        // 拖拽排序(多选模式)
         if (isMulti) {
             tag.addEventListener('dragstart', (e) => {
                 tag.classList.add('dragging');
@@ -390,7 +390,7 @@ const Settings = {
         const info = this._providersInfo[providerName];
         const isTtsAsr = ['settings-tts-model', 'settings-asr-model'].includes(container.id);
 
-        // TTS/ASR：仅允许 OpenAI 协议（非 allow_custom）的 provider
+        // TTS/ASR：仅允许 OpenAI 协议(非 allow_custom)的 provider
         if (isTtsAsr && info && info.allow_custom) return false;
 
         // allow_custom 的 provider：自由输入
@@ -407,7 +407,7 @@ const Settings = {
         return value;
     },
 
-    /** 获取 combo 中所有已选值（按 DOM 顺序） */
+    /** 获取 combo 中所有已选值(按 DOM 顺序) */
     _getComboValues(container) {
         const selectedEl = container.querySelector('.combo-selected');
         return Array.from(selectedEl.querySelectorAll('.combo-tag'))
@@ -415,18 +415,18 @@ const Settings = {
             .filter(Boolean);
     },
 
-    // ── Provider 渲染（保持原逻辑） ──────────────────────
+    // ── Provider 渲染(保持原逻辑) ──────────────────────
 
     _renderProviders() {
         const container = document.getElementById('settings-providers');
         container.innerHTML = '';
 
-        // 添加按钮（始终绑定）
+        // 添加按钮(始终绑定)
         document.getElementById('settings-add-provider').onclick = () => this._addProvider();
 
         const names = Object.keys(this._providers);
         if (names.length === 0) {
-            container.innerHTML = '<div style="color:var(--text-3);font-size:var(--text-sm);padding:8px 0">暂无 Provider，点击上方"添加"按钮创建</div>';
+            container.innerHTML = '<div style="color:var(--text-3);font-size:var(--text-sm);padding:8px 0">暂无 Provider,点击上方"添加"按钮创建</div>';
             return;
         }
 
@@ -590,7 +590,7 @@ const Settings = {
         const maxTokens = document.getElementById('settings-max-tokens').value;
         const topP = document.getElementById('settings-top-p').value;
 
-        // 解析 audio JSON（可能返回 undefined 表示格式错误）
+        // 解析 audio JSON(可能返回 undefined 表示格式错误)
         const audio = this._parseAudio(errEl);
         if (audio === undefined) return;
 
@@ -610,7 +610,7 @@ const Settings = {
             max_agent_depth: parseInt(document.getElementById('settings-max-depth').value) || 3,
             permission_timeout: parseInt(document.getElementById('settings-perm-timeout').value) || 300,
             trusted_ips: document.getElementById('settings-trusted-ips').value
-                .split(/[,，\s]+/)
+                .split(/[,,\s]+/)
                 .map(s => s.trim())
                 .filter(Boolean),
             providers,
@@ -650,7 +650,7 @@ const Settings = {
 
     // ── 工具方法 ──────────────────────────────────────────
 
-    /** 解析 audio textarea 为 dict，空或无效返回 null */
+    /** 解析 audio textarea 为 dict,空或无效返回 null */
     _parseAudio(errEl) {
         const raw = document.getElementById('settings-audio').value.trim();
         if (!raw) return null;
@@ -726,7 +726,7 @@ const Settings = {
             // 静默失败
         }
 
-        // 重新渲染所有 combo（保留已选值）
+        // 重新渲染所有 combo(保留已选值)
         const comboIds = [
             'settings-model-name',
             'settings-mini-model',
@@ -756,6 +756,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ESC 关闭
     document.getElementById('settings-modal')?.addEventListener('click', (e) => {
-        // 不再点击外部关闭，只保留 ESC 关闭
+        // 不再点击外部关闭,只保留 ESC 关闭
     });
 });

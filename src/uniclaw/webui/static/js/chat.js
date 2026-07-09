@@ -416,7 +416,7 @@ const Chat = {
             const text = this._extractText(msg.content);
             const images = this._extractImages(msg.content);
             if (text.startsWith('[system]')) {
-                // Shell 命令消息已由 _onShellResult 渲染(带格式化)，跳过避免重复
+                // Shell 命令消息已由 _onShellResult 渲染(带格式化),跳过避免重复
                 if (text.includes('(用户执行Shell命令)')) return;
                 if (images.length > 0) { this._appendSystemMessageWithImages(text, images); return; }
                 el = this._appendSystemMessage(text);
@@ -435,14 +435,14 @@ const Chat = {
         } else if (typeof msg.content === 'string') {
             const text = msg.content;
             if (text.startsWith('[system]')) {
-                // Shell 命令消息已由 _onShellResult 渲染(带格式化)，跳过避免重复
+                // Shell 命令消息已由 _onShellResult 渲染(带格式化),跳过避免重复
                 if (text.includes('(用户执行Shell命令)')) return;
                 el = this._appendSystemMessage(text);
             } else {
                 el = this._appendUserMessage(text);
             }
         }
-        // 后端广播的 msg_idx 赋给元素，供删除功能精确定位
+        // 后端广播的 msg_idx 赋给元素,供删除功能精确定位
         if (el && msg.msg_idx != null) el.dataset.msgIdx = msg.msg_idx;
     },
 
@@ -871,7 +871,7 @@ const Chat = {
         this._saveScrollState();
         const el = document.createElement('div');
         el.className = 'system-message';
-        el.dataset.shellMsg = '1'; // 标记：对应后端一条 user 消息，计算删除数量时需计入
+        el.dataset.shellMsg = '1'; // 标记：对应后端一条 user 消息,计算删除数量时需计入
         el.innerHTML = `<div style="font-family:var(--font-mono);font-size:var(--text-sm);text-align:left;max-width:900px;margin:0 auto"><div style="color:var(--neon-cyan);margin-bottom:2px">$ ${Utils.escapeHtml(cmd)}</div><pre style="margin:0;white-space:pre-wrap;background:var(--bg-inset);padding:8px 12px;border-radius:var(--r-sm)">${Utils.escapeHtml(output)}</pre></div>`;
         c.appendChild(el);
         this._scrollToBottom();
@@ -966,11 +966,11 @@ const Chat = {
 
         const msgIdx = parseInt(msgEl.dataset.msgIdx, 10);
         if (isNaN(msgIdx)) {
-            Utils.showToast('消息索引未知，请刷新页面后重试', 'warn');
+            Utils.showToast('消息索引未知,请刷新页面后重试', 'warn');
             return;
         }
 
-        if (!confirm('将删除此消息及后续所有消息，确认？')) return;
+        if (!confirm('将删除此消息及后续所有消息,确认？')) return;
 
         const source = this._currentView === 'history' ? 'history' : 'messages';
 
@@ -986,7 +986,7 @@ const Chat = {
                 return;
             }
 
-            // 重新加载会话数据并刷新视图，确保前端与后端完全同步
+            // 重新加载会话数据并刷新视图,确保前端与后端完全同步
             try {
                 const sessResp = await fetch(`/api/sessions/${sid}`);
                 if (sessResp.ok) {

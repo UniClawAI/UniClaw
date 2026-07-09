@@ -54,7 +54,7 @@
 
         let isRegisterMode = false;
 
-        /** SHA-256 哈希（密码不过明文） */
+        /** SHA-256 哈希(密码不过明文) */
         async function sha256(str) {
             const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
             return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
@@ -76,7 +76,7 @@
                     modeHint.textContent = '';
                     document.title = 'UniClaw — 登录';
                 } else {
-                    // 注册模式(首次）
+                    // 注册模式(首次)
                     isRegisterMode = true;
                     subtitle.textContent = '首次使用,请创建管理员账号';
                     submitBtn.textContent = '创建账号';

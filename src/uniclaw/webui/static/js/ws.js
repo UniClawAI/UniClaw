@@ -11,7 +11,7 @@ const WS = {
     connect() {
         const token = localStorage.getItem('uniclaw_token');
         const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-        // 可信 IP 可以不带 token 连接，后端会自动放行
+        // 可信 IP 可以不带 token 连接,后端会自动放行
         const tokenParam = token ? `?token=${encodeURIComponent(token)}` : '';
         const url = `${protocol}//${location.host}/ws${tokenParam}`;
         this.socket = new WebSocket(url);

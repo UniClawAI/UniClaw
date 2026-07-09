@@ -20,7 +20,7 @@ from uniclaw.webui import auth
 STATIC_DIR = Path(__file__).parent / "static"
 ASSETS_DIR = Path(__file__).parent.parent / "assets"
 
-# 认证白名单路径前缀(不需要登录即可访问）
+# 认证白名单路径前缀(不需要登录即可访问)
 _AUTH_WHITELIST = (
     "/login.html",
     "/api/auth/",
@@ -97,7 +97,7 @@ async def auth_middleware(request: Request, call_next):
     if _is_trusted_ip(client_ip):
         return await call_next(request)
 
-    # 提取 token(header 或 cookie）
+    # 提取 token(header 或 cookie)
     token = None
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Bearer "):
@@ -138,7 +138,7 @@ async def auth_status():
 
 @app.post("/api/auth/register")
 async def auth_register(req: _AuthRequest):
-    """创建账号(仅首次无账号时可用）。"""
+    """创建账号(仅首次无账号时可用)。"""
     if auth.user_exists():
         return JSONResponse(
             status_code=400,
@@ -195,7 +195,7 @@ async def auth_login(req: _AuthRequest):
 
 @app.get("/api/auth/me")
 async def auth_me(request: Request):
-    """获取当前用户信息(也可用于验证 token 有效性）。"""
+    """获取当前用户信息(也可用于验证 token 有效性)。"""
     user = auth.get_user()
     if not user:
         return JSONResponse(status_code=404, content={"detail": "无用户"})
@@ -225,7 +225,7 @@ app.add_api_websocket_route("/ws", websocket_endpoint)
 # 静态文件挂载
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
-# 资源文件挂载（logo 等）
+# 资源文件挂载(logo 等)
 if ASSETS_DIR.exists():
     app.mount("/assets", StaticFiles(directory=str(ASSETS_DIR)), name="assets")
 

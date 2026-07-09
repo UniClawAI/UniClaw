@@ -373,7 +373,7 @@ async def bridge_events(session_id: str, config: AppConfig):
                     "session_id": session_id,
                     "content": event.content,
                 }
-                # 附带消息在后端列表中的索引，供前端删除功能使用
+                # 附带消息在后端列表中的索引,供前端删除功能使用
                 try:
                     session = config.current_agent.session
                     msg["msg_idx"] = len(session._messages) - 1
@@ -454,8 +454,8 @@ async def bridge_events(session_id: str, config: AppConfig):
             except Exception as e:
                 out = f"命令执行失败: {e}"
             # 计算 msg_idx: drain_user_queue 会在 send_event_to_user 返回后
-            # 调用 session.add_message 将消息添加到 _messages 末尾，
-            # 此时 add_message 尚未执行，所以当前 len 即为即将添加的索引。
+            # 调用 session.add_message 将消息添加到 _messages 末尾,
+            # 此时 add_message 尚未执行,所以当前 len 即为即将添加的索引。
             shell_msg_idx = -1
             if event.source == "chat":
                 try:
@@ -859,7 +859,7 @@ def _build_content_with_files(content: str, files: list[dict]) -> Any:
 
 
 async def websocket_endpoint(ws: WebSocket):
-    """WebSocket 入口(需要 JWT 认证,可信 IP 跳过）。"""
+    """WebSocket 入口(需要 JWT 认证,可信 IP 跳过)。"""
     # 可信 IP 跳过认证
     client_ip = ws.client.host if ws.client else ""
     from uniclaw.webui.app import _is_trusted_ip

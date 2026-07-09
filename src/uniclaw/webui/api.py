@@ -430,7 +430,7 @@ async def update_settings(body: SettingsUpdate):
     original_github = original.get("GITHUB_TOKEN", "")
     original_exa = original.get("EXA_API_KEY", "")
 
-    # 恢复脱敏的 API key（通过 masked key 的前4后4字符匹配原始 key）
+    # 恢复脱敏的 API key(通过 masked key 的前4后4字符匹配原始 key)
     masked_to_original: dict[str, str] = {}
     for p in original_providers.values():
         orig_key = p.get("api_key", "")
@@ -517,7 +517,7 @@ async def list_models(body: dict):
     global_proxy = body.get("proxy_url") or original.get("proxy_url") or ""
 
     raw_providers = body.get("providers", {})
-    # 恢复脱敏的 api_key（通过 masked key 的前4后4字符匹配原始 key）
+    # 恢复脱敏的 api_key(通过 masked key 的前4后4字符匹配原始 key)
     masked_to_original: dict[str, str] = {}
     for p in original_providers.values():
         orig_key = p.get("api_key", "")

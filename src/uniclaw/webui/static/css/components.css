@@ -960,7 +960,7 @@ textarea.input {
     color: var(--text-2);
 }
 
-/* API Key 输入框（眼睛按钮嵌入输入框内部） */
+/* API Key 输入框(眼睛按钮嵌入输入框内部) */
 .settings-key-input-wrap {
     position: relative;
     display: flex;

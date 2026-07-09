@@ -41,7 +41,7 @@ class User:
 
 
 def _get_conn() -> sqlite3.Connection:
-    """获取数据库连接(自动建表）。"""
+    """获取数据库连接(自动建表)。"""
     _DB_DIR.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(_DB_PATH))
     conn.execute(
@@ -70,7 +70,7 @@ def user_exists() -> bool:
 
 
 def create_user(username: str, password: str) -> User:
-    """创建账号(仅允许一个）。"""
+    """创建账号(仅允许一个)。"""
     if user_exists():
         raise ValueError("账号已存在")
     salt = os.urandom(32).hex()
@@ -152,7 +152,7 @@ def _hash_password(password: str, salt: str) -> str:
 
 
 def _get_jwt_secret() -> str:
-    """获取 JWT 密钥(首次随机生成,持久化到文件）。"""
+    """获取 JWT 密钥(首次随机生成,持久化到文件)。"""
     global _JWT_SECRET
     if _JWT_SECRET:
         return _JWT_SECRET

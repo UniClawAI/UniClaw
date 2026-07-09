@@ -115,6 +115,7 @@
     overflow: hidden;
 }
 .context-mini-fill {
+    display: block;
     height: 100%;
     border-radius: var(--r-full);
     transition: width var(--duration) var(--ease);

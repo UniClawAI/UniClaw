@@ -34,22 +34,73 @@ const Sidebar = {
         try {
             const r = await fetch(`/api/files?root_dir=${encodeURIComponent(rd)}`);
             const files = await r.json();
-            document.getElementById('file-tree').innerHTML = files.map(f =>
-                `<div class="file-item ${f.is_dir ? 'directory' : ''}" onclick="${f.is_dir ? `Sidebar._loadSubDir('${f.path}')` : `Sidebar._insertFile('${f.path}')`}">${f.is_dir ? icon('folder', 'file-icon folder') : icon('file', 'file-icon file')}<span class="file-name">${Utils.escapeHtml(f.name)}</span></div>`
-            ).join('');
+            const tree = document.getElementById('file-tree');
+            tree.innerHTML = files.map(f => this._renderTreeNode(f, 0, '')).join('');
         } catch (e) { console.error('加载文件树失败:', e); }
     },
 
-    async _loadSubDir(path) {
-        const rd = SessionPanel.activeProjectDir;
-        if (!rd) return;
-        try {
-            const r = await fetch(`/api/files?root_dir=${encodeURIComponent(rd)}&path=${encodeURIComponent(path)}`);
-            const files = await r.json();
-            let html = `<div class="file-item" onclick="Sidebar._loadFileTree()">${icon('chevronRight')} <span class="file-name">返回</span></div>`;
-            html += files.map(f => `<div class="file-item ${f.is_dir ? 'directory' : ''}" onclick="${f.is_dir ? `Sidebar._loadSubDir('${path}/${f.name}')` : `Sidebar._insertFile('${path}/${f.name}')`}">${f.is_dir ? icon('folder', 'file-icon folder') : icon('file', 'file-icon file')}<span class="file-name">${Utils.escapeHtml(f.name)}</span></div>`).join('');
-            document.getElementById('file-tree').innerHTML = html;
-        } catch (e) { console.error('加载子目录失败:', e); }
+    _renderTreeNode(item, depth, parentPath) {
+        const fullPath = parentPath ? `${parentPath}/${item.name}` : item.name;
+        const indent = depth * 16;
+        if (item.is_dir) {
+            return `<div class="tree-branch" style="margin-left:${indent}px">
+                <div class="tree-node dir" onclick="Sidebar._toggleDir(this, '${this._escPath(fullPath)}')" data-path="${this._escPath(fullPath)}">
+                    <span class="tree-toggle">${icon('chevronRight')}</span>
+                    ${icon('folder', 'tree-icon folder')}
+                    <span class="tree-name">${Utils.escapeHtml(item.name)}</span>
+                </div>
+                <div class="tree-children" data-loaded="false"></div>
+            </div>`;
+        }
+        return `<div class="tree-branch" style="margin-left:${indent}px">
+            <div class="tree-node file" onclick="Sidebar._insertFile('${this._escPath(fullPath)}')">
+                <span class="tree-toggle placeholder">${icon('chevronRight')}</span>
+                ${icon('file', 'tree-icon file')}
+                <span class="tree-name">${Utils.escapeHtml(item.name)}</span>
+            </div>
+        </div>`;
+    },
+
+    _escPath(p) {
+        return p.replace(/\\/g, '/').replace(/'/g, "\\'");
+    },
+
+    async _toggleDir(nodeEl, path) {
+        const branch = nodeEl.parentElement;
+        const children = branch.querySelector('.tree-children');
+        const toggle = nodeEl.querySelector('.tree-toggle');
+
+        if (toggle.classList.contains('expanded')) {
+            // 折叠
+            toggle.classList.remove('expanded');
+            children.classList.remove('open');
+        } else {
+            // 展开
+            if (children.dataset.loaded === 'false') {
+                // 首次展开,加载子目录
+                const rd = SessionPanel.activeProjectDir;
+                if (!rd) return;
+                try {
+                    const r = await fetch(`/api/files?root_dir=${encodeURIComponent(rd)}&path=${encodeURIComponent(path)}`);
+                    const files = await r.json();
+                    const depth = this._getDepth(nodeEl);
+                    children.innerHTML = files.map(f => this._renderTreeNode(f, depth, path)).join('');
+                    children.dataset.loaded = 'true';
+                } catch (e) { console.error('加载子目录失败:', e); return; }
+            }
+            toggle.classList.add('expanded');
+            children.classList.add('open');
+        }
+    },
+
+    _getDepth(el) {
+        let depth = 0;
+        let cur = el.parentElement;
+        while (cur) {
+            if (cur.classList && cur.classList.contains('tree-branch')) depth++;
+            cur = cur.parentElement;
+        }
+        return depth;
     },
 
     _insertFile(path) {
