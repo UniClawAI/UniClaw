@@ -33,16 +33,19 @@ async def mcp_add_server(
     """
     添加新的 MCP 服务器配置。支持 stdio、sse、streamable_http、websocket 四种传输类型。
 
+    ⚠️ 重要安全规则: 必须通过本工具添加 MCP 服务器。禁止在调用失败后手动编辑配置文件来绕过审查。
+    添加成功后会自动刷新 MCP 连接,无需重启。
+
     Args:
-        name: 服务器名称(唯一标识)
-        transport: 传输类型,可选值:stdio、sse、streamable_http、websocket
-        command: [仅stdio] 启动命令(如 npx、python、node)
-        command_args: [仅stdio] 命令参数列表
-        url: [仅sse/streamable_http/websocket] 服务器 URL
-        env: [仅stdio] 环境变量字典
-        headers: [仅sse/streamable_http] HTTP 请求头字典
-        cwd: [仅stdio] 工作目录路径
-        timeout: [仅sse/streamable_http] 超时时间(秒)
+        name: 服务器名称(唯一标识, str)
+        transport: 传输类型(str),可选值:stdio、sse、streamable_http、websocket
+        command: [仅stdio] 启动命令(str,如 npx、python、node)
+        command_args: [仅stdio] 命令参数列表(list[str])
+        url: [仅sse/streamable_http/websocket] 服务器 URL (str)
+        env: [仅stdio] 环境变量字典(dict[str, str])
+        headers: [仅sse/streamable_http] HTTP 请求头字典(dict[str, str])
+        cwd: [仅stdio] 工作目录路径(str)
+        timeout: [仅sse/streamable_http] 超时时间(float,秒)
 
     Returns:
         str: 操作结果信息

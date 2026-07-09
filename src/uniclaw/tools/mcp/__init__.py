@@ -33,6 +33,7 @@ async def _connect_mcp(connection: dict):
             command=connection.get("command", ""),
             args=connection.get("args", []),
             env=connection.get("env"),
+            cwd=connection.get("cwd"),  # 修复：传递cwd参数
         )
         async with stdio_client(server_params) as (read, write):
             yield read, write
@@ -287,10 +288,17 @@ class MCPManager:
 
     async def test_connection(self, connection: dict, config: AppConfig | None = None) -> bool:
         """测试单个 MCP 连接是否可用"""
+        timeout = connection.get("timeout", 15)
         try:
-            tools = await _discover_tools_async("test", connection)
+            tools = await asyncio.wait_for(
+                _discover_tools_async("test", connection),
+                timeout=timeout,
+            )
             await ok(f"连接验证成功,发现 {len(tools)} 个工具", config)
             return True
+        except asyncio.TimeoutError:
+            await err(f"连接验证超时({timeout}秒)", config)
+            return False
         except Exception as e:
             await err(f"连接验证失败: {e}", config)
             return False

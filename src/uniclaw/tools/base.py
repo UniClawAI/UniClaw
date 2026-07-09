@@ -20,11 +20,42 @@ _TYPE_MAP = {
 # 运行时注入的参数,不写入 schema
 _INJECTED_PARAMS = {"config"}
 
+# 常用类型名称映射,避免 eval
+_BUILTIN_TYPE_NAMES: dict[str, type] = {
+    "str": str,
+    "int": int,
+    "float": float,
+    "bool": bool,
+    "list": list,
+    "dict": dict,
+    "bytes": bytes,
+}
+
+
+def _resolve_str_annotation(tp: str) -> Any:
+    """将字符串形式的类型注解解析为实际类型。"""
+    tp = tp.strip()
+    # 简单类型直接查表
+    if tp in _BUILTIN_TYPE_NAMES:
+        return _BUILTIN_TYPE_NAMES[tp]
+    # None / NoneType
+    if tp == "None":
+        return type(None)
+    try:
+        import builtins
+        return eval(tp, {"__builtins__": builtins}, _BUILTIN_TYPE_NAMES)
+    except Exception:
+        return str
+
 
 def _python_type_to_schema(tp: Any) -> dict:
     """将 Python 类型注解转换为 JSON Schema。"""
     if tp is inspect.Parameter.empty:
         return {"type": "string"}
+
+    # from __future__ import annotations 导致注解为字符串,尝试求值
+    if isinstance(tp, str):
+        tp = _resolve_str_annotation(tp)
 
     origin = getattr(tp, "__origin__", None)
 
