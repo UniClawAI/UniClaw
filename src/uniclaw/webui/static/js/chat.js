@@ -361,6 +361,21 @@ const Chat = {
         return block ? block.querySelector('.tool-body') : null;
     },
 
+    _findLastRunningTool() {
+        // 在 toolBlocks 中查找最近一个状态为 running 的非 subagent 工具块
+        const prefix = this.currentSessionId ? `${this.currentSessionId}:` : '';
+        let last = null;
+        for (const [key, block] of Object.entries(this.toolBlocks)) {
+            if (!key.startsWith(prefix)) continue;
+            if (block.classList.contains('subagent-tool')) continue;
+            const status = block.querySelector('.tool-header .tool-status');
+            if (status && status.classList.contains('running')) {
+                last = { toolCallId: key.slice(prefix.length) };
+            }
+        }
+        return last;
+    },
+
     // ============================================================
     //  辅助函数
     // ============================================================
@@ -619,7 +634,7 @@ const Chat = {
     _onToolStart(msg) {
         if (!msg || !this.currentSessionId || msg.session_id !== this.currentSessionId) return;
 
-        // 检测主 agent 的 sub_agent_create 工具调用,记录 subagent 状态
+        // 检测需要跟踪子智能体的工具调用
         if (!msg.is_subagent && msg.name === 'sub_agent_create') {
             let agentName = '';
             try {
@@ -628,6 +643,15 @@ const Chat = {
             } catch (_) {}
             this._subagentToolId = msg.tool_call_id || null;
             this._subagentName = agentName;
+        }
+
+        // subagent 事件到达但 _subagentToolId 未设置:关联到最近一个正在执行的工具块
+        if (msg.is_subagent && !this._subagentToolId) {
+            const lastRunning = this._findLastRunningTool();
+            if (lastRunning) {
+                this._subagentToolId = lastRunning.toolCallId;
+                this._subagentName = msg.agent_name || '';
+            }
         }
 
         // subagent 的 tool 事件渲染在 tool-block 内
@@ -788,8 +812,10 @@ const Chat = {
         }
         const body = block.querySelector('.tool-body');
         if (body) {
-            // sub_agent_create: 保留 subagent 流式内容,仅追加最终结果
-            if (msg.name === 'sub_agent_create') {
+            // 有子智能体内容:保留步骤,仅追加最终结果(清除中间流式输出)
+            if (body.querySelector('.subagent-tool')) {
+                const streamEl = body.querySelector('.tool-stream-output');
+                if (streamEl) streamEl.remove();
                 if (msg.content) {
                     const resultEl = document.createElement('div');
                     resultEl.className = 'tool-result';

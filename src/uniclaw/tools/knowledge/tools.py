@@ -563,6 +563,7 @@ async def kg_extract(
                 config=sub_config,
                 system_prompt=None,
                 agent_def=agent_def,
+                inherit_events=True,  # 子智能体事件继承到父级队列,前端可显示执行过程
             )
         except Exception as e:
             return f"subagent 启动失败: {e}"
@@ -570,7 +571,8 @@ async def kg_extract(
         if task.status == AgentStatus.FAILED:
             return f"subagent 启动失败: {task.result}"
 
-        # 等待完成
+        # 等待完成(subagent 的 ToolStartEvent/ThinkingChunkEvent 等
+        # 会通过 bridge_events 自动广播到前端,无需在此重复)
         await mgr.wait(task.id, timeout=300)
 
         if task.status == AgentStatus.FAILED:
