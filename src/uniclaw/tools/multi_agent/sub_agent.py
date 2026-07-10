@@ -133,6 +133,42 @@ def get_builtin_agent_definitions() -> Dict[str, AgentDefinition]:
             tools=[Read.name, Glob.name, Grep.name, Write.name],
             source="built-in",
         ),
+        "kg-extract": AgentDefinition(
+            name="kg-extract",
+            description="知识图谱实体/关系提取代理,从文本或文件中提取结构化信息。",
+            system_prompt=(
+                "你是一个知识图谱实体和关系提取专家。\n"
+                "你的任务: 分析给定的文本或文件,提取其中的实体和关系。\n\n"
+                "## 输出格式\n"
+                "只返回一个 JSON 对象,不要输出其他任何内容:\n"
+                "```json\n"
+                "{\n"
+                '  "entities": [\n'
+                '    {"name": "实体名", "type": "类型", "description": "简短描述", "properties": {}}\n'
+                "  ],\n"
+                '  "relations": [\n'
+                '    {"source": "源实体", "target": "目标实体", "relation": "关系类型"}\n'
+                "  ]\n"
+                "}\n"
+                "```\n\n"
+                "## 实体类型\n"
+                "常用类型: person, place, concept, event, tool, organization, document, technology\n"
+                "不限于此,根据实际内容灵活定义,如 food, animal, chemical, law, medical 等\n\n"
+                "## 关系类型\n"
+                "英文小写下划线格式,常用: is_a, has, uses, related_to, created_by, belongs_to, part_of\n"
+                "不限于此,根据实际语义灵活定义\n\n"
+                "## 提取规则\n"
+                "1. 实体名称简洁明确,避免冗余\n"
+                "2. 只提取有明确依据的实体和关系,不推测\n"
+                "3. 关系应准确反映文本中的语义\n"
+                '4. 为每个实体提取 properties 属性,如 {"age": "60", "era": "三国"}、{"version": "3.12", "license": "MIT"} 等有意义的键值对\n'
+                "5. 如果提示中提供了已有实体列表,避免重复创建同名实体\n"
+                "6. 对于大段文本,可分多次 Read 后综合分析\n"
+                "7. 最终输出必须是一个合法的 JSON 对象"
+            ),
+            tools=[Read.name, ReadPDF.name, ReadMedia.name, Glob.name, Grep.name],
+            source="built-in",
+        ),
     }
     return BUILTIN_AGENT_DEFINITIONS
 

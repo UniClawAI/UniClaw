@@ -25,6 +25,7 @@ from uniclaw.commands.checkpoint import cmd_checkpoint
 from uniclaw.commands.undo import cmd_undo
 from uniclaw.commands.voice import cmd_voice
 from uniclaw.commands.cu import cmd_cu
+from uniclaw.commands.knowledge import cmd_knowledge
 
 # 导入子命令列表
 from uniclaw.commands import session as _session_mod
@@ -38,6 +39,7 @@ from uniclaw.commands import task as _task_mod
 from uniclaw.commands import overseer as _overseer_mod
 from uniclaw.commands import goal as _goal_mod
 from uniclaw.commands import checkpoint as _checkpoint_mod
+from uniclaw.commands import knowledge as _knowledge_mod
 
 # 构建命令子命令映射表
 COMMAND_SUBCOMMANDS = {}
@@ -53,6 +55,7 @@ _SUBCOMMAND_MODULES = {
     "overseer": _overseer_mod,
     "goal": _goal_mod,
     "checkpoint": _checkpoint_mod,
+    "kg": _knowledge_mod,
 }
 for _cmd_name, _mod in _SUBCOMMAND_MODULES.items():
     if hasattr(_mod, "SUBCOMMANDS"):
@@ -93,6 +96,8 @@ COMMANDS["cp"] = cmd_checkpoint
 COMMANDS["undo"] = cmd_undo
 COMMANDS["voice"] = cmd_voice
 COMMANDS["cu"] = cmd_cu
+COMMANDS["kg"] = cmd_knowledge
+COMMANDS["knowledge"] = cmd_knowledge
 
 
 async def handle_slash(line: str, config: AppConfig) -> Union[bool, str]:

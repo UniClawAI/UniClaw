@@ -101,6 +101,11 @@ def _build_extended_keywords() -> dict[str, list[str]]:
     )
     from .help import list_slash_commands, get_command_help
     from .send_file import send_file
+    from .knowledge.tools import (
+        kg_add_entity, kg_add_relation, kg_add_alias, kg_update_entity,
+        kg_delete_entity, kg_delete_relation, kg_get_entity, kg_search,
+        kg_neighbors, kg_path, kg_stats, kg_export, kg_list, kg_extract, kg_clear,
+    )
 
     # tool.name → 关键词列表(中英文+语义同义词)
     return {
@@ -224,6 +229,22 @@ def _build_extended_keywords() -> dict[str, list[str]]:
         # TTS 工具
         text_to_speech.name: ["tts", "语音合成", "文本转语音", "text to speech", "朗读", "语音", "说话", "播放语音", "音频生成", "voice"],
         send_file.name: ["发送文件", "send file", "文件发送", "下载文件", "download file", "提供文件", "文件下载"],
+        # 知识图谱工具
+        kg_add_entity.name: ["知识图谱", "添加实体", "knowledge graph", "add entity", "创建实体", "新建实体", "实体", "entity"],
+        kg_add_relation.name: ["添加关系", "知识图谱", "add relation", "创建关系", "关联实体", "关系", "relation"],
+        kg_add_alias.name: ["别名", "alias", "实体别名", "添加别名", "add alias", "知识图谱"],
+        kg_search.name: ["搜索实体", "知识图谱", "search entity", "search knowledge", "查找实体", "图谱搜索"],
+        kg_neighbors.name: ["邻居", "neighbors", "知识图谱", "关联实体", "遍历", "traverse", "图谱遍历"],
+        kg_path.name: ["路径", "path", "知识图谱", "实体路径", "find path", "最短路径", "图谱路径"],
+        kg_stats.name: ["图谱统计", "knowledge stats", "知识图谱", "图谱信息"],
+        kg_export.name: ["导出图谱", "export knowledge", "知识图谱", "可视化", "visualize", "图谱导出"],
+        kg_extract.name: ["提取实体", "extract entities", "知识图谱", "自动提取", "AI提取", "实体提取", "关系提取"],
+        kg_list.name: ["列出实体", "list entities", "知识图谱", "图谱列表", "实体列表"],
+        kg_get_entity.name: ["实体详情", "entity detail", "知识图谱", "查看实体", "实体信息"],
+        kg_update_entity.name: ["更新实体", "update entity", "知识图谱", "修改实体"],
+        kg_delete_entity.name: ["删除实体", "delete entity", "知识图谱", "移除实体"],
+        kg_delete_relation.name: ["删除关系", "delete relation", "知识图谱", "移除关系"],
+        kg_clear.name: ["清空图谱", "clear knowledge", "知识图谱", "清除图谱", "重置图谱"],
     }
 
 
@@ -285,6 +306,11 @@ def _build_tool_categories() -> dict[str, str]:
     )
     from .help import list_slash_commands, get_command_help
     from .send_file import send_file
+    from .knowledge.tools import (
+        kg_add_entity, kg_add_relation, kg_add_alias, kg_update_entity,
+        kg_delete_entity, kg_delete_relation, kg_get_entity, kg_search,
+        kg_neighbors, kg_path, kg_stats, kg_export, kg_list, kg_extract, kg_clear,
+    )
 
     # tool.name → 类别
     return {
@@ -341,6 +367,12 @@ def _build_tool_categories() -> dict[str, str]:
         # TTS 工具
         text_to_speech.name: "TTS",
         send_file.name: "文件发送",
+        # 知识图谱工具
+        kg_add_entity.name: "知识图谱", kg_add_relation.name: "知识图谱", kg_add_alias.name: "知识图谱",
+        kg_update_entity.name: "知识图谱", kg_delete_entity.name: "知识图谱", kg_delete_relation.name: "知识图谱",
+        kg_get_entity.name: "知识图谱", kg_search.name: "知识图谱", kg_neighbors.name: "知识图谱",
+        kg_path.name: "知识图谱", kg_stats.name: "知识图谱", kg_export.name: "知识图谱",
+        kg_list.name: "知识图谱", kg_extract.name: "知识图谱", kg_clear.name: "知识图谱",
     }
 
 

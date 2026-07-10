@@ -206,6 +206,13 @@ async def build_system_prompt(config: AppConfig):
     if hooks_ctx:
         system_prompt += f"\n\n{hooks_ctx}"
 
+    # 知识图谱 — 完全静态内容(图谱非空时才注入)
+    from uniclaw.tools.knowledge.context import get_knowledge_system_prompt
+
+    kg_ctx = get_knowledge_system_prompt(config.root_dir)
+    if kg_ctx:
+        system_prompt += f"\n\n{kg_ctx}\n"
+
     # 子代理提示 — 完全静态内容
     from uniclaw.tools.multi_agent.tools import get_sub_agent_system_prompt
 
@@ -285,10 +292,10 @@ class Scope(StrEnum):
     ALL = "all"
 
 
-def get_app_dir(root_dir: Scope | Path = Scope.USER):
+def get_app_dir(root_dir: Scope | Path | None = Scope.USER):
     if isinstance(root_dir, Path):
         base = root_dir.resolve()
-    elif root_dir == Scope.USER:
+    elif root_dir == Scope.USER or root_dir is None:
         base = Path.home()
     elif root_dir == Scope.ALL:
         raise ValueError(

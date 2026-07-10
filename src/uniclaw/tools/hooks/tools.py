@@ -142,7 +142,6 @@ def hook_read(config: AppConfig = None) -> str:
     输出先项目级后用户级,每个 hook 显示 id、名称、事件、匹配器和命令。
     使用前请先调用 hook_docs 查看完整文档。
 
-    注意:config 参数由系统框架自动注入,请勿手动传入。
     """
     if not config or not config.current_agent:
         raise ValueError("hook_read 需要 config 中的 current_agent 来获取 root_dir")
@@ -189,7 +188,6 @@ def hook_add(
     matcher: 可选的工具名匹配器,支持通配符(*,?)和多模式(|或,分隔)。如 "Bash","Read|Write"。不指定则匹配所有。
     scope: 'project'(项目级)或 'user'(用户级)。
 
-    注意:config 参数由系统框架自动注入,请勿手动传入。
     """
     if not config or not config.current_agent:
         raise ValueError("hook_add 需要 config 中的 current_agent 来获取 root_dir")
@@ -222,7 +220,6 @@ def hook_remove(id_or_name: str, config: AppConfig = None) -> str:
 
     id_or_name: hook 的 id(如 "a3f8c2")或 name(如 "block-rm")。
 
-    注意:config 参数由系统框架自动注入,请勿手动传入。
     """
     if not config or not config.current_agent:
         raise ValueError("hook_remove 需要 config 中的 current_agent 来获取 root_dir")

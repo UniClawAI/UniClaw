@@ -32,8 +32,6 @@ def memory_save(
     - 合并/覆盖:使用 force=True 调用 memory_save,直接用新记忆替换旧记忆
     - 改名保存:直接用不同名称调用 memory_save(旧记忆保留)
 
-    注意:config 参数由系统框架自动注入,请勿手动传入。
-
     Args:
         name: 记忆的名称,用于唯一标识该记忆条目。建议尽可能详细以避免重名冲突
               示例格式:"分类-子分类-具体描述"
@@ -136,8 +134,6 @@ def memory_delete(name: str, scope: str, config: AppConfig = None) -> str:
     该函数根据指定的名称和作用域定位并删除对应的记忆文件,然后重建索引以保持数据一致性。
     删除操作是永久性的,无法恢复,请谨慎使用。
 
-    注意:config 参数由系统框架自动注入,请勿手动传入。
-
     Args:
         name: 要删除的记忆条目的名称,用于唯一标识目标记忆
         scope: 记忆的作用域,决定在哪个范围内查找和删除记忆,可选值包括:
@@ -181,8 +177,6 @@ def memory_list(scope: str, config: AppConfig = None):
 
     该函数从存储系统中加载并格式化展示记忆列表,支持按作用域筛选或显示全部记忆。
     每个记忆条目会显示其类型、作用域、名称、置信度、来源等元数据信息。
-
-    注意:config 参数由系统框架自动注入,请勿手动传入。
 
     Args:
         scope: 记忆的作用域筛选条件,可选值包括:
@@ -237,8 +231,6 @@ async def memory_search(query: str, max_results: int, config: AppConfig = None) 
 
     该函数通过 SQLite FTS5 全文检索和 AI 语义筛选相结合的方式,从记忆库中查找与用户查询最相关的记忆。
     搜索结果按 BM25 相关性 × 0.5 + 置信度 × 近期性 × 0.5 综合排序,并更新记忆的最近使用时间。
-
-    注意:config 参数由系统框架自动注入,请勿手动传入。
 
     Args:
         query (str): 搜索查询字符串,通过 FTS5 unicode61 分词器在记忆的名称、描述和内容中进行 BM25 匹配

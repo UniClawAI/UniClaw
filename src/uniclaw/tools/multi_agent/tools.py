@@ -325,8 +325,6 @@ def list_agent_definitions(config: AppConfig = None) -> str:
 
     该函数加载并格式化显示系统中所有已定义的智能体类型信息,包括每个智能体的名称、
     调用 agent_create 时使用类型名称作为 subagent_type。
-
-    注意:config 参数由系统框架自动注入,请勿手动传入。
     """
     root_dir = config.root_dir
     defs = load_agent_definitions(root_dir)

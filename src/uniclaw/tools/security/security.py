@@ -227,6 +227,11 @@ def is_safe_tool(name: str) -> bool:
     )
     from uniclaw.tools.notify import push_notification
     from uniclaw.tools.registry import search_tools
+    from uniclaw.tools.knowledge.tools import (
+        kg_add_entity, kg_add_relation, kg_add_alias, kg_update_entity,
+        kg_delete_entity, kg_delete_relation, kg_get_entity, kg_search,
+        kg_neighbors, kg_path, kg_stats, kg_export, kg_list, kg_extract, kg_clear,
+    )
     from uniclaw.tools.send_file import send_file
     from uniclaw.tools.computer_use import cu_screenshot, cu_locate_on_screen, cu_get_elements, cu_find_element
     from uniclaw.tools.security.tools import read_llm_safe_prompt
@@ -303,6 +308,22 @@ def is_safe_tool(name: str) -> bool:
         push_notification.name,
         search_tools.name,
         send_file.name,
+        # 知识图谱工具(全部安全)
+        kg_add_entity.name,
+        kg_add_relation.name,
+        kg_add_alias.name,
+        kg_update_entity.name,
+        kg_delete_entity.name,
+        kg_delete_relation.name,
+        kg_get_entity.name,
+        kg_search.name,
+        kg_neighbors.name,
+        kg_path.name,
+        kg_stats.name,
+        kg_export.name,
+        kg_list.name,
+        kg_extract.name,
+        kg_clear.name,
         # Web Browse 只读工具
         browser_screenshot.name,
         browser_get_text.name,

@@ -257,7 +257,17 @@ const Input = {
             }
             const matches = this._commandsCache.filter(c => c.name.startsWith(cmdName.toLowerCase())).slice(0, 10);
             if (!matches.length) { this._hideCompletion(); return; }
-            this._renderCompletion(matches.map(c => ({ label: `/${c.name}`, desc: c.description, fill: () => { document.getElementById('chat-input').value = `/${c.name}`; }, onSelect: () => { this._suppressAutoComplete = true; document.getElementById('chat-input').value = `/${c.name}`; this._hideCompletion(); document.getElementById('chat-input').focus(); } })));
+            this._renderCompletion(matches.map(c => ({ label: `/${c.name}`, desc: c.description, fill: () => { document.getElementById('chat-input').value = `/${c.name}`; }, onSelect: () => {
+                const inp = document.getElementById('chat-input');
+                const val = `/${c.name} `;
+                inp.value = val;
+                this._hideCompletion();
+                inp.focus();
+                // 选中后立即显示子命令
+                if (this._subcommandsCache[c.name]?.length) {
+                    this._showCommandCompletion(val);
+                }
+            } })));
         } catch (e) { console.error('获取命令列表失败:', e); }
     },
 
