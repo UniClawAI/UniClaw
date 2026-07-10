@@ -2,20 +2,19 @@
 
 from __future__ import annotations
 
-from typing import Literal
-
+from pathlib import Path
+import json
 from uniclaw.config import AppConfig
+from uniclaw.context import Scope, get_app_dir
 from uniclaw.tools.base import tool
 
 from .graph import KnowledgeGraph
 
 
-def _get_graph(config: AppConfig) -> KnowledgeGraph:
-    """从 config 获取知识图谱实例。"""
-    from uniclaw.context import get_app_dir
-
-    db_path = get_app_dir(config.root_dir) / "knowledge.db"
-    return KnowledgeGraph(db_path)
+def _get_graph(config: AppConfig, scope: str = "project") -> KnowledgeGraph:
+    """从 config 获取知识图谱实例。scope: "user" 用户级 / "project" 项目级(默认)。"""
+    resolved = config.root_dir if scope == "project" and config.root_dir else Scope.USER
+    return KnowledgeGraph(get_app_dir(resolved) / "knowledge.db")
 
 
 @tool
@@ -24,6 +23,7 @@ def kg_add_entity(
     type: str = "concept",
     description: str = "",
     properties: dict = None,
+    scope: str = "project",
     config: AppConfig = None,
 ) -> str:
     """
@@ -35,8 +35,9 @@ def kg_add_entity(
         type: 实体类型,可选值: person, place, concept, event, tool, organization, document, technology
         description: 实体描述
         properties: 实体属性(JSON 对象),如 {"age": "60", "era": "三国"}
+        scope: 作用域,"user" 为用户级(跨项目共享),"project" 为项目级(默认)
     """
-    graph = _get_graph(config)
+    graph = _get_graph(config, scope)
     try:
         result = graph.add_entity(
             name=name,
@@ -68,6 +69,7 @@ def kg_add_relation(
     source_type: str = "",
     target_type: str = "",
     weight: float = 1.0,
+    scope: str = "project",
     config: AppConfig = None,
 ) -> str:
     """
@@ -81,8 +83,9 @@ def kg_add_relation(
         source_type: 源实体类型(可选,用于消歧)
         target_type: 目标实体类型(可选,用于消歧)
         weight: 关系权重,默认 1.0
+        scope: 作用域,"user" 为用户级(跨项目共享),"project" 为项目级(默认)
     """
-    graph = _get_graph(config)
+    graph = _get_graph(config, scope)
     try:
         result = graph.add_relation(
             source_name=source,
@@ -107,6 +110,7 @@ def kg_add_alias(
     name: str,
     alias: str,
     type: str = "",
+    scope: str = "project",
     config: AppConfig = None,
 ) -> str:
     """
@@ -117,8 +121,9 @@ def kg_add_alias(
         name: 实体名称(已有实体)
         alias: 别名
         type: 实体类型(可选,用于消歧)
+        scope: 作用域,"user" 为用户级(跨项目共享),"project" 为项目级(默认)
     """
-    graph = _get_graph(config)
+    graph = _get_graph(config, scope)
     try:
         result = graph.add_alias(name, type, alias)
         if "error" in result:
@@ -134,6 +139,7 @@ def kg_update_entity(
     type: str = "",
     description: str = "",
     confidence: float = -1,
+    scope: str = "project",
     config: AppConfig = None,
 ) -> str:
     """
@@ -145,8 +151,9 @@ def kg_update_entity(
         type: 实体类型(可选,用于消歧)
         description: 新描述(留空则不更新)
         confidence: 新置信度(负数则不更新)
+        scope: 作用域,"user" 为用户级(跨项目共享),"project" 为项目级(默认)
     """
-    graph = _get_graph(config)
+    graph = _get_graph(config, scope)
     try:
         kwargs = {}
         if description:
@@ -166,6 +173,7 @@ def kg_update_entity(
 def kg_delete_entity(
     name: str,
     type: str = "",
+    scope: str = "project",
     config: AppConfig = None,
 ) -> str:
     """
@@ -175,8 +183,9 @@ def kg_delete_entity(
     Args:
         name: 实体名称
         type: 实体类型(可选,用于消歧)
+        scope: 作用域,"user" 为用户级(跨项目共享),"project" 为项目级(默认)
     """
-    graph = _get_graph(config)
+    graph = _get_graph(config, scope)
     try:
         result = graph.delete_entity(name, type)
         if "error" in result:
@@ -191,6 +200,7 @@ def kg_delete_relation(
     source: str,
     target: str,
     relation: str,
+    scope: str = "project",
     config: AppConfig = None,
 ) -> str:
     """
@@ -201,8 +211,9 @@ def kg_delete_relation(
         source: 源实体名称
         target: 目标实体名称
         relation: 关系类型
+        scope: 作用域,"user" 为用户级(跨项目共享),"project" 为项目级(默认)
     """
-    graph = _get_graph(config)
+    graph = _get_graph(config, scope)
     try:
         result = graph.delete_relation(source, target, relation)
         if "error" in result:
@@ -216,6 +227,7 @@ def kg_delete_relation(
 def kg_get_entity(
     name: str,
     type: str = "",
+    scope: str = "project",
     config: AppConfig = None,
 ) -> str:
     """
@@ -225,8 +237,9 @@ def kg_get_entity(
     Args:
         name: 实体名称
         type: 实体类型(可选,用于消歧)
+        scope: 作用域,"user" 为用户级(跨项目共享),"project" 为项目级(默认)
     """
-    graph = _get_graph(config)
+    graph = _get_graph(config, scope)
     try:
         entity = graph.get_entity(name, type)
         if not entity:
@@ -268,6 +281,7 @@ def kg_search(
     keyword: str,
     type: str = "",
     limit: int = 20,
+    scope: str = "project",
     config: AppConfig = None,
 ) -> str:
     """
@@ -278,8 +292,9 @@ def kg_search(
         keyword: 搜索关键词
         type: 实体类型过滤(可选)
         limit: 最大返回数量,默认 20
+        scope: 作用域,"user" 为用户级(跨项目共享),"project" 为项目级(默认)
     """
-    graph = _get_graph(config)
+    graph = _get_graph(config, scope)
     try:
         results = graph.search_entities(keyword, entity_type=type, limit=limit)
         if not results:
@@ -302,6 +317,7 @@ def kg_neighbors(
     depth: int = 1,
     type: str = "",
     relation_type: str = "",
+    scope: str = "project",
     config: AppConfig = None,
 ) -> str:
     """
@@ -313,8 +329,9 @@ def kg_neighbors(
         depth: 遍历深度,默认 1(直接邻居),最大 3
         type: 实体类型(可选,用于消歧)
         relation_type: 关系类型过滤(可选)
+        scope: 作用域,"user" 为用户级(跨项目共享),"project" 为项目级(默认)
     """
-    graph = _get_graph(config)
+    graph = _get_graph(config, scope)
     try:
         depth = min(depth, 3)
         neighbors = graph.get_neighbors(
@@ -340,6 +357,7 @@ def kg_path(
     source: str,
     target: str,
     max_depth: int = 5,
+    scope: str = "project",
     config: AppConfig = None,
 ) -> str:
     """
@@ -350,8 +368,9 @@ def kg_path(
         source: 源实体名称
         target: 目标实体名称
         max_depth: 最大搜索深度,默认 5
+        scope: 作用域,"user" 为用户级(跨项目共享),"project" 为项目级(默认)
     """
-    graph = _get_graph(config)
+    graph = _get_graph(config, scope)
     try:
         paths = graph.find_path(source, target, max_depth=max_depth)
         if not paths:
@@ -373,12 +392,18 @@ def kg_path(
 
 
 @tool
-def kg_stats(config: AppConfig = None) -> str:
+def kg_stats(
+    scope: str = "project",
+    config: AppConfig = None,
+) -> str:
     """
     获取知识图谱的统计信息。
 
+
+    Args:
+        scope: 作用域,"user" 为用户级(跨项目共享),"project" 为项目级(默认)
     """
-    graph = _get_graph(config)
+    graph = _get_graph(config, scope)
     try:
         stats = graph.get_stats()
         lines = [
@@ -402,36 +427,37 @@ def kg_stats(config: AppConfig = None) -> str:
 
 @tool
 def kg_export(
-    format: Literal["json", "markdown", "html"] = "markdown",
+    path: str,
+    scope: str = "project",
     config: AppConfig = None,
 ) -> str:
     """
-    导出知识图谱。支持 JSON、Markdown 和 HTML(交互式可视化)格式。
+    导出知识图谱到文件。根据文件后缀自动选择格式。
 
 
     Args:
-        format: 导出格式,可选值: "json", "markdown", "html"
+        path: 导出文件路径,支持后缀: .json, .md, .html
+        scope: 作用域,"user" 为用户级(跨项目共享),"project" 为项目级(默认)
     """
-    graph = _get_graph(config)
+
+    output = Path(path)
+    ext = output.suffix.lower()
+    graph = _get_graph(config, scope)
     try:
-        if format == "json":
-            import json
-
+        if ext == ".json":
             data = graph.export_json()
-            return json.dumps(data, ensure_ascii=False, indent=2)
-
-        elif format == "markdown":
-            return graph.export_markdown()
-
-        elif format == "html":
-            from uniclaw.context import get_app_dir
-
-            output_path = get_app_dir(config.root_dir) / "knowledge_graph.html"
-            graph.visualize(output_path)
-            return f"HTML 可视化已生成: {output_path}\n请在浏览器中打开查看。"
-
+            content = json.dumps(data, ensure_ascii=False, indent=2)
+        elif ext == ".md":
+            content = graph.export_markdown()
+        elif ext == ".html":
+            graph.visualize(output)
+            return f"HTML 可视化已生成: {output}\n请在浏览器中打开查看。"
         else:
-            return f"不支持的格式: {format}"
+            return f"不支持的文件后缀: {ext}。支持: .json, .md, .html"
+
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(content, encoding="utf-8")
+        return f"知识图谱已导出: {output}"
     finally:
         graph.close()
 
@@ -440,6 +466,7 @@ def kg_export(
 def kg_list(
     type: str = "",
     limit: int = 50,
+    scope: str = "project",
     config: AppConfig = None,
 ) -> str:
     """
@@ -449,8 +476,9 @@ def kg_list(
     Args:
         type: 实体类型过滤(可选),如 "person", "concept"
         limit: 最大返回数量,默认 50
+        scope: 作用域,"user" 为用户级(跨项目共享),"project" 为项目级(默认)
     """
-    graph = _get_graph(config)
+    graph = _get_graph(config, scope)
     try:
         entities = graph.list_entities(entity_type=type, limit=limit)
         if not entities:
@@ -471,6 +499,7 @@ def kg_list(
 async def kg_extract(
     text: str = "",
     path: str = "",
+    scope: str = "project",
     config: AppConfig = None,
 ) -> str:
     """
@@ -484,6 +513,7 @@ async def kg_extract(
     Args:
         text: 要分析的文本内容(直接传入)
         path: 文件或目录路径(由 subagent 自行读取分析)
+        scope: 作用域,"user" 为用户级(跨项目共享),"project" 为项目级(默认)
     """
     if not text and not path:
         return "错误: 请提供 text 或 path 参数。"
@@ -492,7 +522,7 @@ async def kg_extract(
     from uniclaw.tools.multi_agent.sub_agent import load_agent_definitions
     from uniclaw.utils.format import parse_json_from_llm
 
-    graph = _get_graph(config)
+    graph = _get_graph(config, scope)
     try:
         # 获取已有实体列表(用于避免重复)
         existing = graph.list_entities(limit=100)
@@ -608,12 +638,18 @@ async def kg_extract(
 
 
 @tool
-def kg_clear(config: AppConfig = None) -> str:
+def kg_clear(
+    scope: str = "project",
+    config: AppConfig = None,
+) -> str:
     """
     清空知识图谱中的所有实体和关系。此操作不可逆!
 
+
+    Args:
+        scope: 作用域,"user" 为用户级(跨项目共享),"project" 为项目级(默认)
     """
-    graph = _get_graph(config)
+    graph = _get_graph(config, scope)
     try:
         stats = graph.get_stats()
         graph.conn.execute("DELETE FROM relations")
