@@ -447,6 +447,25 @@ pre:hover .code-copy-btn {
     font-size: var(--text-xs);
 }
 
+/* 工具流式输出（实时显示，工具完成后被最终结果覆盖） */
+.tool-stream-output {
+    margin-top: 4px;
+    max-height: 400px;
+    overflow-y: auto;
+}
+.tool-stream-content {
+    font-family: var(--font-mono, monospace);
+    font-size: var(--text-xs, 12px);
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-all;
+    color: var(--text-2);
+    background: var(--bg-1);
+    padding: 8px;
+    border-radius: 4px;
+    margin: 0;
+}
+
 /* subagent 嵌套在 tool-block 内的样式 */
 .tool-body .subagent-tool {
     margin: 6px 10px;

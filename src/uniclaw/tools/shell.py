@@ -6,6 +6,7 @@ import sys
 import time
 from pathlib import Path
 from uniclaw.tools.base import tool
+from uniclaw.tools.stream import tool_stream
 from uniclaw.utils.constants import TOOL_ERROR
 from uniclaw.utils.format import sanitize_progress_line
 from uniclaw.config import AppConfig
@@ -213,31 +214,60 @@ async def Bash(command: str, timeout: int = 30, config: AppConfig = None) -> str
 
     start_time = time.monotonic()
 
-    try:
-        async def _wait_with_cancel():
-            """等待进程完成,同时检查取消信号。"""
+    # 用于流式输出和最终结果收集
+    _collected = {"stdout": [], "stderr": []}
+
+    async def _read_stream_line_by_line(stream, key):
+        """逐行读取流,同时推送流式输出到前端。"""
+        try:
+            async for raw_line in stream:
+                # sanitize_progress_line 处理进度条的 \r 回车(取最后一帧)
+                line = sanitize_progress_line(smart_decode(raw_line)).rstrip("\n\r")
+                if line:
+                    _collected[key].append(line)
+                    await tool_stream(line + "\n")
+        except (asyncio.CancelledError, Exception):
+            pass
+
+    async def _wait_with_cancel():
+        """等待进程完成,同时逐行推送输出。"""
+        read_tasks = []
+        if proc.stdout:
+            read_tasks.append(
+                asyncio.create_task(_read_stream_line_by_line(proc.stdout, "stdout"))
+            )
+        if proc.stderr:
+            read_tasks.append(
+                asyncio.create_task(_read_stream_line_by_line(proc.stderr, "stderr"))
+            )
+
+        try:
             while proc.returncode is None:
                 if cancel_event is not None and cancel_event.is_set():
                     await _kill_proc_tree(proc.pid)
-                    try:
-                        stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=2)
-                    except (asyncio.TimeoutError, ProcessLookupError):
-                        stdout_bytes, stderr_bytes = b"", b""
-                        proc.kill()
-                        await proc.wait()
-                    return stdout_bytes, stderr_bytes, "cancelled"
+                    for t in read_tasks:
+                        t.cancel()
+                    await asyncio.gather(*read_tasks, return_exceptions=True)
+                    return "cancelled"
                 try:
                     await asyncio.wait_for(proc.wait(), timeout=0.1)
                 except asyncio.TimeoutError:
                     pass
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=2)
-            return stdout_bytes, stderr_bytes, "done"
 
-        result = await asyncio.wait_for(_wait_with_cancel(), timeout=timeout)
-        stdout_bytes, stderr_bytes, status = result
+            # 进程已结束,等待流读取完成(可能还有缓冲中的数据)
+            await asyncio.gather(*read_tasks, return_exceptions=True)
+            return "done"
+        except (asyncio.CancelledError, Exception):
+            for t in read_tasks:
+                t.cancel()
+            await asyncio.gather(*read_tasks, return_exceptions=True)
+            raise
 
-        stdout = sanitize_progress_line(smart_decode(stdout_bytes))
-        stderr = sanitize_progress_line(smart_decode(stderr_bytes))
+    try:
+        status = await asyncio.wait_for(_wait_with_cancel(), timeout=timeout)
+
+        stdout = sanitize_progress_line("\n".join(_collected["stdout"]))
+        stderr = sanitize_progress_line("\n".join(_collected["stderr"]))
         out = stdout
         if stderr:
             out += ("\n" if out else "") + f"{STDERR_MARKER}" + stderr
@@ -251,14 +281,11 @@ async def Bash(command: str, timeout: int = 30, config: AppConfig = None) -> str
 
     except asyncio.TimeoutError:
         await _kill_proc_tree(proc.pid)
-        try:
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=2)
-        except (asyncio.TimeoutError, ProcessLookupError):
-            stdout_bytes, stderr_bytes = b"", b""
-            proc.kill()
-            await proc.wait()
-        stdout = sanitize_progress_line(smart_decode(stdout_bytes))
-        stderr = sanitize_progress_line(smart_decode(stderr_bytes))
+        # 等待一小段时间让读取任务收集最后的输出
+        await asyncio.sleep(0.1)
+
+        stdout = sanitize_progress_line("\n".join(_collected["stdout"]))
+        stderr = sanitize_progress_line("\n".join(_collected["stderr"]))
         out = stdout
         if stderr:
             out += ("\n" if out else "") + f"{STDERR_MARKER}" + stderr

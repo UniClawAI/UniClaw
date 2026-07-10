@@ -24,6 +24,7 @@ from uniclaw.agent import (
     ThinkingStartEvent,
     ToolPreparingEvent,
     ToolStartEvent,
+    ToolStreamEvent,
     ToolEvent,
     AssistantEvent,
     UserEvent,
@@ -420,6 +421,18 @@ async def bridge_events(session_id: str, config: AppConfig):
                     "tool_call_id": event.tool_call_id,
                     "is_subagent": is_subagent,
                     "agent_name": agent_name,
+                }
+            )
+
+        elif isinstance(event, ToolStreamEvent):
+            # 工具流式输出（纯 UI 显示用，不参与 LLM 交互）
+            await _broadcast(
+                {
+                    "event": "tool_stream",
+                    "session_id": session_id,
+                    "name": event.name,
+                    "content": event.content,
+                    "tool_call_id": event.tool_call_id,
                 }
             )
 

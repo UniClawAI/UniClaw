@@ -120,6 +120,15 @@ class ToolEvent:
 
 
 @dataclass
+class ToolStreamEvent:
+    """工具执行过程中的流式输出事件（纯 UI 显示用，不参与 LLM 交互）。"""
+
+    name: str
+    content: str
+    tool_call_id: str = ""
+
+
+@dataclass
 class EndEvent:
     depth: int
 
@@ -921,9 +930,30 @@ class MultiAgent:
                         if "config" in sig.parameters
                         else dict(tc_args)
                     )
+                    # 设置流式输出回调:工具执行过程中可通过 tool_stream() 推送实时输出
+                    from uniclaw.tools.stream import (
+                        set_stream_callback,
+                        reset_stream_callback,
+                    )
+
                     # 支持异步工具:检测是否为协程函数
                     if inspect.iscoroutinefunction(tool.func):
-                        tool_resp_content = await tool.func(**kwargs)
+                        # 设置流式输出回调(仅异步工具可用 tool_stream())
+                        async def _stream_cb(content: str, _tc_id=tc_id, _tc_name=tc_name):
+                            await self.send_event_to_user(
+                                ToolStreamEvent(
+                                    name=_tc_name,
+                                    content=content,
+                                    tool_call_id=_tc_id,
+                                ),
+                                config,
+                            )
+
+                        stream_token = set_stream_callback(_stream_cb)
+                        try:
+                            tool_resp_content = await tool.func(**kwargs)
+                        finally:
+                            reset_stream_callback(stream_token)
                     else:
                         tool_resp_content = tool.func(**kwargs)
                     # 标记扩展工具已使用(LRU:移到最前,防止被淘汰),核心工具不参与能量管理

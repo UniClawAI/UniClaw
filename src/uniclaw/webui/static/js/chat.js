@@ -32,6 +32,7 @@ const Chat = {
         WS.on('assistant', msg => this._onAssistant(msg));
         WS.on('tool_preparing', () => {});
         WS.on('tool_start', msg => this._onToolStart(msg));
+        WS.on('tool_stream', msg => this._onToolStream(msg));
         WS.on('tool_end', msg => this._onToolEnd(msg));
         WS.on('config_changed', msg => this._onConfigChanged(msg));
         WS.on('end', msg => this._onEnd(msg));
@@ -693,6 +694,39 @@ const Chat = {
             const parentBlock = this.toolBlocks[k];
             if (parentBlock) parentBlock.classList.add('expanded');
         }
+    },
+
+    _onToolStream(msg) {
+        if (!msg || !this.currentSessionId || msg.session_id !== this.currentSessionId) return;
+        const key = msg.tool_call_id ? `${msg.session_id}:${msg.tool_call_id}` : null;
+        const block = key ? this.toolBlocks[key] : null;
+        if (!block) return;
+
+        const body = block.querySelector('.tool-body');
+        if (!body) return;
+
+        // 查找或创建流式输出容器
+        let streamEl = body.querySelector('.tool-stream-output');
+        if (!streamEl) {
+            streamEl = document.createElement('div');
+            streamEl.className = 'tool-stream-output';
+            const pre = document.createElement('pre');
+            pre.className = 'tool-stream-content';
+            streamEl.appendChild(pre);
+            // 插入到 tool-args 之后（如果有）
+            const argsEl = body.querySelector('.tool-args');
+            if (argsEl && argsEl.nextSibling) {
+                body.insertBefore(streamEl, argsEl.nextSibling);
+            } else {
+                body.appendChild(streamEl);
+            }
+        }
+
+        const pre = streamEl.querySelector('pre');
+        pre.textContent += msg.content;
+        // 自动展开并滚动
+        block.classList.add('expanded');
+        pre.scrollTop = pre.scrollHeight;
     },
 
     _onToolEnd(msg) {
