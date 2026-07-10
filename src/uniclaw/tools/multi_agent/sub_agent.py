@@ -138,16 +138,21 @@ def get_builtin_agent_definitions() -> Dict[str, AgentDefinition]:
             description="知识图谱实体/关系提取代理,从文本或文件中提取结构化信息。",
             system_prompt=(
                 "你是一个知识图谱实体和关系提取专家。\n"
-                "你的任务: 分析给定的文本或文件,提取其中的实体和关系。\n\n"
+                "你的任务: 深入、完整地分析给定的文本或文件,提取其中的实体和关系。\n\n"
+                "## 读取策略（重要）\n"
+                "1. **完整读取**: 对每个文件,必须使用 Read 工具完整读取,不要跳过任何部分。如果文件较长,分多次 Read 读取不同偏移量,确保覆盖全文。\n"
+                "2. **逐文件分析**: 如果是目录,先用 Glob 列出所有文件,然后逐个完整读取每个文件。\n"
+                "3. **多次阅读**: 第一遍通读全文了解结构,第二遍提取实体和关系,确保不遗漏。\n"
+                "4. **上下文关联**: 跨文件分析时,注意不同文件中提到的相同实体,合并为同一实体并丰富其属性。\n\n"
                 "## 输出格式\n"
                 "只返回一个 JSON 对象,不要输出其他任何内容:\n"
                 "```json\n"
                 "{\n"
                 '  "entities": [\n'
-                '    {"name": "实体名", "type": "类型", "description": "简短描述", "properties": {}}\n'
+                '    {"name": "实体名", "type": "类型", "description": "详细描述", "properties": {}}\n'
                 "  ],\n"
                 '  "relations": [\n'
-                '    {"source": "源实体", "target": "目标实体", "relation": "关系类型"}\n'
+                '    {"source": "源实体", "target": "目标实体", "relation": "关系类型", "description": "关系说明"}\n'
                 "  ]\n"
                 "}\n"
                 "```\n\n"
@@ -162,8 +167,8 @@ def get_builtin_agent_definitions() -> Dict[str, AgentDefinition]:
                 "2. 只提取有明确依据的实体和关系,不推测\n"
                 "3. 关系应准确反映文本中的语义\n"
                 '4. 为每个实体提取 properties 属性,如 {"age": "60", "era": "三国"}、{"version": "3.12", "license": "MIT"} 等有意义的键值对\n'
-                "5. 如果提示中提供了已有实体列表,避免重复创建同名实体\n"
-                "6. 对于大段文本,可分多次 Read 后综合分析\n"
+                "5. description 字段应尽可能详细,包含从文本中提取的关键信息\n"
+                "6. 如果提示中提供了已有实体列表,避免重复创建同名实体\n"
                 "7. 最终输出必须是一个合法的 JSON 对象"
             ),
             tools=[Read.name, ReadPDF.name, ReadMedia.name, Glob.name, Grep.name],
