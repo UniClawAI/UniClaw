@@ -605,9 +605,18 @@ class KnowledgeGraph:
 
         # 构建节点(大小按关系数量缩放,颜色由 category 控制)
         nodes = []
-        type_set = set()
+        type_set: set[str] = set()
         for e in entities:
             type_set.add(e["type"])
+        type_index = {t: i for i, t in enumerate(sorted(type_set))}
+
+        # 检测同名实体,为重复名称生成带类型后缀的唯一 ID
+        from collections import Counter
+        name_counts = Counter(e["name"] for e in entities)
+        # name → {type → id} 映射,用于关系引用时查找
+        name_type_id: dict[str, dict[str, str]] = defaultdict(dict)
+
+        for e in entities:
             icon = type_icons.get(e["type"], "●")
             count = rel_count.get(e["name"], 0)
             size = 10 + (count / max_rel) * 25 if max_rel > 0 else 12  # 10~35
@@ -616,9 +625,17 @@ class KnowledgeGraph:
                 tooltip_parts.append(f"描述: {e['description']}")
             if e.get("aliases"):
                 tooltip_parts.append(f"别名: {', '.join(e['aliases'])}")
+
+            # 同名实体用 "name (type)" 作为唯一 ID
+            node_id = f"{e['name']} ({e['type']})" if name_counts[e["name"]] > 1 else e["name"]
+            name_type_id[e["name"]][e["type"]] = node_id
+
             node = {
+                "id": node_id,
                 "name": e["name"],
                 "symbolSize": round(size),
+                "value": count,
+                "category": type_index[e["type"]],
                 "label": {"show": True},
                 "tooltip": "<br/>".join(tooltip_parts),
                 "type": e["type"],
@@ -628,26 +645,41 @@ class KnowledgeGraph:
             nodes.append(node)
 
         # 构建边(同一对节点的多条关系用不同曲率,数量越多间距越大)
+        # 查询时同时获取类型,用于正确引用去重后的节点 ID
+        # 分组时用排序节点对,确保 A→B 和 B→A 被归为同一组以正确计算曲率
         edge_groups: dict[tuple, list] = defaultdict(list)
         for row in self.conn.execute(
-            "SELECT s.name as src, t.name as tgt, r.relation FROM relations r JOIN entities s ON r.source_id=s.id JOIN entities t ON r.target_id=t.id"
+            "SELECT s.name as src, s.type as src_type, t.name as tgt, t.type as tgt_type, r.relation "
+            "FROM relations r JOIN entities s ON r.source_id=s.id JOIN entities t ON r.target_id=t.id"
         ).fetchall():
-            edge_groups[(row["src"], row["tgt"])].append(row["relation"])
+            src_id = name_type_id.get(row["src"], {}).get(row["src_type"], row["src"])
+            tgt_id = name_type_id.get(row["tgt"], {}).get(row["tgt_type"], row["tgt"])
+            pair = tuple(sorted([src_id, tgt_id]))
+            # 记录边方向是否与排序对一致(用于曲率符号修正)
+            reversed_dir = (src_id, tgt_id) != pair
+            edge_groups[pair].append({
+                "source": src_id, "target": tgt_id,
+                "relation": row["relation"], "reversed": reversed_dir,
+            })
 
         links = []
-        for (src, tgt), relations in edge_groups.items():
-            count = len(relations)
-            # 曲率范围随关系数量扩大: 2条→±0.3, 3条→±0.4, 5条→±0.6
-            spread = min(0.3 + (count - 2) * 0.1, 0.8) if count > 1 else 0
-            for i, rel in enumerate(relations):
+        for _pair, edges in edge_groups.items():
+            count = len(edges)
+            # 曲率范围随关系数量扩大,让多条线充分分开
+            spread = min(0.8 + (count - 2) * 0.2, 3.0) if count > 1 else 0
+            for i, edge in enumerate(edges):
                 curveness = 0.0
                 if count > 1:
                     curveness = -spread + (i / (count - 1)) * spread * 2
+                # ECharts 中反向边的曲率效果也会反转,需取反以确保不同边弯向不同侧
+                if edge["reversed"]:
+                    curveness = -curveness
+                src, tgt, rel = edge["source"], edge["target"], edge["relation"]
                 links.append({
                     "source": src,
                     "target": tgt,
                     "name": rel,
-                    "label": {"show": True, "formatter": rel, "fontSize": 10},
+                    "label": {"show": True, "formatter": rel, "fontSize": 13, "color": "#222", "position": "middle"},
                     "lineStyle": {"curveness": curveness, "opacity": 0.7},
                     "tooltip": f"{src} → {tgt}: {rel}",
                 })
@@ -714,20 +746,21 @@ body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans
     <div id="legend">{legend_html}</div>
 </div>
 <div id="chart"></div>
-<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<div id="load-error" style="display:none;padding:40px;text-align:center;color:#c00;font-size:15px;"></div>
+<script src="https://unpkg.com/echarts@5/dist/echarts.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/echarts/5.5.1/echarts.min.js"></script>
 <script>
+if (typeof echarts === 'undefined') {{
+    document.getElementById('load-error').textContent = '⚠️ ECharts 加载失败(unpkg)，尝试备用CDN...';
+    document.getElementById('load-error').style.display = 'block';
+}} else {{
+try {{
 var chart = echarts.init(document.getElementById('chart'));
 var nodesData = {nodes_json};
 var linksData = {links_json};
 var categories = {categories_json};
 
-// 给节点分配 category 索引
-var typeMap = {{}};
-categories.forEach(function(c, i) {{ typeMap[c.name] = i; }});
-nodesData.forEach(function(n) {{
-    n.category = typeMap[n.type] !== undefined ? typeMap[n.type] : 0;
-    n.draggable = true;
-}});
+nodesData.forEach(function(n) {{ n.draggable = true; }});
 
 // 构建类型→节点索引映射
 var typeIndices = {{}};
@@ -764,7 +797,6 @@ var option = {{
         categories: categories,
         roam: true,
         draggable: true,
-        focusNodeAdjacency: true,
         label: {{
             show: true,
             position: 'right',
@@ -772,13 +804,14 @@ var option = {{
             color: '#333',
         }},
         edgeLabel: {{
-            fontSize: 10,
-            color: '#666',
+            fontSize: 13,
+            color: '#222',
         }},
         force: {{
-            repulsion: 300,
-            gravity: 0.1,
-            edgeLength: [120, 250],
+            repulsion: 500,
+            gravity: 0.08,
+            edgeLength: [150, 350],
+            friction: 0.7,
             layoutAnimation: true,
         }},
         lineStyle: {{
@@ -790,11 +823,6 @@ var option = {{
             focus: 'adjacency',
             itemStyle: {{ shadowBlur: 12, shadowColor: 'rgba(0,0,0,0.3)' }},
             lineStyle: {{ width: 3 }},
-        }},
-        blur: {{
-            itemStyle: {{ opacity: 0.4 }},
-            lineStyle: {{ opacity: 0.2 }},
-            label: {{ color: '#ccc' }},
         }},
     }}]
 }};
@@ -903,6 +931,11 @@ document.getElementById('search').addEventListener('input', function(e) {{
     }}
     chart.setOption({{ series: [{{ data: nodesData, links: linksData }}] }});
 }});
+}} catch(e) {{
+    document.getElementById('load-error').textContent = '⚠️ 图表渲染错误: ' + e.message;
+    document.getElementById('load-error').style.display = 'block';
+}}
+}}
 </script>
 </body>
 </html>"""
