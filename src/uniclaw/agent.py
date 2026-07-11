@@ -556,6 +556,7 @@ class MultiAgent:
             and parent_task.event_queue is not None
         ):
             task.event_queue = parent_task.event_queue
+            task.cancel_event = parent_task.cancel_event
         self.id2AgentTask[task.id] = task
 
         base_system_prompt = get_base_system_prompt(config)
