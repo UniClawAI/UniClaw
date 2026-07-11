@@ -654,6 +654,44 @@ pre:hover .code-copy-btn {
     .welcome-suggestions { grid-template-columns: 1fr; max-width: 320px; }
 }
 
+/* ---- 拖拽上传覆盖层 ---- */
+.drop-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(10, 10, 15, 0.8);
+    backdrop-filter: blur(4px);
+    border: 2px dashed var(--accent);
+    border-radius: var(--r-lg);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--duration) var(--ease);
+}
+.drop-overlay.visible {
+    opacity: 1;
+    pointer-events: auto;
+}
+.drop-overlay-inner {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    color: var(--accent-bright);
+    font-size: var(--text-lg);
+}
+.drop-overlay-inner svg {
+    width: 48px;
+    height: 48px;
+    animation: dropBounce 1.2s ease-in-out infinite;
+}
+@keyframes dropBounce {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-8px); }
+}
+
 /* ---- Spinner ---- */
 .spinner-area {
     position: absolute;

@@ -165,6 +165,7 @@ const Chat = {
     },
 
     _appendSystemMessage(content) {
+        this._removeWelcomeScreen();
         const c = document.getElementById('chat-messages');
         this._saveScrollState();
         const el = document.createElement('div');
@@ -173,6 +174,12 @@ const Chat = {
         c.appendChild(el);
         this._scrollToBottom();
         return el;
+    },
+
+    /** 移除欢迎页面 */
+    _removeWelcomeScreen() {
+        const ws = document.querySelector('#chat-messages .welcome-screen');
+        if (ws) ws.remove();
     },
 
     /** 显示欢迎页面（空状态） */
@@ -483,6 +490,7 @@ const Chat = {
 
     _onUser(msg) {
         if (!msg || !this.currentSessionId || msg.session_id !== this.currentSessionId) return;
+        this._removeWelcomeScreen();
         let el;
         if (Array.isArray(msg.content)) {
             const text = this._extractText(msg.content);

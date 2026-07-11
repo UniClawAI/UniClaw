@@ -44,6 +44,36 @@ const Input = {
         fileInput.onchange = e => this._onFilesSelected(e.target.files);
         const micBtn = document.getElementById('mic-btn');
         if (micBtn) micBtn.onclick = () => this.toggleMic();
+        this._setupDragDrop();
+    },
+
+    /** 拖拽文件到主聊天区添加附件 */
+    _setupDragDrop() {
+        const mainArea = document.getElementById('main-area');
+        if (!mainArea) return;
+        let dragCounter = 0;
+        const overlay = document.createElement('div');
+        overlay.className = 'drop-overlay';
+        overlay.innerHTML = `<div class="drop-overlay-inner">${Icons.attach}<span>松开以添加附件</span></div>`;
+        mainArea.appendChild(overlay);
+
+        mainArea.addEventListener('dragenter', e => {
+            e.preventDefault();
+            dragCounter++;
+            if (e.dataTransfer.types.includes('Files')) overlay.classList.add('visible');
+        });
+        mainArea.addEventListener('dragleave', e => {
+            e.preventDefault();
+            dragCounter--;
+            if (dragCounter <= 0) { dragCounter = 0; overlay.classList.remove('visible'); }
+        });
+        mainArea.addEventListener('dragover', e => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; });
+        mainArea.addEventListener('drop', e => {
+            e.preventDefault();
+            dragCounter = 0;
+            overlay.classList.remove('visible');
+            if (e.dataTransfer.files.length) this._onFilesSelected(e.dataTransfer.files);
+        });
     },
 
     send() {
