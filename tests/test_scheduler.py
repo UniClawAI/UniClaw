@@ -13,11 +13,11 @@ from uniclaw.tools.scheduler.scheduler import Scheduler, _parse_cron
 @pytest.fixture(autouse=True)
 def tmp_config(tmp_path):
     """每个测试使用独立的临时配置文件"""
-    fake_dir = tmp_path / ".UniClaw"
-    fake_dir.mkdir()
+    fake_dir = tmp_path / ".UniClaw" / "schedule"
+    fake_dir.mkdir(parents=True)
     config_file = fake_dir / "scheduler.json"
     with patch.object(Scheduler, "_instance", None):
-        with patch("uniclaw.tools.scheduler.scheduler.get_app_dir", return_value=fake_dir):
+        with patch("uniclaw.tools.scheduler.scheduler.get_app_dir", return_value=fake_dir.parent):
             yield config_file
 
 
@@ -70,41 +70,41 @@ class TestSchedulerCRUD:
     """调度器 CRUD 操作测试"""
 
     def test_add_task(self, scheduler):
-        task_id = scheduler.add_task("测试任务", "0 9 * * *", "shell: echo hello", root_dir="/tmp")
-        assert task_id is not None
+        task = scheduler.add_task("测试任务", "0 9 * * *", "shell: echo hello")
+        assert task is not None
         tasks = scheduler.list_tasks()
         assert len(tasks) == 1
-        assert tasks[0]["id"] == task_id
+        assert tasks[0]["id"] == task.id
         assert tasks[0]["name"] == "测试任务"
         assert tasks[0]["schedule"] == "0 9 * * *"
         assert tasks[0]["action"] == "shell: echo hello"
         assert tasks[0]["enabled"] is True
 
     def test_add_task_returns_unique_ids(self, scheduler):
-        id1 = scheduler.add_task("任务1", "0 9 * * *", "shell: echo 1", root_dir="/tmp")
-        id2 = scheduler.add_task("任务2", "0 9 * * *", "shell: echo 2", root_dir="/tmp")
-        assert id1 is not None
-        assert id2 is not None
-        assert id1 != id2
+        t1 = scheduler.add_task("任务1", "0 9 * * *", "shell: echo 1")
+        t2 = scheduler.add_task("任务2", "0 9 * * *", "shell: echo 2")
+        assert t1 is not None
+        assert t2 is not None
+        assert t1.id != t2.id
 
     def test_add_task_invalid_schedule(self, scheduler):
         with pytest.raises(ValueError, match="无效的 Cron 表达式"):
-            scheduler.add_task("测试", "invalid", "shell: echo hello", root_dir="/tmp")
+            scheduler.add_task("测试", "invalid", "shell: echo hello")
 
     def test_remove_task(self, scheduler):
-        task_id = scheduler.add_task("测试", "0 9 * * *", "shell: echo hello", root_dir="/tmp")
-        assert scheduler.remove_task(task_id) is True
+        task = scheduler.add_task("测试", "0 9 * * *", "shell: echo hello")
+        assert scheduler.remove_task(task.id) is True
         assert scheduler.list_tasks() == []
 
     def test_remove_task_not_found(self, scheduler):
         assert scheduler.remove_task("nonexistent") is False
 
     def test_toggle_task(self, scheduler):
-        task_id = scheduler.add_task("测试", "0 9 * * *", "shell: echo hello", root_dir="/tmp")
-        assert scheduler.toggle_task(task_id, False) is True
+        task = scheduler.add_task("测试", "0 9 * * *", "shell: echo hello")
+        assert scheduler.toggle_task(task.id, False) is True
         tasks = scheduler.list_tasks()
         assert tasks[0]["enabled"] is False
-        assert scheduler.toggle_task(task_id, True) is True
+        assert scheduler.toggle_task(task.id, True) is True
         tasks = scheduler.list_tasks()
         assert tasks[0]["enabled"] is True
 
@@ -112,11 +112,11 @@ class TestSchedulerCRUD:
         assert scheduler.toggle_task("nonexistent", True) is False
 
     def test_persistence(self, scheduler, tmp_config):
-        task_id = scheduler.add_task("持久化测试", "0 9 * * *", "shell: echo hello", root_dir="/tmp")
+        task = scheduler.add_task("持久化测试", "0 9 * * *", "shell: echo hello")
         # 直接读文件验证持久化
         data = json.loads(tmp_config.read_text(encoding="utf-8"))
-        assert task_id in data["tasks"]
-        assert data["tasks"][task_id]["name"] == "持久化测试"
+        assert task.id in data["tasks"]
+        assert data["tasks"][task.id]["name"] == "持久化测试"
 
 
 class TestSchedulerExecution:
@@ -124,9 +124,9 @@ class TestSchedulerExecution:
 
     @pytest.mark.asyncio
     async def test_task_runs_when_due(self, scheduler):
-        task_id = scheduler.add_task("", "*/5 * * * *", "shell: echo hello", root_dir="/tmp")
+        task = scheduler.add_task("", "*/5 * * * *", "shell: echo hello")
         # 设置 last_run 为 10 分钟前
-        scheduler._tasks[task_id].last_run = (
+        scheduler._tasks[task.id].last_run = (
             datetime.now() - timedelta(minutes=10)
         ).isoformat(timespec="seconds")
         scheduler.save_config()
@@ -138,9 +138,9 @@ class TestSchedulerExecution:
 
     @pytest.mark.asyncio
     async def test_task_not_runs_when_not_due(self, scheduler):
-        task_id = scheduler.add_task("", "*/5 * * * *", "shell: echo hello", root_dir="/tmp")
+        task = scheduler.add_task("", "*/5 * * * *", "shell: echo hello")
         now_str = datetime.now().isoformat(timespec="seconds")
-        scheduler._tasks[task_id].last_run = now_str
+        scheduler._tasks[task.id].last_run = now_str
         scheduler.save_config()
 
         await scheduler._check_and_run_tasks()
@@ -151,7 +151,7 @@ class TestSchedulerExecution:
 
     @pytest.mark.asyncio
     async def test_first_run_immediately(self, scheduler):
-        task_id = scheduler.add_task("", "* * * * *", "shell: echo hello", root_dir="/tmp")
+        task = scheduler.add_task("", "* * * * *", "shell: echo hello")
 
         await scheduler._check_and_run_tasks()
 
@@ -160,8 +160,8 @@ class TestSchedulerExecution:
 
     @pytest.mark.asyncio
     async def test_disabled_task_skipped(self, scheduler):
-        task_id = scheduler.add_task("", "* * * * *", "shell: echo hello", root_dir="/tmp")
-        scheduler.toggle_task(task_id, False)
+        task = scheduler.add_task("", "* * * * *", "shell: echo hello")
+        scheduler.toggle_task(task.id, False)
 
         await scheduler._check_and_run_tasks()
 

@@ -70,8 +70,8 @@ class TestParsePlatforms:
         assert result == ["github", "arxiv"]
 
     def test_with_spaces(self):
-        result = _parse_platforms("github, arxiv , weibo")
-        assert result == ["github", "arxiv", "weibo"]
+        result = _parse_platforms("github, arxiv , bilibili")
+        assert result == ["github", "arxiv", "bilibili"]
 
     def test_unknown_filtered(self):
         result = _parse_platforms("github,unknown,arxiv")
@@ -316,76 +316,6 @@ class TestPlatformSearchHackerNews:
         assert "testuser" in result
 
 
-class TestPlatformSearchWeibo:
-    """微博搜索测试"""
-
-    @pytest.mark.asyncio
-    async def test_basic(self, mock_config):
-        html = """
-        <div class="card-wrap">
-            <p node-type="feed_list_content">这是一条测试微博内容</p>
-            <a class="name">测试用户</a>
-            <a action-type="feed_list_forward">转发 10</a>
-            <a action-type="feed_list_comment">评论 20</a>
-            <a action-type="feed_list_like"><em>30</em></a>
-        </div>
-        """
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.text = html
-
-        with patch("uniclaw.tools.search.httpx.AsyncClient") as mock_client:
-            mock_client.return_value.__aenter__ = AsyncMock(
-                return_value=MagicMock(get=AsyncMock(return_value=mock_response))
-            )
-            mock_client.return_value.__aexit__ = AsyncMock()
-            result = await _search(query="test", platform="weibo", config=mock_config)
-
-        assert "微博" in result
-
-
-class TestPlatformSearchZhihu:
-    """知乎搜索测试"""
-
-    @pytest.mark.asyncio
-    async def test_basic(self, mock_config):
-        html = '<html><body>知乎搜索页面</body></html>'
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.text = html
-
-        with patch("uniclaw.tools.search.httpx.AsyncClient") as mock_client:
-            mock_client.return_value.__aenter__ = AsyncMock(
-                return_value=MagicMock(get=AsyncMock(return_value=mock_response))
-            )
-            mock_client.return_value.__aexit__ = AsyncMock()
-            result = await _search(query="test", platform="zhihu", config=mock_config)
-
-        # 知乎需要登录或 JS 渲染,应该返回相应提示
-        assert "知乎" in result
-
-
-class TestPlatformSearchDouyin:
-    """抖音搜索测试"""
-
-    @pytest.mark.asyncio
-    async def test_basic(self, mock_config):
-        html = '<html><body>抖音搜索页面</body></html>'
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.text = html
-
-        with patch("uniclaw.tools.search.httpx.AsyncClient") as mock_client:
-            mock_client.return_value.__aenter__ = AsyncMock(
-                return_value=MagicMock(get=AsyncMock(return_value=mock_response))
-            )
-            mock_client.return_value.__aexit__ = AsyncMock()
-            result = await _search(query="test", platform="douyin", config=mock_config)
-
-        # 抖音是 SPA,应该返回相应提示
-        assert "抖音" in result
-
-
 class TestPlatformSearchBilibili:
     """B站搜索测试"""
 
@@ -490,7 +420,7 @@ class TestErrorHandling:
             mock_client.return_value.__aexit__ = AsyncMock()
             result = await _search(query="test", platform="github", timeout=3, config=mock_config)
 
-        assert "连接失败" in result
+        assert "连接超时" in result
         assert "proxy_url" in result
 
     @pytest.mark.asyncio
@@ -592,7 +522,7 @@ class TestPlatformRouting:
 
     def test_platform_list_completeness(self):
         """平台列表包含所有预期平台"""
-        expected = {"github", "arxiv", "stackoverflow", "hackernews", "x", "weibo", "zhihu", "douyin", "bilibili"}
+        expected = {"github", "arxiv", "stackoverflow", "hackernews", "bilibili"}
         assert set(_PLATFORM_SEARCHERS.keys()) == expected
 
     @pytest.mark.asyncio

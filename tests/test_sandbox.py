@@ -83,17 +83,17 @@ class TestRunCodeValidation:
 
     def test_unsupported_language(self):
         result = asyncio.run(RunCode.func("rust", "fn main() {}"))
-        assert "Error" in result
+        assert "ERROR" in result
         assert "不支持" in result
 
     def test_empty_code(self):
         result = asyncio.run(RunCode.func("python", ""))
-        assert "Error" in result
+        assert "ERROR" in result
         assert "不能为空" in result
 
     def test_whitespace_only_code(self):
         result = asyncio.run(RunCode.func("python", "   \n  "))
-        assert "Error" in result
+        assert "ERROR" in result
         assert "不能为空" in result
 
 

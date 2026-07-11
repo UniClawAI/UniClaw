@@ -58,7 +58,7 @@ async def test_save_load_preserves_full_message_fields(tmp_path):
     )
 
     config = _make_config(tmp_path, task)
-    await SessionManager.save_session(task, config)
+    await SessionManager.save_session(config)
     loaded = SessionManager.load_session(task.session.id)
 
     assert loaded is not None
@@ -78,7 +78,7 @@ async def test_search_sessions_reports_matching_message_numbers(tmp_path):
     )
 
     config = _make_config(tmp_path, task)
-    await SessionManager.save_session(task, config)
+    await SessionManager.save_session(config)
 
     results = SessionManager.search_sessions("crawler")
 
@@ -92,7 +92,7 @@ async def test_session_load_command_replaces_task_messages(tmp_path):
     source.session.add_user_message(content="saved message")
 
     config = _make_config(tmp_path, source)
-    await SessionManager.save_session(source, config)
+    await SessionManager.save_session(config)
 
     target = _make_task(root_dir=tmp_path)
     target.session.add_user_message(content="old message")

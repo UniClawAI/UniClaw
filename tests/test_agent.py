@@ -159,7 +159,7 @@ class TestPermissionRequestEvent:
         assert event.description == "运行命令"
         assert event.tool_call == {"name": "Bash", "args": {"command": "ls"}}
         assert event.explanation == "需要执行命令"
-        assert event.content is False
+        assert event.content == "无可用的 UI 响应,自动拒绝权限请求"
         assert hasattr(event, "return_event")
 
     def test_default_tool_call(self):

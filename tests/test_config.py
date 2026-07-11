@@ -20,6 +20,7 @@ from uniclaw.config import (
     save_config,
     load_config,
     create_sub_agent_config,
+    _create_config_from_data,
 )
 
 
@@ -48,7 +49,7 @@ class TestAppConfig:
         assert config.max_tokens is None
         assert config.top_p is None
         assert config.proxy_url == ""
-        assert config.max_agent_depth == 3
+        assert config.max_agent_depth == 2
         assert config.permission_timeout == 300
         assert config.permission_mode == Permissions.AUTO
         assert config.verbose is False
@@ -306,23 +307,30 @@ class TestLoadSettingsJson:
             assert result["mini_model_name"] == ["gpt-4"]
 
 
-class TestSaveSettingsJson:
-    """_save_settings_json 函数测试"""
+class TestCreateConfigFromData:
+    """_create_config_from_data 函数测试"""
 
-    def test_save_to_file(self):
-        """测试保存到文件"""
-        test_data = {"key": "value"}
-
-        with patch("uniclaw.config.get_config_path") as mock_get_path:
-            mock_path = MagicMock()
-            mock_parent = MagicMock()
-            mock_path.parent = mock_parent
-            mock_get_path.return_value = mock_path
-
-            _save_settings_json(test_data)
-
-            mock_parent.mkdir.assert_called_once_with(parents=True, exist_ok=True)
-            mock_path.write_text.assert_called_once()
+    def test_create_from_data(self):
+        """测试从数据字典创建配置"""
+        test_data = {
+            "providers": {
+                "test": {
+                    "name": "test",
+                    "protocol": "openai",
+                    "api_key": "sk-test",
+                    "base_url": "https://api.test.com/v1",
+                }
+            },
+            "model_name": ["gpt-4"],
+            "mini_model_name": ["gpt-4-mini"],
+            "temperature": 0.7,
+            "max_agent_depth": 3,
+        }
+        config = _create_config_from_data(test_data)
+        assert config.model_name == ["gpt-4"]
+        assert config.mini_model_name == ["gpt-4-mini"]
+        assert config.temperature == 0.7
+        assert config.providers["test"].api_key == "sk-test"
 
 
 class TestSaveConfig:
@@ -383,19 +391,23 @@ class TestLoadConfig:
             "temperature": 0.5,
         }
 
+        mock_session = MagicMock()
+
         with (
-            patch("uniclaw.tools.session.session.Session") as MockSession,
             patch("uniclaw.agent.AgentTask") as MockAgentTask,
             patch("uniclaw.tools.todolist.TodoList") as MockTodoList,
+            patch("uniclaw.tools.todolist.goal.GoalManager") as MockGoalManager,
             patch("uniclaw.config._load_settings_json") as mock_load,
         ):
-            MockSession.return_value = MagicMock()
             MockAgentTask.return_value = MagicMock()
             MockTodoList.return_value = MagicMock()
+            MockGoalManager.return_value = MagicMock()
             mock_load.return_value = test_data
 
             mock_spinner = MagicMock()
-            config = load_config(Path("/test/root"), mock_spinner)
+            config = load_config(
+                Path("/test/root"), mock_spinner, session=mock_session
+            )
 
             assert config.providers["default"].api_key == "test-key"
             assert config.model_name == ["gpt-4"]
