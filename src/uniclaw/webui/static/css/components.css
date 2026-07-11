@@ -1225,7 +1225,7 @@ textarea.input {
     .settings-provider-fields {
         grid-template-columns: 1fr;
     }
-    /* 弹窗内按钮更大，方便触摸 */
+    /* 弹窗内按钮更大,方便触摸 */
     .modal-actions .btn {
         min-height: 40px;
         padding: 8px 16px;

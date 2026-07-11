@@ -705,7 +705,7 @@ async def handle_ws_message(ws: WebSocket, msg: dict):
         task = config.current_agent
         raw_content = msg.get("content", "")
 
-        content = _build_content_with_files(raw_content, msg.get("files", []))
+        content = _build_content_with_files(raw_content, msg.get("files", []), config)
         get_logger("webui", Path.cwd()).info(
             f"[{session_id}] 准备启动 agent, task.status={task.status}"
         )
@@ -848,8 +848,14 @@ async def handle_ws_message(ws: WebSocket, msg: dict):
             await _notify_config_changed(session_id)
 
 
-def _build_content_with_files(content: str, files: list[dict]) -> Any:
-    """构建带附件的消息内容。"""
+def _build_content_with_files(content: str, files: list[dict], config) -> Any:
+    """构建带附件的消息内容。
+
+    - 图片/视频/音频：转为多模态块
+    - 其他文件：写入 root_dir,内容追加到消息中
+    """
+    import base64
+
     from uniclaw.tools.session.session import MultimodalBlock
 
     if not files:
@@ -860,15 +866,43 @@ def _build_content_with_files(content: str, files: list[dict]) -> Any:
         name = f.get("name", "")
         data = f.get("data", "")
         mime = f.get("mime", "")
+
         if mime.startswith("image/"):
             blocks.append(
                 MultimodalBlock(
                     type="image_url", image_url={"url": f"data:{mime};base64,{data}"}
                 )
             )
+        elif mime.startswith("video/"):
+            blocks.append(
+                MultimodalBlock(
+                    type="video_url", video_url={"url": f"data:{mime};base64,{data}"}
+                )
+            )
+        elif mime.startswith("audio/"):
+            # input_audio 需要 format 字段(wav/mp3 等)
+            audio_format = mime.split("/")[-1]  # e.g. "audio/wav" → "wav"
+            blocks.append(
+                MultimodalBlock(
+                    type="input_audio",
+                    input_audio={"data": data, "format": audio_format},
+                )
+            )
         else:
-            blocks.append(MultimodalBlock(type="text", text=f"[附件: {name}]"))
-    return blocks
+            # 非多媒体文件：写入 root_dir,由 agent 自行处理
+            try:
+                file_path = config.root_dir / name
+                file_path.parent.mkdir(parents=True, exist_ok=True)
+                file_bytes = base64.b64decode(data)
+                file_path.write_bytes(file_bytes)
+                blocks.append(MultimodalBlock(type="text", text=f"[附件: {name}]"))
+            except Exception as e:
+                get_logger("webui", Path.cwd()).error(f"保存附件失败: {e}")
+                blocks.append(
+                    MultimodalBlock(type="text", text=f"[附件: {name} 保存失败: {e}]")
+                )
+    # 转换为字典列表,确保可JSON序列化
+    return [block.to_dict() for block in blocks]
 
 
 async def websocket_endpoint(ws: WebSocket):

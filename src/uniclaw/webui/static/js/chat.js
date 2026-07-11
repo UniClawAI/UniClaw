@@ -116,13 +116,18 @@ const Chat = {
             } else if (role === 'user') {
                 const text = this._extractText(msg.content);
                 const images = this._extractImages(msg.content);
+                const videos = this._extractVideos(msg.content);
+                const audio = this._extractAudio(msg.content);
+                const files = this._extractFiles(msg.content);
                 let el;
                 if (text.startsWith('[system]')) {
                     if (text.includes('(用户执行Shell命令)')) el = this._appendShellResultFromHistory(text, msgIdx);
                     else if (images.length > 0) this._appendSystemMessageWithImages(text, images);
                     else this._appendSystemMessage(text);
-                } else if (images.length > 0) {
-                    el = this._appendUserMessageWithImages(text, images);
+                } else if (images.length > 0 || videos.length > 0 || audio.length > 0 || files.length > 0) {
+                    // 清除 [附件: ...] 后缀,只保留纯文本
+                    const cleanText = text.replace(/\n?\[附件: [^\]]+\]/g, '').trim();
+                    el = this._appendUserMessageWithMedia(cleanText, images, videos, audio, files);
                 } else {
                     el = this._appendUserMessage(text);
                 }
@@ -182,7 +187,7 @@ const Chat = {
         if (ws) ws.remove();
     },
 
-    /** 显示欢迎页面（空状态） */
+    /** 显示欢迎页面(空状态) */
     _appendWelcomeScreen() {
         const c = document.getElementById('chat-messages');
         this._saveScrollState();
@@ -204,7 +209,7 @@ const Chat = {
         el.innerHTML = `
             <div class="welcome-logo">🦞</div>
             <div class="welcome-title">UniClaw</div>
-            <div class="welcome-subtitle">你的 AI 智能助手，随时准备帮你解决问题</div>
+            <div class="welcome-subtitle">你的 AI 智能助手,随时准备帮你解决问题</div>
             <div class="welcome-suggestions">
                 ${suggestions.map(s => `
                     <div class="welcome-suggestion-card" data-text="${Utils.escapeHtml(s.text)}">
@@ -263,6 +268,50 @@ const Chat = {
         html += '<div class="image-grid">';
         imageUrls.forEach(url => { html += `<img src="${url}" onclick="Chat._showLightbox('${url}')" />`; });
         html += '</div>';
+        html += '</div>';
+        el.innerHTML = html;
+        c.appendChild(el);
+        Utils.addCopyButtons(el);
+        this._scrollToBottom();
+        return el;
+    },
+
+    /** 追加带多媒体附件的用户消息 */
+    _appendUserMessageWithMedia(content, images, videos, audio, files) {
+        const c = document.getElementById('chat-messages');
+        this._saveScrollState();
+        const el = document.createElement('div');
+        el.className = 'message user';
+        el.dataset.rawContent = content || '';
+        let html = `<div class="msg-avatar user">${icon('send')}</div><div class="msg-body">`;
+        if (content) html += `<div class="msg-content"><button class="msg-delete-btn" onclick="Chat._onEditUserMessage(this)" title="删除并重新编辑">${icon('close')}</button><div class="msg-text-aligner"><div class="markdown-body">${Utils.renderMarkdown(content)}</div></div></div>`;
+
+        // 图片网格
+        if (images.length > 0) {
+            html += '<div class="image-grid">';
+            images.forEach(url => { html += `<img src="${url}" onclick="Chat._showLightbox('${url}')" />`; });
+            html += '</div>';
+        }
+
+        // 视频
+        videos.forEach(url => {
+            html += `<div class="media-attachment"><video controls preload="metadata" style="max-width:300px;max-height:200px;border-radius:var(--r-md)"><source src="${url}"></video></div>`;
+        });
+
+        // 音频
+        audio.forEach(a => {
+            html += `<div class="media-attachment"><audio controls preload="metadata"><source src="data:audio/${a.format};base64,${a.data}"></audio></div>`;
+        });
+
+        // 文件附件
+        if (files.length > 0) {
+            html += '<div class="file-attachments">';
+            files.forEach(name => {
+                html += `<div class="file-attachment-item">${Icons.file || '📄'}<span>${Utils.escapeHtml(name)}</span></div>`;
+            });
+            html += '</div>';
+        }
+
         html += '</div>';
         el.innerHTML = html;
         c.appendChild(el);
@@ -452,6 +501,19 @@ const Chat = {
         if (!Array.isArray(content)) return [];
         return content.filter(b => b.type === 'image_url').map(b => b.image_url.url);
     },
+    _extractVideos(content) {
+        if (!Array.isArray(content)) return [];
+        return content.filter(b => b.type === 'video_url').map(b => b.video_url.url);
+    },
+    _extractAudio(content) {
+        if (!Array.isArray(content)) return [];
+        return content.filter(b => b.type === 'input_audio').map(b => ({ data: b.input_audio.data, format: b.input_audio.format }));
+    },
+    /** 提取附件文件(非多媒体的 [附件: ...] 文本块) */
+    _extractFiles(content) {
+        if (!Array.isArray(content)) return [];
+        return content.filter(b => b.type === 'text' && /^\[附件: .+\]$/.test(b.text)).map(b => b.text.match(/^\[附件: (.+)\]$/)[1]);
+    },
     _formatJson(str) {
         if (typeof str !== 'string') { try { return JSON.stringify(str, null, 2); } catch (_) { return String(str); } }
         try { return JSON.stringify(JSON.parse(str), null, 2); } catch (_) { return str; }
@@ -495,6 +557,9 @@ const Chat = {
         if (Array.isArray(msg.content)) {
             const text = this._extractText(msg.content);
             const images = this._extractImages(msg.content);
+            const videos = this._extractVideos(msg.content);
+            const audio = this._extractAudio(msg.content);
+            const files = this._extractFiles(msg.content);
             if (text.startsWith('[system]')) {
                 // Shell 命令消息已由 _onShellResult 渲染(带格式化),跳过避免重复
                 if (text.includes('(用户执行Shell命令)')) return;
@@ -503,15 +568,9 @@ const Chat = {
                 if (el && msg.msg_idx != null) el.dataset.msgIdx = msg.msg_idx;
                 return;
             }
-            if (images.length > 0) {
-                const userMsgs = document.querySelectorAll('#chat-messages .message.user');
-                const last = userMsgs.length > 0 ? userMsgs[userMsgs.length - 1] : null;
-                if (last && !last.querySelector('.image-grid')) {
-                    let grid = last.querySelector('.image-grid');
-                    if (!grid) { grid = document.createElement('div'); grid.className = 'image-grid'; last.querySelector('.msg-body').appendChild(grid); }
-                    images.forEach(url => { const img = document.createElement('img'); img.src = url; img.onclick = () => this._showLightbox(url); grid.appendChild(img); });
-                }
-            }
+            // 清除 [附件: ...] 后缀,只保留纯文本
+            const cleanText = text.replace(/\n?\[附件: [^\]]+\]/g, '').trim();
+            el = this._appendUserMessageWithMedia(cleanText, images, videos, audio, files);
         } else if (typeof msg.content === 'string') {
             const text = msg.content;
             if (text.startsWith('[system]')) {
@@ -805,10 +864,10 @@ const Chat = {
         }
 
         const pre = streamEl.querySelector('pre');
-        // 判断用户是否在底部附近（距离底部 50px 以内）
+        // 判断用户是否在底部附近(距离底部 50px 以内)
         const isNearBottom = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 50;
         pre.textContent += msg.content;
-        // 如果已展开且用户在底部附近，则自动滚动到底部
+        // 如果已展开且用户在底部附近,则自动滚动到底部
         if (block.classList.contains('expanded') && isNearBottom) {
             pre.scrollTop = pre.scrollHeight;
         }

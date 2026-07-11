@@ -225,8 +225,11 @@ const Input = {
         if (!this.attachedFiles.length) { preview.style.display = 'none'; preview.innerHTML = ''; return; }
         preview.style.display = 'flex';
         preview.innerHTML = this.attachedFiles.map((f, i) => {
-            if (f.mime.startsWith('image/')) return `<div style="position:relative"><img src="${f.url}" style="width:60px;height:60px;object-fit:cover;border-radius:var(--r-sm);border:1px solid var(--border)"/><button onclick="Input.removeFile(${i})" style="position:absolute;top:-4px;right:-4px;width:18px;height:18px;border-radius:50%;background:var(--neon-pink);color:#fff;border:none;cursor:pointer;font-size:10px;display:flex;align-items:center;justify-content:center">×</button></div>`;
-            return `<div style="position:relative;padding:4px 8px;background:var(--bg-3);border-radius:var(--r-sm);font-size:10px;color:var(--text-2)">${Utils.escapeHtml(f.name)}<button onclick="Input.removeFile(${i})" style="position:absolute;top:-4px;right:-4px;width:18px;height:18px;border-radius:50%;background:var(--neon-pink);color:#fff;border:none;cursor:pointer;font-size:10px;display:flex;align-items:center;justify-content:center">×</button></div>`;
+            const removeBtn = `<button onclick="Input.removeFile(${i})" style="position:absolute;top:-4px;right:-4px;width:18px;height:18px;border-radius:50%;background:var(--neon-pink);color:#fff;border:none;cursor:pointer;font-size:10px;display:flex;align-items:center;justify-content:center">×</button>`;
+            if (f.mime.startsWith('image/')) return `<div style="position:relative"><img src="${f.url}" style="width:60px;height:60px;object-fit:cover;border-radius:var(--r-sm);border:1px solid var(--border)"/>${removeBtn}</div>`;
+            if (f.mime.startsWith('video/')) return `<div style="position:relative"><video src="${f.url}" style="width:60px;height:60px;object-fit:cover;border-radius:var(--r-sm);border:1px solid var(--border)"/>${removeBtn}</div>`;
+            if (f.mime.startsWith('audio/')) return `<div style="position:relative;display:flex;align-items:center;gap:4px;padding:4px 8px;background:var(--bg-3);border-radius:var(--r-sm)">${Icons.file || '🎵'}<span style="font-size:10px;color:var(--text-2);max-width:50px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${Utils.escapeHtml(f.name)}</span>${removeBtn}</div>`;
+            return `<div style="position:relative;display:flex;align-items:center;gap:4px;padding:4px 8px;background:var(--bg-3);border-radius:var(--r-sm)">${Icons.file || '📄'}<span style="font-size:10px;color:var(--text-2);max-width:50px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${Utils.escapeHtml(f.name)}</span>${removeBtn}</div>`;
         }).join('');
     },
 

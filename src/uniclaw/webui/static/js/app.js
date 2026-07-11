@@ -234,7 +234,7 @@ const App = {
         return window.innerWidth > 768 && window.innerWidth <= 1024;
     },
 
-    /** 监听窗口尺寸变化，跨断点时自动收起/恢复面板 */
+    /** 监听窗口尺寸变化,跨断点时自动收起/恢复面板 */
     _bindResizeHandler() {
         let prevWidth = window.innerWidth;
         window.addEventListener('resize', () => {
@@ -337,7 +337,7 @@ const App = {
             const dx = t.clientX - startX;
             const dy = Math.abs(t.clientY - startY);
 
-            if (dy > MAX_DY) return; // 垂直滑动过长，忽略
+            if (dy > MAX_DY) return; // 垂直滑动过长,忽略
 
             if (side === 'left' && dx > MIN_DX) {
                 this._toggleLeftPanel(); // 打开左面板
