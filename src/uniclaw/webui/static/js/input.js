@@ -210,10 +210,15 @@ const Input = {
     },
 
     _onFilesSelected(files) {
+        const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500MB
         Array.from(files).forEach(file => {
+            if (file.size > MAX_FILE_SIZE) {
+                Utils.showToast(`文件 ${file.name} 超过500MB限制,已跳过`);
+                return;
+            }
             const reader = new FileReader();
             reader.onload = () => {
-                this.attachedFiles.push({ name: file.name, data: reader.result.split(',')[1], mime: file.type, url: reader.result });
+                this.attachedFiles.push({ name: file.name, data: reader.result.split(',')[1], mime: file.type || 'application/octet-stream', url: reader.result });
                 this._updateFilePreview();
             };
             reader.readAsDataURL(file);
