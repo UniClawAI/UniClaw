@@ -103,7 +103,7 @@ def _build_extended_keywords() -> dict[str, list[str]]:
     from .send_file import send_file
     from .knowledge.tools import (
         kg_add_entity, kg_add_relation, kg_add_alias, kg_update_entity,
-        kg_delete_entity, kg_delete_relation, kg_get_entity, kg_search,
+        kg_delete_entity, kg_delete_relation, kg_merge_entities, kg_get_entity, kg_search,
         kg_neighbors, kg_path, kg_stats, kg_export, kg_list, kg_extract, kg_clear,
     )
 
@@ -244,6 +244,7 @@ def _build_extended_keywords() -> dict[str, list[str]]:
         kg_update_entity.name: ["更新实体", "update entity", "知识图谱", "修改实体"],
         kg_delete_entity.name: ["删除实体", "delete entity", "知识图谱", "移除实体"],
         kg_delete_relation.name: ["删除关系", "delete relation", "知识图谱", "移除关系"],
+        kg_merge_entities.name: ["合并实体", "merge entities", "知识图谱", "实体合并", "去重", "实体去重", "deduplicate entity"],
         kg_clear.name: ["清空图谱", "clear knowledge", "知识图谱", "清除图谱", "重置图谱"],
     }
 
@@ -308,7 +309,7 @@ def _build_tool_categories() -> dict[str, str]:
     from .send_file import send_file
     from .knowledge.tools import (
         kg_add_entity, kg_add_relation, kg_add_alias, kg_update_entity,
-        kg_delete_entity, kg_delete_relation, kg_get_entity, kg_search,
+        kg_delete_entity, kg_delete_relation, kg_merge_entities, kg_get_entity, kg_search,
         kg_neighbors, kg_path, kg_stats, kg_export, kg_list, kg_extract, kg_clear,
     )
 
@@ -370,6 +371,7 @@ def _build_tool_categories() -> dict[str, str]:
         # 知识图谱工具
         kg_add_entity.name: "知识图谱", kg_add_relation.name: "知识图谱", kg_add_alias.name: "知识图谱",
         kg_update_entity.name: "知识图谱", kg_delete_entity.name: "知识图谱", kg_delete_relation.name: "知识图谱",
+        kg_merge_entities.name: "知识图谱",
         kg_get_entity.name: "知识图谱", kg_search.name: "知识图谱", kg_neighbors.name: "知识图谱",
         kg_path.name: "知识图谱", kg_stats.name: "知识图谱", kg_export.name: "知识图谱",
         kg_list.name: "知识图谱", kg_extract.name: "知识图谱", kg_clear.name: "知识图谱",

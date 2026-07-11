@@ -121,7 +121,7 @@ class ToolEvent:
 
 @dataclass
 class ToolStreamEvent:
-    """工具执行过程中的流式输出事件（纯 UI 显示用，不参与 LLM 交互）。"""
+    """工具执行过程中的流式输出事件(纯 UI 显示用,不参与 LLM 交互)。"""
 
     name: str
     content: str

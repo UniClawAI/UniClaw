@@ -231,6 +231,7 @@ def is_safe_tool(name: str) -> bool:
         kg_add_entity, kg_add_relation, kg_add_alias, kg_update_entity,
         kg_delete_entity, kg_delete_relation, kg_get_entity, kg_search,
         kg_neighbors, kg_path, kg_stats, kg_export, kg_list, kg_extract, kg_clear,
+        kg_merge_entities,
     )
     from uniclaw.tools.send_file import send_file
     from uniclaw.tools.computer_use import cu_screenshot, cu_locate_on_screen, cu_get_elements, cu_find_element
@@ -324,6 +325,7 @@ def is_safe_tool(name: str) -> bool:
         kg_list.name,
         kg_extract.name,
         kg_clear.name,
+        kg_merge_entities.name,
         # Web Browse 只读工具
         browser_screenshot.name,
         browser_get_text.name,

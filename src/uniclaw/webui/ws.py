@@ -425,7 +425,7 @@ async def bridge_events(session_id: str, config: AppConfig):
             )
 
         elif isinstance(event, ToolStreamEvent):
-            # 工具流式输出（纯 UI 显示用，不参与 LLM 交互）
+            # 工具流式输出(纯 UI 显示用,不参与 LLM 交互)
             await _broadcast(
                 {
                     "event": "tool_stream",

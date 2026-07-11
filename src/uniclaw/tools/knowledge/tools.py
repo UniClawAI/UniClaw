@@ -23,6 +23,7 @@ def kg_add_entity(
     type: str = "concept",
     description: str = "",
     properties: dict = None,
+    confidence: float = 1.0,
     scope: str = "project",
     config: AppConfig = None,
 ) -> str:
@@ -35,6 +36,7 @@ def kg_add_entity(
         type: 实体类型,可选值: person, place, concept, event, tool, organization, document, technology
         description: 实体描述
         properties: 实体属性(JSON 对象),如 {"age": "60", "era": "三国"}
+        confidence: 置信度,0.0~1.0,默认 1.0
         scope: 作用域,"user" 为用户级(跨项目共享),"project" 为项目级(默认)
     """
     graph = _get_graph(config, scope)
@@ -45,6 +47,7 @@ def kg_add_entity(
             description=description,
             properties=properties,
             source="manual",
+            confidence=confidence,
         )
 
         lines = []
@@ -219,6 +222,46 @@ def kg_delete_relation(
         if "error" in result:
             return f"错误: {result['error']}"
         return f"关系已删除: {result['deleted']}"
+    finally:
+        graph.close()
+
+
+@tool
+def kg_merge_entities(
+    source: str,
+    target: str,
+    source_type: str = "",
+    target_type: str = "",
+    scope: str = "project",
+    config: AppConfig = None,
+) -> str:
+    """
+    合并两个实体:将 source 的关系、别名、属性转移到 target,然后删除 source。
+
+    用于两个实体表示同一含义时的去重操作。转移过程中会自动跳过重复关系和冲突别名。
+
+
+    Args:
+        source: 要被合并的实体名称(合并后会被删除)
+        target: 保留的实体名称(关系转移到此实体)
+        source_type: 源实体类型(可选,用于消歧)
+        target_type: 目标实体类型(可选,用于消歧)
+        scope: 作用域,"user" 为用户级(跨项目共享),"project" 为项目级(默认)
+    """
+    graph = _get_graph(config, scope)
+    try:
+        result = graph.merge_entities(source, target, source_type, target_type)
+        if "error" in result:
+            return f"错误: {result['error']}"
+
+        lines = [f"实体合并完成: '{result['source']}' → '{result['target']}'"]
+        lines.append(f"  转移关系: {result['transferred_relations']} 条 (跳过重复: {result['skipped_relations']})")
+        lines.append(f"  转移别名: {result['transferred_aliases']} 个 (跳过冲突: {result['skipped_aliases']})")
+        if result["merged_properties"]:
+            lines.append("  属性已合并")
+        if result["inherited_description"]:
+            lines.append("  描述已继承")
+        return "\n".join(lines)
     finally:
         graph.close()
 
@@ -601,7 +644,7 @@ async def kg_extract(
                 description=e.get("description", ""),
                 properties=e.get("properties"),
                 source="auto",
-                confidence=0.8,
+                confidence=e.get("confidence", 0.8),
             )
             status = (
                 "已添加"
@@ -623,7 +666,7 @@ async def kg_extract(
                 target_name=r["target"],
                 relation=r["relation"],
                 source="auto",
-                confidence=0.8,
+                confidence=r.get("confidence", 0.8),
             )
             if "error" in result:
                 lines.append(
@@ -672,6 +715,7 @@ def get_tools() -> list:
         kg_update_entity,
         kg_delete_entity,
         kg_delete_relation,
+        kg_merge_entities,
         kg_get_entity,
         kg_search,
         kg_neighbors,

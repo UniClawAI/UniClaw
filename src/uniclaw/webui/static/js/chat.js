@@ -737,7 +737,7 @@ const Chat = {
             const pre = document.createElement('pre');
             pre.className = 'tool-stream-content';
             streamEl.appendChild(pre);
-            // 插入到 tool-args 之后（如果有）
+            // 插入到 tool-args 之后(如果有)
             const argsEl = body.querySelector('.tool-args');
             if (argsEl && argsEl.nextSibling) {
                 body.insertBefore(streamEl, argsEl.nextSibling);

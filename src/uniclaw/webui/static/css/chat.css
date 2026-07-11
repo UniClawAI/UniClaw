@@ -447,7 +447,7 @@ pre:hover .code-copy-btn {
     font-size: var(--text-xs);
 }
 
-/* 工具流式输出（实时显示，工具完成后被最终结果覆盖） */
+/* 工具流式输出(实时显示,工具完成后被最终结果覆盖) */
 .tool-stream-output {
     margin-top: 4px;
     max-height: 400px;

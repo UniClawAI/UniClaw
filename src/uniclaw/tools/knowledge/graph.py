@@ -259,6 +259,134 @@ class KnowledgeGraph:
             return {"error": f"关系不存在: {source_name} --[{relation}]--> {target_name}"}
         return {"ok": True, "deleted": f"{source_name} --[{relation}]--> {target_name}"}
 
+    def merge_entities(self, source_name: str, target_name: str, source_type: str = "", target_type: str = "") -> dict:
+        """合并两个实体:将 source 的关系、别名、属性转移到 target,然后删除 source。
+
+        处理规则:
+        - 关系:转移时跳过自环(source→target 已有关系)和重复关系
+        - 别名:source 的别名转移到 target,冲突时跳过
+        - 属性:source 的属性合并到 target,不覆盖 target 已有字段
+        - 描述:若 target 无描述而 source 有,继承 source 的描述
+        """
+        src = self._resolve_entity(source_name, source_type)
+        if not src:
+            return {"error": f"实体 '{source_name}' 不存在。"}
+
+        tgt = self._resolve_entity(target_name, target_type)
+        if not tgt:
+            return {"error": f"实体 '{target_name}' 不存在。"}
+
+        if src["id"] == tgt["id"]:
+            return {"error": f"'{source_name}' 和 '{target_name}' 是同一个实体。"}
+
+        now = _now()
+        transferred_rels = 0
+        skipped_rels = 0
+        transferred_aliases = 0
+        skipped_aliases = 0
+
+        # ── 1. 转移关系 ──────────────────────────────────────
+        # 出边:source → X 改为 target → X
+        for row in self.conn.execute(
+            "SELECT * FROM relations WHERE source_id=?", (src["id"],)
+        ).fetchall():
+            old = dict(row)
+            new_target_id = old["target_id"] if old["target_id"] != src["id"] else tgt["id"]
+            # 自环检查:合并后 target → target
+            if new_target_id == tgt["id"]:
+                skipped_rels += 1
+                continue
+            try:
+                self.conn.execute(
+                    "INSERT INTO relations (source_id, target_id, relation, properties, weight, source, confidence, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (tgt["id"], new_target_id, old["relation"], old["properties"], old["weight"], old["source"], old["confidence"], now),
+                )
+                transferred_rels += 1
+            except sqlite3.IntegrityError:
+                skipped_rels += 1  # 重复关系,跳过
+
+        # 入边:X → source 改为 X → target
+        for row in self.conn.execute(
+            "SELECT * FROM relations WHERE target_id=?", (src["id"],)
+        ).fetchall():
+            old = dict(row)
+            new_source_id = old["source_id"] if old["source_id"] != src["id"] else tgt["id"]
+            # 自环检查
+            if new_source_id == tgt["id"]:
+                skipped_rels += 1
+                continue
+            try:
+                self.conn.execute(
+                    "INSERT INTO relations (source_id, target_id, relation, properties, weight, source, confidence, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (new_source_id, tgt["id"], old["relation"], old["properties"], old["weight"], old["source"], old["confidence"], now),
+                )
+                transferred_rels += 1
+            except sqlite3.IntegrityError:
+                skipped_rels += 1
+
+        # ── 2. 转移别名 ──────────────────────────────────────
+        # source 的名称本身也作为 target 的别名
+        try:
+            self.conn.execute(
+                "INSERT INTO entity_aliases (entity_id, alias) VALUES (?, ?)",
+                (tgt["id"], src["name"]),
+            )
+            transferred_aliases += 1
+        except sqlite3.IntegrityError:
+            skipped_aliases += 1
+
+        for row in self.conn.execute(
+            "SELECT alias FROM entity_aliases WHERE entity_id=?", (src["id"],)
+        ).fetchall():
+            try:
+                self.conn.execute(
+                    "INSERT INTO entity_aliases (entity_id, alias) VALUES (?, ?)",
+                    (tgt["id"], row["alias"]),
+                )
+                transferred_aliases += 1
+            except sqlite3.IntegrityError:
+                skipped_aliases += 1
+
+        # ── 3. 合并属性 ──────────────────────────────────────
+        merged_props = False
+        src_props = json.loads(src["properties"]) if src.get("properties") else {}
+        tgt_props = json.loads(tgt["properties"]) if tgt.get("properties") else {}
+        if src_props:
+            new_props = {**src_props, **tgt_props}  # target 优先
+            if new_props != tgt_props:
+                self.conn.execute(
+                    "UPDATE entities SET properties=?, updated_at=? WHERE id=?",
+                    (json.dumps(new_props, ensure_ascii=False), now, tgt["id"]),
+                )
+                merged_props = True
+
+        # ── 4. 继承描述 ──────────────────────────────────────
+        inherited_desc = False
+        if not tgt.get("description") and src.get("description"):
+            self.conn.execute(
+                "UPDATE entities SET description=?, updated_at=? WHERE id=?",
+                (src["description"], now, tgt["id"]),
+            )
+            inherited_desc = True
+
+        self.conn.commit()
+
+        # ── 5. 删除 source 实体(级联删除剩余关系和别名) ────
+        self.conn.execute("DELETE FROM entities WHERE id=?", (src["id"],))
+        self.conn.commit()
+
+        return {
+            "ok": True,
+            "source": src["name"],
+            "target": tgt["name"],
+            "transferred_relations": transferred_rels,
+            "skipped_relations": skipped_rels,
+            "transferred_aliases": transferred_aliases,
+            "skipped_aliases": skipped_aliases,
+            "merged_properties": merged_props,
+            "inherited_description": inherited_desc,
+        }
+
     # ── 查询 ──────────────────────────────────────────────────
 
     def get_entity(self, name: str, entity_type: str = "") -> dict | None:
@@ -751,7 +879,7 @@ body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans
 <script src="https://cdnjs.cloudflare.com/ajax/libs/echarts/5.5.1/echarts.min.js"></script>
 <script>
 if (typeof echarts === 'undefined') {{
-    document.getElementById('load-error').textContent = '⚠️ ECharts 加载失败(unpkg)，尝试备用CDN...';
+    document.getElementById('load-error').textContent = '⚠️ ECharts 加载失败(unpkg),尝试备用CDN...';
     document.getElementById('load-error').style.display = 'block';
 }} else {{
 try {{
