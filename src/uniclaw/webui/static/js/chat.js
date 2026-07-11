@@ -712,12 +712,6 @@ const Chat = {
             this._appendToolBlock(parent, msg.name, msg.args, '执行中...', null, msg.tool_call_id);
         }
 
-        // 自动展开父级 sub_agent_create 工具块
-        if (!msg.is_subagent && msg.name === 'sub_agent_create' && msg.tool_call_id) {
-            const k = `${msg.session_id}:${msg.tool_call_id}`;
-            const parentBlock = this.toolBlocks[k];
-            if (parentBlock) parentBlock.classList.add('expanded');
-        }
     },
 
     _onToolStream(msg) {
@@ -747,10 +741,13 @@ const Chat = {
         }
 
         const pre = streamEl.querySelector('pre');
+        // 判断用户是否在底部附近（距离底部 50px 以内）
+        const isNearBottom = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 50;
         pre.textContent += msg.content;
-        // 自动展开并滚动
-        block.classList.add('expanded');
-        pre.scrollTop = pre.scrollHeight;
+        // 如果已展开且用户在底部附近，则自动滚动到底部
+        if (block.classList.contains('expanded') && isNearBottom) {
+            pre.scrollTop = pre.scrollHeight;
+        }
     },
 
     _onToolEnd(msg) {
