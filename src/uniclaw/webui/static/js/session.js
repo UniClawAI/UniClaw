@@ -478,7 +478,7 @@ const SessionPanel = {
         Chat._resetStreamingState();
         this._updateStatusBar(rootDir, null, true);
         Chat.clear();
-        Chat._appendSystemMessage('新会话,发送消息开始对话');
+        Chat._appendWelcomeScreen();
         this._render();
     },
 
@@ -490,7 +490,7 @@ const SessionPanel = {
         Chat._resetStreamingState();
         this._updateStatusBar('__free__', null, true);
         Chat.clear();
-        Chat._appendSystemMessage('聊天模式 — 发送消息开始对话');
+        Chat._appendWelcomeScreen();
         this._render();
     },
 

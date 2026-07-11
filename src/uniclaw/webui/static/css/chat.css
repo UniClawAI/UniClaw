@@ -549,6 +549,111 @@ pre:hover .code-copy-btn {
     color: var(--text-3);
 }
 
+/* ---- 欢迎页面 ---- */
+.welcome-screen {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100%;
+    padding: 24px;
+    text-align: center;
+    animation: fadeIn var(--duration) var(--ease);
+    max-width: 720px;
+    margin: 0 auto;
+    width: 100%;
+    box-sizing: border-box;
+    gap: 8px;
+}
+.welcome-logo {
+    font-size: 64px;
+    line-height: 1;
+    animation: welcomePulse 3s ease-in-out infinite;
+    margin-bottom: 8px;
+    filter: drop-shadow(0 0 24px var(--accent-glow));
+}
+@keyframes welcomePulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.08) rotate(-3deg); }
+}
+.welcome-title {
+    font-size: 28px;
+    font-weight: 700;
+    background: var(--gradient-accent);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    letter-spacing: 0.5px;
+}
+.welcome-subtitle {
+    font-size: var(--text-md);
+    color: var(--text-2);
+    margin-bottom: 12px;
+    line-height: 1.6;
+}
+.welcome-suggestions {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+    width: 100%;
+    max-width: 520px;
+    margin: 8px 0 16px;
+}
+.welcome-suggestion-card {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 16px;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+    cursor: pointer;
+    transition: all var(--duration) var(--ease);
+    text-align: left;
+    color: var(--text-1);
+    font-size: var(--text-sm);
+}
+.welcome-suggestion-card:hover {
+    background: var(--bg-3);
+    border-color: var(--accent);
+    box-shadow: 0 0 16px var(--accent-dim);
+    transform: translateY(-1px);
+}
+.welcome-suggestion-card .card-icon {
+    font-size: 20px;
+    flex-shrink: 0;
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--accent-dim);
+    border-radius: var(--r-md);
+}
+.welcome-tip {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: var(--text-xs);
+    color: var(--text-3);
+    padding: 8px 16px;
+    background: var(--bg-2);
+    border-radius: var(--r-full);
+    border: 1px solid var(--border);
+}
+.welcome-tip svg {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+    color: var(--accent);
+}
+@media (max-width: 600px) {
+    .welcome-screen { padding: 40px 16px 24px; }
+    .welcome-logo { font-size: 48px; }
+    .welcome-title { font-size: 22px; }
+    .welcome-suggestions { grid-template-columns: 1fr; max-width: 320px; }
+}
+
 /* ---- Spinner ---- */
 .spinner-area {
     position: absolute;

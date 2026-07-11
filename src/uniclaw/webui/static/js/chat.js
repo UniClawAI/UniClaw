@@ -45,6 +45,9 @@ const Chat = {
         WS.on('spinner_start', msg => this._onSpinner(msg));
         WS.on('spinner_update', msg => this._onSpinner(msg));
         WS.on('spinner_stop', msg => this._onSpinnerStop(msg));
+
+        // 初始加载时显示欢迎页面
+        this._appendWelcomeScreen();
     },
 
     // ============================================================
@@ -97,7 +100,7 @@ const Chat = {
         if (spinner) spinner.innerHTML = '';
         const msgs = this._currentView === 'history' ? this._historyData : this._compactData;
         if (msgs?.length) this._replayMessages(msgs);
-        else this._appendSystemMessage('新会话,发送消息开始对话');
+        else this._appendWelcomeScreen();
         MsgNav?.refresh?.();
         this._forceScrollToBottom();
     },
@@ -170,6 +173,59 @@ const Chat = {
         c.appendChild(el);
         this._scrollToBottom();
         return el;
+    },
+
+    /** 显示欢迎页面（空状态） */
+    _appendWelcomeScreen() {
+        const c = document.getElementById('chat-messages');
+        this._saveScrollState();
+        const el = document.createElement('div');
+        el.className = 'welcome-screen';
+        const suggestions = [
+            { icon: '📝', text: '帮我写一个 Python 脚本' },
+            { icon: '🔍', text: '搜索最新的技术资讯' },
+            { icon: '📂', text: '分析项目代码结构' },
+            { icon: '💡', text: '你能做什么？' },
+        ];
+        const tips = [
+            '输入 ! 可直接执行 Shell 命令',
+            '输入 / 可查看所有可用命令',
+            '拖拽文件到输入框可添加附件',
+            '按 Esc 可中断 AI 回复',
+        ];
+        const tip = tips[Math.floor(Math.random() * tips.length)];
+        el.innerHTML = `
+            <div class="welcome-logo">🦞</div>
+            <div class="welcome-title">UniClaw</div>
+            <div class="welcome-subtitle">你的 AI 智能助手，随时准备帮你解决问题</div>
+            <div class="welcome-suggestions">
+                ${suggestions.map(s => `
+                    <div class="welcome-suggestion-card" data-text="${Utils.escapeHtml(s.text)}">
+                        <span class="card-icon">${s.icon}</span>
+                        <span>${Utils.escapeHtml(s.text)}</span>
+                    </div>
+                `).join('')}
+            </div>
+            <div class="welcome-tip">
+                ${icon('sparkles')}
+                <span>${Utils.escapeHtml(tip)}</span>
+            </div>
+        `;
+        el.querySelectorAll('.welcome-suggestion-card').forEach(card => {
+            card.addEventListener('click', () => this._fillInput(card.dataset.text));
+        });
+        c.appendChild(el);
+        this._scrollToBottom();
+        return el;
+    },
+
+    /** 将文本填入输入框并聚焦 */
+    _fillInput(text) {
+        const input = document.getElementById('chat-input');
+        if (!input) return;
+        input.value = text;
+        input.focus();
+        input.dispatchEvent(new Event('input', { bubbles: true }));
     },
 
     _appendUserMessage(content) {
