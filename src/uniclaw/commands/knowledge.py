@@ -1,7 +1,7 @@
 """知识图谱命令 — /kg stats, search, list, export, clear。"""
 
 from __future__ import annotations
-
+import json
 from uniclaw.config import AppConfig
 from uniclaw.console.ui import info, ok, warn
 
@@ -199,10 +199,12 @@ async def _cmd_export(graphs, fmt: str, config: AppConfig):
             graph.visualize(output_path)
             await ok(f"[{label}] HTML 可视化已生成: {output_path}", config)
         elif fmt == "json":
-            import json
+
             data = graph.export_json()
             output_path = base_dir / "knowledge_graph.json"
-            output_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+            output_path.write_text(
+                json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
             await ok(f"[{label}] JSON 已导出: {output_path}", config)
         elif fmt == "markdown":
             md = graph.export_markdown()
@@ -229,7 +231,9 @@ async def _cmd_clear(graphs, config: AppConfig):
             f"[{label}] 即将清空知识图谱 ({stats['entities']} 个实体, {stats['relations']} 条关系)。此操作不可逆!",
             config,
         )
-        confirm = await get_input(f"确认清空 [{label}] 知识图谱? (yes/no): ", title="确认", config=config)
+        confirm = await get_input(
+            f"确认清空 [{label}] 知识图谱? (yes/no): ", title="确认", config=config
+        )
         if confirm.lower() not in ("yes", "y"):
             await info(f"[{label}] 已取消", config)
             continue

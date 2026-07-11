@@ -28,7 +28,8 @@ def kg_add_entity(
     config: AppConfig = None,
 ) -> str:
     """
-    添加实体到知识图谱。如果发现相似实体会返回重复警告。
+    添加单个实体到知识图谱。如果发现相似实体会返回重复警告。
+    注意：如果需要从文本中批量提取实体和关系，请使用 kg_extract 工具。
 
 
     Args:
@@ -76,7 +77,8 @@ def kg_add_relation(
     config: AppConfig = None,
 ) -> str:
     """
-    在知识图谱中添加实体间的关系。
+    在知识图谱中添加单条实体间关系。
+    注意：如果需要从文本中批量提取实体和关系，请使用 kg_extract 工具。
 
 
     Args:
