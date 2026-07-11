@@ -282,3 +282,50 @@
     height: 14px;
     color: var(--neon-yellow);
 }
+
+/* ---- 响应式: 平板+手机 (≤1024px) ---- */
+@media (max-width: 1024px) {
+    #status-bar {
+        gap: 6px;
+        padding: 0 8px;
+        z-index: 110; /* 高于面板 z-index:100，确保不被遮挡 */
+    }
+}
+
+/* ---- 响应式: 手机 (≤768px) ---- */
+@media (max-width: 768px) {
+    /* 隐藏次要状态项 */
+    #status-bar .status-sep,
+    #status-tokens,
+    #toggle-usage,
+    #status-cu,
+    #status-voice,
+    #history-toggle {
+        display: none !important;
+    }
+    #status-bar {
+        gap: 4px;
+        padding: 0 6px;
+        font-size: 10px;
+        z-index: 110; /* 高于面板 z-index:100，确保不被遮挡 */
+    }
+    .session-label {
+        max-width: 120px;
+    }
+}
+
+/* ---- 响应式: 小屏手机 (≤480px) ---- */
+@media (max-width: 480px) {
+    #status-context,
+    #status-session {
+        display: none !important;
+    }
+    #status-bar {
+        height: 28px;
+        gap: 4px;
+        padding: 0 4px;
+    }
+    .context-mini-bar {
+        width: 40px;
+    }
+}

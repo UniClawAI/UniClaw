@@ -127,7 +127,32 @@
     user-select: none;
 }
 
-/* ---- 响应式 ---- */
+/* ---- 响应式: 平板 (≤1024px) ---- */
+@media (max-width: 1024px) {
+    #left-panel {
+        width: 260px;
+    }
+    #right-panel {
+        position: fixed;
+        top: 0;
+        bottom: 0;
+        right: 0;
+        z-index: 100;
+        width: 320px !important;
+        max-width: 85vw !important;
+        box-shadow: var(--shadow-lg);
+        transform: translateX(100%);
+        transition: transform var(--duration-slow) var(--ease);
+    }
+    #right-panel:not(.collapsed) {
+        transform: translateX(0);
+    }
+    #right-drag {
+        display: none !important;
+    }
+}
+
+/* ---- 响应式: 手机 (≤768px) ---- */
 @media (max-width: 768px) {
     #left-panel, #right-panel {
         position: fixed;
@@ -159,5 +184,13 @@
     }
     #msg-nav {
         display: none !important;
+    }
+}
+
+/* ---- 响应式: 小屏手机 (≤480px) ---- */
+@media (max-width: 480px) {
+    #left-panel, #right-panel {
+        width: 90vw !important;
+        max-width: none !important;
     }
 }

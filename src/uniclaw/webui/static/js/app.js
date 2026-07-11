@@ -47,6 +47,8 @@ const App = {
         this._bindDragHandles();
         this._bindPanelToggles();
         this._restorePanelState();
+        this._bindResizeHandler();
+        this._bindTouchGestures();
 
         Utils.hideLoading();
         console.log('[App] UniClaw WebUI 已初始化');
@@ -203,11 +205,16 @@ const App = {
         if (lw) document.getElementById('left-panel').style.width = lw;
         const rw = localStorage.getItem('panel_width_right');
         if (rw) document.getElementById('right-panel').style.width = rw;
-        if (localStorage.getItem('left_collapsed') === 'true') {
+
+        // 移动端/平板端: 未手动操作过则默认收起
+        const isMobile = this._isMobile();
+        const isTablet = this._isTablet();
+
+        if (localStorage.getItem('left_collapsed') === 'true' || (isMobile && localStorage.getItem('left_collapsed') === null)) {
             document.getElementById('left-panel').classList.add('collapsed');
             document.getElementById('left-drag').style.display = 'none';
         }
-        if (localStorage.getItem('right_collapsed') === 'true') {
+        if (localStorage.getItem('right_collapsed') === 'true' || ((isMobile || isTablet) && localStorage.getItem('right_collapsed') === null)) {
             document.getElementById('right-panel').classList.add('collapsed');
             document.getElementById('right-drag').style.display = 'none';
         }
@@ -215,6 +222,133 @@ const App = {
             document.getElementById('chat-messages').classList.add('show-usage');
             document.getElementById('toggle-usage').classList.add('active');
         }
+    },
+
+    /** 当前是否移动端 (≤768px) */
+    _isMobile() {
+        return window.innerWidth <= 768;
+    },
+
+    /** 当前是否平板端 (768px ~ 1024px) */
+    _isTablet() {
+        return window.innerWidth > 768 && window.innerWidth <= 1024;
+    },
+
+    /** 监听窗口尺寸变化，跨断点时自动收起/恢复面板 */
+    _bindResizeHandler() {
+        let prevWidth = window.innerWidth;
+        window.addEventListener('resize', () => {
+            const w = window.innerWidth;
+            const prevMobile = prevWidth <= 768;
+            const prevTablet = prevWidth > 768 && prevWidth <= 1024;
+            const prevDesktop = prevWidth > 1024;
+            const curMobile = w <= 768;
+            const curTablet = w > 768 && w <= 1024;
+            const curDesktop = w > 1024;
+
+            // ---- 缩小: 自动收起 ----
+
+            // 桌面 → 平板: 收起右面板
+            if (prevDesktop && curTablet) {
+                const rp = document.getElementById('right-panel');
+                if (!rp.classList.contains('collapsed')) {
+                    rp.classList.add('collapsed');
+                }
+                document.getElementById('right-drag').style.display = 'none';
+            }
+            // 任意 → 移动端: 收起两个面板
+            if (!prevMobile && curMobile) {
+                ['left-panel', 'right-panel'].forEach(id => {
+                    const p = document.getElementById(id);
+                    if (!p.classList.contains('collapsed')) {
+                        p.classList.add('collapsed');
+                    }
+                });
+                document.getElementById('left-drag').style.display = 'none';
+                document.getElementById('right-drag').style.display = 'none';
+            }
+
+            // ---- 放大: 根据 localStorage 恢复 ----
+
+            // 移动端 → 平板: 恢复左面板(如果未手动收起)
+            if (prevMobile && curTablet) {
+                const lp = document.getElementById('left-panel');
+                if (localStorage.getItem('left_collapsed') !== 'true') {
+                    lp.classList.remove('collapsed');
+                }
+            }
+            // 平板/移动端 → 桌面: 恢复左右面板(根据 localStorage)
+            if (!prevDesktop && curDesktop) {
+                const ld = document.getElementById('left-drag');
+                const rd = document.getElementById('right-drag');
+                if (localStorage.getItem('left_collapsed') !== 'true') {
+                    document.getElementById('left-panel').classList.remove('collapsed');
+                    ld.style.display = '';
+                }
+                if (localStorage.getItem('right_collapsed') !== 'true') {
+                    document.getElementById('right-panel').classList.remove('collapsed');
+                    rd.style.display = '';
+                }
+            }
+
+            prevWidth = w;
+        });
+    },
+
+    /** 触摸滑动手势: 边缘滑动打开/关闭面板 */
+    _bindTouchGestures() {
+        let startX = 0, startY = 0, tracking = false, side = null;
+        const EDGE = 20; // 边缘检测区域宽度 (px)
+        const MIN_DX = 60; // 最小水平滑动距离
+        const MAX_DY = 80; // 最大垂直偏移 (防止误判为滚动)
+
+        document.addEventListener('touchstart', e => {
+            const t = e.touches[0];
+            startX = t.clientX;
+            startY = t.clientY;
+            tracking = false;
+            side = null;
+
+            // 左边缘右滑 → 打开左面板
+            if (startX < EDGE && document.getElementById('left-panel').classList.contains('collapsed')) {
+                tracking = true;
+                side = 'left';
+            }
+            // 右边缘左滑 → 打开右面板
+            else if (startX > window.innerWidth - EDGE && document.getElementById('right-panel').classList.contains('collapsed')) {
+                tracking = true;
+                side = 'right';
+            }
+            // 左面板打开时左滑 → 关闭
+            else if (!document.getElementById('left-panel').classList.contains('collapsed') && startX > 40) {
+                tracking = true;
+                side = 'close-left';
+            }
+            // 右面板打开时右滑 → 关闭
+            else if (!document.getElementById('right-panel').classList.contains('collapsed') && startX < window.innerWidth - 40) {
+                tracking = true;
+                side = 'close-right';
+            }
+        }, { passive: true });
+
+        document.addEventListener('touchend', e => {
+            if (!tracking || !side) return;
+            const t = e.changedTouches[0];
+            const dx = t.clientX - startX;
+            const dy = Math.abs(t.clientY - startY);
+
+            if (dy > MAX_DY) return; // 垂直滑动过长，忽略
+
+            if (side === 'left' && dx > MIN_DX) {
+                this._toggleLeftPanel(); // 打开左面板
+            } else if (side === 'right' && dx < -MIN_DX) {
+                this._toggleRightPanel(); // 打开右面板
+            } else if (side === 'close-left' && dx < -MIN_DX) {
+                this._toggleLeftPanel(); // 关闭左面板
+            } else if (side === 'close-right' && dx > MIN_DX) {
+                this._toggleRightPanel(); // 关闭右面板
+            }
+        }, { passive: true });
     },
 };
 

@@ -771,3 +771,69 @@ pre:hover .code-copy-btn {
     font-size: var(--text-sm);
     color: var(--text-1);
 }
+
+/* ---- 响应式: 手机 (≤768px) ---- */
+@media (max-width: 768px) {
+    .chat-messages {
+        padding: 12px 10px;
+    }
+    .message {
+        padding-left: 36px;
+        padding-right: 36px;
+        max-width: 100%;
+    }
+    .msg-avatar {
+        width: 28px;
+        height: 28px;
+        font-size: 13px;
+    }
+    .msg-body {
+        min-width: 0;
+    }
+    .msg-content {
+        font-size: var(--text-sm);
+    }
+    /* 工具块紧凑 */
+    .tool-block-header {
+        padding: 6px 10px;
+        font-size: var(--text-xs);
+    }
+    .tool-block-body {
+        padding: 8px 10px;
+        font-size: var(--text-xs);
+    }
+    /* 代码块不溢出 */
+    .markdown-body pre {
+        max-width: 100%;
+        overflow-x: auto;
+    }
+    .markdown-body code {
+        font-size: var(--text-xs);
+        word-break: break-all;
+    }
+}
+
+/* ---- 响应式: 小屏手机 (≤480px) ---- */
+@media (max-width: 480px) {
+    .chat-messages {
+        padding: 8px 6px;
+    }
+    .message {
+        padding-left: 30px;
+        padding-right: 30px;
+    }
+    .msg-avatar {
+        width: 24px;
+        height: 24px;
+        font-size: 12px;
+    }
+    .input-area {
+        padding: 8px 10px !important;
+    }
+    .input-row {
+        gap: 4px;
+    }
+    #chat-input {
+        font-size: 16px; /* 防止 iOS 自动缩放 */
+    }
+}
