@@ -7,13 +7,23 @@
 
 > 📦 项目采用 **src layout** — 所有源码位于 `src/uniclaw/` 下。
 
+### 🆕 最近更新 (v0.1.0)
+
+- **知识图谱系统** (新增) — 基于 SQLite 的知识图谱,支持实体/关系管理、全文搜索、路径发现、AI 自动提取和可视化导出,用户级和项目级双层管理
+- **WebUI 增强** — 新增拖拽上传、多媒体附件支持、移动端响应式设计和触摸手势
+- **工具流式输出** — 工具执行过程中可实时推送输出到前端,提升用户体验
+- **文件大小限制** — 自动限制上传文件大小,优化性能
+- **任务取消事件传递** — WebUI 中任务取消事件实时同步到前端
+
 ## ✨ 特性
 
 - 🤖 **智能代理**: 基于 OpenAI SDK 和 Anthropic SDK 的全异步对话式 AI 助手,多 provider 自动路由,支持 reasoning_content 和思考标签流式解析,内置死循环检测防止工具调用陷入无限循环
 - 🔍 **工具注册表**: BM25 智能工具搜索,核心工具常驻加载 + 扩展工具按需发现,LRU + 能量机制(每工具 10 点能量,每轮-1,调用/搜索恢复满,归零淘汰)自动管理已加载工具,优化 prompt 缓存
-- 🌐 **WebUI 界面**: 基于 WebSocket 的 Web 用户界面,支持浏览器中与 AI 对话,可局域网共享
+- 🌐 **WebUI 界面**: 基于 WebSocket 的 Web 用户界面,支持浏览器中与 AI 对话,可局域网共享,支持移动端响应式设计和触摸手势
+- ⚡ **工具流式输出**: 工具执行过程中实时推送输出到前端,无需等待完成即可看到进度
 - 💬 **微信集成**: 支持通过 iLink Bot 协议接入微信,实现移动端交互
 - 🧠 **记忆系统**: 持久化记忆管理,支持用户偏好、项目信息和反馈记录
+- 🗺️ **知识图谱**: 基于 SQLite 的知识图谱系统,支持实体/关系管理、全文搜索、路径发现、自动提取和可视化导出,用户级和项目级双层管理
 - 👥 **多智能体协作**: 全异步架构支持创建和管理多个专业智能体,实现任务分工协作和智能体间通信
 - 🖥️ **计算机控制**: 屏幕截图、鼠标/键盘自动化操作,支持全局热键 (Ctrl+U) 切换,`/cu` 命令一键开关
 - 🔊 **语音合成**: TTS 文本转语音,支持多种风格/情绪/方言控制,`/voice` 命令切换语音模式
@@ -59,6 +69,7 @@
 - [WebUI 模式](#-webui-模式)
 - [微信机器人集成](#-微信机器人集成)
 - [工具系统](#-工具系统)
+- [知识图谱系统](#-知识图谱系统)
 - [架构设计](#-架构设计)
 - [常见问题](#-常见问题)
 
@@ -265,6 +276,7 @@ UniClaw 的斜杠命令支持子命令自动补全,输入命令后按空格会�
 | `/checkpoint` | `create`, `pop`, `apply`, `delete`, `diff` |
 | `/goal` | `clear`, `status` |
 | `/export` | `markdown`, `json` |
+| `/kg` | `stats`, `search`, `list`, `export`, `clear` |
 
 #### 使用示例
 
@@ -337,6 +349,12 @@ UniClaw 使用工作空间概念管理文件访问范围：
 ```
 
 > 💡 `protocol` 支持 `"openai"` 和 `"anthropic"` 两种协议。系统会根据 model_name 中的 provider 前缀(如 `default/`、`anthropic/`)自动路由到对应的 provider。
+
+**超时配置**:
+- `timeout`: 连接超时时间(秒),默认根据协议类型自动设置
+  - SSE: 5 秒
+  - Streamable HTTP: 10 秒
+  - 工具发现: 15 秒
 
 ### 权限模式说明
 
@@ -621,6 +639,16 @@ monitor_start("npm run dev", name="开发服务器")
 |------|------|------|
 | `/context` | 显示详细的上下文使用分析(Token 分布、工具占用等) | `/context` |
 
+#### 知识图谱命令 🗺️
+
+| 命令 | 说明 | 示例 |
+|------|------|------|
+| `/kg` 或 `/kg stats` | 显示知识图谱统计信息(用户级+项目级) | `/kg` |
+| `/kg search <关键词>` | 搜索实体 | `/kg search Python` |
+| `/kg list [类型]` | 列出实体(可选类型过滤) | `/kg list person` |
+| `/kg export html\|json\|markdown [user\|project]` | 导出图谱 | `/kg export html` |
+| `/kg clear [user\|project]` | 清空图谱(需确认) | `/kg clear project` |
+
 #### 其他命令
 
 | 命令 | 说明 | 示例 |
@@ -694,6 +722,10 @@ uniclaw --mode webui
 - ✅ **TodoList 同步** — 任务清单实时同步到 WebUI 界面
 - ✅ **权限模式切换** — WebUI 中直接切换权限模式(auto/manual/accept-all/plan)
 - ✅ **输入对话框** — 权限请求时弹出输入框,支持倒计时自动处理
+- ✅ **拖拽上传** — 支持拖拽文件到聊天区域上传,自动识别文件类型并添加为附件
+- ✅ **多媒体附件** — 支持图片、音频、视频等多媒体文件作为附件发送给 AI 分析
+- ✅ **文件大小限制** — 自动限制上传文件大小,防止过大的文件影响性能
+- ✅ **移动端响应式设计** — 完美适配手机和平板设备,支持触摸手势操作
 - ✅ **精美 UI 样式** — 基础 CSS 样式和动画效果,提升视觉体验
 
 ---
@@ -818,9 +850,11 @@ UniClaw 提供了丰富的内置工具,AI 助手可以自动调用这些工具�
 
 #### Shell 工具
 
-- **Bash** - 执行 Shell 命令(支持超时控制和上限校验,跨平台兼容)
+- **Bash** - 执行 Shell 命令(支持超时控制和上限校验,跨平台兼容,支持流式输出)
 - **Grep** - 在文件中搜索文本模式(优先使用 ripgrep,支持正则表达式)
 - **search_files_with_everything** - 使用 Everything 引擎快速搜索文件名(仅 Windows,需安装 Everything)
+
+> 💡 **流式输出**: Bash 工具执行过程中会实时推送输出到前端(WebUI),无需等待命令完成即可看到进度。
 
 > 💡 **Windows 用户提示**: 在 Windows 系统上,如果检测到 Git Bash,Bash 工具会自动使用 Git Bash 执行命令,提供更好的 Unix 命令兼容性。建议安装 [Git for Windows](https://git-scm.com/download/win) 以获得最佳的 Shell 体验。
 
@@ -941,7 +975,7 @@ UniClaw 提供了丰富的内置工具,AI 助手可以自动调用这些工具�
 - **agent_close** - 关闭指定的子智能体
 - **agent_discuss** - 启动多个智能体之间的讨论协作
 
-> 💡 **提示**: 多智能体系统采用全异步架构,允许为不同任务创建专门的助手,实现更精细的任务分工。支持智能体间的异步通信和结果传递,可通过 `keep_alive` 模式保持智能体持续运行并接收新指令。支持 worktree 隔离模式(`isolation=True`),子智能体在独立的 git 分支上工作,避免文件冲突。
+> 💡 **提示**: 多智能体系统采用全异步架构,允许为不同任务创建专门的助手,实现更精细的任务分工。支持智能体间的异步通信和结果传递,可通过 `keep_alive` 模式保持智能体持续运行并接收新指令。支持 worktree 隔离模式(`isolation=True`),子智能体在独立的 git 分支上工作,避免文件冲突。支持事件继承(`inherit_events=True`),子智能体的工具调用、思考过程等事件会自动广播到父级队列,前端可实时显示执行进度。
 
 #### 技能系统
 
@@ -1063,6 +1097,40 @@ UniClaw 提供了丰富的内置工具,AI 助手可以自动调用这些工具�
   - WebUI 模式: 生成临时下载链接(默认 30 分钟有效)
   - 微信模式: 通过 Bot 直接发送文件
   - Console 模式: 不支持(忽略)
+
+#### 知识图谱工具 🗺️
+
+基于 SQLite 的知识图谱系统,支持实体和关系的管理、查询、可视化：
+
+**实体管理：**
+- **kg_add_entity** - 添加实体(支持类型、描述、属性、置信度)
+- **kg_update_entity** - 更新实体属性
+- **kg_delete_entity** - 删除实体(级联删除关系和别名)
+- **kg_merge_entities** - 合并两个实体(关系、别名、属性转移)
+- **kg_add_alias** - 为实体添加别名(用于实体消歧)
+
+**关系管理：**
+- **kg_add_relation** - 添加实体间关系
+- **kg_delete_relation** - 删除关系
+
+**查询工具：**
+- **kg_get_entity** - 获取实体详细信息(含关系)
+- **kg_search** - FTS5 全文搜索实体
+- **kg_neighbors** - 获取实体邻居(支持多跳遍历)
+- **kg_path** - 查找两个实体之间的路径
+- **kg_list** - 列出实体(支持类型过滤)
+- **kg_stats** - 获取图谱统计信息
+
+**高级功能：**
+- **kg_extract** - 从文本或文件中自动提取实体和关系(使用 AI)
+- **kg_export** - 导出图谱(JSON/Markdown/HTML 可视化)
+- **kg_clear** - 清空图谱(需确认)
+
+**作用域：**
+- `user` - 用户级(跨项目共享,存储在 `~/.UniClaw/knowledge.db`)
+- `project` - 项目级(默认,存储在 `.UniClaw/knowledge.db`)
+
+> 💡 **提示**: 知识图谱支持自动提取功能,AI 可以分析文本或文件,自动识别实体和关系并添加到图谱中。使用 `/kg` 命令管理图谱。
 
 #### AI 自助帮助工具 📖
 
@@ -1201,6 +1269,11 @@ UniClaw/
     │   ├── multi_agent/    # 多智能体(全异步 + worktree 隔离)
     │   ├── mcp/            # MCP 集成 🔌
     │   ├── memory/         # 记忆系统(FTS5 检索 + 自动整合 + 自动保存) 🧠
+    │   ├── knowledge/      # 知识图谱(实体/关系管理 + 自动提取 + 可视化) 🗺️
+    │   │   ├── __init__.py
+    │   │   ├── graph.py    # 核心图谱类(SQLite + FTS5)
+    │   │   ├── tools.py    # 工具定义(16 个工具)
+    │   │   └── context.py  # 上下文注入
     │   ├── todolist/       # 任务清单 + 监工 + 目标系统 📋
     │   ├── monitor/        # 后台进程管理(异步) 🔄
     │   ├── session/        # 会话持久化 + 历史消息检索 + 自动保存 💬
@@ -1242,7 +1315,7 @@ UniClaw/
   - 基于 BM25 算法搜索,支持中英文关键词 + 语义同义词
   - **LRU + 能量机制**: 每个扩展工具初始 10 点能量,每轮对话 -1,被调用或搜索命中恢复满能量,归零自动卸载;最多同时加载 25 个扩展工具,超出时按 LRU 顺序淘汰能量最低者
   - 搜索结果自动注入到当前任务的可用工具集
-  - 按类别组织: 计算机操作、多智能体、任务清单、进程监控、会话管理、定时任务、MCP 管理、安全管理、Hook 管理、沙箱、媒体等
+  - 按类别组织: 计算机操作、多智能体、任务清单、进程监控、会话管理、定时任务、MCP 管理、安全管理、Hook 管理、沙箱、媒体、知识图谱等
 
 **工作流程**: AI 需要使用非常用工具时 → 调用 `search_tools(query)` → BM25 匹配 → 工具自动加载(若超过上限则淘汰 LRU 端能量最低的工具) → 下一轮即可调用。已加载工具每轮能量-1,被调用/搜索命中恢复满,归零自动卸载。
 
@@ -1320,6 +1393,104 @@ LLM 推理 → 工具执行 → 后台异步压缩(maybe_compact)
 ```
 
 > 💡 **跨会话持久化**: 会话通过 `SessionManager` 保存到 `.UniClaw/sessions/`,两条列表同时序列化。恢复会话后,完整历史不丢失,召回工具继续可用。
+
+---
+
+## 🗺️ 知识图谱系统
+
+UniClaw 内置基于 SQLite 的知识图谱系统,支持实体和关系的管理、查询、可视化。
+
+### 核心特性
+
+- **双层管理**: 用户级(跨项目共享)和项目级独立管理
+- **全文搜索**: 基于 SQLite FTS5 的高效搜索
+- **智能提取**: AI 自动从文本或文件中提取实体和关系
+- **路径发现**: 查找实体间的关联路径(多跳遍历)
+- **实体合并**: 去重操作,自动转移关系和别名
+- **可视化导出**: 支持 HTML、JSON、Markdown 格式导出
+
+### 数据模型
+
+**实体类型**:
+- `person` - 人物
+- `place` - 地点
+- `concept` - 概念
+- `event` - 事件
+- `tool` - 工具
+- `organization` - 组织
+- `document` - 文档
+- `technology` - 技术
+
+**关系类型**:
+- `is_a` - 是一种
+- `has` - 拥有
+- `uses` - 使用
+- `related_to` - 相关
+- `created_by` - 由...创建
+- `belongs_to` - 属于
+
+### 使用示例
+
+#### 手动添加实体和关系
+
+```
+# AI 会自动调用工具
+kg_add_entity(name="Python", type="technology", description="编程语言")
+kg_add_entity(name="Guido", type="person", description="Python 之父")
+kg_add_relation(source="Guido", target="Python", relation="created_by")
+```
+
+#### 自动提取
+
+```
+# 从文本提取
+kg_extract(text="Python 是一种解释型编程语言,由 Guido van Rossum 于 1991 年创建。")
+
+# 从文件提取
+kg_extract(path="docs/README.md")
+
+# 从目录提取
+kg_extract(path="src/")
+```
+
+#### 查询和遍历
+
+```
+# 搜索实体
+kg_search(keyword="Python")
+
+# 获取实体详情
+kg_get_entity(name="Python")
+
+# 获取邻居(多跳)
+kg_neighbors(name="Python", depth=2)
+
+# 查找路径
+kg_path(source="Guido", target="人工智能")
+```
+
+#### 使用斜杠命令
+
+```bash
+/kg                        # 查看统计信息
+/kg search Python          # 搜索实体
+/kg list person            # 列出所有人物
+/kg export html            # 导出 HTML 可视化
+/kg clear project          # 清空项目级图谱
+```
+
+### 存储位置
+
+- **用户级**: `~/.UniClaw/knowledge.db` (跨项目共享)
+- **项目级**: `.UniClaw/knowledge.db` (当前项目)
+
+### 可视化
+
+导出 HTML 后,可以在浏览器中查看交互式知识图谱可视化,支持：
+- 节点拖拽和缩放
+- 关系类型过滤
+- 实体搜索
+- 详情查看
 
 ---
 
@@ -1438,6 +1609,7 @@ MCP 配置存储在 `~/.UniClaw/mcp.json`：
       "headers": {
         "Authorization": "Bearer your-api-key"
       },
+      "timeout": 15,
       "enabled": true
     }
   }
@@ -1455,7 +1627,8 @@ HTTP 类协议通过 `headers` 传递认证信息：
   "headers": {
     "Authorization": "Bearer your-api-key",
     "X-API-Key": "your-api-key"
-  }
+  },
+  "timeout": 15
 }
 ```
 
@@ -1760,7 +1933,7 @@ A: 在 REPL 中输入斜杠命令后按空格,会自动显示该命令的子命�
 4. 输入子命令前缀可进行过滤
 
 **支持子命令的命令：**
-- `/memory` - `consolidate`
+- `/memory` - `list`, `search`, `delete`, `consolidate`
 - `/schedule` - `list`, `add`, `remove`, `enable`, `disable`
 - `/mcp` - `list`, `add`, `remove`, `show`, `edit`, `enable`, `disable`, `tools`, `refresh`
 - `/permissions` - `list`, `add`, `remove`, `mode`
@@ -1770,6 +1943,7 @@ A: 在 REPL 中输入斜杠命令后按空格,会自动显示该命令的子命�
 - `/overseer` - `start`, `stop`
 - `/checkpoint` - `create`, `pop`, `apply`, `delete`, `diff`
 - `/export` - `markdown`, `json`
+- `/kg` - `stats`, `search`, `list`, `export`, `clear`
 
 ### Q: 如何使用定时任务功能？
 
@@ -1854,6 +2028,87 @@ A: AI 可以通过 `send_file` 工具将文件发送给您：
 - **Console 模式**: 暂不支持文件发送
 
 示例对话: "帮我生成一个 Python 脚本,然后发送给我"
+
+### Q: 知识图谱如何使用？
+
+A: 知识图谱支持手动添加和自动提取两种方式：
+
+**手动添加**:
+```
+# 添加实体
+kg_add_entity(name="Python", type="technology", description="编程语言")
+
+# 添加关系
+kg_add_relation(source="Guido", target="Python", relation="created_by")
+```
+
+**自动提取**:
+```
+# 从文本提取
+kg_extract(text="Python 是一种解释型编程语言...")
+
+# 从文件提取
+kg_extract(path="docs/README.md")
+```
+
+**查询**:
+```
+kg_search(keyword="Python")           # 搜索
+kg_get_entity(name="Python")          # 详情
+kg_neighbors(name="Python", depth=2)  # 邻居
+kg_path(source="A", target="B")       # 路径
+```
+
+**斜杠命令**:
+```bash
+/kg                        # 统计信息
+/kg search Python          # 搜索
+/kg list person            # 列出实体
+/kg export html            # 导出可视化
+```
+
+详细使用方法请参考 [知识图谱系统](#-知识图谱系统) 章节。
+
+### Q: 如何在 WebUI 中上传文件？
+
+A: WebUI 支持多种文件上传方式：
+
+**拖拽上传**:
+1. 将文件直接拖拽到聊天区域
+2. 系统自动识别文件类型并添加为附件
+3. 支持图片、音频、视频等多媒体文件
+
+**文件大小限制**:
+- 系统会自动限制上传文件大小
+- 过大的文件会提示错误
+
+**多媒体支持**:
+- 图片: PNG、JPG、GIF 等
+- 音频: MP3、WAV 等
+- 视频: MP4 等
+
+### Q: WebUI 支持手机访问吗？
+
+A: 是的,WebUI 完美支持移动端访问：
+
+**响应式设计**:
+- 自动适配手机和平板屏幕
+- 触摸手势支持
+- 移动端优化的 UI 布局
+
+**局域网访问**:
+```bash
+# 启动时指定 host
+uv run uniclaw --mode webui --host 0.0.0.0
+
+# 手机浏览器访问
+http://你的IP地址:8080
+```
+
+**功能完整**:
+- 对话功能完整可用
+- 文件上传支持
+- 工具调用可视化
 
 ## 📄 许可证
 
