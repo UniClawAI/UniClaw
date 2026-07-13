@@ -67,6 +67,7 @@ from .search import get_tools as search_get_tools, get_all_tools as search_get_a
 from .help import get_tools as help_get_tools, get_all_tools as help_get_all_tools
 from .tts.tools import get_tools as tts_get_tools, get_all_tools as tts_get_all_tools
 from .send_file import get_tools as send_file_get_tools, get_all_tools as send_file_get_all_tools
+from .wechat import get_tools as wechat_get_tools, get_all_tools as wechat_get_all_tools
 from .knowledge import get_tools as knowledge_get_tools, get_all_tools as knowledge_get_all_tools
 from .mcp import MCPManager
 from .registry import get_tools as registry_get_tools, init_registry
@@ -137,6 +138,7 @@ async def get_tools(config) -> list:
         *help_get_tools(),
         *tts_get_tools(config),
         *send_file_get_tools(),
+        *wechat_get_tools(),
         *knowledge_get_tools(),
         *registry_get_tools(),
         *mcp_tools,
@@ -187,6 +189,7 @@ async def get_all_tools() -> list:
         *help_get_all_tools(),
         *tts_get_all_tools(),
         *send_file_get_all_tools(),
+        *wechat_get_all_tools(),
         *knowledge_get_all_tools(),
         *mcp_tools,
     ]

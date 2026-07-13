@@ -101,6 +101,7 @@ def _build_extended_keywords() -> dict[str, list[str]]:
     )
     from .help import list_slash_commands, get_command_help
     from .send_file import send_file
+    from .wechat import wechat_list_contacts, wechat_send_text, wechat_send_image, wechat_send_file
     from .knowledge.tools import (
         kg_add_entity, kg_add_relation, kg_add_alias, kg_update_entity,
         kg_delete_entity, kg_delete_relation, kg_merge_entities, kg_get_entity, kg_search,
@@ -229,6 +230,11 @@ def _build_extended_keywords() -> dict[str, list[str]]:
         # TTS 工具
         text_to_speech.name: ["tts", "语音合成", "文本转语音", "text to speech", "朗读", "语音", "说话", "播放语音", "音频生成", "voice"],
         send_file.name: ["发送文件", "send file", "文件发送", "下载文件", "download file", "提供文件", "文件下载"],
+        # 微信工具
+        wechat_list_contacts.name: ["微信", "wechat", "微信列表", "微信号", "可用微信", "微信账号", "机器人列表", "bot list", "联系人", "contacts", "微信联系人"],
+        wechat_send_text.name: ["微信", "wechat", "发消息", "send message", "微信消息", "发送文字", "send text", "微信文字", "微信发送"],
+        wechat_send_image.name: ["微信", "wechat", "发图片", "send image", "微信图片", "发送图片", "微信发图", "wechat image"],
+        wechat_send_file.name: ["微信", "wechat", "发文件", "send file to", "微信文件", "发送文件到", "微信发送文件", "wechat file"],
         # 知识图谱工具
         kg_add_entity.name: ["知识图谱", "添加实体", "knowledge graph", "add entity", "创建实体", "新建实体", "实体", "entity"],
         kg_add_relation.name: ["添加关系", "知识图谱", "add relation", "创建关系", "关联实体", "关系", "relation"],
@@ -307,6 +313,7 @@ def _build_tool_categories() -> dict[str, str]:
     )
     from .help import list_slash_commands, get_command_help
     from .send_file import send_file
+    from .wechat import wechat_list_contacts, wechat_send_text, wechat_send_image, wechat_send_file
     from .knowledge.tools import (
         kg_add_entity, kg_add_relation, kg_add_alias, kg_update_entity,
         kg_delete_entity, kg_delete_relation, kg_merge_entities, kg_get_entity, kg_search,
@@ -368,6 +375,9 @@ def _build_tool_categories() -> dict[str, str]:
         # TTS 工具
         text_to_speech.name: "TTS",
         send_file.name: "文件发送",
+        # 微信工具
+        wechat_list_contacts.name: "微信", wechat_send_text.name: "微信",
+        wechat_send_image.name: "微信", wechat_send_file.name: "微信",
         # 知识图谱工具
         kg_add_entity.name: "知识图谱", kg_add_relation.name: "知识图谱", kg_add_alias.name: "知识图谱",
         kg_update_entity.name: "知识图谱", kg_delete_entity.name: "知识图谱", kg_delete_relation.name: "知识图谱",

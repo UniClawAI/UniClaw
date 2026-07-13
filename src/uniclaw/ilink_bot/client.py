@@ -50,7 +50,7 @@ class IlinkBotClient:
         self.poll_timeout = poll_timeout
         self._handlers: list[MessageHandler] = []
         self._stop_event = threading.Event()
-        self._current_user_id: str | None = None
+        self._current_user_id: str | None = self._restore_user_id()
 
         if self.store.base_url:
             self.base_url = self.store.base_url.rstrip("/")
@@ -562,6 +562,14 @@ class IlinkBotClient:
     def _require_login(self) -> None:
         if not self.store.bot_token:
             raise AuthError("Not logged in. Call login() first.")
+
+    def _restore_user_id(self) -> str | None:
+        """从持久化 store 中恢复上次的 _current_user_id。"""
+        contexts = self.store.data.get("contexts", {})
+        if contexts:
+            # 取最后一个有 context_token 的用户
+            return next(reversed(contexts))
+        return None
 
     def _require_user(self) -> str:
         if not self._current_user_id:

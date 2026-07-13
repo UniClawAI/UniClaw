@@ -234,6 +234,7 @@ def is_safe_tool(name: str) -> bool:
         kg_merge_entities,
     )
     from uniclaw.tools.send_file import send_file
+    from uniclaw.tools.wechat import wechat_list_contacts, wechat_send_text, wechat_send_image, wechat_send_file
     from uniclaw.tools.computer_use import cu_screenshot, cu_locate_on_screen, cu_get_elements, cu_find_element
     from uniclaw.tools.security.tools import read_llm_safe_prompt
     from uniclaw.tools.web_browse.tools import (
@@ -309,6 +310,11 @@ def is_safe_tool(name: str) -> bool:
         push_notification.name,
         search_tools.name,
         send_file.name,
+        # 微信工具(全部安全)
+        wechat_list_contacts.name,
+        wechat_send_text.name,
+        wechat_send_image.name,
+        wechat_send_file.name,
         # 知识图谱工具(全部安全)
         kg_add_entity.name,
         kg_add_relation.name,
