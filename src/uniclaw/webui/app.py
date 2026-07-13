@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from uniclaw.webui.api import router as api_router
 from uniclaw.webui.ws import websocket_endpoint
 from uniclaw.webui import auth
+from uniclaw.webui.crypto import decrypt_data, is_encrypted
 
 # 静态文件目录
 STATIC_DIR = Path(__file__).parent / "static"
@@ -116,6 +117,67 @@ async def auth_middleware(request: Request, call_next):
             content={"detail": "未登录"},
         )
     return RedirectResponse(url="/login.html", status_code=302)
+
+
+# ── 加密静态文件解密中间件 ──────────────────────────────────────────────────
+
+# 扩展名 → Content-Type 映射
+_EXT_CONTENT_TYPE: dict[str, str] = {
+    ".js": "application/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".html": "text/html; charset=utf-8",
+    ".json": "application/json; charset=utf-8",
+    ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".ico": "image/x-icon",
+    ".woff": "font/woff",
+    ".woff2": "font/woff2",
+}
+
+# 需要检测加密的扩展名
+ENCRYPTABLE_EXTS = {".js", ".html"}
+
+
+@app.middleware("http")
+async def decrypt_static_middleware(request: Request, call_next):
+    """拦截静态文件请求,若文件已加密则解密后返回。"""
+    path = request.url.path
+
+    # 仅处理 /static/ 和 /assets/ 路径
+    if not (path.startswith("/static/") or path.startswith("/assets/")):
+        return await call_next(request)
+
+    # 计算文件系统路径
+    if path.startswith("/static/"):
+        rel = path[len("/static/"):]
+        base_dir = STATIC_DIR
+    else:
+        rel = path[len("/assets/"):]
+        base_dir = ASSETS_DIR
+
+    file_path = base_dir / rel
+
+    # 只对可加密扩展名做检测,其他文件走正常流程
+    if file_path.suffix.lower() not in ENCRYPTABLE_EXTS:
+        return await call_next(request)
+
+    if not file_path.exists():
+        return await call_next(request)
+
+    try:
+        data = file_path.read_bytes()
+        if not is_encrypted(data):
+            return await call_next(request)  # 未加密,正常处理
+
+        data = decrypt_data(data)
+        ext = file_path.suffix.lower()
+        ct = _EXT_CONTENT_TYPE.get(ext, "application/octet-stream")
+        return Response(content=data, media_type=ct)
+    except Exception:
+        # 解密失败(密钥错误/文件损坏) → 返回 403
+        return Response(content=b"Forbidden", status_code=403)
 
 
 # ── 认证 API ──────────────────────────────────────────────────────────────
@@ -230,13 +292,21 @@ if ASSETS_DIR.exists():
     app.mount("/assets", StaticFiles(directory=str(ASSETS_DIR)), name="assets")
 
 
+def _serve_html(file_path: Path) -> Response:
+    """返回 HTML 文件,若已加密则解密。"""
+    data = file_path.read_bytes()
+    if is_encrypted(data):
+        data = decrypt_data(data)
+    return Response(content=data, media_type="text/html; charset=utf-8")
+
+
 @app.get("/")
 async def index():
     """返回 SPA 入口页面。"""
-    return FileResponse(str(STATIC_DIR / "index.html"))
+    return _serve_html(STATIC_DIR / "index.html")
 
 
 @app.get("/login.html")
 async def login_page():
     """返回登录页面。"""
-    return FileResponse(str(STATIC_DIR / "login.html"))
+    return _serve_html(STATIC_DIR / "login.html")

@@ -228,7 +228,54 @@ const Chat = {
         });
         c.appendChild(el);
         this._scrollToBottom();
+        // 尝试获取公告
+        this._fetchAnnouncement().catch(() => {});
         return el;
+    },
+
+    /** 从公告服务器获取公告内容（HTTPS 优先，失败回退 HTTP） */
+    async _fetchAnnouncement() {
+        // 去重：已有公告栏则跳过
+        if (document.querySelector('.announcement-banner')) return;
+
+        const host = 'uniclawai.top:8001';
+        // no-cors 模式探测可达性（服务器无 CORS 头，ok/status 不可用，只能靠是否抛异常判断）
+        let server = null;
+        for (const proto of ['https', 'http']) {
+            try {
+                await fetch(`${proto}://${host}/`, { method: 'HEAD', mode: 'no-cors', signal: AbortSignal.timeout(2000) });
+                server = `${proto}://${host}`;
+                break;
+            } catch {}
+        }
+        if (!server) return;
+
+        // 再次检查（异步间隙中可能已有其他实例插入）
+        if (document.querySelector('.announcement-banner')) return;
+
+        // 创建 object 容器
+        const banner = document.createElement('div');
+        banner.className = 'announcement-banner';
+
+        const obj = document.createElement('object');
+        obj.data = `${server}/api/announcement`;
+        obj.type = 'text/html';
+        obj.style.cssText = 'width:100%;border:none;min-height:40px;';
+
+        // 加载失败时隐藏
+        obj.onerror = () => banner.remove();
+        obj.onload = () => {
+            // 调整高度适应内容
+            try {
+                obj.style.height = obj.contentDocument?.body?.scrollHeight + 'px';
+            } catch (e) {}
+        };
+
+        banner.appendChild(obj);
+
+        // 插入到聊天区域最顶部
+        const chatMessages = document.getElementById('chat-messages');
+        chatMessages.insertBefore(banner, chatMessages.firstChild);
     },
 
     /** 将文本填入输入框并聚焦 */

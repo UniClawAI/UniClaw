@@ -549,6 +549,27 @@ pre:hover .code-copy-btn {
     color: var(--text-3);
 }
 
+/* ---- 公告栏 ---- */
+.announcement-banner {
+    width: 100%;
+    max-width: 520px;
+    margin: 16px auto;
+    box-sizing: border-box;
+    text-align: center;
+}
+/* 欢迎页面时容器变 flex 列，公告在顶、欢迎内容占剩余空间 */
+.chat-messages:has(.welcome-screen) {
+    display: flex;
+    flex-direction: column;
+}
+.chat-messages:has(.welcome-screen) .announcement-banner {
+    flex-shrink: 0;
+}
+.chat-messages:has(.welcome-screen) .welcome-screen {
+    flex: 1;
+    min-height: 0;
+}
+
 /* ---- 欢迎页面 ---- */
 .welcome-screen {
     display: flex;
