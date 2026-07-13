@@ -43,9 +43,12 @@ async def cmd_overseer(args: str, config: AppConfig) -> bool:
 
     # 无参数:显示状态
     if manager.active:
-        await info("监工模式: 运行中", config)
-        await info("  - TodoList 完成需审核验收", config)
-        await info("  - 未完成任务会被督促继续", config)
+        await info(
+            "监工模式: 运行中\n"
+            "  - TodoList 完成需审核验收\n"
+            "  - 未完成任务会被督促继续",
+            config,
+        )
     else:
         await info("监工模式: 未运行", config)
         await info("  使用 /overseer start 启动", config)

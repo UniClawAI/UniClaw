@@ -28,10 +28,11 @@ async def cmd_add_dir(args: str, config: AppConfig) -> bool:
         if not dirs:
             await info("没有额外工作空间目录", config)
         else:
-            await info(f"\n额外工作空间目录 ({len(dirs)} 个):", config)
+            lines = [f"\n额外工作空间目录 ({len(dirs)} 个):"]
             for i, d in enumerate(dirs, 1):
-                await info(f"  {i}. {d}", config)
-            await info("", config)
+                lines.append(f"  {i}. {d}")
+            lines.append("")
+            await info("\n".join(lines), config)
         return True
 
     # rm/remove 子命令:移除目录

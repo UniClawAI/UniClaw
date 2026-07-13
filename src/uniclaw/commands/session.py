@@ -187,10 +187,13 @@ async def cmd_export(args: str, config: AppConfig) -> bool:
                 f.write(md_content)
 
         await ok(f"✓ 对话已导出: {export_path}", config)
-        await info(f"导出格式: {'JSON' if use_json else 'Markdown'}", config)
-        await info(f"消息数量: {len(task.session)}", config)
-        await info(f"总输入 Token: {total.get(UsageField.INPUT_TOKENS, 0)}", config)
-        await info(f"总输出 Token: {total.get(UsageField.OUTPUT_TOKENS, 0)}", config)
+        await info(
+            f"导出格式: {'JSON' if use_json else 'Markdown'}\n"
+            f"消息数量: {len(task.session)}\n"
+            f"总输入 Token: {total.get(UsageField.INPUT_TOKENS, 0)}\n"
+            f"总输出 Token: {total.get(UsageField.OUTPUT_TOKENS, 0)}",
+            config,
+        )
     except Exception as e:
         await err(f"导出失败: {e}", config)
         return False

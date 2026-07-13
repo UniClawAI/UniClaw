@@ -35,11 +35,12 @@ async def cmd_permissions(args: str, config: AppConfig) -> bool:
         if not rules:
             await warn("暂无保存的权限规则", config)
             return True
-        await info(f"\n共 {len(rules)} 条权限规则:\n", config)
+        lines = [f"\n共 {len(rules)} 条权限规则:\n"]
         for i, r in enumerate(rules, 1):
             created = r.get("created", "")
-            await info(f"  {i}. [{r['type']}] {r['pattern']}  (创建: {created})", config)
-        await info(f"\n使用 /permissions remove <type> <pattern> 删除规则", config)
+            lines.append(f"  {i}. [{r['type']}] {r['pattern']}  (创建: {created})")
+        lines.append(f"\n使用 /permissions remove <type> <pattern> 删除规则")
+        await info("\n".join(lines), config)
         return True
 
     if parts[0] == "remove" and len(parts) >= 3:

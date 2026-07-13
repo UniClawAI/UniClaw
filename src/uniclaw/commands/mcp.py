@@ -96,7 +96,7 @@ async def _mcp_list(manager, config: AppConfig) -> bool:
         await warn("暂无 MCP 服务器配置", config)
         await info("使用 /mcp add <名称> 添加服务器", config)
         return True
-    await info(f"\nMCP 服务器 (共 {len(servers)} 个):\n", config)
+    lines = [f"\nMCP 服务器 (共 {len(servers)} 个):\n"]
     for s in servers:
         name = s["name"]
         transport = s.get("transport", "unknown")
@@ -107,9 +107,10 @@ async def _mcp_list(manager, config: AppConfig) -> bool:
             detail = f"{s.get('command', '')} {' '.join(s.get('args', []))}"
         else:
             detail = s.get("url", "")
-        await info(f"  [{status}] {name} ({transport})", config)
-        await info(f"    {detail}", config)
-        await info("", config)
+        lines.append(f"  [{status}] {name} ({transport})")
+        lines.append(f"    {detail}")
+        lines.append("")
+    await info("\n".join(lines), config)
     return True
 
 
@@ -318,19 +319,20 @@ async def _mcp_show(manager, name: str, config: AppConfig) -> bool:
         await err(f"服务器 '{name}' 不存在", config)
         return True
 
-    await info(f"\n服务器: {name}\n", config)
+    lines = [f"\n服务器: {name}\n"]
     for k, v in server.items():
         if k == "name":
             continue
         if isinstance(v, dict):
-            await info(f"  {k}:", config)
+            lines.append(f"  {k}:")
             for dk, dv in v.items():
-                await info(f"    {dk}: {dv}", config)
+                lines.append(f"    {dk}: {dv}")
         elif isinstance(v, list):
-            await info(f"  {k}: {' '.join(str(i) for i in v)}", config)
+            lines.append(f"  {k}: {' '.join(str(i) for i in v)}")
         else:
-            await info(f"  {k}: {v}", config)
-    await info("", config)
+            lines.append(f"  {k}: {v}")
+    lines.append("")
+    await info("\n".join(lines), config)
     return True
 
 
@@ -423,12 +425,13 @@ async def _mcp_tools(manager, server_name: str, config: AppConfig = None) -> boo
         await warn("暂无可用的 MCP 工具", config)
         return True
 
-    await info(f"\nMCP 工具 (共 {len(tools_info)} 个):\n", config)
+    lines = [f"\nMCP 工具 (共 {len(tools_info)} 个):\n"]
     for t in tools_info:
-        await info(f"  • {t['name']} (来自: {t['server']})", config)
+        lines.append(f"  • {t['name']} (来自: {t['server']})")
         if t["description"]:
-            await info(f"    {t['description']}", config)
-    await info("", config)
+            lines.append(f"    {t['description']}")
+    lines.append("")
+    await info("\n".join(lines), config)
     return True
 
 

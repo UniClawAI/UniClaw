@@ -60,11 +60,13 @@ async def cmd_btw(args: str, config: AppConfig) -> bool:
             tui.print("")
         else:
             # 非 TUI 模式直接打印
-            await info(f"\n💡 侧问题: {question}", config)
-            await info("─" * 40, config)
-            await info(answer, config)
-            await info("─" * 40, config)
-            await info("", config)
+            await info(
+                f"\n💡 侧问题: {question}\n"
+                "─" * 40 + "\n"
+                f"{answer}\n"
+                "─" * 40,
+                config,
+            )
 
     except Exception as e:
         await err(f"侧问题回答失败: {e}", config)

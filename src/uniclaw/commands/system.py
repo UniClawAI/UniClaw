@@ -58,22 +58,23 @@ async def cmd_skills(_args: str, config: AppConfig) -> bool:
         if skill.source in groups:
             groups[skill.source][1].append(skill)
 
-    await info(f"\n可用技能 (共 {len(skills)} 个):\n", config)
+    lines = [f"\n可用技能 (共 {len(skills)} 个):\n"]
     for source_key, (title, skill_list) in groups.items():
         if not skill_list:
             continue
-        await info(title, config)
+        lines.append(title)
         for skill in skill_list:
             triggers = ", ".join(skill.triggers[:3])
             if len(skill.triggers) > 3:
                 triggers += f" (+{len(skill.triggers) - 3})"
-            await info(f"  - {skill.name}: {skill.description}", config)
-            await info(f"    触发器: {triggers}", config)
+            lines.append(f"  - {skill.name}: {skill.description}")
+            lines.append(f"    触发器: {triggers}")
             if skill.when_to_use:
-                await info(f"    使用时机: {skill.when_to_use}", config)
+                lines.append(f"    使用时机: {skill.when_to_use}")
             if skill.argument_hint:
-                await info(f"    参数提示: {skill.argument_hint}", config)
-            await info("", config)
+                lines.append(f"    参数提示: {skill.argument_hint}")
+            lines.append("")
+    await info("\n".join(lines), config)
     return True
 
 
@@ -93,101 +94,88 @@ async def cmd_usage(_args: str, config: AppConfig) -> bool:
 
 async def cmd_help(_args: str, config: AppConfig) -> bool:
     """显示所有可用的斜杠命令帮助信息,按分类列出命令和快捷键提示。"""
-    await info("\n📖 UniClaw 斜杠命令帮助\n", config)
+    help_text = """
+📖 UniClaw 斜杠命令帮助
 
-    await info("【会话管理】", config)
-    await info("  /btw <问题>            - 侧问题:不打断当前对话提问", config)
-    await info("  /name [名称]          - 为会话命名(无参数自动生成)", config)
-    await info("  /clear, /cls          - 清空当前对话历史并清屏", config)
-    await info("  /compact [关键词]      - 压缩上下文,优化 Token 使用", config)
-    await info("  /export [路径]         - 导出当前会话到文件(Markdown/JSON)", config)
-    await info("  /resume [ID]           - 恢复会话(无参数交互式选择)", config)
-    await info("  /resume list           - 列出所有历史对话", config)
-    await info("  /resume del <ID>       - 删除指定会话", config)
-    await info("  /resume search <关键词> - 搜索对话内容", config)
-    await info("", config)
+【会话管理】
+  /btw <问题>            - 侧问题:不打断当前对话提问
+  /name [名称]          - 为会话命名(无参数自动生成)
+  /clear, /cls          - 清空当前对话历史并清屏
+  /compact [关键词]      - 压缩上下文,优化 Token 使用
+  /export [路径]         - 导出当前会话到文件(Markdown/JSON)
+  /resume [ID]           - 恢复会话(无参数交互式选择)
+  /resume list           - 列出所有历史对话
+  /resume del <ID>       - 删除指定会话
+  /resume search <关键词> - 搜索对话内容
 
-    await info("【Git 检查点】", config)
-    await info("  /undo                 - 撤销 AI 最近的文件编辑", config)
-    await info("  /undo <序号>          - 恢复到指定检查点", config)
-    await info("  /checkpoint           - 列出所有检查点", config)
-    await info("  /checkpoint diff      - 查看当前未提交的变更", config)
-    await info("  /checkpoint diff <序号> - 当前修改 vs 指定检查点", config)
-    await info("  /checkpoint diff <a> <b> - 比较两个检查点", config)
-    await info("  /checkpoint restore   - 恢复最近的检查点", config)
-    await info("  /checkpoint <序号>    - 恢复指定检查点", config)
-    await info("", config)
+【Git 检查点】
+  /undo                 - 撤销 AI 最近的文件编辑
+  /undo <序号>          - 恢复到指定检查点
+  /checkpoint           - 列出所有检查点
+  /checkpoint diff      - 查看当前未提交的变更
+  /checkpoint diff <序号> - 当前修改 vs 指定检查点
+  /checkpoint diff <a> <b> - 比较两个检查点
+  /checkpoint restore   - 恢复最近的检查点
+  /checkpoint <序号>    - 恢复指定检查点
 
-    await info("【监工模式】", config)
-    await info("  /overseer start        - 启动监工模式(TodoList完成需审核)", config)
-    await info("  /overseer stop         - 退出监工模式", config)
-    await info("  /overseer              - 查看监工模式状态", config)
-    await info("", config)
+【监工模式】
+  /overseer start        - 启动监工模式(TodoList完成需审核)
+  /overseer stop         - 退出监工模式
+  /overseer              - 查看监工模式状态
 
-    await info("【模型与系统】", config)
-    await info("  /model [名称]          - 查看或切换当前使用的模型", config)
-    await info("  /config [get|set|reset] - 运行时配置管理", config)
-    await info("  /cwd, /cd, /pwd [路径] - 查看或切换工作目录", config)
-    await info(
-        "  /add-dir <路径>        - 添加额外工作空间目录(仅当前会话有效)", config
-    )
-    await info("  /usage                 - 查看 Token 使用统计", config)
-    await info(
-        "  /cost                  - 查看费用统计(按模型计费,价格来自 OpenRouter)",
-        config,
-    )
-    await info("  /context               - 查看当前上下文 token 构成", config)
-    await info("  /skills                - 列出所有可用技能", config)
-    await info("  /init                  - 扫描项目并生成/更新 CLAUDE.md", config)
-    await info("  /doctor                - 环境诊断(检查依赖和配置状态)", config)
-    await info("  /help                  - 显示本帮助信息", config)
-    await info("  /exit, /quit           - 退出程序", config)
-    await info("", config)
+【模型与系统】
+  /model [名称]          - 查看或切换当前使用的模型
+  /config [get|set|reset] - 运行时配置管理
+  /cwd, /cd, /pwd [路径] - 查看或切换工作目录
+  /add-dir <路径>        - 添加额外工作空间目录(仅当前会话有效)
+  /usage                 - 查看 Token 使用统计
+  /cost                  - 查看费用统计(按模型计费,价格来自 OpenRouter)
+  /context               - 查看当前上下文 token 构成
+  /skills                - 列出所有可用技能
+  /init                  - 扫描项目并生成/更新 CLAUDE.md
+  /doctor                - 环境诊断(检查依赖和配置状态)
+  /help                  - 显示本帮助信息
+  /exit, /quit           - 退出程序
 
-    await info("【记忆管理】", config)
-    await info("  /memory                - 列出所有记忆", config)
-    await info("  /memory <关键词>       - 搜索相关记忆", config)
-    await info("  /memory consolidate    - 从当前对话提取记忆", config)
-    await info("", config)
+【记忆管理】
+  /memory                - 列出所有记忆
+  /memory <关键词>       - 搜索相关记忆
+  /memory consolidate    - 从当前对话提取记忆
 
-    await info("【MCP 管理】", config)
-    await info("  /mcp list              - 列出 MCP 服务器", config)
-    await info("  /mcp add <名称> [JSON] - 添加 MCP 服务器", config)
-    await info("  /mcp remove <名称>     - 删除 MCP 服务器", config)
-    await info("  /mcp show <名称>       - 查看服务器详情", config)
-    await info("  /mcp edit <名称> [JSON] - 编辑服务器配置", config)
-    await info("  /mcp enable/disable <名称> - 启用/禁用服务器", config)
-    await info("  /mcp tools [名称]      - 列出 MCP 工具", config)
-    await info("  /mcp refresh           - 刷新 MCP 工具", config)
-    await info("", config)
+【MCP 管理】
+  /mcp list              - 列出 MCP 服务器
+  /mcp add <名称> [JSON] - 添加 MCP 服务器
+  /mcp remove <名称>     - 删除 MCP 服务器
+  /mcp show <名称>       - 查看服务器详情
+  /mcp edit <名称> [JSON] - 编辑服务器配置
+  /mcp enable/disable <名称> - 启用/禁用服务器
+  /mcp tools [名称]      - 列出 MCP 工具
+  /mcp refresh           - 刷新 MCP 工具
 
-    await info("【定时任务】", config)
-    await info("  /schedule list         - 列出所有定时任务", config)
-    await info("  /schedule add <id> <调度> <动作> - 创建定时任务", config)
-    await info("  /schedule remove <id>  - 删除定时任务", config)
-    await info("  /schedule enable <id>  - 启用定时任务", config)
-    await info("  /schedule disable <id> - 禁用定时任务", config)
-    await info("", config)
+【定时任务】
+  /schedule list         - 列出所有定时任务
+  /schedule add <id> <调度> <动作> - 创建定时任务
+  /schedule remove <id>  - 删除定时任务
+  /schedule enable <id>  - 启用定时任务
+  /schedule disable <id> - 禁用定时任务
 
-    await info("【后台任务】", config)
-    await info("  /task                  - 列出所有后台任务", config)
-    await info("  /task list             - 列出所有后台任务", config)
-    await info("  /task output <id> [N]  - 获取任务输出(默认 50 行)", config)
-    await info("  /task stop <id>        - 停止指定任务", config)
-    await info("  /task matched <id>     - 获取监控匹配结果", config)
-    await info("", config)
+【后台任务】
+  /task                  - 列出所有后台任务
+  /task list             - 列出所有后台任务
+  /task output <id> [N]  - 获取任务输出(默认 50 行)
+  /task stop <id>        - 停止指定任务
+  /task matched <id>     - 获取监控匹配结果
 
-    await info("【权限管理】", config)
-    await info("  /permissions list      - 查看所有权限规则", config)
-    await info("  /permissions remove <类型> <模式> - 删除权限规则", config)
-    await info("", config)
+【权限管理】
+  /permissions list      - 查看所有权限规则
+  /permissions remove <类型> <模式> - 删除权限规则
 
-    await info("💡 提示:", config)
-    await info("  - 输入 /<命令> help 可查看该命令的详细说明(如 /memory help)", config)
-    await info("  - 输入 ! 开头的命令可直接执行 Shell 命令(如 !ls -la)", config)
-    await info("  - 按 F2 键可切换详细/简洁显示模式", config)
-    await info("  - 按 ESC 键可中断正在运行的任务", config)
-    await info("  - 按 Ctrl+K 可聚焦对话侧边栏", config)
-    await info("", config)
-
+💡 提示:
+  - 输入 /<命令> help 可查看该命令的详细说明(如 /memory help)
+  - 输入 ! 开头的命令可直接执行 Shell 命令(如 !ls -la)
+  - 按 F2 键可切换详细/简洁显示模式
+  - 按 ESC 键可中断正在运行的任务
+  - 按 Ctrl+K 可聚焦对话侧边栏
+"""
+    await info(help_text, config)
     return True

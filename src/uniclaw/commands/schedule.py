@@ -71,11 +71,14 @@ async def _schedule_list(scheduler, config: AppConfig) -> bool:
     tasks = scheduler.list_tasks()
     if not tasks:
         await warn("暂无定时任务", config)
-        await info("使用 /schedule add <id> <schedule> <action> 添加任务", config)
-        await info('示例: /schedule add check-git "0 * * * *" "shell: git status"', config)
+        await info(
+            "使用 /schedule add <id> <schedule> <action> 添加任务\n"
+            '示例: /schedule add check-git "0 * * * *" "shell: git status"',
+            config,
+        )
         return True
 
-    await info(f"\n定时任务 (共 {len(tasks)} 个):\n", config)
+    lines = [f"\n定时任务 (共 {len(tasks)} 个):\n"]
     for t in tasks:
         tid = t["id"]
         name = t.get("name", tid)
@@ -108,14 +111,15 @@ async def _schedule_list(scheduler, config: AppConfig) -> bool:
             action_str = action
 
         status = "✓ 启用" if enabled else "✗ 禁用"
-        await info(f"  [{status}] {tid}", config)
-        await info(f"    名称: {name}", config)
-        await info(f"    调度: {schedule}", config)
-        await info(f"    动作: {action_str}", config)
-        await info(f"    工作目录: {root_dir}", config)
-        await info(f"    权限模式: {permission_mode}", config)
-        await info(f"    上次执行: {last_run}", config)
-        await info("", config)
+        lines.append(f"  [{status}] {tid}")
+        lines.append(f"    名称: {name}")
+        lines.append(f"    调度: {schedule}")
+        lines.append(f"    动作: {action_str}")
+        lines.append(f"    工作目录: {root_dir}")
+        lines.append(f"    权限模式: {permission_mode}")
+        lines.append(f"    上次执行: {last_run}")
+        lines.append("")
+    await info("\n".join(lines), config)
     return True
 
 
@@ -135,9 +139,12 @@ async def _schedule_add(scheduler, args_str: str, config: AppConfig) -> bool:
     parts = _parse_quoted_args(args_str)
     if len(parts) < 2:
         await err("参数不足: /schedule add <schedule> <action> [name]", config)
-        await info('示例: /schedule add "0 * * * *" "shell: git status"', config)
-        await info("调度格式: Cron 表达式(分 时 日 月 周),最小粒度 1 分钟", config)
-        await info("动作类型: shell: <命令>、agent: <消息> 或 py: <Python代码>", config)
+        await info(
+            '示例: /schedule add "0 * * * *" "shell: git status"\n'
+            "调度格式: Cron 表达式(分 时 日 月 周),最小粒度 1 分钟\n"
+            "动作类型: shell: <命令>、agent: <消息> 或 py: <Python代码>",
+            config,
+        )
         return True
 
     schedule, action = parts[0], parts[1]

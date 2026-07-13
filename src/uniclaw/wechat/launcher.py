@@ -124,11 +124,11 @@ async def launch():
     handler = make_handler()
     manager.on_message(handler)
 
-    await info(f"数据目录: {manager.data_dir}")
-    await info(f"已注册 {len(manager)} 个账号")
+    lines = [f"数据目录: {manager.data_dir}", f"已注册 {len(manager)} 个账号"]
     for bot in manager.bots:
         status = "已登录" if bot.is_logged_in else "未登录"
-        await info(f"  - {status}")
+        lines.append(f"  - {status}")
+    await info("\n".join(lines))
 
     try:
         await _input_loop(manager)

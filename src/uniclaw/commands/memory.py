@@ -60,31 +60,31 @@ async def cmd_memory(args: str, config: AppConfig) -> bool:
         if not results:
             await warn(f"未找到与「{query}」相关的记忆", config)
             return True
-        await info(f"\n找到 {len(results)} 条相关记忆:\n", config)
+        lines = [f"\n找到 {len(results)} 条相关记忆:\n"]
         for r in results:
-            await info(f"  [{r['type']}] {r['name']}", config)
-            await info(f"    {r['description']}", config)
-            await info(
-                f"    置信度: {r['confidence']}  来源: {r['source']}  作用域: {r['scope']}",
-                config,
+            lines.append(f"  [{r['type']}] {r['name']}")
+            lines.append(f"    {r['description']}")
+            lines.append(
+                f"    置信度: {r['confidence']}  来源: {r['source']}  作用域: {r['scope']}"
             )
             if r.get("freshness_text"):
-                await info(f"    {r['freshness_text']}", config)
-            await info("", config)
+                lines.append(f"    {r['freshness_text']}")
+            lines.append("")
+        await info("\n".join(lines), config)
         return True
 
     # 无参数 — 列出全部记忆详情
-    await info(f"\n共 {len(all_memories)} 条记忆:\n", config)
+    lines = [f"\n共 {len(all_memories)} 条记忆:\n"]
     for mem in all_memories:
-        await info(f"  [{mem.type}] {mem.name}", config)
-        await info(f"    {mem.description}", config)
-        await info(
-            f"    置信度: {mem.confidence}  来源: {mem.source}  作用域: {mem.scope}",
-            config,
+        lines.append(f"  [{mem.type}] {mem.name}")
+        lines.append(f"    {mem.description}")
+        lines.append(
+            f"    置信度: {mem.confidence}  来源: {mem.source}  作用域: {mem.scope}"
         )
         if mem.created:
-            await info(f"    创建时间: {mem.created}", config)
+            lines.append(f"    创建时间: {mem.created}")
         if mem.last_used_at:
-            await info(f"    最后使用: {mem.last_used_at}", config)
-        await info("", config)
+            lines.append(f"    最后使用: {mem.last_used_at}")
+        lines.append("")
+    await info("\n".join(lines), config)
     return True
