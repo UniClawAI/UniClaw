@@ -109,14 +109,12 @@ def _format_tool_call(name: str, args: dict) -> str:
 async def _collect_response(
     config: AppConfig,
     client: IlinkBotClient | None = None,
-    msg: IncomingMessage | None = None,
 ) -> str:
     """从事件队列中收集 Agent 的文本回复。
 
     Args:
         config: 用户的 AppConfig(含 current_agent)
         client: iLink Bot 客户端,用于实时发送工具调用通知
-        msg: 原始消息,用于回复目标用户
     """
     task = config.current_agent
     spinner = config.spinner
@@ -172,9 +170,9 @@ async def _collect_response(
             current_args = event.args
             label = _format_tool_call(event.name, event.args)
             spinner_wait_id = spinner.start(f"工具 '{label}' 执行中...")
-            if client and msg:
+            if client:
                 try:
-                    client.reply_text(msg, f"🔧 {label}")
+                    client.reply_text(f"🔧 {label}")
                 except Exception:
                     pass
         elif isinstance(event, ToolEvent):
@@ -244,8 +242,8 @@ def make_handler():
         config = _get_user_config(user_id)
         task = config.current_agent
 
-        # 挂载 bot 和 msg 供 wechat_input 使用
-        config.wechat_ctx = (bot, msg)
+        # 挂载 bot 供 wechat_input / send_file / tts 使用
+        config.wechat_ctx = bot
 
         # 如果有待处理的输入请求,优先响应
         if user_id in _pending_wechat_inputs:
@@ -263,13 +261,13 @@ def make_handler():
                 result = await handle_slash(text, config)
             output = _ANSI_RE.sub("", buf.getvalue()).strip()
             if isinstance(result, str):
-                bot.reply_text(msg, result)
+                bot.reply_text(result)
             elif output:
-                bot.reply_text(msg, output.replace("\n", "\n\n"))
+                bot.reply_text(output.replace("\n", "\n\n"))
             elif result:
                 print("命令已执行。")
             else:
-                bot.reply_text(msg, "命令没找到")
+                bot.reply_text("命令没找到")
             return
 
         # !命令处理 - 直接执行 shell 命令
@@ -279,7 +277,7 @@ def make_handler():
                 await info(f"[微信] 执行命令: {shell_cmd}", config)
                 result = await Bash.func(shell_cmd, config=config)
                 output = _ANSI_RE.sub("", result).strip()
-                bot.reply_text(msg, output.replace("\n", "\n\n") or "(无输出)")
+                bot.reply_text(output.replace("\n", "\n\n") or "(无输出)")
             return
 
         user_message = await _build_user_message(msg, bot, config)
@@ -296,7 +294,7 @@ def make_handler():
                 return
 
         try:
-            bot.send_typing(user_id, context_token=msg.context_token)
+            bot.send_typing()
         except Exception:
             pass
 
@@ -308,24 +306,24 @@ def make_handler():
                 config=config,
                 system_prompt=system_prompt,
             )
-            reply = await _collect_response(config, client=bot, msg=msg)
+            reply = await _collect_response(config, client=bot)
 
             if not reply:
                 reply = "(Agent 未产生回复)"
 
             # 微信需要 \n+空格 才能正确换行
-            bot.reply_text(msg, reply.replace("\n", "\n "))
+            bot.reply_text(reply.replace("\n", "\n "))
             print(f"[微信] 已回复 [{user_id}]: {reply[:50]}...")
 
         except Exception as e:
             await err(f"[微信] 处理消息失败: {e}", config)
             try:
-                bot.reply_text(msg, f"处理出错: {e}")
+                bot.reply_text(f"处理出错: {e}")
             except Exception:
                 pass
         finally:
             try:
-                bot.stop_typing(user_id, context_token=msg.context_token)
+                bot.stop_typing()
             except Exception:
                 pass
 
@@ -334,15 +332,14 @@ def make_handler():
 
 async def wechat_input(prompt: str, title: str = "输入", config=None) -> str:
     """微信模式的输入函数:发送问题给用户,等待回复。"""
-    ctx = getattr(config, "wechat_ctx", None)
-    if not ctx:
+    bot = getattr(config, "wechat_ctx", None)
+    if not bot:
         return ""
-    bot, msg = ctx
 
-    user_id = msg.user_id
+    user_id = bot._current_user_id
     # 发送问题
     try:
-        bot.reply_text(msg, f"💬 {title}\n{prompt}")
+        bot.reply_text(f"💬 {title}\n{prompt}")
     except Exception:
         return ""
 

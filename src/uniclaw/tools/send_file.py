@@ -90,11 +90,10 @@ async def send_file(
         return f"[file_download:{file_id}:{name}:{expires_at}]"
     else:
         # 微信模式: 通过 bot 直接发送
-        ctx = getattr(config, "wechat_ctx", None)
-        if ctx:
-            bot, msg = ctx
+        bot = getattr(config, "wechat_ctx", None)
+        if bot:
             try:
-                bot.reply_file(msg, p, file_name=name)
+                bot.reply_file(p, file_name=name)
                 return f"文件已发送: {name}"
             except Exception as e:
                 return f"文件发送失败: {e}"

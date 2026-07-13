@@ -50,6 +50,7 @@ class IlinkBotClient:
         self.poll_timeout = poll_timeout
         self._handlers: list[MessageHandler] = []
         self._stop_event = threading.Event()
+        self._current_user_id: str | None = None
 
         if self.store.base_url:
             self.base_url = self.store.base_url.rstrip("/")
@@ -130,6 +131,7 @@ class IlinkBotClient:
         for msg in messages:
             if msg.user_id and msg.context_token:
                 self.store.set_context(msg.user_id, msg.context_token)
+                self._current_user_id = msg.user_id
         self.store.save()
         return messages
 
@@ -151,13 +153,12 @@ class IlinkBotClient:
     def logout(self) -> None:
         self.store.clear_session()
 
-    def reply_text(self, msg: IncomingMessage, text: str) -> dict[str, Any]:
-        return self.send_text(msg.user_id, text, context_token=msg.context_token)
+    def reply_text(self, text: str) -> dict[str, Any]:
+        return self.send_text(text)
 
-    def send_text(
-        self, user_id: str, text: str, *, context_token: str | None = None
-    ) -> dict[str, Any]:
-        token = self._context_for(user_id, context_token)
+    def send_text(self, text: str) -> dict[str, Any]:
+        user_id = self._require_user()
+        token = self._context_for(user_id, None)
         payload = {
             "msg": {
                 "from_user_id": "",
@@ -176,25 +177,15 @@ class IlinkBotClient:
         return data
 
     def reply_image(
-        self,
-        msg: IncomingMessage,
-        image_path: str | Path,
-        *,
-        caption: str | None = None,
+        self, image_path: str | Path, *, caption: str | None = None
     ) -> dict[str, Any]:
-        return self.send_image(
-            msg.user_id, image_path, caption=caption, context_token=msg.context_token
-        )
+        return self.send_image(image_path, caption=caption)
 
     def send_image(
-        self,
-        user_id: str,
-        image_path: str | Path,
-        *,
-        caption: str | None = None,
-        context_token: str | None = None,
+        self, image_path: str | Path, *, caption: str | None = None
     ) -> dict[str, Any]:
-        token = self._context_for(user_id, context_token)
+        user_id = self._require_user()
+        token = self._context_for(user_id, None)
         media = self._upload_media(user_id, image_path, media_type=1)
         item_list: list[dict[str, Any]] = [
             {
@@ -229,28 +220,15 @@ class IlinkBotClient:
         return data
 
     def reply_file(
-        self,
-        msg: IncomingMessage,
-        file_path: str | Path,
-        *,
-        file_name: str | None = None,
+        self, file_path: str | Path, *, file_name: str | None = None
     ) -> dict[str, Any]:
-        return self.send_file(
-            msg.user_id,
-            file_path,
-            file_name=file_name,
-            context_token=msg.context_token,
-        )
+        return self.send_file(file_path, file_name=file_name)
 
     def send_file(
-        self,
-        user_id: str,
-        file_path: str | Path,
-        *,
-        file_name: str | None = None,
-        context_token: str | None = None,
+        self, file_path: str | Path, *, file_name: str | None = None
     ) -> dict[str, Any]:
-        token = self._context_for(user_id, context_token)
+        user_id = self._require_user()
+        token = self._context_for(user_id, None)
         media = self._upload_media(user_id, file_path, media_type=3)
         file_path = Path(file_path)
         file_item: dict[str, Any] = {
@@ -283,24 +261,15 @@ class IlinkBotClient:
         return data
 
     def reply_voice(
-        self, msg: IncomingMessage, voice_path: str | Path, *, duration_ms: int = 0
+        self, voice_path: str | Path, *, duration_ms: int = 0
     ) -> dict[str, Any]:
-        return self.send_voice(
-            msg.user_id,
-            voice_path,
-            context_token=msg.context_token,
-            duration_ms=duration_ms,
-        )
+        return self.send_voice(voice_path, duration_ms=duration_ms)
 
     def send_voice(
-        self,
-        user_id: str,
-        voice_path: str | Path,
-        *,
-        context_token: str | None = None,
-        duration_ms: int = 0,
+        self, voice_path: str | Path, *, duration_ms: int = 0
     ) -> dict[str, Any]:
-        token = self._context_for(user_id, context_token)
+        user_id = self._require_user()
+        token = self._context_for(user_id, None)
         media = self._upload_media(user_id, voice_path, media_type=4)
         voice_item: dict[str, Any] = {
             "media": {
@@ -333,20 +302,15 @@ class IlinkBotClient:
         self._check_api(data)
         return data
 
-    def send_typing(
-        self, user_id: str, *, context_token: str | None = None
-    ) -> dict[str, Any]:
-        return self._send_typing_status(user_id, 1, context_token=context_token)
+    def send_typing(self) -> dict[str, Any]:
+        return self._send_typing_status(1)
 
-    def stop_typing(
-        self, user_id: str, *, context_token: str | None = None
-    ) -> dict[str, Any]:
-        return self._send_typing_status(user_id, 2, context_token=context_token)
+    def stop_typing(self) -> dict[str, Any]:
+        return self._send_typing_status(2)
 
-    def _send_typing_status(
-        self, user_id: str, status: int, *, context_token: str | None = None
-    ) -> dict[str, Any]:
-        token = self._context_for(user_id, context_token)
+    def _send_typing_status(self, status: int) -> dict[str, Any]:
+        user_id = self._require_user()
+        token = self._context_for(user_id, None)
         config = self._post(
             "getconfig", {"ilink_user_id": user_id, "context_token": token}
         )
@@ -598,6 +562,11 @@ class IlinkBotClient:
     def _require_login(self) -> None:
         if not self.store.bot_token:
             raise AuthError("Not logged in. Call login() first.")
+
+    def _require_user(self) -> str:
+        if not self._current_user_id:
+            raise NoContextError("No current user. Wait for an incoming message first.")
+        return self._current_user_id
 
     def print_qrcode(self, qr_url: str) -> None:
         """在终端打印 ASCII 二维码。"""

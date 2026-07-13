@@ -139,13 +139,12 @@ def _wechat_reply(msg: str, config: AppConfig | None, level: str = "info") -> bo
     """尝试通过微信发送消息,成功返回 True。"""
     if config is None:
         return False
-    ctx = getattr(config, "wechat_ctx", None)
-    if not ctx:
+    bot = getattr(config, "wechat_ctx", None)
+    if not bot:
         return False
-    bot, incoming_msg = ctx
     prefix = _WECHAT_PREFIX.get(level, "ℹ️")
     try:
-        bot.reply_text(incoming_msg, f"{prefix} {msg}")
+        bot.reply_text(f"{prefix} {msg}")
     except Exception:
         pass
     return True

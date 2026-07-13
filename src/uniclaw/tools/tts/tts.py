@@ -112,7 +112,7 @@ async def _send_wechat_voice(_chunk: StreamChunk, config) -> None:
     ctx = getattr(config, "wechat_ctx", None)
     if not ctx:
         return
-    bot, msg = ctx
+    bot = ctx
     try:
         pcm_bytes = base64.b64decode(_chunk.audio)
         wav_bytes = _pcm_to_wav(pcm_bytes)
@@ -122,12 +122,12 @@ async def _send_wechat_voice(_chunk: StreamChunk, config) -> None:
         finally:
             os.close(fd)
         try:
-            bot.reply_file(msg, tmp_path, file_name="tts.wav")
+            bot.reply_file(tmp_path, file_name="tts.wav")
         finally:
             os.unlink(tmp_path)
     except Exception as e:
         try:
-            bot.reply_text(msg, f"[TTS] {e}")
+            bot.reply_text(f"[TTS] {e}")
         except Exception:
             pass
 
