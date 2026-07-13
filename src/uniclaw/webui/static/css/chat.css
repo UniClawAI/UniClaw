@@ -557,7 +557,7 @@ pre:hover .code-copy-btn {
     box-sizing: border-box;
     text-align: center;
 }
-/* 欢迎页面时容器变 flex 列，公告在顶、欢迎内容占剩余空间 */
+/* 欢迎页面时容器变 flex 列,公告在顶、欢迎内容占剩余空间 */
 .chat-messages:has(.welcome-screen) {
     display: flex;
     flex-direction: column;

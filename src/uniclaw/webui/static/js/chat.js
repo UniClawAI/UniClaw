@@ -233,13 +233,13 @@ const Chat = {
         return el;
     },
 
-    /** 从公告服务器获取公告内容（HTTPS 优先，失败回退 HTTP） */
+    /** 从公告服务器获取公告内容(HTTPS 优先,失败回退 HTTP) */
     async _fetchAnnouncement() {
         // 去重：已有公告栏则跳过
         if (document.querySelector('.announcement-banner')) return;
 
         const host = 'uniclawai.top:8001';
-        // no-cors 模式探测可达性（服务器无 CORS 头，ok/status 不可用，只能靠是否抛异常判断）
+        // no-cors 模式探测可达性(服务器无 CORS 头,ok/status 不可用,只能靠是否抛异常判断)
         let server = null;
         for (const proto of ['https', 'http']) {
             try {
@@ -250,7 +250,7 @@ const Chat = {
         }
         if (!server) return;
 
-        // 再次检查（异步间隙中可能已有其他实例插入）
+        // 再次检查(异步间隙中可能已有其他实例插入)
         if (document.querySelector('.announcement-banner')) return;
 
         // 创建 object 容器

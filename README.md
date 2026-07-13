@@ -1304,14 +1304,15 @@ UniClaw/
 
 采用核心/扩展工具分层架构,对齐 Anthropic 的 `defer_loading` 模式：
 
-- **核心工具** (18 个): 始终加载完整 schema,是 prompt 缓存的稳定前缀
+- **核心工具** (19 个): 始终加载完整 schema,是 prompt 缓存的稳定前缀
   - 文件系统: `Read`, `Write`, `Edit`, `Glob`
   - Shell: `Bash`, `Grep`
   - Web: `webFetch`, `webSearch`, `platform_search`
   - 记忆: `memory_save/delete/list/search`
   - 计划: `enter/exit_plan_mode`
   - 技能: `skill_suggest/read/run_command`
-- **扩展工具** (30+ 个): 初始不加载,通过 `search_tools` 元工具按需发现
+  - 元工具: `search_tools`
+- **扩展工具** (131 个): 初始不加载,通过 `search_tools` 元工具按需发现
   - 基于 BM25 算法搜索,支持中英文关键词 + 语义同义词
   - **LRU + 能量机制**: 每个扩展工具初始 10 点能量,每轮对话 -1,被调用或搜索命中恢复满能量,归零自动卸载;最多同时加载 25 个扩展工具,超出时按 LRU 顺序淘汰能量最低者
   - 搜索结果自动注入到当前任务的可用工具集

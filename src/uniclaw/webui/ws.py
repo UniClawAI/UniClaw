@@ -866,7 +866,7 @@ def _build_content_with_files(content: str, files: list[dict], config) -> Any:
     for f in files:
         name = f.get("name", "")
         data = f.get("data", "")
-        # 检查文件大小（base64 编码后约为原始大小的 4/3）
+        # 检查文件大小(base64 编码后约为原始大小的 4/3)
         if len(data) * 3 / 4 > MAX_FILE_SIZE:
             get_logger("webui", Path.cwd()).warning(f"附件 {name} 超过500MB限制,已跳过")
             blocks.append(MultimodalBlock(type="text", text=f"[附件: {name} 超过500MB限制,已跳过]"))
