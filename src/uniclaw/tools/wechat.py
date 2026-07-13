@@ -55,7 +55,11 @@ def _resolve_path(file_path: str, config: AppConfig) -> tuple[Path | None, str]:
 
 @tool
 def wechat_list_contacts(config: AppConfig = None) -> str:
-    """列出当前已登录的微信机器人名称。可用于确认哪些微信号可以收发消息。"""
+    """列出当前已登录的微信机器人名称。可用于确认哪些微信号可以收发消息。
+
+    Returns:
+        已登录机器人名称的换行分隔列表；若无机器人或未登录则返回提示信息。
+    """
     from uniclaw.ilink_bot.manager import BotManager
 
     if config is None:
@@ -69,7 +73,8 @@ def wechat_list_contacts(config: AppConfig = None) -> str:
     if not active_bots:
         return "当前没有已登录的微信机器人。请先通过 /wechat 命令添加并登录。"
 
-    return "\n".join(b.name for b in active_bots)
+    bot_names = "\n".join(f"- {b.name}" for b in active_bots)
+    return f"已登录的微信机器人：\n{bot_names}"
 
 
 @tool
@@ -80,12 +85,9 @@ async def wechat_send_text(
 ) -> str:
     """通过微信向当前对话用户发送文字消息。
 
-    只能发送给与当前会话关联的微信用户,无法发送给其他好友。
-
     Args:
         text: 要发送的文字内容
-        bot_name: 指定使用的机器人名称(可选,默认自动选择)
-        config: 应用配置(运行时自动注入)
+        bot_name: 指定使用的机器人名称，可通过 wechat_list_contacts 获取
 
     Returns:
         str: 发送结果消息
@@ -115,13 +117,10 @@ async def wechat_send_image(
 ) -> str:
     """通过微信向当前对话用户发送图片。
 
-    只能发送给与当前会话关联的微信用户,无法发送给其他好友。
-
     Args:
         image_path: 图片文件的绝对路径或相对于工作目录的路径
         caption: 图片附带的文字说明(可选)
-        bot_name: 指定使用的机器人名称(可选,默认自动选择)
-        config: 应用配置(运行时自动注入)
+        bot_name: 指定使用的机器人名称，可通过 wechat_list_contacts 获取
 
     Returns:
         str: 发送结果消息
@@ -155,13 +154,10 @@ async def wechat_send_file(
 ) -> str:
     """通过微信向当前对话用户发送文件。
 
-    只能发送给与当前会话关联的微信用户,无法发送给其他好友。
-
     Args:
         file_path: 文件的绝对路径或相对于工作目录的路径
         file_name: 自定义文件名(可选,默认使用原始文件名)
-        bot_name: 指定使用的机器人名称(可选,默认自动选择)
-        config: 应用配置(运行时自动注入)
+        bot_name: 指定使用的机器人名称，可通过 wechat_list_contacts 获取
 
     Returns:
         str: 发送结果消息
