@@ -6,14 +6,21 @@ import io
 from typing import Optional
 
 import mss
-import pyautogui
 from uniclaw.tools.base import tool
 from uniclaw.utils.constants import SYSTEM_PREFIX, TOOL_ERROR
 from PIL import Image, ImageDraw
 
-# 禁用 pyautogui 的安全暂停和故障保护(在受控环境中使用)
-pyautogui.PAUSE = 0.1
-pyautogui.FAILSAFE = True
+# pyautogui 延迟导入:避免无 X11 显示器时模块加载崩溃
+_pyautogui = None
+
+def _get_pyautogui():
+    global _pyautogui
+    if _pyautogui is None:
+        import pyautogui
+        pyautogui.PAUSE = 0.1
+        pyautogui.FAILSAFE = True
+        _pyautogui = pyautogui
+    return _pyautogui
 
 
 def get_cu_system_prompt(config) -> str:
@@ -143,7 +150,7 @@ def _screenshot_impl(
         img = Image.frombytes("RGB", screenshot.size, screenshot.bgra, "raw", "BGRX")
 
         # 获取鼠标位置并绘制标记
-        cursor_x, cursor_y = pyautogui.position()
+        cursor_x, cursor_y = _get_pyautogui().position()
         draw = ImageDraw.Draw(img)
 
         # 计算相对坐标(如果指定了区域)
@@ -244,7 +251,7 @@ def cu_mouse_move(x: int, y: int, duration: float = 0.5) -> str:
     Returns:
         操作结果消息。
     """
-    pyautogui.moveTo(x, y, duration=duration)
+    _get_pyautogui().moveTo(x, y, duration=duration)
     return f"鼠标已移动到 ({x}, {y})"
 
 
@@ -268,7 +275,7 @@ def cu_mouse_click(
     Returns:
         操作结果消息。
     """
-    pyautogui.click(x, y, clicks=clicks, button=button, interval=interval)
+    _get_pyautogui().click(x, y, clicks=clicks, button=button, interval=interval)
     action = "双击" if clicks == 2 else "点击"
     return f"已在 ({x}, {y}) {action}鼠标{button}键"
 
@@ -285,7 +292,7 @@ def cu_mouse_double_click(x: int, y: int, button: str = "left") -> str:
     Returns:
         操作结果消息。
     """
-    pyautogui.doubleClick(x, y, button=button)
+    _get_pyautogui().doubleClick(x, y, button=button)
     return f"已在 ({x}, {y}) 双击鼠标{button}键"
 
 
@@ -311,8 +318,8 @@ def cu_mouse_drag(
     Returns:
         操作结果消息。
     """
-    pyautogui.moveTo(start_x, start_y)
-    pyautogui.drag(end_x - start_x, end_y - start_y, duration=duration, button=button)
+    _get_pyautogui().moveTo(start_x, start_y)
+    _get_pyautogui().drag(end_x - start_x, end_y - start_y, duration=duration, button=button)
     return f"已从 ({start_x}, {start_y}) 拖拽到 ({end_x}, {end_y})"
 
 
@@ -330,11 +337,12 @@ def cu_mouse_scroll(
     Returns:
         操作结果消息。
     """
+    pa = _get_pyautogui()
     if x is not None and y is not None:
-        pyautogui.scroll(clicks, x=x, y=y)
+        pa.scroll(clicks, x=x, y=y)
         return f"已在 ({x}, {y}) 滚动 {clicks} 格"
     else:
-        pyautogui.scroll(clicks)
+        pa.scroll(clicks)
         direction = "上" if clicks > 0 else "下"
         return f"已向{direction}滚动 {abs(clicks)} 格"
 
@@ -350,7 +358,7 @@ def cu_keyboard_type(text: str, interval: float = 0.05) -> str:
     Returns:
         操作结果消息。
     """
-    pyautogui.typewrite(text, interval=interval)
+    _get_pyautogui().typewrite(text, interval=interval)
     return f"已输入文本:{text}"
 
 
@@ -366,7 +374,7 @@ def cu_keyboard_type_unicode(text: str, interval: float = 0.05) -> str:
         操作结果消息。
     """
     for char in text:
-        pyautogui.write(char, interval=interval)
+        _get_pyautogui().write(char, interval=interval)
     return f"已输入 Unicode 文本:{text}"
 
 
@@ -385,7 +393,7 @@ def cu_keyboard_press(keys: str) -> str:
         操作结果消息。
     """
     key_list = [k.strip() for k in keys.split("+")]
-    pyautogui.hotkey(*key_list)
+    _get_pyautogui().hotkey(*key_list)
     return f"已按下按键:{keys}"
 
 
@@ -399,7 +407,7 @@ def cu_keyboard_key_down(key: str) -> str:
     Returns:
         操作结果消息。
     """
-    pyautogui.keyDown(key)
+    _get_pyautogui().keyDown(key)
     return f"已按下并保持:{key}"
 
 
@@ -413,7 +421,7 @@ def cu_keyboard_key_up(key: str) -> str:
     Returns:
         操作结果消息。
     """
-    pyautogui.keyUp(key)
+    _get_pyautogui().keyUp(key)
     return f"已释放按键:{key}"
 
 
@@ -429,9 +437,10 @@ def cu_locate_on_screen(image_path: str, confidence: float = 0.8) -> str:
         找到的图像中心坐标,或未找到的错误消息。
     """
     try:
-        location = pyautogui.locateOnScreen(image_path, confidence=confidence)
+        pa = _get_pyautogui()
+        location = pa.locateOnScreen(image_path, confidence=confidence)
         if location:
-            center = pyautogui.center(location)
+            center = pa.center(location)
             return f"找到图像,中心位置:({center.x}, {center.y})"
         else:
             return f"{TOOL_ERROR}: 未在屏幕上找到指定图像"
