@@ -107,6 +107,7 @@ def _build_extended_keywords() -> dict[str, list[str]]:
         kg_delete_entity, kg_delete_relation, kg_merge_entities, kg_get_entity, kg_search,
         kg_neighbors, kg_path, kg_stats, kg_export, kg_list, kg_extract, kg_clear,
     )
+    from .advisor import advisor_list, ask_advisor
 
     # tool.name → 关键词列表(中英文+语义同义词)
     return {
@@ -252,6 +253,8 @@ def _build_extended_keywords() -> dict[str, list[str]]:
         kg_delete_relation.name: ["删除关系", "delete relation", "知识图谱", "移除关系"],
         kg_merge_entities.name: ["合并实体", "merge entities", "知识图谱", "实体合并", "去重", "实体去重", "deduplicate entity"],
         kg_clear.name: ["清空图谱", "clear knowledge", "知识图谱", "清除图谱", "重置图谱"],
+        advisor_list.name: ["顾问模型", "advisor", "咨询模型", "列出顾问", "list advisors", "大模型", "顾问列表"],
+        ask_advisor.name: ["问顾问", "咨询顾问", "ask advisor", "consult", "询问模型", "请教", "ask model", "顾问提问"],
     }
 
 
@@ -319,6 +322,7 @@ def _build_tool_categories() -> dict[str, str]:
         kg_delete_entity, kg_delete_relation, kg_merge_entities, kg_get_entity, kg_search,
         kg_neighbors, kg_path, kg_stats, kg_export, kg_list, kg_extract, kg_clear,
     )
+    from .advisor import advisor_list, ask_advisor
 
     # tool.name → 类别
     return {
@@ -385,6 +389,8 @@ def _build_tool_categories() -> dict[str, str]:
         kg_get_entity.name: "知识图谱", kg_search.name: "知识图谱", kg_neighbors.name: "知识图谱",
         kg_path.name: "知识图谱", kg_stats.name: "知识图谱", kg_export.name: "知识图谱",
         kg_list.name: "知识图谱", kg_extract.name: "知识图谱", kg_clear.name: "知识图谱",
+        # 顾问工具
+        advisor_list.name: "顾问", ask_advisor.name: "顾问",
     }
 
 

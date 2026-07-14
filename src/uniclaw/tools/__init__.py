@@ -69,6 +69,7 @@ from .tts.tools import get_tools as tts_get_tools, get_all_tools as tts_get_all_
 from .send_file import get_tools as send_file_get_tools, get_all_tools as send_file_get_all_tools
 from .wechat import get_tools as wechat_get_tools, get_all_tools as wechat_get_all_tools
 from .knowledge import get_tools as knowledge_get_tools, get_all_tools as knowledge_get_all_tools
+from .advisor import get_tools as advisor_get_tools, get_all_tools as advisor_get_all_tools
 from .mcp import MCPManager
 from .registry import get_tools as registry_get_tools, init_registry
 
@@ -140,6 +141,7 @@ async def get_tools(config) -> list:
         *send_file_get_tools(),
         *wechat_get_tools(),
         *knowledge_get_tools(),
+        *advisor_get_tools(config),
         *registry_get_tools(),
         *mcp_tools,
     ]
@@ -191,5 +193,6 @@ async def get_all_tools() -> list:
         *send_file_get_all_tools(),
         *wechat_get_all_tools(),
         *knowledge_get_all_tools(),
+        *advisor_get_all_tools(),
         *mcp_tools,
     ]

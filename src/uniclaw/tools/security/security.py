@@ -236,6 +236,7 @@ def is_safe_tool(name: str) -> bool:
     from uniclaw.tools.send_file import send_file
     from uniclaw.tools.wechat import wechat_list_contacts, wechat_send_text, wechat_send_image, wechat_send_file
     from uniclaw.tools.computer_use import cu_screenshot, cu_locate_on_screen, cu_get_elements, cu_find_element
+    from uniclaw.tools.advisor import advisor_list, ask_advisor
     from uniclaw.tools.security.tools import read_llm_safe_prompt
     from uniclaw.tools.web_browse.tools import (
         browser_screenshot,
@@ -355,6 +356,9 @@ def is_safe_tool(name: str) -> bool:
         cu_locate_on_screen.name,
         cu_get_elements.name,
         cu_find_element.name,
+        # Advisor 工具(只读)
+        advisor_list.name,
+        ask_advisor.name,
     ]
 
     return name in safe_tools
