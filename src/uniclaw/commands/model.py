@@ -125,7 +125,7 @@ async def _apply_model(model_ref: str, config: AppConfig) -> None:
         "  [1] 设为主模型\n"
         "  [2] 设为 mini 模型\n"
         "  [3] 设为多模态模型\n"
-        "  [4] 全部设置\n"
+        "  [4] 设为顾问模型\n"
         "  [5] 设为 TTS 模型\n"
         "  [6] 设为 ASR 模型\n"
         "选择 (1-6, 回车取消): ",
@@ -151,11 +151,9 @@ async def _apply_model(model_ref: str, config: AppConfig) -> None:
         await ok(f"✓ 已设为多模态模型: {model_ref}", config)
         await _notify_webui()
     elif choice == "4":
-        config.model_name = _move_to_first(config.model_name, model_ref)
-        config.mini_model_name = _move_to_first(config.mini_model_name, model_ref)
-        config.multimodal_model_name = _move_to_first(config.multimodal_model_name, model_ref)
+        config.large_model_name = _move_to_first(config.large_model_name, model_ref)
         save_config(config)
-        await ok(f"✓ 已全部设为: {model_ref}", config)
+        await ok(f"✓ 已设为顾问模型: {model_ref}", config)
         await _notify_webui()
     elif choice == "5":
         config.tts_model = model_ref
@@ -255,6 +253,7 @@ async def cmd_model(args: str, config: AppConfig) -> bool:
     current_main = config.model_name[0] if config.model_name else ""
     current_mini = config.mini_model_name[0] if config.mini_model_name else ""
     current_mm = config.multimodal_model_name[0] if config.multimodal_model_name else ""
+    current_large = config.large_model_name[0] if config.large_model_name else ""
     current_tts = config.tts_model
     current_asr = config.asr_model
 
@@ -273,6 +272,8 @@ async def cmd_model(args: str, config: AppConfig) -> bool:
             tags.append("mini")
         if m == current_mm:
             tags.append("多模态")
+        if m == current_large:
+            tags.append("顾问")
         if m == current_tts:
             tags.append("TTS")
         if m == current_asr:

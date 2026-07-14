@@ -83,6 +83,7 @@ const Settings = {
         this._initCombo('settings-model-name', d.model_name || []);
         this._initCombo('settings-mini-model', d.mini_model_name || []);
         this._initCombo('settings-multimodal-model', d.multimodal_model_name || []);
+        this._initCombo('settings-large-model', d.large_model_name || []);
         this._initCombo('settings-tts-model', d.tts_model ? [d.tts_model] : []);
         this._initCombo('settings-asr-model', d.asr_model ? [d.asr_model] : []);
 
@@ -561,6 +562,7 @@ const Settings = {
         const modelName = this._getComboValues(document.getElementById('settings-model-name'));
         const miniModel = this._getComboValues(document.getElementById('settings-mini-model'));
         const multimodalModel = this._getComboValues(document.getElementById('settings-multimodal-model'));
+        const largeModel = this._getComboValues(document.getElementById('settings-large-model'));
         const ttsValues = this._getComboValues(document.getElementById('settings-tts-model'));
         const asrValues = this._getComboValues(document.getElementById('settings-asr-model'));
 
@@ -570,6 +572,7 @@ const Settings = {
             ...modelName.map(m => ({ field: '主模型', value: m })),
             ...miniModel.map(m => ({ field: '轻量模型', value: m })),
             ...multimodalModel.map(m => ({ field: '多模态模型', value: m })),
+            ...largeModel.map(m => ({ field: '顾问模型', value: m })),
             ...ttsValues.map(m => ({ field: 'TTS 模型', value: m })),
             ...asrValues.map(m => ({ field: 'ASR 模型', value: m })),
         ];
@@ -598,6 +601,7 @@ const Settings = {
             model_name: modelName,
             mini_model_name: miniModel,
             multimodal_model_name: multimodalModel,
+            large_model_name: largeModel,
             tts_model: ttsValues[0] || '',
             asr_model: asrValues[0] || '',
             audio: audio,
@@ -731,6 +735,7 @@ const Settings = {
             'settings-model-name',
             'settings-mini-model',
             'settings-multimodal-model',
+            'settings-large-model',
             'settings-tts-model',
             'settings-asr-model',
         ];

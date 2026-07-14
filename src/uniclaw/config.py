@@ -66,6 +66,7 @@ class AppConfig:
     )  # 主模型列表(第一个为主,后续为 fallback)
     mini_model_name: list[str] = field(default_factory=list)  # mini 模型列表
     multimodal_model_name: list[str] = field(default_factory=list)  # 多模态模型列表
+    large_model_name: list[str] = field(default_factory=list)  # 顾问模型列表
     tts_model: str = ""  # TTS 模型名称
     asr_model: str = ""  # ASR 模型名称
     audio: dict | None = None  # TTS 音频配置 (voice, format 等)
@@ -185,6 +186,7 @@ class AppConfig:
             model_name=list(self.model_name),
             mini_model_name=list(self.mini_model_name),
             multimodal_model_name=list(self.multimodal_model_name),
+            large_model_name=list(self.large_model_name),
             tts_model=self.tts_model,
             asr_model=self.asr_model,
             audio=self.audio,
@@ -468,6 +470,7 @@ def _load_settings_json() -> dict[str, Any]:
     data["multimodal_model_name"] = _normalize_model_field(
         data.get("multimodal_model_name")
     )
+    data["large_model_name"] = _normalize_model_field(data.get("large_model_name"))
 
     # mini_model_name 默认等于 model_name
     if data["model_name"] and not data["mini_model_name"]:
@@ -591,6 +594,7 @@ def save_config(config: AppConfig) -> None:
         "model_name": config.model_name,
         "mini_model_name": config.mini_model_name,
         "multimodal_model_name": config.multimodal_model_name,
+        "large_model_name": config.large_model_name,
         "tts_model": config.tts_model,
         "asr_model": config.asr_model,
         "audio": config.audio,

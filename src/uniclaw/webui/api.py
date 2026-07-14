@@ -404,6 +404,7 @@ async def get_settings():
         "model_name": _norm_model(data.get("model_name")),
         "mini_model_name": _norm_model(data.get("mini_model_name")),
         "multimodal_model_name": _norm_model(data.get("multimodal_model_name")),
+        "large_model_name": _norm_model(data.get("large_model_name")),
         "tts_model": data.get("tts_model", "") or "",
         "asr_model": data.get("asr_model", "") or "",
         "audio": data.get("audio") or None,
@@ -460,7 +461,7 @@ async def update_settings(body: SettingsUpdate):
 
     # 验证模型名的 provider 前缀
     provider_names = set(providers.keys())
-    for field_name in ("model_name", "mini_model_name", "multimodal_model_name"):
+    for field_name in ("model_name", "mini_model_name", "multimodal_model_name", "large_model_name"):
         models = getattr(body, field_name)
         for m in models:
             if "/" not in m:
@@ -479,6 +480,7 @@ async def update_settings(body: SettingsUpdate):
         "model_name": body.model_name,
         "mini_model_name": body.mini_model_name,
         "multimodal_model_name": body.multimodal_model_name,
+        "large_model_name": body.large_model_name,
         "tts_model": body.tts_model,
         "asr_model": body.asr_model,
         "temperature": body.temperature,

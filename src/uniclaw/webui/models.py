@@ -242,6 +242,7 @@ class SettingsUpdate(BaseModel):
     model_name: list[str] = Field(default_factory=list)
     mini_model_name: list[str] = Field(default_factory=list)
     multimodal_model_name: list[str] = Field(default_factory=list)
+    large_model_name: list[str] = Field(default_factory=list)
     tts_model: str = ""
     asr_model: str = ""
     audio: dict | None = None  # TTS 音频配置 (voice, format, speed 等,自由键值)
