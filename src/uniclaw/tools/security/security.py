@@ -260,63 +260,77 @@ def is_safe_tool(name: str) -> bool:
 
     # 使用 .name 属性获取工具的实际名称,构建安全工具集合
     safe_tools = [
+        # ── 文件系统 / Shell ──
         Read.name,
         ReadPDF.name,
         ReadMedia.name,
         Glob.name,
         Grep.name,
         RunCode.name,
+        search_files_with_everything.name,
+        # ── Web / 搜索 ──
         webFetch.name,
         webSearch.name,
         platform_search.name,
+        search_tools.name,
+        # ── 记忆 ──
         memory_save.name,
         memory_delete.name,
         memory_list.name,
         memory_search.name,
+        # ── 定时任务 ──
         schedule_create.name,
         schedule_list.name,
         schedule_remove.name,
         schedule_toggle.name,
+        # ── 技能 ──
         skill_suggest.name,
-        sleep_timer.name,
+        skill_read.name,
+        # ── Plan ──
         enter_plan_mode.name,
         exit_plan_mode.name,
+        # ── 进程监控 ──
         monitor_list.name,
         monitor_output.name,
         monitor_get_matched.name,
         monitor_update_pattern.name,
+        # ── 任务清单 ──
         todolist_create.name,
         todolist_update.name,
         todolist_clear.name,
         todolist_list.name,
         todolist_cancel.name,
-        AskUserQuestion.name,
-        mcp_list_servers.name,
+        # ── 多智能体 ──
+        subagent_send_message.name,
+        subagent_close.name,
+        subagent_check_result.name,
+        subagent_list_tasks.name,
+        subagent_discuss.name,
+        subagent_list_definitions.name,
+        subagent_get_definition.name,
+        # ── 会话管理 ──
         session_list.name,
         session_detail.name,
         recall_history.name,
         get_history_range.name,
+        # ── Hooks ──
         hook_docs.name,
         hook_read.name,
+        # ── MCP ──
+        mcp_list_servers.name,
+        # ── 安全 ──
         read_llm_safe_prompt.name,
-        subagent_list_tasks.name,
-        subagent_check_result.name,
-        subagent_close.name,
-        subagent_list_definitions.name,
-        subagent_get_definition.name,
-        subagent_discuss.name,
-        subagent_send_message.name,
-        search_files_with_everything.name,
-        skill_read.name,
+        # ── Ask / 通知 ──
+        AskUserQuestion.name,
         push_notification.name,
-        search_tools.name,
         send_file.name,
-        # 微信工具(全部安全)
+        sleep_timer.name,
+        # ── 微信(全部安全) ──
         wechat_list_contacts.name,
         wechat_send_text.name,
         wechat_send_image.name,
         wechat_send_file.name,
-        # 知识图谱工具(全部安全)
+        # ── 知识图谱(全部安全) ──
         kg_add_entity.name,
         kg_add_relation.name,
         kg_add_alias.name,
@@ -333,7 +347,7 @@ def is_safe_tool(name: str) -> bool:
         kg_extract.name,
         kg_clear.name,
         kg_merge_entities.name,
-        # Web Browse 只读工具
+        # ── Web Browse 只读 ──
         browser_screenshot.name,
         browser_get_text.name,
         browser_get_html.name,
@@ -351,12 +365,12 @@ def is_safe_tool(name: str) -> bool:
         browser_wait.name,
         browser_scroll.name,
         browser_list_pages.name,
-        # Computer Use 只读工具
+        # ── Computer Use 只读 ──
         cu_screenshot.name,
         cu_locate_on_screen.name,
         cu_get_elements.name,
         cu_find_element.name,
-        # Advisor 工具(只读)
+        # ── Advisor 只读 ──
         advisor_list.name,
         ask_advisor.name,
     ]
