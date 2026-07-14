@@ -805,7 +805,7 @@ const Chat = {
         if (!msg || !this.currentSessionId || msg.session_id !== this.currentSessionId) return;
 
         // 检测需要跟踪子智能体的工具调用
-        if (!msg.is_subagent && msg.name === 'sub_agent_create') {
+        if (!msg.is_subagent && msg.name === 'subagent_create') {
             let agentName = '';
             try {
                 const args = typeof msg.args === 'string' ? JSON.parse(msg.args) : msg.args;
@@ -953,8 +953,8 @@ const Chat = {
             return;
         }
 
-        // 主 agent 的 sub_agent_create 结束,清除 subagent 状态
-        if (!msg.is_subagent && msg.name === 'sub_agent_create' && this._subagentToolId) {
+        // 主 agent 的 subagent_create 结束,清除 subagent 状态
+        if (!msg.is_subagent && msg.name === 'subagent_create' && this._subagentToolId) {
             this._clearSubagentState();
         }
 

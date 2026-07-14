@@ -217,13 +217,13 @@ def is_safe_tool(name: str) -> bool:
     from uniclaw.tools.session.recall import recall_history, get_history_range
     from uniclaw.tools.hooks.tools import hook_docs, hook_read
     from uniclaw.tools.multi_agent.tools import (
-        list_agent_tasks,
-        check_agent_result,
-        list_agent_definitions,
-        agent_close,
-        get_agent_definition,
-        agent_discuss,
-        send_message,
+        subagent_list_tasks,
+        subagent_check_result,
+        subagent_list_definitions,
+        subagent_close,
+        subagent_get_definition,
+        subagent_discuss,
+        subagent_send_message,
     )
     from uniclaw.tools.notify import push_notification
     from uniclaw.tools.registry import search_tools
@@ -299,15 +299,15 @@ def is_safe_tool(name: str) -> bool:
         hook_docs.name,
         hook_read.name,
         read_llm_safe_prompt.name,
-        list_agent_tasks.name,
-        check_agent_result.name,
-        agent_close.name,
-        list_agent_definitions.name,
+        subagent_list_tasks.name,
+        subagent_check_result.name,
+        subagent_close.name,
+        subagent_list_definitions.name,
+        subagent_get_definition.name,
+        subagent_discuss.name,
+        subagent_send_message.name,
         search_files_with_everything.name,
         skill_read.name,
-        get_agent_definition.name,
-        agent_discuss.name,
-        send_message.name,
         push_notification.name,
         search_tools.name,
         send_file.name,

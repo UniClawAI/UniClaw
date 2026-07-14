@@ -9,7 +9,7 @@ from uniclaw.tools.session.session import AIMessage
 
 
 @tool
-async def sub_agent_create(
+async def subagent_create(
     prompt: str,
     subagent_type: str,
     name: str,
@@ -22,27 +22,27 @@ async def sub_agent_create(
 
     Args:
         prompt (str): 用户消息或任务提示
-        subagent_type (str): 子智能体类型标识符,使用 list_agent_definitions 查看所有可用类型(含内置和自定义)。
+        subagent_type (str): 子智能体类型标识符,使用 subagent_list_definitions 查看所有可用类型(含内置和自定义)。
         name (str): 智能体名称
         wait (bool, optional): 是否等待任务完成,默认True。
-            - True: 同步执行,等待任务完成后返回结果,不需要调用agent_close
-            - False: 异步执行,立即返回任务信息,需要使用agent_close关闭智能体
+            - True: 同步执行,等待任务完成后返回结果,不需要调用 subagent_close
+            - False: 异步执行,立即返回任务信息,需要使用 subagent_close 关闭智能体
         isolation (bool, optional): 是否启用隔离模式,默认False
         config: 内部使用参数,由系统自动注入
 
     Returns:
-        str: 执行结果或任务信息。异步模式(wait=False)下可使用 CheckAgentResult 查询状态、
-             SendMessage 发送消息,任务完成后需调用 agent_close 关闭智能体
+        str: 执行结果或任务信息。异步模式(wait=False)下可使用 subagent_check_result 查询状态、
+             subagent_send_message 发送消息,任务完成后需调用 subagent_close 关闭智能体
 
     Example:
         >>> # 同步执行(不需要关闭)
-        >>> result = agent_create(prompt="分析代码", subagent_type="code_analyzer", name="task1")
+        >>> result = subagent_create(prompt="分析代码", subagent_type="code_analyzer", name="task1")
         >>>
-        >>> # 异步执行,需要使用 agent_close 关闭
-        >>> task_info = agent_create(prompt="编写测试", subagent_type="test_writer", name="task2", wait=False)
-        >>> check_agent_result("task2")  # 查询结果
-        >>> send_message("task2", "补充要求")  # 发送消息
-        >>> agent_close("task2")  # 任务完成后必须关闭
+        >>> # 异步执行,需要使用 subagent_close 关闭
+        >>> task_info = subagent_create(prompt="编写测试", subagent_type="test_writer", name="task2", wait=False)
+        >>> subagent_check_result("task2")  # 查询结果
+        >>> subagent_send_message("task2", "补充要求")  # 发送消息
+        >>> subagent_close("task2")  # 任务完成后必须关闭
     """
     from uniclaw.agent import MultiAgent
 
@@ -92,17 +92,17 @@ async def sub_agent_create(
         if task.worktree_branch:
             info_parts.append(f"工作树分支:{task.worktree_branch}")
         info_parts.append(
-            f"使用 {check_agent_result.name} 或 {send_message.name} 与此智能体交互。"
+            f"使用 {subagent_check_result.name} 或 {subagent_send_message.name} 与此智能体交互。"
         )
         info_parts.append(
-            f"子智能体完成后会发送以 {SYSTEM_PREFIX}[child_agent] 前缀通知;请使用任务ID调用 {check_agent_result.name} 来读取结果。"
+            f"子智能体完成后会发送以 {SYSTEM_PREFIX}[child_agent] 前缀通知;请使用任务ID调用 {subagent_check_result.name} 来读取结果。"
         )
-        info_parts.append(f"使用 {agent_close.name} 可关闭智能体释放资源。")
+        info_parts.append(f"使用 {subagent_close.name} 可关闭智能体释放资源。")
         return "\n".join(info_parts)
 
 
 @tool
-def send_message(task_id: str, message: str) -> str:
+def subagent_send_message(task_id: str, message: str) -> str:
     """
     向指定的智能体发送消息。
 
@@ -133,7 +133,7 @@ def send_message(task_id: str, message: str) -> str:
 
 
 @tool
-def agent_close(task_id: str) -> str:
+def subagent_close(task_id: str) -> str:
     """
     关闭后台子智能体,当父智能体决定其任务已完成时调用。
 
@@ -153,7 +153,7 @@ def agent_close(task_id: str) -> str:
 
 
 @tool
-def check_agent_result(task_id: str, full: bool = False) -> str:
+def subagent_check_result(task_id: str, full: bool = False) -> str:
     """
     检查指定任务ID的执行结果和状态信息。
 
@@ -199,7 +199,7 @@ def check_agent_result(task_id: str, full: bool = False) -> str:
 
 
 @tool
-def list_agent_tasks() -> str:
+def subagent_list_tasks() -> str:
     """
     列出所有子智能体任务的当前状态和信息。
 
@@ -236,13 +236,13 @@ def list_agent_tasks() -> str:
 
 
 @tool
-async def agent_discuss(topic: str, participants: list[str], rounds: int = 2) -> str:
+async def subagent_discuss(topic: str, participants: list[str], rounds: int = 2) -> str:
     """
     让现有的后台子智能体围绕指定主题进行有限轮次的讨论。
 
     participants 应包含子智能体的任务ID。父智能体作为协调者:
     它将每轮的讨论记录发送给每个参与者,等待他们的回复,并返回完整的讨论文本。
-    当父智能体决定不再需要这些子智能体时,应使用 agent_close 关闭它们。
+    当父智能体决定不再需要这些子智能体时,应使用 subagent_close 关闭它们。
 
     Args:
         topic (str): 讨论的主题
@@ -319,12 +319,12 @@ async def agent_discuss(topic: str, participants: list[str], rounds: int = 2) ->
 
 
 @tool
-def list_agent_definitions(config: AppConfig = None) -> str:
+def subagent_list_definitions(config: AppConfig = None) -> str:
     """
     列出所有可用的智能体类型定义。
 
     该函数加载并格式化显示系统中所有已定义的智能体类型信息,包括每个智能体的名称、
-    调用 agent_create 时使用类型名称作为 subagent_type。
+    调用 subagent_create 时使用类型名称作为 subagent_type。
     """
     root_dir = config.root_dir
     defs = load_agent_definitions(root_dir)
@@ -351,7 +351,7 @@ def list_agent_definitions(config: AppConfig = None) -> str:
 
 
 @tool
-def get_agent_definition(subagent_type: str, config: AppConfig = None) -> str:
+def subagent_get_definition(subagent_type: str, config: AppConfig = None) -> str:
     """
     获取指定智能体类型的详细信息。
 
@@ -382,14 +382,14 @@ def get_agent_definition(subagent_type: str, config: AppConfig = None) -> str:
 def get_tools() -> list:
     """获取多智能体工具列表"""
     return [
-        sub_agent_create,
-        send_message,
-        agent_close,
-        check_agent_result,
-        list_agent_tasks,
-        agent_discuss,
-        get_agent_definition,
-        list_agent_definitions,
+        subagent_create,
+        subagent_send_message,
+        subagent_close,
+        subagent_check_result,
+        subagent_list_tasks,
+        subagent_discuss,
+        subagent_get_definition,
+        subagent_list_definitions,
     ]
 
 
@@ -405,12 +405,12 @@ def get_sub_agent_system_prompt() -> str:
         return ""
     lines = [
         "# 子代理",
-        f"当遇到以下情况时,使用 {sub_agent_create.name} 启动子代理:",
+        f"当遇到以下情况时,使用 {subagent_create.name} 启动子代理:",
         "- 大文件/多文件分析,避免污染主上下文",
         "- 需要并行处理多个独立任务(wait=False 异步启动)",
         "- 隔离执行有风险的操作",
         f"可用subagent_type({len(defs)}个):",
     ]
     lines.append("  " + "、".join(defs.keys()))
-    lines.append(f"使用 {list_agent_definitions.name} 查看详细说明。")
+    lines.append(f"使用 {subagent_list_definitions.name} 查看详细说明。")
     return "\n".join(lines)

@@ -34,9 +34,9 @@ from uniclaw.tools.base import tc_name as _tc_name, tc_args as _tc_args, Tool
 LOOP_DETECTION_THRESHOLD = 5
 from uniclaw.tools.multi_agent.sub_agent import AgentDefinition
 from uniclaw.tools.multi_agent.tools import (
-    check_agent_result,
-    send_message,
-    agent_close,
+    subagent_check_result,
+    subagent_send_message,
+    subagent_close,
 )
 from uniclaw.tools.shell import Bash
 from uniclaw.utils.checkpoint import create_checkpoint
@@ -660,9 +660,9 @@ class MultiAgent:
                             f"任务ID: {task.id}\n"
                             f"状态: {task.status}\n"
                             "消息: 此子智能体有新的输出。\n"
-                            f'- 请调用 {check_agent_result.name}(task_id="{task.id}") 来读取结果\n'
-                            f'- 使用 {send_message.name}(task_id="{task.id}", message="...") 发送消息\n'
-                            f'- 使用 {agent_close.name}(task_id="{task.id}") 关闭智能体'
+                            f'- 请调用 {subagent_check_result.name}(task_id="{task.id}") 来读取结果\n'
+                            f'- 使用 {subagent_send_message.name}(task_id="{task.id}", message="...") 发送消息\n'
+                            f'- 使用 {subagent_close.name}(task_id="{task.id}") 关闭智能体'
                         )
                     if not keep_alive:
                         break

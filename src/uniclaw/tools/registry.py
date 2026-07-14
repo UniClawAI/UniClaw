@@ -54,8 +54,8 @@ def _build_extended_keywords() -> dict[str, list[str]]:
         cu_get_elements, cu_find_element, cu_interact,
     )
     from .multi_agent.tools import (
-        sub_agent_create, send_message, agent_close, check_agent_result,
-        list_agent_tasks, agent_discuss, list_agent_definitions, get_agent_definition,
+        subagent_create, subagent_send_message, subagent_close, subagent_check_result,
+        subagent_list_tasks, subagent_discuss, subagent_list_definitions, subagent_get_definition,
     )
     from .todolist.tools import (
         todolist_create, todolist_update, todolist_clear,
@@ -128,14 +128,14 @@ def _build_extended_keywords() -> dict[str, list[str]]:
         cu_get_elements.name: ["UI元素", "元素列表", "控件", "按钮", "输入框", "get elements", "list elements", "UI tree", "accessibility", "交互元素"],
         cu_find_element.name: ["查找元素", "find element", "搜索控件", "查找控件", "定位元素", "search element"],
         cu_interact.name: ["操作元素", "点击元素", "interact", "click element", "invoke", "focus", "UI操作", "控件操作"],
-        sub_agent_create.name: ["创建代理", "子代理", "sub agent", "create agent", "多智能体", "spawn agent"],
-        send_message.name: ["发送消息", "send message", "代理消息", "message agent"],
-        agent_close.name: ["关闭代理", "close agent", "停止代理", "kill agent"],
-        check_agent_result.name: ["检查结果", "agent result", "代理结果", "check result"],
-        list_agent_tasks.name: ["列出代理", "list agents", "代理列表", "代理任务"],
-        agent_discuss.name: ["讨论", "discuss", "代理讨论", "多代理讨论", "multi agent discuss"],
-        list_agent_definitions.name: ["代理定义", "agent definitions", "可用代理", "available agents"],
-        get_agent_definition.name: ["代理详情", "agent detail", "代理信息", "agent info", "子代理详情"],
+        subagent_create.name: ["创建代理", "子代理", "sub agent", "create agent", "多智能体", "spawn agent"],
+        subagent_send_message.name: ["发送消息", "send message", "代理消息", "message agent"],
+        subagent_close.name: ["关闭代理", "close agent", "停止代理", "kill agent"],
+        subagent_check_result.name: ["检查结果", "agent result", "代理结果", "check result"],
+        subagent_list_tasks.name: ["列出代理", "list agents", "代理列表", "代理任务"],
+        subagent_discuss.name: ["讨论", "discuss", "代理讨论", "多代理讨论", "multi agent discuss"],
+        subagent_list_definitions.name: ["代理定义", "agent definitions", "可用代理", "available agents"],
+        subagent_get_definition.name: ["代理详情", "agent detail", "代理信息", "agent info", "子代理详情"],
         todolist_create.name: ["创建任务", "待办", "todolist", "任务清单", "创建待办", "create task", "todo"],
         todolist_update.name: ["更新任务", "更新待办", "完成任务", "update task", "complete task"],
         todolist_clear.name: ["清除任务", "清空待办", "clear todolist", "clear tasks"],
@@ -269,8 +269,8 @@ def _build_tool_categories() -> dict[str, str]:
         cu_get_elements, cu_find_element, cu_interact,
     )
     from .multi_agent.tools import (
-        sub_agent_create, send_message, agent_close, check_agent_result,
-        list_agent_tasks, agent_discuss, list_agent_definitions, get_agent_definition,
+        subagent_create, subagent_send_message, subagent_close, subagent_check_result,
+        subagent_list_tasks, subagent_discuss, subagent_list_definitions, subagent_get_definition,
     )
     from .todolist.tools import (
         todolist_create, todolist_update, todolist_clear,
@@ -334,9 +334,9 @@ def _build_tool_categories() -> dict[str, str]:
         cu_keyboard_press.name: "计算机操作", cu_keyboard_key_down.name: "计算机操作",
         cu_keyboard_key_up.name: "计算机操作", cu_locate_on_screen.name: "计算机操作",
         cu_get_elements.name: "计算机操作", cu_find_element.name: "计算机操作", cu_interact.name: "计算机操作",
-        sub_agent_create.name: "多智能体", send_message.name: "多智能体", agent_close.name: "多智能体",
-        check_agent_result.name: "多智能体", list_agent_tasks.name: "多智能体",
-        agent_discuss.name: "多智能体", list_agent_definitions.name: "多智能体", get_agent_definition.name: "多智能体",
+        subagent_create.name: "多智能体", subagent_send_message.name: "多智能体", subagent_close.name: "多智能体",
+        subagent_check_result.name: "多智能体", subagent_list_tasks.name: "多智能体",
+        subagent_discuss.name: "多智能体", subagent_list_definitions.name: "多智能体", subagent_get_definition.name: "多智能体",
         todolist_create.name: "任务清单", todolist_update.name: "任务清单", todolist_clear.name: "任务清单",
         todolist_cancel.name: "任务清单", todolist_list.name: "任务清单",
         monitor_start.name: "进程监控", monitor_stop.name: "进程监控", monitor_list.name: "进程监控",

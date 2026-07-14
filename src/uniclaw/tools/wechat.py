@@ -87,7 +87,7 @@ async def wechat_send_text(
 
     Args:
         text: 要发送的文字内容
-        bot_name: 指定使用的机器人名称，可通过 wechat_list_contacts 获取
+        bot_name: 指定使用的机器人名称,可通过 wechat_list_contacts 获取
 
     Returns:
         str: 发送结果消息
@@ -120,7 +120,7 @@ async def wechat_send_image(
     Args:
         image_path: 图片文件的绝对路径或相对于工作目录的路径
         caption: 图片附带的文字说明(可选)
-        bot_name: 指定使用的机器人名称，可通过 wechat_list_contacts 获取
+        bot_name: 指定使用的机器人名称,可通过 wechat_list_contacts 获取
 
     Returns:
         str: 发送结果消息
@@ -157,7 +157,7 @@ async def wechat_send_file(
     Args:
         file_path: 文件的绝对路径或相对于工作目录的路径
         file_name: 自定义文件名(可选,默认使用原始文件名)
-        bot_name: 指定使用的机器人名称，可通过 wechat_list_contacts 获取
+        bot_name: 指定使用的机器人名称,可通过 wechat_list_contacts 获取
 
     Returns:
         str: 发送结果消息

@@ -79,7 +79,7 @@ def schedule_create(
                 - 每次都需要 AI 处理 → agent
                 - 先用命令检查,有问题才需要 AI 处理 → monitor
 
-                agent 可用类型(使用 list_agent_definitions 查看完整列表):
+                agent 可用类型(使用 subagent_list_definitions 查看完整列表):
                 · general-purpose — 通用代理(默认)
                 · coder — 编程代理
                 · reviewer — 代码审查
