@@ -7,13 +7,25 @@ const WS = {
     reconnectDelay: 1000,
     connected: false,
 
+    /** 从 cookie 获取 token */
+    _getCookie(name) {
+        const match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
+        return match ? match[2] : null;
+    },
+
     /** 连接 WebSocket */
     connect() {
-        const token = localStorage.getItem('uniclaw_token');
+        // 优先从 localStorage 获取，其次从 cookie 获取
+        let token = localStorage.getItem('uniclaw_token');
+        if (!token) {
+            token = this._getCookie('uniclaw_token');
+        }
+        console.log('[WS] 连接, token:', token ? token.substring(0, 20) + '...' : 'null');
         const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
         // 可信 IP 可以不带 token 连接,后端会自动放行
         const tokenParam = token ? `?token=${encodeURIComponent(token)}` : '';
         const url = `${protocol}//${location.host}/ws${tokenParam}`;
+        console.log('[WS] URL:', url);
         this.socket = new WebSocket(url);
 
         this.socket.onopen = () => {
@@ -22,6 +34,10 @@ const WS = {
             this.reconnectDelay = 1000;
             this._updateStatus(true);
             this._emit('connected');
+        };
+
+        this.socket.onerror = (e) => {
+            console.error('[WS] 错误:', e);
         };
 
         this.socket.onmessage = (e) => {
@@ -34,14 +50,21 @@ const WS = {
         };
 
         this.socket.onclose = (e) => {
-            console.log('[WS] 连接断开');
+            console.log('[WS] 连接断开, code:', e.code, 'reason:', e.reason, 'wasClean:', e.wasClean);
             this.connected = false;
             this._updateStatus(false);
             this._emit('disconnected');
             // 认证失败,跳转登录页
             if (e.code === 4001) {
+                console.log('[WS] 认证失败,跳转登录页');
                 localStorage.removeItem('uniclaw_token');
                 document.cookie = 'uniclaw_token=;path=/;max-age=0';
+                window.location.href = '/login.html';
+                return;
+            }
+            // 连接失败但没有token,也跳转登录页
+            if (!this._getCookie('uniclaw_token') && !localStorage.getItem('uniclaw_token')) {
+                console.log('[WS] 没有token,跳转登录页');
                 window.location.href = '/login.html';
                 return;
             }

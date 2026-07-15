@@ -111,11 +111,8 @@ async def auth_middleware(request: Request, call_next):
         return await call_next(request)
 
     # 未登录：API 请求返回 401,页面请求重定向登录页
-    if path.startswith("/api/") or path == "/ws":
-        return JSONResponse(
-            status_code=401,
-            content={"detail": "未登录"},
-        )
+    if path.startswith("/api/"):
+        return JSONResponse(status_code=401, content={"detail": "未登录"})
     return RedirectResponse(url="/login.html", status_code=302)
 
 
@@ -218,7 +215,7 @@ async def auth_register(req: _AuthRequest):
         resp.set_cookie(
             "uniclaw_token",
             token,
-            httponly=True,
+            httponly=False,  # 允许 JavaScript 读取
             samesite="lax",
             max_age=86400,
         )

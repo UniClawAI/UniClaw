@@ -29,6 +29,17 @@ def main():
         default="127.0.0.1",
         help="WebUI 模式的监听地址 (默认: 127.0.0.1,局域网访问用 0.0.0.0)",
     )
+    parser.add_argument(
+        "--no-ssl",
+        action="store_true",
+        help="禁用 HTTPS (使用 HTTP)",
+    )
+    parser.add_argument(
+        "--domain",
+        type=str,
+        default="",
+        help="域名 (如 uniclaw.example.com)",
+    )
     args = parser.parse_args()
 
     # 后台预加载 tiktoken 编码器,避免首次调用时同步下载阻塞事件循环
@@ -68,7 +79,8 @@ def main():
         from uniclaw.console.launcher import launch
 
     if args.mode == "webui":
-        asyncio.run(launch(host=args.host, port=args.port))
+        ssl = not args.no_ssl  # 默认启用 SSL
+        asyncio.run(launch(host=args.host, port=args.port, ssl=ssl, domain=args.domain))
     else:
         # 首次启动引导(console 和 wechat 共用)
         if is_first_launch():
