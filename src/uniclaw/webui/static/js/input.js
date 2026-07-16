@@ -157,7 +157,6 @@ const Input = {
         }
 
         // 进入免提模式
-        console.log('[Mic] 进入免提模式');
         await this._startHandsfree();
     },
 
@@ -514,7 +513,6 @@ const Input = {
         if (msg.status === 'recognition') {
             // 识别结果(实时显示)——仅在当前仍在等待识别时更新,避免覆盖已发送的内容
             if (this._isSpeaking || micBtn.classList.contains('processing') || micBtn.classList.contains('listening')) {
-                console.log('识别结果:', msg.text);
                 this._speechUpdating = true;
                 input.value = msg.text;
                 this._speechUpdating = false;
@@ -523,7 +521,6 @@ const Input = {
             }
         } else if (msg.status === 'sent') {
             // 发送成功
-            console.log('语音已发送:', msg.text);
             this._speechUpdating = true;
             input.value = '';
             this._speechUpdating = false;
@@ -536,7 +533,6 @@ const Input = {
             }, 2000);
         } else if (msg.status === 'ignored') {
             // 无意义内容,静默忽略
-            console.log('语音已忽略:', msg.raw, '原因:', msg.reason);
             micBtn.classList.remove('processing');
             if (this._handsfree) {
                 input.placeholder = '🎤 免提模式 - 请说话';
