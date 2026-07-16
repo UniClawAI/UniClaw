@@ -15,7 +15,7 @@ const WS = {
 
     /** 连接 WebSocket */
     connect() {
-        // 优先从 localStorage 获取，其次从 cookie 获取
+        // 优先从 localStorage 获取,其次从 cookie 获取
         let token = localStorage.getItem('uniclaw_token');
         if (!token) {
             token = this._getCookie('uniclaw_token');

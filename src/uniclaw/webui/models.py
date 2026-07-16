@@ -219,6 +219,14 @@ class AsrRequest(BaseModel):
     format: str = Field(default="webm", description="音频格式: webm/wav/mp3")
 
 
+class AsrStreamRequest(BaseModel):
+    """免提语音请求(音频 → ASR → 过滤 → 直接发送给 Agent)。"""
+
+    audio: str = Field(description="Base64 编码的音频数据")
+    format: str = Field(default="wav", description="音频格式")
+    session_id: str = Field(description="目标会话 ID")
+
+
 class ProviderConfig(BaseModel):
     """单个 Provider 配置。"""
 

@@ -87,7 +87,7 @@ const Chat = {
         if (view === this._currentView) return;
         this._currentView = view;
         const btn = document.getElementById('history-toggle');
-        // 显示可切换到的视图图标：当前 compact 显示 history 图标,反之亦然
+        // 显示可切换到的视图图标:当前 compact 显示 history 图标,反之亦然
         if (btn) btn.innerHTML = view === 'compact' ? icon('history') : icon('save');
         this._renderCurrentView();
     },
@@ -235,7 +235,7 @@ const Chat = {
 
     /** 从公告服务器获取公告内容(HTTPS 优先,失败回退 HTTP) */
     async _fetchAnnouncement() {
-        // 去重：已有公告栏则跳过
+        // 去重:已有公告栏则跳过
         if (document.querySelector('.announcement-banner')) return;
 
         const host = 'uniclawai.top:8001';
@@ -1098,7 +1098,7 @@ const Chat = {
         this._saveScrollState();
         const el = document.createElement('div');
         el.className = 'system-message';
-        el.dataset.shellMsg = '1'; // 标记：对应后端一条 user 消息,计算删除数量时需计入
+        el.dataset.shellMsg = '1'; // 标记:对应后端一条 user 消息,计算删除数量时需计入
         el.innerHTML = `<div style="font-family:var(--font-mono);font-size:var(--text-sm);text-align:left;max-width:900px;margin:0 auto"><div style="color:var(--neon-cyan);margin-bottom:2px">$ ${Utils.escapeHtml(cmd)}</div><pre style="margin:0;white-space:pre-wrap;background:var(--bg-inset);padding:8px 12px;border-radius:var(--r-sm)">${Utils.escapeHtml(output)}</pre></div>`;
         c.appendChild(el);
         this._scrollToBottom();
@@ -1181,7 +1181,7 @@ const Chat = {
 
     _stopSpinnerTimer() { if (this._spinnerTimer) { clearInterval(this._spinnerTimer); this._spinnerTimer = null; } },
 
-    /** 编辑用户消息：删除该消息及之后的所有消息,将内容放入输入框 */
+    /** 编辑用户消息:删除该消息及之后的所有消息,将内容放入输入框 */
     async _onEditUserMessage(btn) {
         const msgEl = btn.closest('.message.user');
         if (!msgEl) return;

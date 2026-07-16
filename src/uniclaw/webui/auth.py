@@ -1,4 +1,4 @@
-"""WebUI 认证模块：单账号登录 + JWT。"""
+"""WebUI 认证模块:单账号登录 + JWT。"""
 
 from __future__ import annotations
 

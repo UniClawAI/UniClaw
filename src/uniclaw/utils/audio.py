@@ -5,8 +5,45 @@ from __future__ import annotations
 import asyncio
 import base64
 import os
+import struct
 import tempfile
 from pathlib import Path
+
+
+def pcm_to_wav(
+    pcm: bytes, sample_rate: int = 24000, channels: int = 1, bits: int = 16
+) -> bytes:
+    """将 PCM 原始数据转为 WAV 格式。
+
+    Args:
+        pcm: PCM 原始数据。
+        sample_rate: 采样率,默认 24000。
+        channels: 声道数,默认 1(单声道)。
+        bits: 每个采样的位数,默认 16。
+
+    Returns:
+        WAV 格式的数据。
+    """
+    byte_rate = sample_rate * channels * bits // 8
+    block_align = channels * bits // 8
+    data_size = len(pcm)
+    header = struct.pack(
+        "<4sI4s4sIHHIIHH4sI",
+        b"RIFF",
+        36 + data_size,
+        b"WAVE",
+        b"fmt ",
+        16,
+        1,
+        channels,
+        sample_rate,
+        byte_rate,
+        block_align,
+        bits,
+        b"data",
+        data_size,
+    )
+    return header + pcm
 
 
 async def _convert_to_mp3(src: Path) -> Path:
@@ -55,7 +92,7 @@ async def asr(
     *,
     asr_options: dict | None = None,
 ) -> str:
-    """语音识别：将音频文件转为文字。
+    """语音识别:将音频文件转为文字。
 
     使用配置中的 asr_model 调用 LLM 进行语音识别。
     非 mp3/wav 格式会自动通过 ffmpeg 转换为 mp3。

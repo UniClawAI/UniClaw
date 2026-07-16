@@ -100,7 +100,7 @@
     background: var(--gradient-accent-dim);
     border-color: rgba(124, 92, 252, 0.15);
 }
-/* 用户消息 — 文字对齐容器：根据文字宽度自适应,靠右显示,内部左对齐 */
+/* 用户消息 — 文字对齐容器:根据文字宽度自适应,靠右显示,内部左对齐 */
 .message.user .msg-text-aligner {
     width: fit-content;
     max-width: 100%;

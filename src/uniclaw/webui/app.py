@@ -110,7 +110,7 @@ async def auth_middleware(request: Request, call_next):
     if token and auth.verify_token(token):
         return await call_next(request)
 
-    # 未登录：API 请求返回 401,页面请求重定向登录页
+    # 未登录:API 请求返回 401,页面请求重定向登录页
     if path.startswith("/api/"):
         return JSONResponse(status_code=401, content={"detail": "未登录"})
     return RedirectResponse(url="/login.html", status_code=302)

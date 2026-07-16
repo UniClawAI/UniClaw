@@ -79,7 +79,7 @@ const Settings = {
         }
         this._renderProviders();
 
-        // 模型字段：初始化 combo 组件
+        // 模型字段:初始化 combo 组件
         this._initCombo('settings-model-name', d.model_name || []);
         this._initCombo('settings-mini-model', d.mini_model_name || []);
         this._initCombo('settings-multimodal-model', d.multimodal_model_name || []);
@@ -273,10 +273,10 @@ const Settings = {
     _allowCustomInput(container) {
         const isTtsAsr = ['settings-tts-model', 'settings-asr-model'].includes(container.id);
         if (isTtsAsr) {
-            // TTS/ASR：仅 OpenAI 协议,不允许自定义输入
+            // TTS/ASR:仅 OpenAI 协议,不允许自定义输入
             return false;
         }
-        // 主模型/轻量/多模态：只要有任一 provider 是 allow_custom(Anthropic)就允许
+        // 主模型/轻量/多模态:只要有任一 provider 是 allow_custom(Anthropic)就允许
         for (const info of Object.values(this._providersInfo)) {
             if (info.allow_custom) return true;
         }
@@ -291,12 +291,12 @@ const Settings = {
         // 同步表单中的最新 providers(用户可能改了名称)
         this._syncProviders();
 
-        // 验证：非自定义输入必须存在于模型列表中
+        // 验证:非自定义输入必须存在于模型列表中
         if (!this._isValidModel(value, container)) {
             return false;
         }
 
-        // 单选模式：替换
+        // 单选模式:替换
         if (!isMulti) {
             selectedEl.innerHTML = '';
         }
@@ -367,7 +367,7 @@ const Settings = {
         }
     },
 
-    /** 拖拽排序：将 fromValue 移动到 toValue 前面 */
+    /** 拖拽排序:将 fromValue 移动到 toValue 前面 */
     _reorderTag(container, fromValue, toValue) {
         const selectedEl = container.querySelector('.combo-selected');
         const tags = Array.from(selectedEl.querySelectorAll('.combo-tag'));
@@ -391,13 +391,13 @@ const Settings = {
         const info = this._providersInfo[providerName];
         const isTtsAsr = ['settings-tts-model', 'settings-asr-model'].includes(container.id);
 
-        // TTS/ASR：仅允许 OpenAI 协议(非 allow_custom)的 provider
+        // TTS/ASR:仅允许 OpenAI 协议(非 allow_custom)的 provider
         if (isTtsAsr && info && info.allow_custom) return false;
 
-        // allow_custom 的 provider：自由输入
+        // allow_custom 的 provider:自由输入
         if (info && info.allow_custom) return true;
 
-        // 非 allow_custom 的 provider：必须在模型列表中
+        // 非 allow_custom 的 provider:必须在模型列表中
         const modelId = value.split('/').slice(1).join('/');
         return this._models.some(m => m.provider === providerName && m.id === modelId);
     },
@@ -578,7 +578,7 @@ const Settings = {
         ];
         for (const { field, value } of allModels) {
             if (!value.includes('/')) {
-                errEl.textContent = `${field} 格式错误："${value}" 必须是 "provider/model" 格式`;
+                errEl.textContent = `${field} 格式错误:"${value}" 必须是 "provider/model" 格式`;
                 return;
             }
             const prefix = value.split('/')[0];

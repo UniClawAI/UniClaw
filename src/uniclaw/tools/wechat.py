@@ -74,7 +74,7 @@ def wechat_list_contacts(config: AppConfig = None) -> str:
         return "当前没有已登录的微信机器人。请先通过 /wechat 命令添加并登录。"
 
     bot_names = "\n".join(f"- {b.name}" for b in active_bots)
-    return f"已登录的微信机器人：\n{bot_names}"
+    return f"已登录的微信机器人:\n{bot_names}"
 
 
 @tool

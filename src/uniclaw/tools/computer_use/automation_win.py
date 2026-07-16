@@ -89,7 +89,7 @@ def _get_states(control) -> list[str]:
                  IsOffscreen 等属性。
 
     Returns:
-        list[str]: 控件当前状态字符串列表,可能的值包括：
+        list[str]: 控件当前状态字符串列表,可能的值包括:
                    - "focused": 控件当前拥有键盘焦点；
                    - "disabled": 控件处于禁用状态；
                    - "offscreen": 控件不在屏幕可见区域内。

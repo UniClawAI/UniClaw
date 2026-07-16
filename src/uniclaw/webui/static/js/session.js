@@ -143,7 +143,7 @@ const SessionPanel = {
 
     async _createWechatBot(name) {
         try {
-            // 第一步：创建 Bot 并获取 QR URL
+            // 第一步:创建 Bot 并获取 QR URL
             const createResp = await fetch('/api/wechat/bots', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -164,7 +164,7 @@ const SessionPanel = {
             // 显示二维码弹窗
             this._showQrcodeDialog(qrUrl, botName);
 
-            // 第二步：触发登录(阻塞等待,传入 qrcode 会话标识)
+            // 第二步:触发登录(阻塞等待,传入 qrcode 会话标识)
             const loginResp = await fetch(`/api/wechat/bots/${encodeURIComponent(botName)}/login?qrcode=${encodeURIComponent(qrCode)}`, {
                 method: 'POST',
             });

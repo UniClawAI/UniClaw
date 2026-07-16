@@ -34,7 +34,7 @@ async def _connect_mcp(connection: dict):
             command=connection.get("command", ""),
             args=connection.get("args", []),
             env=connection.get("env"),
-            cwd=connection.get("cwd"),  # 修复：传递cwd参数
+            cwd=connection.get("cwd"),  # 修复:传递cwd参数
         )
         async with stdio_client(server_params) as (read, write):
             yield read, write

@@ -81,7 +81,8 @@ const VoiceMode = {
     _updateMicBtn() {
         const micBtn = document.getElementById('mic-btn');
         if (micBtn) {
-            micBtn.style.display = this._asrAvailable ? '' : 'none';
+            // 始终显示麦克风按钮(支持 Web Speech API 作为备选方案)
+            micBtn.style.display = '';
         }
     },
 

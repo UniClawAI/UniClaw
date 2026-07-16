@@ -467,7 +467,7 @@ async def update_settings(body: SettingsUpdate):
             if "/" not in m:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"{field_name} 格式错误：'{m}' 必须是 'provider/model' 格式",
+                    detail=f"{field_name} 格式错误:'{m}' 必须是 'provider/model' 格式",
                 )
             prefix = m.split("/", 1)[0]
             if prefix not in provider_names:
@@ -495,7 +495,7 @@ async def update_settings(body: SettingsUpdate):
         "providers": providers,
     }
 
-    # audio 配置：直接透传 dict
+    # audio 配置:直接透传 dict
     cleaned["audio"] = body.audio if body.audio else None
 
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -569,7 +569,7 @@ async def list_models(body: dict):
 
 @router.post("/asr")
 async def transcribe_audio(body: AsrRequest):
-    """语音识别：将音频转为文字。"""
+    """语音识别:将音频转为文字。"""
     from uniclaw.utils.audio import asr as asr_func
     from uniclaw.config import load_config
 
@@ -877,7 +877,7 @@ async def git_ai_commit_message(body: GitAiCommitMessage):
     _validate_path(body.root_dir, "")
     log = get_logger("webui", Path.cwd())
 
-    # 获取 config：优先从 session_cache 复用,否则新建
+    # 获取 config:优先从 session_cache 复用,否则新建
     config = None
     for _, cached_config in session_cache.items():
         cached_root = str(cached_config.current_agent.session.root_dir)

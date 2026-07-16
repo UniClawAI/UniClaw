@@ -1,4 +1,4 @@
-"""SSL 证书工具：自动生成自签名证书。"""
+"""SSL 证书工具:自动生成自签名证书。"""
 
 from __future__ import annotations
 
@@ -10,14 +10,14 @@ def get_or_create_certs(domain: str = "") -> tuple[str, str]:
     """获取或创建 SSL 证书。
 
     证书保存在 ~/.UniClaw/ssl/ 目录下。
-    支持多种域名格式：
+    支持多种域名格式:
     - example.com.key.pem / example.com.cert.pem
     - sub.example.com.key.pem / sub.example.com.cert.pem
-    - _.example.com.key.pem / _.example.com.cert.pem（通配符）
-    - key.pem / cert.pem（默认）
+    - _.example.com.key.pem / _.example.com.cert.pem(通配符)
+    - key.pem / cert.pem(默认)
 
     Args:
-        domain: 可选的域名，如 "uniclaw.example.com"
+        domain: 可选的域名,如 "uniclaw.example.com"
 
     Returns:
         (keyfile_path, certfile_path) 元组
@@ -37,7 +37,7 @@ def get_or_create_certs(domain: str = "") -> tuple[str, str]:
     keyfile = cert_dir / "key.pem"
     certfile = cert_dir / "cert.pem"
 
-    # 如果证书已存在且未过期，直接返回
+    # 如果证书已存在且未过期,直接返回
     if keyfile.exists() and certfile.exists():
         if not _is_cert_expired(certfile):
             return str(keyfile), str(certfile)
@@ -48,13 +48,13 @@ def get_or_create_certs(domain: str = "") -> tuple[str, str]:
 
 
 def _find_existing_certs(cert_dir: Path, domain: str) -> tuple[Path | None, Path | None]:
-    """查找已有的证书文件，支持多种命名格式。
+    """查找已有的证书文件,支持多种命名格式。
 
-    查找顺序：
+    查找顺序:
     1. {domain}.key.pem / {domain}.cert.pem
     2. {domain_without_wildcard}.key.pem / {domain_without_wildcard}.cert.pem
     3. _.{domain}.key.pem / _.{domain}.cert.pem
-    4. 匹配域名后缀的证书（如 sub.example.com 匹配 example.com 的证书）
+    4. 匹配域名后缀的证书(如 sub.example.com 匹配 example.com 的证书)
     """
     # 1. 精确匹配
     keyfile = cert_dir / f"{domain}.key.pem"
@@ -62,7 +62,7 @@ def _find_existing_certs(cert_dir: Path, domain: str) -> tuple[Path | None, Path
     if keyfile.exists() and certfile.exists() and not _is_cert_expired(certfile):
         return keyfile, certfile
 
-    # 2. 去掉通配符前缀匹配（如 *.example.com -> example.com）
+    # 2. 去掉通配符前缀匹配(如 *.example.com -> example.com)
     clean_domain = domain.lstrip("*.")
     if clean_domain != domain:
         keyfile = cert_dir / f"{clean_domain}.key.pem"
@@ -70,13 +70,13 @@ def _find_existing_certs(cert_dir: Path, domain: str) -> tuple[Path | None, Path
         if keyfile.exists() and certfile.exists() and not _is_cert_expired(certfile):
             return keyfile, certfile
 
-    # 3. 通配符格式匹配（_.example.com）
+    # 3. 通配符格式匹配(_.example.com)
     keyfile = cert_dir / f"_.{clean_domain}.key.pem"
     certfile = cert_dir / f"_.{clean_domain}.cert.pem"
     if keyfile.exists() and certfile.exists() and not _is_cert_expired(certfile):
         return keyfile, certfile
 
-    # 4. 后缀匹配（查找包含域名后缀的证书）
+    # 4. 后缀匹配(查找包含域名后缀的证书)
     for key_path in cert_dir.glob("*.key.pem"):
         cert_path = key_path.with_suffix("").with_suffix(".cert.pem")
         if not cert_path.exists():
@@ -183,12 +183,12 @@ def _generate_self_signed_cert(keyfile: Path, certfile: Path, domain: str = "") 
         certfile.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
 
     except ImportError:
-        # 如果没有 cryptography 库，使用 openssl 命令
+        # 如果没有 cryptography 库,使用 openssl 命令
         _generate_with_openssl(keyfile, certfile, domain)
 
 
 def _generate_with_openssl(keyfile: Path, certfile: Path, domain: str = "") -> None:
-    """使用 openssl 命令生成证书（备用方案）。"""
+    """使用 openssl 命令生成证书(备用方案)。"""
     import subprocess
     import tempfile
 

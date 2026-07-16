@@ -485,7 +485,7 @@ class ToolCallMessage(BaseMessage):
 
 
 # 结构化 checkpoint 模板 — 替代自由文本摘要
-CHECKPOINT_TEMPLATE = """请将以下对话历史整理为结构化摘要,严格按以下格式输出：
+CHECKPOINT_TEMPLATE = """请将以下对话历史整理为结构化摘要,严格按以下格式输出:
 
 ## 当前意图
 {用户最终想完成什么}
@@ -512,7 +512,7 @@ CHECKPOINT_TEMPLATE = """请将以下对话历史整理为结构化摘要,严格
 {归档的消息条数和时间范围}
 {本段对话涉及的核心主题,用于辅助检索,但不限于这些词}
 
-注意：
+注意:
 - 每个 section 如果没有对应内容就写"无"
 - 文件路径、URL、端口号、变量名、命令等关键信息必须完整保留,一字不改
 - 错误信息和堆栈可以精简但不能省略关键行
@@ -653,7 +653,7 @@ class Session:
                         "args": message.get("args", {}),
                     },
                 )
-        # 恢复 history(兼容旧数据：没有 history 字段时用 messages 填充)
+        # 恢复 history(兼容旧数据:没有 history 字段时用 messages 填充)
         history_data = data.get("history")
         if history_data is not None:
             session.history.clear()
@@ -1031,7 +1031,7 @@ class Session:
     def snip_old_tool_results(
         self, max_chars: int = 2000, preserve_last_n_turns: int = 6
     ) -> None:
-        """压缩旧工具结果：可再生工具清空,不可再生工具截断。"""
+        """压缩旧工具结果:可再生工具清空,不可再生工具截断。"""
         cutoff = max(0, len(self._messages) - preserve_last_n_turns)
         for i in range(cutoff):
             msg = self._messages[i]
@@ -1041,10 +1041,10 @@ class Session:
             if not content or len(content) <= 200:
                 continue
             if msg.name in self.COMPACTABLE_TOOLS:
-                # 可再生工具：清空结果,保留工具名和参数信息
+                # 可再生工具:清空结果,保留工具名和参数信息
                 msg.content = f"[{msg.name} 结果已清除,可重新执行获取]"
             elif len(content) > max_chars:
-                # 不可再生工具：截断(保留头尾)
+                # 不可再生工具:截断(保留头尾)
                 half = max_chars // 2
                 quarter = max_chars // 4
                 snipped = len(content) - half - quarter

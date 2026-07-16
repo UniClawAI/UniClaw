@@ -2,7 +2,7 @@
 
 const App = {
     async init() {
-        // 认证检查：尝试调 /api/auth/me,可信 IP 无需 token 也能通过
+        // 认证检查:尝试调 /api/auth/me,可信 IP 无需 token 也能通过
         const token = localStorage.getItem('uniclaw_token');
         try {
             const headers = token ? { 'Authorization': 'Bearer ' + token } : {};

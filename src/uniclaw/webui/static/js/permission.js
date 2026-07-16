@@ -21,7 +21,7 @@ const Permission = {
         document.getElementById('status-permission').onclick = e => { e.stopPropagation(); this.showModeMenu(); };
     },
 
-    /** 会话切换时调用：检查是否有缓存的权限请求需要显示 */
+    /** 会话切换时调用:检查是否有缓存的权限请求需要显示 */
     onSessionSwitched(sessionId) {
         if (!sessionId) return;
         const pending = this._pendingBySession[sessionId];

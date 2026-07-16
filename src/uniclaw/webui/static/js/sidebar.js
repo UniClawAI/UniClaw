@@ -386,11 +386,11 @@ const Sidebar = {
 
     _appendConsole(text, type) {
         const out = document.getElementById('console-output');
-        // 处理 \r：只保留最后一个 \r 之后的内容(覆盖当前行)
+        // 处理 \r:只保留最后一个 \r 之后的内容(覆盖当前行)
         const lines = text.split('\n');
         for (let i = 0; i < lines.length; i++) {
             let lineText = lines[i];
-            // \r 覆盖：取最后一个 \r 之后的内容
+            // \r 覆盖:取最后一个 \r 之后的内容
             const crIdx = lineText.lastIndexOf('\r');
             if (crIdx >= 0) lineText = lineText.slice(crIdx + 1);
             if (!lineText && i < lines.length - 1) continue; // 跳过空行(除了最后一行)

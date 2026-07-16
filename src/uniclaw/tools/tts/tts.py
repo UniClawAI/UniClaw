@@ -75,39 +75,12 @@ def _get_console_player():
     return _console_player
 
 
-def _pcm_to_wav(
-    pcm: bytes, sample_rate: int = 24000, channels: int = 1, bits: int = 16
-) -> bytes:
-    """给 PCM16 原始数据加上 WAV 文件头。"""
-    import struct
-
-    byte_rate = sample_rate * channels * bits // 8
-    block_align = channels * bits // 8
-    data_size = len(pcm)
-    header = struct.pack(
-        "<4sI4s4sIHHIIHH4sI",
-        b"RIFF",
-        36 + data_size,
-        b"WAVE",
-        b"fmt ",
-        16,
-        1,
-        channels,
-        sample_rate,
-        byte_rate,
-        block_align,
-        bits,
-        b"data",
-        data_size,
-    )
-    return header + pcm
-
-
 async def _send_wechat_voice(_chunk: StreamChunk, config) -> None:
     """将累积的音频作为文件发送到微信。"""
     import base64
     import os
     import tempfile
+    from uniclaw.utils.audio import pcm_to_wav
 
     ctx = getattr(config, "wechat_ctx", None)
     if not ctx:
@@ -115,7 +88,7 @@ async def _send_wechat_voice(_chunk: StreamChunk, config) -> None:
     bot = ctx
     try:
         pcm_bytes = base64.b64decode(_chunk.audio)
-        wav_bytes = _pcm_to_wav(pcm_bytes)
+        wav_bytes = pcm_to_wav(pcm_bytes)
         fd, tmp_path = tempfile.mkstemp(suffix=".wav")
         try:
             os.write(fd, wav_bytes)

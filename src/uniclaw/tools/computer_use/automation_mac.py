@@ -110,7 +110,7 @@ def get_interactive_elements(
     try:
         app = _get_focused_app()
         if not app:
-            return f"{TOOL_ERROR}: 无法获取焦点应用(检查辅助功能权限：系统设置 → 隐私 → 辅助功能)"
+            return f"{TOOL_ERROR}: 无法获取焦点应用(检查辅助功能权限:系统设置 → 隐私 → 辅助功能)"
 
         root = app
         app_title = _get_attr(app, "AXTitle") or "(未知应用)"

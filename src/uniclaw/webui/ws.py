@@ -1,14 +1,14 @@
-"""WebSocket 管理器：连接、事件桥接、权限交互。"""
+"""WebSocket 管理器:连接、事件桥接、权限交互。"""
 
 from __future__ import annotations
 
 import asyncio
 import time
+import base64
 import traceback
 import uuid
 from dataclasses import dataclass
 from typing import Any
-
 from fastapi import WebSocket, WebSocketDisconnect
 from cachetools import LRUCache
 
@@ -39,26 +39,26 @@ from uniclaw.utils.logger import get_logger
 from uniclaw.utils.message import MessageRole
 from pathlib import Path
 
-# 会话 LRU 缓存：session_id → AppConfig
+# 会话 LRU 缓存:session_id → AppConfig
 session_cache: LRUCache[str, AppConfig] = LRUCache(maxsize=10)
 
 # 所有已连接的 WebSocket(广播用)
 _connected_ws: set[WebSocket] = set()
 _connected_ws_lock = asyncio.Lock()
 
-# 挂起的权限请求：req_id → asyncio.Future(需要锁保护)
+# 挂起的权限请求:req_id → asyncio.Future(需要锁保护)
 pending_permissions: dict[str, asyncio.Future] = {}
 _permissions_lock = asyncio.Lock()
 
-# 挂起的输入请求：req_id → asyncio.Future(需要锁保护)
+# 挂起的输入请求:req_id → asyncio.Future(需要锁保护)
 pending_inputs: dict[str, asyncio.Future] = {}
 _inputs_lock = asyncio.Lock()
 
-# 正在运行的 bridge_events 任务：session_id → asyncio.Task(需要锁保护)
+# 正在运行的 bridge_events 任务:session_id → asyncio.Task(需要锁保护)
 _bridge_tasks: dict[str, asyncio.Task] = {}
 _bridge_tasks_lock = asyncio.Lock()
 
-# 正在运行的 _watch_user_queue 任务：session_id → asyncio.Task
+# 正在运行的 _watch_user_queue 任务:session_id → asyncio.Task
 _watch_tasks: dict[str, asyncio.Task] = {}
 _watch_tasks_lock = asyncio.Lock()
 
@@ -109,7 +109,7 @@ async def _register_pending(session_id: str, req_id: str, req: PendingRequest):
         if session_id not in pending_session_requests:
             pending_session_requests[session_id] = {}
         pending_session_requests[session_id][req_id] = req
-    # 通知所有连接的前端：该会话有待处理请求
+    # 通知所有连接的前端:该会话有待处理请求
     await _broadcast_attention(session_id, req.msg_type)
 
 
@@ -245,7 +245,7 @@ async def bridge_events(session_id: str, config: AppConfig):
                 )
             continue
 
-        # === 阻塞事件：需要等待前端响应 ===
+        # === 阻塞事件:需要等待前端响应 ===
         elif isinstance(event, PermissionRequestEvent):
             req_id = f"perm_{id(event)}"
             _tn = tc_name(event.tool_call)
@@ -293,7 +293,7 @@ async def bridge_events(session_id: str, config: AppConfig):
 
             if response["approved"]:
                 event.content = True
-                # "始终允许"：将规则持久化
+                # "始终允许":将规则持久化
                 if response.get("always") and config.root_dir:
                     try:
                         from uniclaw.tools.security.security import add_permission_rule
@@ -583,7 +583,6 @@ async def _watch_user_queue(session_id: str, config: AppConfig):
                 continue
             if not msg:
                 continue
-            print(f"[bridge] 唤醒: {msg}")
             multi_agent = MultiAgent.get_instance()
             multi_agent.start_agent(msg, config)
             await _start_bridge(session_id, config)
@@ -622,7 +621,7 @@ async def handle_ws_message(ws: WebSocket, msg: dict):
     """处理客户端发来的 WS 消息。"""
     msg_type = msg.get("type", "")
 
-    # === chat 消息：区分创建会话和已有会话 ===
+    # === chat 消息:区分创建会话和已有会话 ===
     if msg_type == "chat":
         root_dir = msg.get("root_dir")
         session_id = msg.get("session_id")
@@ -733,7 +732,7 @@ async def handle_ws_message(ws: WebSocket, msg: dict):
             task.user_queue.put_nowait(content)
         return
 
-    # === 其他消息：必须带 session_id ===
+    # === 其他消息:必须带 session_id ===
     session_id = msg.get("session_id")
     if not session_id:
         await _safe_send(
@@ -755,12 +754,12 @@ async def handle_ws_message(ws: WebSocket, msg: dict):
         cmd = msg.get("command", "")
         source = msg.get("source", "chat")
         if task.status == AgentStatus.RUNNING:
-            # Agent 运行中：放入 user_queue,drain_user_queue 会创建 ShellCommandEvent
+            # Agent 运行中:放入 user_queue,drain_user_queue 会创建 ShellCommandEvent
             # !!前缀=控制台命令(不注入session)；!前缀=聊天区命令(注入session)
             prefix = "!!" if source == "console" else "!"
             task.user_queue.put_nowait(f"{prefix}{cmd}")
         else:
-            # Agent 空闲：直接执行；仅聊天区命令注入 session
+            # Agent 空闲:直接执行；仅聊天区命令注入 session
             try:
                 output = await Bash.func(cmd, config=config)
             except Exception as e:
@@ -779,7 +778,9 @@ async def handle_ws_message(ws: WebSocket, msg: dict):
                     "output": output,
                     "success": True,
                     "source": source,
-                    "msg_idx": len(task.session._messages) - 1 if source == "chat" else -1,
+                    "msg_idx": (
+                        len(task.session._messages) - 1 if source == "chat" else -1
+                    ),
                 },
             )
 
@@ -823,7 +824,7 @@ async def handle_ws_message(ws: WebSocket, msg: dict):
         task.cancel_event.set()
 
     elif msg_type == "set_active":
-        # 前端通知当前活跃会话：重发待处理请求 + 通知刷新 config
+        # 前端通知当前活跃会话:重发待处理请求 + 通知刷新 config
         await _resend_pending_requests(session_id)
         await _notify_config_changed(session_id)
 
@@ -847,12 +848,26 @@ async def handle_ws_message(ws: WebSocket, msg: dict):
                 await tts_cleanup(session_id)
             await _notify_config_changed(session_id)
 
+    elif msg_type == "asr_stream":
+        # 免提语音:ASR → 过滤口语 → 直接发送给 Agent
+        await _handle_asr_stream(ws, session_id, config, msg)
+
+    elif msg_type == "asr_stream_audio":
+        # 接收音频数据,实时识别
+        await _handle_asr_stream_audio(ws, session_id, config, msg)
+
+    elif msg_type == "asr_stream_reset":
+        # 清空流式 ASR 缓冲区,取消待执行的识别任务
+        session = _asr_stream_sessions.pop(session_id, None)
+        if session and session.get("timer") and not session["timer"].done():
+            session["timer"].cancel()
+
 
 def _build_content_with_files(content: str, files: list[dict], config) -> Any:
     """构建带附件的消息内容。
 
-    - 图片/视频/音频：转为多模态块
-    - 其他文件：写入 root_dir,内容追加到消息中
+    - 图片/视频/音频:转为多模态块
+    - 其他文件:写入 root_dir,内容追加到消息中
     """
     import base64
 
@@ -869,7 +884,11 @@ def _build_content_with_files(content: str, files: list[dict], config) -> Any:
         # 检查文件大小(base64 编码后约为原始大小的 4/3)
         if len(data) * 3 / 4 > MAX_FILE_SIZE:
             get_logger("webui", Path.cwd()).warning(f"附件 {name} 超过500MB限制,已跳过")
-            blocks.append(MultimodalBlock(type="text", text=f"[附件: {name} 超过500MB限制,已跳过]"))
+            blocks.append(
+                MultimodalBlock(
+                    type="text", text=f"[附件: {name} 超过500MB限制,已跳过]"
+                )
+            )
             continue
         mime = f.get("mime", "")
 
@@ -895,7 +914,7 @@ def _build_content_with_files(content: str, files: list[dict], config) -> Any:
                 )
             )
         else:
-            # 非多媒体文件：写入 root_dir,由 agent 自行处理
+            # 非多媒体文件:写入 root_dir,由 agent 自行处理
             try:
                 file_path = config.root_dir / name
                 file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -911,21 +930,283 @@ def _build_content_with_files(content: str, files: list[dict], config) -> Any:
     return [block.to_dict() for block in blocks]
 
 
+async def _handle_asr_stream(
+    ws: WebSocket, session_id: str, config: AppConfig, msg: dict
+):
+    """处理语音消息:过滤口语 → 直接发送给 Agent。"""
+    text = msg.get("audio", "").strip()
+
+    if not text:
+        await _safe_send(
+            ws,
+            {
+                "event": "asr_stream_result",
+                "session_id": session_id,
+                "status": "error",
+                "message": "缺少文本内容",
+            },
+        )
+        return
+
+    try:
+        # 过滤口语词
+        processed = await _filter_filler_words(text, config)
+
+        # 判断是否有意义
+        if not processed["meaningful"]:
+            await _safe_send(
+                ws,
+                {
+                    "event": "asr_stream_result",
+                    "session_id": session_id,
+                    "status": "ignored",
+                    "raw": text,
+                    "text": processed["text"],
+                    "reason": "filler_only",
+                },
+            )
+            return
+
+        # 发送给 Agent
+        final_text = processed["text"]
+        task = config.current_agent
+
+        if task.status != AgentStatus.RUNNING:
+            multi_agent = MultiAgent.get_instance()
+            multi_agent.start_agent(final_text, config)
+            await _start_bridge(session_id, config)
+        else:
+            task.user_queue.put_nowait(final_text)
+
+        await _safe_send(
+            ws,
+            {
+                "event": "asr_stream_result",
+                "session_id": session_id,
+                "status": "sent",
+                "raw": text,
+                "text": final_text,
+            },
+        )
+
+    except Exception as e:
+        get_logger("webui", Path.cwd()).error(f"语音消息处理失败: {e}")
+        await _safe_send(
+            ws,
+            {
+                "event": "asr_stream_result",
+                "session_id": session_id,
+                "status": "error",
+                "message": str(e),
+            },
+        )
+
+
+# 流式 ASR 会话状态:session_id → {buffer, last_text, sample_rate, last_asr_time, timer}
+_asr_stream_sessions: dict[str, dict] = {}
+
+# ASR 识别间隔(秒)
+ASR_INTERVAL = 2.0
+
+
+async def _schedule_asr(
+    ws: WebSocket, session_id: str, config: AppConfig, delay: float = 0
+):
+    """延迟执行 ASR 识别。"""
+    import time
+
+    # 等待一段时间后执行
+    if delay > 0:
+        await asyncio.sleep(delay)
+
+    if session_id not in _asr_stream_sessions:
+        return
+
+    session_state = _asr_stream_sessions[session_id]
+    buffer = bytes(session_state["buffer"])
+    sample_rate = session_state["sample_rate"]
+
+    if not buffer:
+        return
+
+    # 执行识别
+    raw_text = await _asr_recognize(buffer, sample_rate, config)
+
+    # session 可能在识别期间被 reset
+    if session_id not in _asr_stream_sessions:
+        return
+
+    session_state["last_asr_time"] = time.time()
+
+    if not raw_text:
+        return
+
+    # 与上次结果比较,避免重复
+    if raw_text == session_state["last_text"]:
+        return
+
+    session_state["last_text"] = raw_text
+
+    # 返回识别结果(实时显示)
+    await _safe_send(
+        ws,
+        {
+            "event": "asr_stream_result",
+            "session_id": session_id,
+            "status": "recognition",
+            "text": raw_text,
+        },
+    )
+
+
+async def _asr_recognize(
+    buffer: bytes, sample_rate: int, config: AppConfig
+) -> str | None:
+    """执行 ASR 识别,返回识别文本。"""
+    import tempfile
+    from uniclaw.utils.audio import pcm_to_wav, asr as asr_func
+
+    tmp_path = None
+    try:
+        # 转为 WAV
+        wav_data = pcm_to_wav(buffer, sample_rate)
+
+        # 写入临时文件
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+            f.write(wav_data)
+            tmp_path = f.name
+
+        # ASR 识别
+        raw_text = await asr_func(tmp_path, config)
+
+        if not raw_text or not raw_text.strip():
+            return None
+
+        return raw_text.strip()
+
+    except Exception as e:
+        get_logger("webui", Path.cwd()).error(f"ASR 识别失败: {e}")
+        return None
+    finally:
+        # 确保异常时也能清理临时文件
+        if tmp_path:
+            Path(tmp_path).unlink(missing_ok=True)
+
+
+async def _handle_asr_stream_audio(
+    ws: WebSocket, session_id: str, config: AppConfig, msg: dict
+):
+    """处理流式音频数据,累积到缓冲区,智能调度识别。"""
+
+    audio_data = msg.get("audio", "")
+    if not audio_data:
+        return
+
+    if not config.asr_model:
+        return
+
+    # 获取或创建会话状态
+    if session_id not in _asr_stream_sessions:
+        _asr_stream_sessions[session_id] = {
+            "buffer": bytearray(),
+            "last_text": "",
+            "sample_rate": msg.get("sample_rate", 16000),
+            "last_asr_time": time.time(),
+            "timer": None,
+            "lock": asyncio.Lock(),
+        }
+
+    session_state = _asr_stream_sessions[session_id]
+
+    # 同一会话串行处理,避免 buffer/定时器竞态
+    async with session_state["lock"]:
+        # 解码并累积音频数据
+        audio_bytes = base64.b64decode(audio_data)
+        session_state["buffer"].extend(audio_bytes)
+
+        # 取消之前的定时器
+        if session_state["timer"] and not session_state["timer"].done():
+            session_state["timer"].cancel()
+
+        # 检查距离上次识别的时间
+        now = time.time()
+        time_since_last = now - session_state["last_asr_time"]
+
+        # buffer 太小额外延迟,等待更多数据(buffer 越小延迟越大)
+        buffer = bytes(session_state["buffer"])
+        extra_delay = (1 - len(buffer) / 3200) * 0.25 if len(buffer) < 3200 else 0
+
+        # 离上次识别越近延迟越大,最大0.25s + buffer延迟
+        interval_delay = (ASR_INTERVAL - time_since_last) * 0.25 if time_since_last < ASR_INTERVAL else 0
+        delay = interval_delay + extra_delay
+        session_state["timer"] = asyncio.create_task(
+            _schedule_asr(ws, session_id, config, delay=delay)
+        )
+
+
+async def _filter_filler_words(text: str, config: AppConfig) -> dict:
+    """使用小模型过滤口语词,修正识别错误,整合成连贯文字。"""
+    from uniclaw.provider.router import achat
+    from uniclaw.tools.session.session import Session
+    from uniclaw.utils.message import MessageRole
+    from uniclaw.utils.format import parse_json_from_llm
+
+    if not config.mini_model_name:
+        return {"text": text, "meaningful": True}
+
+    # 创建临时 session 用于单轮对话
+    session = Session()
+    session.add_message(MessageRole.USER, text)
+
+    try:
+        ai_msg = await achat(
+            system_prompt=_ASR_FILTER_PROMPT,
+            session=session,
+            model_name=config.mini_model_name[0],
+            config=config,
+            enable_thinking=False,
+            thinking=False,
+        )
+        result = parse_json_from_llm(ai_msg.content)
+        if result:
+            return {
+                "text": result.get("text", "").strip(),
+                "meaningful": bool(result.get("meaningful", False)),
+            }
+        return {"text": text, "meaningful": True}
+    except Exception:
+        # LLM 调用失败,返回原文(视为有意义)
+        return {"text": text, "meaningful": True}
+
+
+_ASR_FILTER_PROMPT = """语音识别后处理助手。将语音识别结果整理成通顺的书面文字。
+
+规则:
+1. 去除语气词/口头禅(嗯、啊、哦、呃、那个、就是说、对对对等)
+2. 修正谐音错误(在那→在哪、什么时后→什么时候、因该→应该等)
+3. 补充标点,调整语序,保留原意
+4. 判断是否有实质意义(纯语气词、<2字视为无意义)
+
+返回JSON:{"text": "整理后文字", "meaningful": true/false}"""
+
+
 async def websocket_endpoint(ws: WebSocket):
     """WebSocket 入口(需要 JWT 认证,可信 IP 跳过)。"""
     # 可信 IP 跳过认证
     client_ip = ws.client.host if ws.client else ""
     from uniclaw.webui.app import _is_trusted_ip
+
     if not _is_trusted_ip(client_ip):
         # 从 query param 提取 token
         token = ws.query_params.get("token", "")
         if not token:
-            await ws.close(code=4001, reason="未提供认证 token")
+            await ws.close(code=4001, reason="未登录")
             return
         from uniclaw.webui.auth import verify_token
+
         username = verify_token(token)
         if not username:
-            await ws.close(code=4001, reason="认证 token 无效或已过期")
+            await ws.close(code=4001, reason="登录已过期")
             return
 
     await ws.accept()
