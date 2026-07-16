@@ -45,28 +45,6 @@
         </symbol>
     </svg>
 
-    <!-- 右上角设置 + 用户菜单 -->
-    <div id="top-right-controls" style="position:fixed;top:12px;right:16px;z-index:100;display:flex;align-items:center;gap:4px">
-        <button id="settings-btn" class="btn-icon" title="设置" style="opacity:0.7">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
-        </button>
-    <div id="user-menu" style="position:relative">
-        <button id="user-menu-btn" class="btn-icon" title="用户菜单" style="opacity:0.7">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-        </button>
-        <div id="user-menu-dropdown" style="display:none;position:absolute;top:100%;right:0;margin-top:6px;background:var(--bg-2);border:1px solid var(--border);border-radius:var(--r-md);padding:4px;min-width:140px;box-shadow:var(--shadow-md)">
-            <button style="display:flex;align-items:center;gap:8px;width:100%;padding:8px 12px;border:none;background:none;color:var(--text-1);font-size:var(--text-sm);cursor:pointer;border-radius:var(--r-sm);text-align:left" onmouseover="this.style.background='var(--bg-3)'" onmouseout="this.style.background='none'" onclick="document.getElementById('change-pwd-modal').classList.remove('hidden');document.getElementById('user-menu-dropdown').style.display='none'">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-                修改密码
-            </button>
-            <button style="display:flex;align-items:center;gap:8px;width:100%;padding:8px 12px;border:none;background:none;color:var(--red);font-size:var(--text-sm);cursor:pointer;border-radius:var(--r-sm);text-align:left" onmouseover="this.style.background='var(--bg-3)'" onmouseout="this.style.background='none'" onclick="localStorage.removeItem('uniclaw_token');document.cookie='uniclaw_token=;path=/;max-age=0';window.location.href='/login.html'">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>
-                登出
-            </button>
-        </div>
-    </div>
-    </div>
-
     <div id="app">
         <div id="content-area">
             <!-- 左侧面板 -->
@@ -90,6 +68,27 @@
 
             <!-- 主聊天区 -->
             <main id="main-area">
+                <!-- 右上角设置 + 用户菜单 (相对于主区域定位) -->
+                <div id="top-right-controls" style="position:absolute;top:12px;right:16px;z-index:100;display:flex;align-items:center;gap:4px">
+                    <button id="settings-btn" class="btn-icon" title="设置" style="opacity:0.7">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+                    </button>
+                    <div id="user-menu" style="position:relative">
+                        <button id="user-menu-btn" class="btn-icon" title="用户菜单" style="opacity:0.7">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                        </button>
+                        <div id="user-menu-dropdown" style="display:none;position:absolute;top:100%;right:0;margin-top:6px;background:var(--bg-2);border:1px solid var(--border);border-radius:var(--r-md);padding:4px;min-width:140px;box-shadow:var(--shadow-md)">
+                            <button style="display:flex;align-items:center;gap:8px;width:100%;padding:8px 12px;border:none;background:none;color:var(--text-1);font-size:var(--text-sm);cursor:pointer;border-radius:var(--r-sm);text-align:left" onmouseover="this.style.background='var(--bg-3)'" onmouseout="this.style.background='none'" onclick="document.getElementById('change-pwd-modal').classList.remove('hidden');document.getElementById('user-menu-dropdown').style.display='none'">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                                修改密码
+                            </button>
+                            <button style="display:flex;align-items:center;gap:8px;width:100%;padding:8px 12px;border:none;background:none;color:var(--red);font-size:var(--text-sm);cursor:pointer;border-radius:var(--r-sm);text-align:left" onmouseover="this.style.background='var(--bg-3)'" onmouseout="this.style.background='none'" onclick="localStorage.removeItem('uniclaw_token');document.cookie='uniclaw_token=;path=/;max-age=0';window.location.href='/login.html'">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>
+                                登出
+                            </button>
+                        </div>
+                    </div>
+                </div>
                 <div id="chat-messages" class="chat-messages"></div>
                 <div id="todolist-area" class="todolist-area" style="display:none"></div>
                 <div id="spinner-area" class="spinner-area"></div>

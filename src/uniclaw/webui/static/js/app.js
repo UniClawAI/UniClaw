@@ -49,6 +49,7 @@ const App = {
         this._restorePanelState();
         this._bindResizeHandler();
         this._bindTouchGestures();
+        this._syncControlsWithRightPanel();
 
         Utils.hideLoading();
         console.log('[App] UniClaw WebUI 已初始化');
