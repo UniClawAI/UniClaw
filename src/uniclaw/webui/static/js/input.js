@@ -107,10 +107,8 @@ const Input = {
             WS.send({ type: 'command', session_id: sid, command: text });
             Chat._appendSystemMessage(text);
         } else {
-            const msg = { type: 'chat', content: text, files: this.attachedFiles.map(f => ({ name: f.name, data: f.data, mime: f.mime })) };
-            if (sid) msg.session_id = sid;
-            else if (rootDir === '__free__') msg.free_chat = true;
-            else msg.root_dir = rootDir;
+            if (!sid) { Utils.showToast('会话创建中,请稍候'); return; }
+            const msg = { type: 'chat', session_id: sid, content: text, files: this.attachedFiles.map(f => ({ name: f.name, data: f.data, mime: f.mime })) };
             WS.send(msg);
             // 不在本地追加——服务端会广播 UserEvent 回来,由 _onUser 统一显示
         }

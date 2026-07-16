@@ -87,7 +87,7 @@ async def get_or_load_session(session_id: str) -> AppConfig:
         return config
     # 从磁盘加载
     session = SessionManager.load_session(session_id)
-    if not session:
+    if session is None:
         raise ValueError(f"会话 {session_id} 不存在")
     spinner = WebSpinner()
     config = load_config(
@@ -621,14 +621,13 @@ async def handle_ws_message(ws: WebSocket, msg: dict):
     """处理客户端发来的 WS 消息。"""
     msg_type = msg.get("type", "")
 
-    # === chat 消息:区分创建会话和已有会话 ===
-    if msg_type == "chat":
+    # === 创建会话(前端点击"+"时发送) ===
+    if msg_type == "create_session":
         root_dir = msg.get("root_dir")
-        session_id = msg.get("session_id")
         free_chat = msg.get("free_chat", False)
 
-        if free_chat and not session_id:
-            # 创建自由聊天会话(无需项目目录,load_config 自动分配工作目录)
+        if free_chat:
+            # 创建自由聊天会话
             spinner = WebSpinner()
             from uniclaw.tools.session.session import SessionType
 
@@ -647,57 +646,70 @@ async def handle_ws_message(ws: WebSocket, msg: dict):
 
             spinner.set_send_callback(_broadcast_send_free)
             config.output_callback = _make_broadcast_callback(session_id)
-            await _safe_send(
-                ws,
+            await _broadcast(
                 {
                     "event": "session_created",
                     "session_id": session_id,
                 },
             )
-            await _start_bridge(session_id, config)
-        elif root_dir and not session_id:
-            # 创建新会话
+        elif root_dir:
+            # 创建项目会话
             spinner = WebSpinner()
             config = load_config(
                 root_dir=Path(root_dir), spinner=spinner, run_mode=RunMode.WEBUI
             )
             session_id = config.current_agent.session.id
             spinner.set_session_id(session_id)
-            # 初始化 event_queue
             config.current_agent.event_queue = asyncio.Queue()
             session_cache[session_id] = config
 
-            # spinner/output 回调广播到所有连接
             async def _broadcast_send(data):
                 await _broadcast(data)
 
             spinner.set_send_callback(_broadcast_send)
             config.output_callback = _make_broadcast_callback(session_id)
-            await _safe_send(
-                ws,
+            await _broadcast(
                 {
                     "event": "session_created",
                     "session_id": session_id,
                     "root_dir": root_dir,
                 },
             )
-            await _start_bridge(session_id, config)
-        elif session_id and not root_dir:
-            # 已有会话
-            config = await get_or_load_session(session_id)
-            config.spinner.set_session_id(session_id)
-            await _start_bridge(session_id, config)
-            # 重发待处理请求(处理新浏览器连接的场景)
-            await _resend_pending_requests(session_id)
         else:
             await _safe_send(
                 ws,
                 {
                     "event": "error",
-                    "message": "chat 消息必须带 root_dir、session_id 或 free_chat",
+                    "message": "create_session 消息必须带 root_dir 或 free_chat",
                 },
             )
             return
+        return
+
+    # === chat 消息:已有会话的消息发送 ===
+    if msg_type == "chat":
+        session_id = msg.get("session_id")
+        if not session_id:
+            await _safe_send(
+                ws,
+                {
+                    "event": "error",
+                    "message": "chat 消息必须带 session_id,请先创建会话",
+                },
+            )
+            return
+
+        try:
+            config = await get_or_load_session(session_id)
+        except ValueError as e:
+            await _safe_send(
+                ws, {"event": "error", "message": str(e), "session_id": session_id}
+            )
+            return
+
+        config.spinner.set_session_id(session_id)
+        await _start_bridge(session_id, config)
+        await _resend_pending_requests(session_id)
 
         # 存储 ws 回调,供 web_input / AskUserQuestion 等使用
         config.ws_send = ws.send_json

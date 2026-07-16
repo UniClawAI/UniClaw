@@ -189,7 +189,7 @@ async def get_session(session_id: str):
             session is None or len(file_session._messages) > len(session._messages)
         ):
             session = file_session
-    if not session:
+    if session is None:
         raise HTTPException(status_code=404, detail=f"会话不存在: {session_id}")
     # 手动构建响应(避免 to_dict 的 async/config 依赖)
     from datetime import datetime

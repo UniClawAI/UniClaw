@@ -24,6 +24,7 @@ const SessionPanel = {
         });
         WS.on('session_deleted', msg => this._onSessionDeleted(msg));
         WS.on('session_switched', msg => this._onSessionSwitched(msg));
+        WS.on('session_created', msg => this._onSessionCreated(msg));
     },
 
     _bindEvents() {
@@ -288,6 +289,14 @@ const SessionPanel = {
         this._refreshSessions();
     },
 
+    _onSessionCreated(msg) {
+        if (!msg.session_id) return;
+        this.activeSessionId = msg.session_id;
+        Chat.currentSessionId = msg.session_id;
+        this._updateStatusBar(this.activeProjectDir, msg.session_id);
+        this._refreshSessions();
+    },
+
     _onStatus(msg) {
         const sid = msg.session_id;
         if (!sid) return;
@@ -480,6 +489,8 @@ const SessionPanel = {
         Chat.clear();
         Chat._appendWelcomeScreen();
         this._render();
+        // 通知后端创建 session
+        WS.send({ type: 'create_session', root_dir: rootDir });
     },
 
     /** 创建自由聊天会话 */
@@ -492,6 +503,8 @@ const SessionPanel = {
         Chat.clear();
         Chat._appendWelcomeScreen();
         this._render();
+        // 通知后端创建 session
+        WS.send({ type: 'create_session', free_chat: true });
     },
 
     _updateStatusBar(rootDir, sessionId, skipFetch = false) {
