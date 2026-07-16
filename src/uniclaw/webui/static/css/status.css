@@ -294,36 +294,36 @@
 
 /* ---- 响应式: 手机 (≤768px) ---- */
 @media (max-width: 768px) {
-    /* 隐藏次要状态项 */
-    #status-bar .status-sep,
-    #status-tokens,
-    #toggle-usage,
-    #status-cu,
-    #status-voice,
-    #history-toggle {
-        display: none !important;
-    }
     #status-bar {
-        gap: 4px;
-        padding: 0 6px;
+        flex-wrap: wrap;
+        height: auto;
+        gap: 4px 6px;
+        padding: 4px 6px;
         font-size: 10px;
         z-index: 110; /* 高于面板 z-index:100,确保不被遮挡 */
     }
+    /* 隐藏弹性占位,避免撑满第一行阻止换行 */
+    .status-spacer {
+        display: none !important;
+    }
+    /* 所有子项不压缩 */
+    #status-bar > * {
+        flex-shrink: 0;
+    }
+    /* toggle-right 推到行尾 */
+    #toggle-right {
+        margin-left: auto;
+    }
     .session-label {
-        max-width: 120px;
+        max-width: 100px;
     }
 }
 
 /* ---- 响应式: 小屏手机 (≤480px) ---- */
 @media (max-width: 480px) {
-    #status-context,
-    #status-session {
-        display: none !important;
-    }
     #status-bar {
-        height: 28px;
-        gap: 4px;
-        padding: 0 4px;
+        padding: 3px 4px;
+        gap: 3px 5px;
     }
     .context-mini-bar {
         width: 40px;
