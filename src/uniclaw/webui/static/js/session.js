@@ -276,6 +276,7 @@ const SessionPanel = {
         const sid = msg.session_id;
         if (!sid) return;
         if (this.activeSessionId === sid) {
+            this._clearSessionFromUrl();
             const rootDir = msg.root_dir ?? this.activeProjectDir;
             if (rootDir) this.createSession(rootDir);
             else { this.activeSessionId = null; Chat.clear(); Chat._appendSystemMessage('请选择项目或发送消息开始对话'); this._render(); }
@@ -293,6 +294,7 @@ const SessionPanel = {
         if (!msg.session_id) return;
         this.activeSessionId = msg.session_id;
         Chat.currentSessionId = msg.session_id;
+        this._saveSessionToUrl(msg.session_id);
         this._updateStatusBar(this.activeProjectDir, msg.session_id);
         this._refreshSessions();
     },
@@ -328,6 +330,43 @@ const SessionPanel = {
             }
         }
         await this._refreshSessions();
+        // 恢复上次选中的 session：URL 参数优先，localStorage 兜底
+        const urlSid = new URLSearchParams(window.location.search).get('session_id');
+        const savedSid = urlSid || localStorage.getItem('uniclaw_active_session');
+        if (savedSid) {
+            const found = this._findSession(savedSid);
+            if (found) {
+                this.selectSession(savedSid, found.rootDir);
+            } else if (!urlSid) {
+                // 仅在非 URL 来源时清除 localStorage，避免用户手动输入的 URL 被误删
+                localStorage.removeItem('uniclaw_active_session');
+            }
+        }
+    },
+
+    /** 在所有项目中查找 session，返回 { rootDir, session } 或 null */
+    _findSession(sessionId) {
+        for (const [rootDir, proj] of Object.entries(this.projects)) {
+            const s = proj.sessions.find(s => s.session_id === sessionId);
+            if (s) return { rootDir, session: s };
+        }
+        return null;
+    },
+
+    /** 将 session_id 写入 URL query 参数（不触发页面刷新） */
+    _saveSessionToUrl(sessionId) {
+        const url = new URL(window.location);
+        url.searchParams.set('session_id', sessionId);
+        history.replaceState(null, '', url);
+        localStorage.setItem('uniclaw_active_session', sessionId);
+    },
+
+    /** 从 URL 中移除 session_id 参数 */
+    _clearSessionFromUrl() {
+        const url = new URL(window.location);
+        url.searchParams.delete('session_id');
+        history.replaceState(null, '', url);
+        localStorage.removeItem('uniclaw_active_session');
     },
 
     async _refreshSessions() {
@@ -466,6 +505,7 @@ const SessionPanel = {
         this.activeSessionId = sessionId;
         this.activeProjectDir = rootDir;
         Chat.currentSessionId = sessionId;
+        this._saveSessionToUrl(sessionId);
         Chat._resetStreamingState();
         Permission.closeIfSessionMismatch(sessionId);
         InputDialog.closeIfSessionMismatch(sessionId);
