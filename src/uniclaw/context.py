@@ -188,6 +188,11 @@ async def build_system_prompt(config: AppConfig):
     if config.is_free_chat:
         return _build_free_chat_prompt(config)
 
+    # Session 自定义系统提示词:直接返回,跳过默认构建
+    task = config.current_agent
+    if task and task.session.system_prompt:
+        return task.session.system_prompt
+
     system_prompt = get_base_system_prompt(config)
 
     # === 稳定内容(低频变化,最大化缓存前缀命中) ===

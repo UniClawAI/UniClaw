@@ -162,7 +162,11 @@ class SessionManager:
         root_dir = original.get("root_dir")
         if root_dir == "None":
             root_dir = None
-        forked = Session(title=title, root_dir=Path(root_dir) if root_dir else None)
+        forked = Session(
+            title=title,
+            root_dir=Path(root_dir) if root_dir else None,
+            system_prompt=original.get("system_prompt"),
+        )
         for msg in messages[: message_idx + 1]:
             role = msg.get("role", "")
             content = msg.get("content", "")

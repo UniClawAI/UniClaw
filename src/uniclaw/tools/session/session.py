@@ -533,6 +533,7 @@ class Session:
     start_time: datetime = field(default_factory=datetime.now)
     title: str | None = None
     session_type: SessionType = SessionType.CONSOLE
+    system_prompt: str | None = None
 
     @property
     def is_wechat(self) -> bool:
@@ -632,6 +633,7 @@ class Session:
             title=data.get("title", ""),
             start_time=start_time,
             session_type=SessionType(data.get("session_type", "console")),
+            system_prompt=data.get("system_prompt"),
         )
         # 加载 _messages
         messages_data = data.get("messages", [])
@@ -764,6 +766,7 @@ class Session:
             "title": self.title,
             "root_dir": root_dir,
             "session_type": self.session_type,
+            "system_prompt": self.system_prompt,
             "start_time": self.start_time.isoformat(),
             "end_time": now.strftime("%Y-%m-%d %H:%M:%S"),
             "duration_seconds": duration,

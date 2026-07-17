@@ -45,7 +45,7 @@ async def cmd_clear(_args: str, config: AppConfig) -> bool:
     Args:
         _args: 未使用的参数
         task: 当前代理任务对象,其消息历史将被清空
-        _config: 未使用的配置字典
+        config: 未使用的配置字典
 
     Returns:
         bool: 始终返回 True 表示命令执行完成
