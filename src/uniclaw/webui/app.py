@@ -304,6 +304,14 @@ async def index():
 
 
 @app.get("/login.html")
-async def login_page():
-    """返回登录页面。"""
+async def login_page(request: Request):
+    """返回登录页面。已认证用户或可信 IP 直接跳转主页。"""
+    # 可信 IP 跳转
+    client_ip = request.client.host if request.client else ""
+    if _is_trusted_ip(client_ip):
+        return RedirectResponse(url="/", status_code=302)
+    # 已登录跳转
+    token = request.cookies.get("uniclaw_token")
+    if token and auth.verify_token(token):
+        return RedirectResponse(url="/", status_code=302)
     return _serve_html(STATIC_DIR / "login.html")
