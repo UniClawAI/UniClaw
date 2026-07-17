@@ -4,7 +4,7 @@ from typing import Optional, List
 from uniclaw.tools.base import tool
 from uniclaw.utils.constants import TOOL_ERROR
 from uniclaw.config import AppConfig
-from uniclaw.provider import achat
+from uniclaw.provider.fallback import achat
 from uniclaw.tools.skill.executor import run_skill
 from .loader import SkillDef, load_skills, find_skill
 
@@ -106,7 +106,7 @@ async def skill_suggest(
         resp = await achat(
             system_prompt,
             _session,
-            model_name=config.mini_model_name[0] if config.mini_model_name else "",
+            model_name=config.mini_model_name,
             enable_thinking=False,
             thinking=False,
             config=config,

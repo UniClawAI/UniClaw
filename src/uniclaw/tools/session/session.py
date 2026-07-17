@@ -839,12 +839,12 @@ class Session:
         title_session.add_user_message(content=prompt)
 
         try:
-            from uniclaw.provider import achat
+            from uniclaw.provider.fallback import achat
 
             resp = await achat(
                 system_prompt,
                 title_session,
-                model_name=config.mini_model_name[0] if config.mini_model_name else "",
+                model_name=config.mini_model_name,
                 enable_thinking=False,
                 thinking=False,
                 config=config,

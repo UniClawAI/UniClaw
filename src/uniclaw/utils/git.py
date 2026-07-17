@@ -477,7 +477,7 @@ refactor: 统一配置加载逻辑
 - 使用 pydantic-settings 做类型校验和默认值处理"""
 
     try:
-        from uniclaw.provider import achat
+        from uniclaw.provider.fallback import achat
         from uniclaw.tools.session.session import Session
 
         session = Session()
@@ -488,7 +488,7 @@ refactor: 统一配置加载逻辑
         resp = await achat(
             system_prompt,
             session,
-            model_name=config.mini_model_name[0] if config.mini_model_name else "",
+            model_name=config.mini_model_name,
             enable_thinking=False,
             thinking=False,
             config=config,

@@ -356,7 +356,7 @@ async def optimize_prompt(body: PromptOptimize):
         return {"optimized": ""}
 
     from uniclaw.tools.session.session import Session, SessionType
-    from uniclaw.provider import achat
+    from uniclaw.provider.fallback import achat
     from uniclaw.config import load_config
 
     config = load_config()
@@ -367,7 +367,7 @@ async def optimize_prompt(body: PromptOptimize):
             "你是一个提示词优化专家。用户会给你一段系统提示词,请优化它,使其更清晰、更结构化、更有效。"
             "保持用户的原始意图不变,只改进表达。直接输出优化后的提示词,不要解释。",
             session,
-            model_name=config.mini_model_name[0] if config.mini_model_name else "",
+            model_name=config.mini_model_name,
             enable_thinking=False,
             thinking=False,
             config=config,

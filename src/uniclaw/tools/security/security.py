@@ -411,7 +411,7 @@ def bash_desc(cmd: str, config: AppConfig) -> str:
     Returns:
         AI 生成的命令描述和安全风险评估文本
     """
-    from uniclaw.provider import chat
+    from uniclaw.provider.fallback import chat
     from uniclaw.tools.session.session import Session
 
     # 构建提示词
@@ -439,7 +439,7 @@ def bash_desc(cmd: str, config: AppConfig) -> str:
         response = chat(
             system_prompt,
             session,
-            model_name=config.mini_model_name[0] if config.mini_model_name else "",
+            model_name=config.mini_model_name,
             enable_thinking=False,
             thinking=False,
             config=config,
@@ -506,7 +506,7 @@ async def llm_safe_check(tc: dict, config: AppConfig) -> tuple[bool, str]:
             - (False, explanation): 有安全风险,需要用户确认
             - (False, ""): LLM 调用失败,降级到需要用户确认
     """
-    from uniclaw.provider import achat
+    from uniclaw.provider.fallback import achat
     from uniclaw.tools.security.tools import _load_llm_safe_prompt
     from uniclaw.tools.base import tc_name, tc_args
     from uniclaw.tools.session.session import Session
@@ -581,7 +581,7 @@ explanation 要求:
         response = await achat(
             system_prompt,
             session,
-            model_name=config.mini_model_name[0] if config.mini_model_name else "",
+            model_name=config.mini_model_name,
             temperature=0,
             max_tokens=5000,
             enable_thinking=False,

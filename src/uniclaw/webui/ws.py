@@ -1164,7 +1164,7 @@ async def _handle_asr_stream_audio(
 
 async def _filter_filler_words(text: str, config: AppConfig) -> dict:
     """使用小模型过滤口语词,修正识别错误,整合成连贯文字。"""
-    from uniclaw.provider.router import achat
+    from uniclaw.provider.fallback import achat
     from uniclaw.tools.session.session import Session
     from uniclaw.utils.message import MessageRole
     from uniclaw.utils.format import parse_json_from_llm
@@ -1180,7 +1180,7 @@ async def _filter_filler_words(text: str, config: AppConfig) -> dict:
         ai_msg = await achat(
             system_prompt=_ASR_FILTER_PROMPT,
             session=session,
-            model_name=config.mini_model_name[0],
+            model_name=config.mini_model_name,
             config=config,
             enable_thinking=False,
             thinking=False,

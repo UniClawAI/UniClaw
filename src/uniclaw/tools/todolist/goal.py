@@ -100,7 +100,7 @@ async def evaluate_goal(
     Returns:
         (status, reason): 状态和原因说明
     """
-    from uniclaw.provider import achat
+    from uniclaw.provider.fallback import achat
 
     judge_prompt = (
         f"你是一个严格的目标评估员。请根据以下对话内容,判断目标状态。\n\n"
@@ -130,7 +130,7 @@ async def evaluate_goal(
             ),
             session=session,
             config=config,
-            model_name=config.mini_model_name[0] if config.mini_model_name else "",
+            model_name=config.mini_model_name,
             temperature=0.0,
             max_tokens=200,
             tools=None,
