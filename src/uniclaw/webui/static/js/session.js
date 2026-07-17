@@ -330,7 +330,7 @@ const SessionPanel = {
             }
         }
         await this._refreshSessions();
-        // 恢复上次选中的 session：URL 参数优先，localStorage 兜底
+        // 恢复上次选中的 session：URL 参数优先,localStorage 兜底
         const urlSid = new URLSearchParams(window.location.search).get('session_id');
         const savedSid = urlSid || localStorage.getItem('uniclaw_active_session');
         if (savedSid) {
@@ -338,17 +338,17 @@ const SessionPanel = {
             if (found) {
                 this.selectSession(savedSid, found.rootDir);
             } else if (urlSid) {
-                // URL 中的 session_id 无效，清除参数并显示主页
+                // URL 中的 session_id 无效,清除参数并显示主页
                 this._clearSessionFromUrl();
                 localStorage.removeItem('uniclaw_active_session');
             } else {
-                // localStorage 中的 session 无效，清除
+                // localStorage 中的 session 无效,清除
                 localStorage.removeItem('uniclaw_active_session');
             }
         }
     },
 
-    /** 在所有项目中查找 session，返回 { rootDir, session } 或 null */
+    /** 在所有项目中查找 session,返回 { rootDir, session } 或 null */
     _findSession(sessionId) {
         for (const [rootDir, proj] of Object.entries(this.projects)) {
             const s = proj.sessions.find(s => s.session_id === sessionId);
@@ -357,7 +357,7 @@ const SessionPanel = {
         return null;
     },
 
-    /** 将 session_id 写入 URL query 参数（不触发页面刷新） */
+    /** 将 session_id 写入 URL query 参数(不触发页面刷新) */
     _saveSessionToUrl(sessionId) {
         const url = new URL(window.location);
         url.searchParams.set('session_id', sessionId);

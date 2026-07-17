@@ -544,6 +544,7 @@ class Session:
     history: list[UserMessage | AIMessage | ToolCallMessage] = field(
         default_factory=list
     )
+    _compact_count: int = field(default=0, repr=False)  # _messages 开头的压缩摘要消息数 (0 或 2)
     dedup_cache: set = field(default_factory=set, repr=False)  # 只读工具结果去重缓存
     from uniclaw.tools.fs import Glob, Read
     from uniclaw.tools.search import platform_search
@@ -632,7 +633,9 @@ class Session:
             start_time=start_time,
             session_type=SessionType(data.get("session_type", "console")),
         )
-        for message in data.get("messages", []):
+        # 加载 _messages
+        messages_data = data.get("messages", [])
+        for message in messages_data:
             role = message.get("role")
             if role == MessageRole.USER:
                 session.add_user_message(content=message.get("content", ""))
@@ -653,18 +656,42 @@ class Session:
                         "args": message.get("args", {}),
                     },
                 )
-        # 恢复 history(兼容旧数据:没有 history 字段时用 messages 填充)
-        history_data = data.get("history")
-        if history_data is not None:
-            session.history.clear()
-            for message in history_data:
+
+        version = data.get("version", 1)
+        if version >= 2:
+            # 新格式: compacted + messages 重建 history
+            compact_count = data.get("compact_count", 0)
+            compacted_data = data.get("compacted", [])
+            compacted_msgs = []
+            for message in compacted_data:
                 role = message.get("role")
                 if role == MessageRole.USER:
-                    session.history.append(UserMessage.from_dict(message))
+                    compacted_msgs.append(UserMessage.from_dict(message))
                 elif role == MessageRole.ASSISTANT:
-                    session.history.append(AIMessage.from_dict(message))
+                    compacted_msgs.append(AIMessage.from_dict(message))
                 elif role == MessageRole.TOOL:
-                    session.history.append(ToolCallMessage.from_dict(message))
+                    compacted_msgs.append(ToolCallMessage.from_dict(message))
+            # history = compacted + 最近消息(跳过 _messages 开头的摘要)
+            recent_msgs = session._messages[compact_count:]
+            session.history = compacted_msgs + recent_msgs
+            session._compact_count = compact_count
+        else:
+            # 旧格式: history 字段直接恢复
+            history_data = data.get("history")
+            if history_data is not None:
+                session.history.clear()
+                for message in history_data:
+                    role = message.get("role")
+                    if role == MessageRole.USER:
+                        session.history.append(UserMessage.from_dict(message))
+                    elif role == MessageRole.ASSISTANT:
+                        session.history.append(AIMessage.from_dict(message))
+                    elif role == MessageRole.TOOL:
+                        session.history.append(ToolCallMessage.from_dict(message))
+                # history 和 messages 长度相同 → 未压缩,否则 → 已压缩
+                session._compact_count = (
+                    0 if len(history_data) == len(messages_data) else 2
+                )
         return session
 
     def to_openai_messages(self) -> list[dict[str, str | list[dict[str, Any]]]]:
@@ -729,6 +756,9 @@ class Session:
             1 for message in self._messages if isinstance(message, AIMessage)
         )
         root_dir = str(self.root_dir) if self.root_dir else None
+        # 计算 history 中的旧消息数(压缩前的部分)
+        recent_count = len(self._messages) - self._compact_count
+        old_count = max(0, len(self.history) - recent_count)
         data = {
             "session_id": self.id,
             "title": self.title,
@@ -741,8 +771,10 @@ class Session:
             "total_input_tokens": total_input_tokens,
             "total_output_tokens": total_output_tokens,
             "api_calls": api_calls,
+            "version": 2,
+            "compact_count": self._compact_count,
+            "compacted": [m.to_dict() for m in self.history[:old_count]],
             "messages": self.to_messages(),
-            "history": self.to_history_messages(),
         }
         return data
 
@@ -1013,6 +1045,7 @@ class Session:
             )
         )
         self._messages.extend(recent)
+        self._compact_count = 2
 
     def _find_split_point(self, keep_ratio: float = 0.3) -> int:
         """查找分割点使最近部分约占总 token 的 keep_ratio。"""

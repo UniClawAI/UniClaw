@@ -227,7 +227,8 @@ def get_history_range(
 
 def get_recall_system_prompt(session: Session) -> str:
     """返回历史检索的系统提示词,仅当存在被压缩的历史消息时返回内容。"""
-    archived_count = len(session.history) - len(session._messages)
+    recent_count = len(session._messages) - session._compact_count
+    archived_count = len(session.history) - recent_count
     if archived_count <= 0:
         return ""
     return (
