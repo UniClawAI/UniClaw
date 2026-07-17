@@ -113,10 +113,17 @@ const App = {
             }
         });
 
+        let _hasConnected = false;
         WS.on('connected', () => {
             const dot = document.getElementById('connection-dot');
             if (dot) dot.className = 'connection-dot connected';
             document.getElementById('status-model').textContent = '已连接';
+            if (_hasConnected) {
+                Utils.showSuccess('已重新连接到服务器');
+            } else {
+                Utils.showSuccess('已连接到服务器');
+                _hasConnected = true;
+            }
         });
         WS.on('disconnected', () => {
             const dot = document.getElementById('connection-dot');
