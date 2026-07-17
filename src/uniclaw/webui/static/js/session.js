@@ -397,9 +397,23 @@ const SessionPanel = {
                 savedDirs = Array.isArray(data) ? data : Object.keys(data);
             }
             Object.keys(this.projects).forEach(dir => { if (!grouped[dir] && !savedDirs.includes(dir)) delete this.projects[dir]; });
+
+            // 第一步：更新所有项目的 sessions 数据
             Object.keys(grouped).forEach(dir => {
                 if (!this.projects[dir]) this.projects[dir] = { sessions: [], expanded: true };
                 this.projects[dir].sessions = grouped[dir].sort((a, b) => (b.end_time || b.start_time || '').localeCompare(a.end_time || a.start_time || ''));
+            });
+
+            // 第二步：找到当前活动会话所在的项目（此时 sessions 已更新）
+            const urlSid = new URLSearchParams(window.location.search).get('session_id');
+            const activeSid = this.activeSessionId || urlSid || localStorage.getItem('uniclaw_active_session');
+            const activeSessionProject = activeSid ? this._findSession(activeSid)?.rootDir : null;
+
+            // 第三步：会话数超过 50 的项目，根据当前活动会话判断是否折叠
+            Object.keys(grouped).forEach(dir => {
+                if (this.projects[dir].sessions.length > 50) {
+                    this.projects[dir].expanded = (dir === activeSessionProject);
+                }
             });
             savedDirs.forEach(dir => { if (!this.projects[dir]) this.projects[dir] = { sessions: [], expanded: true }; });
             this._render();
