@@ -337,8 +337,12 @@ const SessionPanel = {
             const found = this._findSession(savedSid);
             if (found) {
                 this.selectSession(savedSid, found.rootDir);
-            } else if (!urlSid) {
-                // 仅在非 URL 来源时清除 localStorage，避免用户手动输入的 URL 被误删
+            } else if (urlSid) {
+                // URL 中的 session_id 无效，清除参数并显示主页
+                this._clearSessionFromUrl();
+                localStorage.removeItem('uniclaw_active_session');
+            } else {
+                // localStorage 中的 session 无效，清除
                 localStorage.removeItem('uniclaw_active_session');
             }
         }
