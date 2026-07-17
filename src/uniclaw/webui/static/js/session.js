@@ -539,6 +539,80 @@ const SessionPanel = {
 
     /** 创建自由聊天会话 */
     createFreeChat() {
+        this._showFreeChatDialog();
+    },
+
+    /** 显示自由聊天创建对话框(系统提示词输入) */
+    _showFreeChatDialog() {
+        const old = document.getElementById('session-modal'); if (old) old.remove();
+        const modal = document.createElement('div');
+        modal.id = 'session-modal';
+        modal.className = 'modal-overlay';
+        const bodyHtml = `
+            <div style="margin-bottom:8px;font-size:13px;color:var(--text-2)">自定义系统提示词(可选)</div>
+            <div style="position:relative;">
+                <textarea id="fc-system-prompt" rows="12" placeholder="输入自定义系统提示词,留空则使用默认提示词..."
+                    style="width:100%;padding:10px;border:1px solid var(--border);border-radius:var(--r-md);
+                    background:var(--bg-base);color:var(--text-1);font-size:13px;resize:vertical;
+                    font-family:var(--font-mono, monospace);line-height:1.5;"></textarea>
+                <button id="fc-optimize-btn" title="AI 优化提示词"
+                    style="position:absolute;top:6px;right:6px;padding:2px 4px;border:none;
+                    background:transparent;font-size:14px;cursor:pointer;opacity:0.5;
+                    transition:opacity .15s;line-height:1;"
+                    onmouseover="this.style.opacity='1'"
+                    onmouseout="this.style.opacity='0.5'">
+                    ✨
+                </button>
+            </div>`;
+        modal.innerHTML = `<div class="modal-content" style="max-width:680px;">
+            <div class="modal-title">新建自由聊天</div>
+            <div class="modal-body">${bodyHtml}</div>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" id="sm-cancel">取消</button>
+                <button class="btn btn-primary" id="sm-confirm">确认</button>
+            </div></div>`;
+        document.body.appendChild(modal);
+
+        const textarea = document.getElementById('fc-system-prompt');
+        const optimizeBtn = document.getElementById('fc-optimize-btn');
+        let optimizing = false;
+
+        optimizeBtn.onclick = async () => {
+            const prompt = textarea.value.trim();
+            if (!prompt || optimizing) return;
+            optimizing = true;
+            optimizeBtn.textContent = '⏳';
+            optimizeBtn.disabled = true;
+            try {
+                const resp = await fetch('/api/optimize-prompt', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ prompt }),
+                });
+                if (resp.ok) {
+                    const data = await resp.json();
+                    if (data.optimized) textarea.value = data.optimized;
+                }
+            } catch (e) {
+                console.error('优化失败:', e);
+            } finally {
+                optimizing = false;
+                optimizeBtn.textContent = '✨';
+                optimizeBtn.disabled = false;
+            }
+        };
+
+        document.getElementById('sm-cancel').onclick = () => modal.remove();
+        document.getElementById('sm-confirm').onclick = () => {
+            const systemPrompt = textarea.value.trim() || null;
+            modal.remove();
+            this._doCreateFreeChat(systemPrompt);
+        };
+        textarea.focus();
+    },
+
+    /** 执行自由聊天会话创建 */
+    _doCreateFreeChat(systemPrompt) {
         this.activeSessionId = null;
         this.activeProjectDir = '__free__';
         Chat.currentSessionId = null;
@@ -547,8 +621,9 @@ const SessionPanel = {
         Chat.clear();
         Chat._appendWelcomeScreen();
         this._render();
-        // 通知后端创建 session
-        WS.send({ type: 'create_session', free_chat: true });
+        const msg = { type: 'create_session', free_chat: true };
+        if (systemPrompt) msg.system_prompt = systemPrompt;
+        WS.send(msg);
     },
 
     _updateStatusBar(rootDir, sessionId, skipFetch = false) {

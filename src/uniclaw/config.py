@@ -488,6 +488,7 @@ def load_config(
     session: Session | str = "",
     run_mode: RunMode = RunMode.CONSOLE,
     session_type: SessionType | None = None,  # None 则使用 Session 默认值
+    system_prompt: str | None = None,
 ) -> AppConfig:
     """从 settings.json 加载配置,内部创建 Session 和 AgentTask(name="root")。
 
@@ -497,6 +498,7 @@ def load_config(
         session: 可选,传入已有 Session 则直接复用,否则新建
         run_mode: 运行模式,控制输入输出方式(console/wechat/webui)
         session_type: 会话类型,有值时覆盖 Session 的默认值
+        system_prompt: 自定义系统提示词,有值时跳过默认构建逻辑
     """
     # 默认值
     if spinner is None:
@@ -514,6 +516,7 @@ def load_config(
             root_dir=root_dir,
             id=session,
             session_type=session_type or SessionType.CONSOLE,
+            system_prompt=system_prompt,
         )
     elif session_type is not None:
         session.session_type = session_type

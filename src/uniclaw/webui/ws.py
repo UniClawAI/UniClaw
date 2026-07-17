@@ -640,6 +640,7 @@ async def handle_ws_message(ws: WebSocket, msg: dict):
                 spinner=spinner,
                 run_mode=RunMode.WEBUI,
                 session_type=SessionType.FREE_CHAT,
+                system_prompt=msg.get("system_prompt") or None,
             )
             session_id = config.current_agent.session.id
             spinner.set_session_id(session_id)

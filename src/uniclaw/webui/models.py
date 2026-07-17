@@ -227,6 +227,13 @@ class AsrStreamRequest(BaseModel):
     session_id: str = Field(description="目标会话 ID")
 
 
+class PromptOptimize(BaseModel):
+    """优化提示词。"""
+
+    prompt: str
+    type: str = "system"  # "system" | "user"
+
+
 class ProviderConfig(BaseModel):
     """单个 Provider 配置。"""
 

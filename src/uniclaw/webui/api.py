@@ -20,6 +20,7 @@ from uniclaw.webui.models import (
     HookUpdate,
     MessageDelete,
     PermissionRuleDelete,
+    PromptOptimize,
     SessionMove,
     SessionRename,
     SettingsUpdate,
@@ -346,6 +347,34 @@ async def update_config(body: ConfigUpdate):
         return {"ok": True}
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.post("/optimize-prompt")
+async def optimize_prompt(body: PromptOptimize):
+    """优化系统提示词。"""
+    if not body.prompt.strip():
+        return {"optimized": ""}
+
+    from uniclaw.tools.session.session import Session, SessionType
+    from uniclaw.provider import achat
+    from uniclaw.config import load_config
+
+    config = load_config()
+    session = Session()
+    session.add_user_message(body.prompt)
+    try:
+        resp = await achat(
+            "你是一个提示词优化专家。用户会给你一段系统提示词,请优化它,使其更清晰、更结构化、更有效。"
+            "保持用户的原始意图不变,只改进表达。直接输出优化后的提示词,不要解释。",
+            session,
+            model_name=config.mini_model_name[0] if config.mini_model_name else "",
+            enable_thinking=False,
+            thinking=False,
+            config=config,
+        )
+        return {"optimized": resp.content.strip()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 def _mask_key(key: str) -> str:
