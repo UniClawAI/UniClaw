@@ -8,6 +8,7 @@ from pathlib import Path
 import uvicorn
 
 from uniclaw.utils.logger import get_logger
+import ipaddress
 import socket
 
 
@@ -62,16 +63,18 @@ async def launch(host: str = "127.0.0.1", port: int = 8080, ssl: bool = False, d
     logger.info(f"启动 WebUI 模式,地址: {host}:{port}")
 
     print(f"\n  UniClaw WebUI 已启动")
-    if host == "0.0.0.0":
+    if host in ("0.0.0.0", "::"):
         # 显示本机 IP 地址方便局域网访问
-        local_ip = _get_local_ip()
+        local_ip = _get_local_ip(is_ipv6=_is_ipv6(host))
         print(f"  本地访问: {protocol}://localhost:{port}")
         if local_ip:
-            print(f"  局域网访问: {protocol}://{local_ip}:{port}")
+            ip_display = f"[{local_ip}]" if _is_ipv6(local_ip) else local_ip
+            print(f"  局域网访问: {protocol}://{ip_display}:{port}")
         else:
             print(f"  局域网访问: {protocol}://<本机IP>:{port}")
     else:
-        print(f"  请在浏览器中打开: {protocol}://{host}:{port}")
+        display_host = f"[{host}]" if _is_ipv6(host) else host
+        print(f"  请在浏览器中打开: {protocol}://{display_host}:{port}")
     print()
 
     config = uvicorn.Config(
@@ -94,12 +97,32 @@ def _ensure_ssl_certs(domain: str = "") -> tuple[str, str]:
     return get_or_create_certs(domain)
 
 
-def _get_local_ip() -> str:
-    """获取本机局域网 IP 地址。"""
+def _is_ipv6(host: str) -> bool:
+    """判断地址是否为 IPv6。"""
     try:
-        # 通过连接外部地址获取本机 IP(不会真正发送数据)
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-            s.connect(("8.8.8.8", 80))
-            return s.getsockname()[0]
-    except Exception:
-        return ""
+        addr = ipaddress.ip_address(host)
+        return addr.version == 6
+    except ValueError:
+        return False
+
+
+def _get_local_ip(is_ipv6: bool = False) -> str:
+    """获取本机局域网 IP 地址。
+
+    Args:
+        is_ipv6: True 时使用 IPv6 协议族,否则使用 IPv4。
+    """
+    if is_ipv6:
+        try:
+            with socket.socket(socket.AF_INET6, socket.SOCK_DGRAM) as s:
+                s.connect(("2001:4860:4860::8888", 80))
+                return s.getsockname()[0].split("%")[0]  # 去掉 scope ID
+        except Exception:
+            return ""
+    else:
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                s.connect(("8.8.8.8", 80))
+                return s.getsockname()[0]
+        except Exception:
+            return ""
