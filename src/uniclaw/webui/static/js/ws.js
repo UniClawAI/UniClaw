@@ -62,11 +62,11 @@ const WS = {
                 window.location.href = '/login.html';
                 return;
             }
-            // 连接失败但没有token,也跳转登录页
+            // 其他断开情况,尝试重连(app.js 会通过事件显示 toast)
             if (!this._getCookie('uniclaw_token') && !localStorage.getItem('uniclaw_token')) {
-                console.log('[WS] 没有token,跳转登录页');
-                window.location.href = '/login.html';
-                return;
+                console.log('[WS] 没有token,尝试重连(可信IP可能无需认证)');
+            } else {
+                console.log('[WS] 连接断开,尝试重连');
             }
             this._scheduleReconnect();
         };
@@ -121,12 +121,11 @@ const WS = {
     /** 自动重连 */
     _scheduleReconnect() {
         if (this.reconnectTimer) return;
-        if (!localStorage.getItem('uniclaw_token')) return;
         this.reconnectTimer = setTimeout(() => {
             this.reconnectTimer = null;
             console.log('[WS] 尝试重连...');
             this.connect();
         }, this.reconnectDelay);
-        this.reconnectDelay = Math.min(this.reconnectDelay * 2, 30000);
+        this.reconnectDelay = Math.min(this.reconnectDelay * 2, 60000);
     },
 };
