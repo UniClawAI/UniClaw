@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import uvicorn
@@ -27,6 +28,20 @@ async def launch(host: str = "127.0.0.1", port: int = 8080, ssl: bool = False, d
     await Scheduler.get_instance().start()
 
     logger = get_logger("webui", Path.cwd())
+
+    # Windows ProactorEventLoop 在 HTTPS/WSS 连接关闭时会抛出
+    # _ProactorBasePipeTransport._call_connection_lost() 异常
+    # (ConnectionResetError: [WinError 10054]),通过自定义异常处理器过滤此无害错误
+    loop = asyncio.get_running_loop()
+    _default_handler = loop.get_exception_handler() or loop.default_exception_handler
+
+    def _suppress_connection_reset(loop, context):
+        exc = context.get("exception")
+        if isinstance(exc, ConnectionResetError):
+            return
+        _default_handler(loop, context)
+
+    loop.set_exception_handler(_suppress_connection_reset)
 
     # SSL 配置
     ssl_keyfile = None
@@ -66,6 +81,8 @@ async def launch(host: str = "127.0.0.1", port: int = 8080, ssl: bool = False, d
         log_level="info",
         ssl_keyfile=ssl_keyfile,
         ssl_certfile=ssl_certfile,
+        ws_ping_interval=30,  # 每 30 秒发送 ping,及时检测死连接
+        ws_ping_timeout=10,   # 10 秒无 pong 响应则关闭连接
     )
     server = uvicorn.Server(config)
     await server.serve()

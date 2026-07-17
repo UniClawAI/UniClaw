@@ -508,10 +508,15 @@ async def bridge_events(session_id: str, config: AppConfig):
 
 
 async def _safe_send(ws: WebSocket, data: dict):
-    """安全发送 WebSocket 消息,忽略断开异常。"""
+    """安全发送 WebSocket 消息,断开时自动从连接池移除。"""
     try:
         await ws.send_json(data)
+    except (ConnectionResetError, OSError, WebSocketDisconnect):
+        async with _connected_ws_lock:
+            _connected_ws.discard(ws)
     except Exception:
+        async with _connected_ws_lock:
+            _connected_ws.discard(ws)
         get_logger("webui", Path.cwd()).debug(
             f"WebSocket 发送失败(连接可能已断开): {traceback.format_exc()}"
         )
@@ -1235,6 +1240,8 @@ async def websocket_endpoint(ws: WebSocket):
             t.add_done_callback(_log_task_error)
     except WebSocketDisconnect:
         pass
+    except ConnectionResetError:
+        get_logger("webui", Path.cwd()).info("WebSocket 连接被重置(客户端断开)")
     except Exception as e:
         get_logger("webui", Path.cwd()).error(
             f"WebSocket 错误: {traceback.format_exc()}"
