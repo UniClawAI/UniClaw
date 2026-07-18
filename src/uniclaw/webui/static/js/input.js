@@ -416,14 +416,29 @@ const Input = {
 
             this._isSpeaking = false;
 
+            // 环形缓冲区:持续保存最近 ~600ms 的音频,VAD 触发时先发缓冲区(避免丢首字)
+            this._preRollBuffer = [];
+            this._preRollMaxChunks = 20; // 约 640ms (每块 32ms @16kHz/512samples)
+
             // 仅在说话时发送音频,VAD 只控制何时把识别结果发给 Agent
             // TTS 播放期间/冷却期内不发送,防止回声循环(AEC 关闭时靠软件隔离)
             workletNode.port.onmessage = (e) => {
                 const pcmData = new Int16Array(e.data);
+                const speaking = this._isSpeaking && !this._ttsPlaying && !this._ttsCooldown;
 
-                if (this._isSpeaking && !this._ttsPlaying && !this._ttsCooldown) {
-                    // 发送音频块到后端(实时识别)
+                if (speaking) {
+                    // 缓冲区有内容说明刚从不说话切换过来,先发缓冲区(避免丢首字)
+                    if (this._preRollBuffer.length > 0) {
+                        for (const chunk of this._preRollBuffer) this._sendAudioChunk(chunk);
+                        this._preRollBuffer = [];
+                    }
                     this._sendAudioChunk(pcmData);
+                } else {
+                    // 未说话:存入环形缓冲区
+                    this._preRollBuffer.push(pcmData);
+                    if (this._preRollBuffer.length > this._preRollMaxChunks) {
+                        this._preRollBuffer.shift();
+                    }
                 }
             };
 
@@ -465,7 +480,7 @@ const Input = {
                     micBtn.classList.add('processing');
                     micBtn.title = '发送中...';
                     input.placeholder = '发送中...';
-                    this._startSpeechSendTimer(2000);
+                    this._startSpeechSendTimer(1000);
                 },
                 onVADMisfire: () => {
                     this._isSpeaking = false;
@@ -473,7 +488,7 @@ const Input = {
                     micBtn.classList.remove('listening', 'processing');
                     micBtn.title = '免提模式 - 请说话';
                     input.placeholder = '🎤 免提模式 - 请说话';
-                    this._startSpeechSendTimer(2000);
+                    this._startSpeechSendTimer(1000);
                 },
             });
             this._vad.receive(source);
