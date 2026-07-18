@@ -166,16 +166,21 @@ def _build_free_chat_prompt(config: AppConfig) -> str:
     from uniclaw.tools.web import webSearch
 
     task = config.current_agent
-    lines = [
-        f"你是 {APP_NAME},一个简洁友好的 AI 助手。",
-        "",
-        "## 规则",
-        "- 简洁直接,先给出答案",
-        f"- 涉及实时信息、事实核查、不确定的内容时,主动使用 {webSearch.name} 搜索",
-        "- 搜索无结果时,更换关键词、同义词或更宽泛/具体的表述多次尝试",
-        "- 不确定时坦诚说明,不要编造",
-        f"- 当前日期:{datetime.now().strftime('%Y-%m-%d %A')}",
-    ]
+    if task and task.session.system_prompt:
+        lines = [task.session.system_prompt]
+    else:
+        lines = [
+            f"你是 {APP_NAME},一个简洁友好的 AI 助手。",
+            "",
+            "## 规则",
+            "- 简洁直接,先给出答案",
+            f"- 涉及实时信息、事实核查、不确定的内容时,主动使用 {webSearch.name} 搜索",
+            "- 搜索无结果时,更换关键词、同义词或更宽泛/具体的表述多次尝试",
+            "- 不确定时坦诚说明,不要编造",
+            f"- 当前日期:{datetime.now().strftime('%Y-%m-%d %A')}",
+        ]
+    # scope 限制:无论是否有自定义提示词,始终生效
+    lines.append("- 有 scope 的工具写入只允许修改项目级,不允许修改用户级")
     # 仅注入记忆索引(不含操作说明)
     index = Memory.get_memory_index_preview(task.session.root_dir)
     if index:
@@ -184,9 +189,6 @@ def _build_free_chat_prompt(config: AppConfig) -> str:
 
 
 async def build_system_prompt(config: AppConfig):
-    task = config.current_agent
-    if task and task.session.system_prompt:
-        return task.session.system_prompt
     # 自由聊天模式:精简提示词,节省 token
     if config.is_free_chat:
         return _build_free_chat_prompt(config)
