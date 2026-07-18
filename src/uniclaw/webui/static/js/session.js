@@ -30,6 +30,12 @@ const SessionPanel = {
     _bindEvents() {
         document.getElementById('new-project-btn').onclick = () => this._showNewProjectDialog();
         document.getElementById('search-input').oninput = Utils.debounce(e => this._onSearch(e.target.value), 300);
+        // 触摸设备: 点击空白区域关闭 tooltip
+        document.addEventListener('touchstart', e => {
+            if (!e.target.closest('[data-tip]') && !e.target.closest('#session-tooltip')) {
+                this._hideTip();
+            }
+        }, { passive: true });
     },
 
     // ============================================================
@@ -456,7 +462,7 @@ const SessionPanel = {
         const sessionTime = proj.sessions.length > 0 ? (proj.sessions[0].end_time || proj.sessions[0].start_time || '-') : '-';
         const tipData = JSON.stringify({ dir: rootDir, created: proj.created_at || '-', sessions: proj.sessions.length, latest: sessionTime }).replace(/"/g, '&quot;');
         let h = `<div class="project-group ${isExp ? 'expanded' : ''}" data-dir="${Utils.escapeHtml(rootDir)}">`;
-        h += `<div class="project-header" data-tip="${tipData}" onclick="SessionPanel.toggleProject('${this._esc(rootDir)}')" onmouseenter="SessionPanel._showTip(this, event)" onmousemove="SessionPanel._moveTip(event)" onmouseleave="SessionPanel._hideTip()" ondragover="SessionPanel._onDragOver(event)" ondrop="SessionPanel._onDrop(event, '${this._esc(rootDir)}')">`;
+        h += `<div class="project-header" data-tip="${tipData}" onclick="SessionPanel.toggleProject('${this._esc(rootDir)}')" onmouseenter="SessionPanel._showTip(this, event)" onmousemove="SessionPanel._moveTip(event)" onmouseleave="SessionPanel._hideTip()" ontouchstart="SessionPanel._showTip(this, event)" ondragover="SessionPanel._onDragOver(event)" ondrop="SessionPanel._onDrop(event, '${this._esc(rootDir)}')">`;
         h += `<span class="project-chevron">${icon('chevronRight')}</span>`;
         h += `<span class="project-icon">${icon('folder')}</span>`;
         h += `<span class="project-name">${Utils.escapeHtml(shortName)}</span>`;
@@ -495,7 +501,7 @@ const SessionPanel = {
             const title = s.title || s.session_id;
             const time = Utils.formatRelativeTime(s.end_time || s.start_time);
             const tipData = JSON.stringify({ id: s.session_id, start: s.start_time || '', end: s.end_time || '', dir: s.root_dir || '', msg: s.message_count || 0 }).replace(/"/g, '&quot;');
-            h += `<div class="session-item ${isActive ? 'active' : ''}" data-sid="${s.session_id}" data-tip="${tipData}" draggable="true" ondragstart="SessionPanel._onDragStart(event, '${s.session_id}')" onclick="SessionPanel.selectSession('${s.session_id}', '${this._esc(rootDir)}')" onmouseenter="SessionPanel._showTip(this, event)" onmousemove="SessionPanel._moveTip(event)" onmouseleave="SessionPanel._hideTip()">`;
+            h += `<div class="session-item ${isActive ? 'active' : ''}" data-sid="${s.session_id}" data-tip="${tipData}" draggable="true" ondragstart="SessionPanel._onDragStart(event, '${s.session_id}')" onclick="SessionPanel.selectSession('${s.session_id}', '${this._esc(rootDir)}')" onmouseenter="SessionPanel._showTip(this, event)" onmousemove="SessionPanel._moveTip(event)" onmouseleave="SessionPanel._hideTip()" ontouchstart="SessionPanel._showTip(this, event)">`;
             h += `<span class="session-icon">${icon('chat')}</span>`;
             h += `<div class="session-info"><div class="session-title">${Utils.escapeHtml(title)}</div><div class="session-meta">${time}</div></div>`;
             if (isRunning) h += '<span class="running-indicator"></span>';
@@ -870,6 +876,14 @@ const SessionPanel = {
     _esc(s) { return s.replace(/\\/g, '\\\\').replace(/'/g, "\\'"); },
     _now() { const d = new Date(); const pad = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`; },
 
+    // 从 mouse/touch 事件中提取坐标
+    _getEventCoords(event) {
+        if (event.touches && event.touches.length > 0) {
+            return { x: event.touches[0].clientX, y: event.touches[0].clientY };
+        }
+        return { x: event.clientX, y: event.clientY };
+    },
+
     _showTip(el, event) {
         const raw = el.getAttribute('data-tip');
         if (!raw) return;
@@ -896,13 +910,16 @@ const SessionPanel = {
         tip.innerHTML = inner;
         tip.style.display = 'block';
         this._moveTip(event);
+        // 触摸设备: 阻止默认行为防止触发其他点击
+        if (event.type === 'touchstart') event.stopPropagation();
     },
 
     _moveTip(event) {
         const tip = document.getElementById('session-tooltip');
         if (!tip || tip.style.display === 'none') return;
-        tip.style.left = `${event.clientX + 12}px`;
-        tip.style.top = `${event.clientY + 12}px`;
+        const { x, y } = this._getEventCoords(event);
+        tip.style.left = `${x + 12}px`;
+        tip.style.top = `${y + 12}px`;
     },
 
     _hideTip() {
