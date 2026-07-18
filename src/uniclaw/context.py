@@ -184,14 +184,12 @@ def _build_free_chat_prompt(config: AppConfig) -> str:
 
 
 async def build_system_prompt(config: AppConfig):
-    # 自由聊天模式:精简提示词,节省 token
-    if config.is_free_chat:
-        return _build_free_chat_prompt(config)
-
-    # Session 自定义系统提示词:直接返回,跳过默认构建
     task = config.current_agent
     if task and task.session.system_prompt:
         return task.session.system_prompt
+    # 自由聊天模式:精简提示词,节省 token
+    if config.is_free_chat:
+        return _build_free_chat_prompt(config)
 
     system_prompt = get_base_system_prompt(config)
 
