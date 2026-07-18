@@ -21,6 +21,10 @@ const Input = {
     _recognition: null,  // Web Speech API
     _manualEdit: false,  // 用户是否手动编辑了输入框
     _speechUpdating: false,  // onresult 正在更新 input.value
+    _ttsPlaying: false,  // TTS 是否正在播放
+    _ttsCooldown: false,  // TTS 播完后的短暂冷却期
+    _speechIsTts: false,  // 当前 VAD 检测到的语音是否来自 TTS
+    _speechIsTtsTimer: null,  // _speechIsTts 安全兜底定时器
 
     init() {
         const input = document.getElementById('chat-input');
@@ -57,6 +61,47 @@ const Input = {
 
         // 注册免提语音 WebSocket 事件
         WS.on('asr_stream_result', (msg) => this._onAsrStreamResult(msg));
+    },
+
+    /** TTS 播放状态变更回调(由 AudioPlayer._setPlaying 调用) */
+    _onTtsPlayback(isPlaying) {
+        this._ttsPlaying = isPlaying;
+        // 仅免提模式下阻断用户输入(非免提模式用户是打字,不存在回声问题)
+        if (!this._handsfree) return;
+        const input = document.getElementById('chat-input');
+        const sendBtn = document.getElementById('send-btn');
+        if (isPlaying) {
+            if (input) input.placeholder = '🔊 AI 正在说话...';
+            if (sendBtn) sendBtn.disabled = true;
+        } else {
+            if (sendBtn) sendBtn.disabled = false;
+            this._clearSpeechBuffer();
+        }
+    },
+
+    /** 清空语音识别缓存(TTS 播完后调用,避免把之前的语音残留发出去) */
+    _clearSpeechBuffer() {
+        clearTimeout(this._speechSendTimer);
+        this._speechSendTimer = null;
+        this._speechAllText = '';
+        this._manualEdit = false;
+        this._isSpeaking = false;
+        // 注意:不在这里重置 _speechIsTts,由 onSpeechEnd/onVADMisfire 负责重置
+        // 安全兜底:1 秒后强制重置(防止 onSpeechEnd 未触发的情况)
+        clearTimeout(this._speechIsTtsTimer);
+        this._speechIsTtsTimer = setTimeout(() => { this._speechIsTts = false; }, 1000);
+        const input = document.getElementById('chat-input');
+        if (input) {
+            input.value = '';
+            input.style.height = 'auto';
+            input.placeholder = this._handsfree ? '🎤 免提模式 - 请说话' : '输入消息... (!Shell /命令 @文件)';
+        }
+        // 通知后端清空 ASR 缓冲区
+        const sid = SessionPanel.activeSessionId;
+        if (sid) WS.send({ type: 'asr_stream_reset', session_id: sid });
+        // 短暂冷却,等后端处理完 reset 再恢复 ASR
+        this._ttsCooldown = true;
+        setTimeout(() => { this._ttsCooldown = false; }, 300);
     },
 
     /** 拖拽文件到主聊天区添加附件 */
@@ -372,10 +417,11 @@ const Input = {
             this._isSpeaking = false;
 
             // 仅在说话时发送音频,VAD 只控制何时把识别结果发给 Agent
+            // TTS 播放期间/冷却期内不发送,防止回声循环(AEC 关闭时靠软件隔离)
             workletNode.port.onmessage = (e) => {
                 const pcmData = new Int16Array(e.data);
 
-                if (this._isSpeaking) {
+                if (this._isSpeaking && !this._ttsPlaying && !this._ttsCooldown) {
                     // 发送音频块到后端(实时识别)
                     this._sendAudioChunk(pcmData);
                 }
@@ -396,8 +442,10 @@ const Input = {
                 preSpeechPadFrames: 7,          // 说话开始前回填 N 帧音频 (避免截掉开头)
                 minSpeechFrames: 3,             // 至少连续 N 帧才视为有效语音 (过滤短噪声)
                 onSpeechStart: () => {
-                    this._isSpeaking = true;
                     clearTimeout(this._speechSendTimer);
+                    // TTS 播放期间标记为 TTS 语音,不当作用户说话
+                    if (this._ttsPlaying) { this._speechIsTts = true; return; }
+                    this._isSpeaking = true;
                     micBtn.classList.remove('processing');
                     micBtn.classList.add('listening');
                     micBtn.title = '正在聆听...';
@@ -405,19 +453,27 @@ const Input = {
                 },
                 onSpeechEnd: () => {
                     this._isSpeaking = false;
+                    // TTS 触发的语音结束或冷却期内,直接回到就绪状态
+                    if (this._speechIsTts || this._ttsCooldown) {
+                        this._speechIsTts = false;
+                        micBtn.classList.remove('listening', 'processing');
+                        micBtn.title = '免提模式 - 请说话';
+                        input.placeholder = '🎤 免提模式 - 请说话';
+                        return;
+                    }
                     micBtn.classList.remove('listening');
                     micBtn.classList.add('processing');
                     micBtn.title = '发送中...';
                     input.placeholder = '发送中...';
-                    this._startSpeechSendTimer(3500);
+                    this._startSpeechSendTimer(2000);
                 },
                 onVADMisfire: () => {
-                    // 咳嗽等短触发,speaking 已被库重置,启动定时器等待可能的后续说话
                     this._isSpeaking = false;
+                    if (this._ttsPlaying || this._speechIsTts) { this._speechIsTts = false; return; }
                     micBtn.classList.remove('listening', 'processing');
                     micBtn.title = '免提模式 - 请说话';
                     input.placeholder = '🎤 免提模式 - 请说话';
-                    this._startSpeechSendTimer(3500);
+                    this._startSpeechSendTimer(2000);
                 },
             });
             this._vad.receive(source);
@@ -507,6 +563,8 @@ const Input = {
     /** 处理 ASR 流结果事件 */
     _onAsrStreamResult(msg) {
         if (msg.session_id !== SessionPanel.activeSessionId) return;
+        // TTS 播放期间/冷却期忽略 ASR 结果(防止 TTS 声音被识别)
+        if (this._ttsPlaying || this._ttsCooldown) return;
         const input = document.getElementById('chat-input');
         const micBtn = document.getElementById('mic-btn');
 
