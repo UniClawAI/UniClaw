@@ -193,12 +193,58 @@ const Chat = {
         this._saveScrollState();
         const el = document.createElement('div');
         el.className = 'welcome-screen';
-        const suggestions = [
-            { icon: '📝', text: '帮我写一个 Python 脚本' },
-            { icon: '🔍', text: '搜索最新的技术资讯' },
-            { icon: '📂', text: '分析项目代码结构' },
+        const allSuggestions = [
             { icon: '💡', text: '你能做什么？' },
+            { icon: '📝', text: '帮我写一封请假邮件' },
+            { icon: '🌐', text: '翻译这段英文到中文' },
+            { icon: '📋', text: '帮我制定一个学习计划' },
+            { icon: '🧮', text: '帮我算一下房贷月供' },
+            { icon: '📅', text: '帮我安排一下明天的行程' },
+            { icon: '📖', text: '用简单的语言解释量子计算' },
+            { icon: '🍎', text: '推荐几道简单的家常菜谱' },
+            { icon: '✈️', text: '规划一个三天的旅行攻略' },
+            { icon: '📝', text: '帮我写一篇朋友圈文案' },
+            { icon: '💡', text: '给我讲一个有趣的冷知识' },
+            { icon: '🎓', text: '推荐几本值得读的好书' },
+            { icon: '🏋️', text: '制定一个健身减脂计划' },
+            { icon: '💼', text: '帮我润色一下这段简历' },
+            { icon: '🎬', text: '推荐几部好看的电影' },
+            { icon: '🧹', text: '帮我整理一份待办清单' },
+            { icon: '📊', text: '帮我分析一下这份数据' },
+            { icon: '🤔', text: '用比喻解释什么是 AI' },
+            { icon: '📧', text: '帮我写一封商务合作邮件' },
+            { icon: '🎯', text: '帮我拆解一个复杂的任务' },
+            { icon: '💬', text: '帮我写一段年终总结' },
+            { icon: '🧪', text: '给我出几道脑筋急转弯' },
+            { icon: '📰', text: '帮我写一段产品宣传文案' },
+            { icon: '🌸', text: '推荐一个周末放松的方式' },
+            { icon: '📝', text: '帮我写一篇读书笔记模板' },
+            { icon: '🎤', text: '帮我准备一段自我介绍' },
+            { icon: '🎨', text: '给我推荐几个配色方案' },
+            { icon: '🛒', text: '帮我列一个年货采购清单' },
+            { icon: '📱', text: '推荐几个好用的手机 App' },
+            { icon: '🧳', text: '帮我整理出行李打包清单' },
+            { icon: '🎵', text: '推荐一些适合工作时听的音乐' },
+            { icon: '💭', text: '给我一些写日记的灵感' },
+            { icon: '🔍', text: '帮我搜索一下这个问题的最新答案' },
+            { icon: '🔊', text: '把这段话朗读给我听' },
+            { icon: '⏰', text: '每天早上 9 点提醒我喝水' },
+            { icon: '📸', text: '帮我识别一下这张图片里的内容' },
+            { icon: '📑', text: '帮我记住这个知识点，以后能查到' },
+            { icon: '🖥️', text: '帮我运行一下这段代码看看结果' },
+            { icon: '📑', text: '帮我总结一下这个网页的内容' },
+            { icon: '📐', text: '帮我截图并分析屏幕上的内容' },
+            { icon: '📄', text: '帮我把这个文件发送给我' },
+            { icon: '🧩', text: '搜索 GitHub 上类似的开源项目' },
+            { icon: '📂', text: '帮我读取并分析这个文件' },
         ];
+        // Fisher-Yates shuffle, pick first 4
+        const shuffled = [...allSuggestions];
+        for (let i = shuffled.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+        }
+        const suggestions = shuffled.slice(0, 4);
         const tips = [
             '输入 ! 可直接执行 Shell 命令',
             '输入 / 可查看所有可用命令',
