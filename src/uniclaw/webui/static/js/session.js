@@ -277,9 +277,10 @@ const SessionPanel = {
         if (!sid) return;
         if (this.activeSessionId === sid) {
             this._clearSessionFromUrl();
-            const rootDir = msg.root_dir ?? this.activeProjectDir;
-            if (rootDir) this.createSession(rootDir);
-            else { this.activeSessionId = null; Chat.clear(); Chat._appendSystemMessage('请选择项目或发送消息开始对话'); this._render(); }
+            this.activeSessionId = null;
+            Chat.currentSessionId = null;
+            Chat.clear();
+            Chat._appendSystemMessage('会话已删除，请选择其他会话或创建新会话');
         }
         this._refreshSessions();
     },
