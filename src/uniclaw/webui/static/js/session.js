@@ -500,7 +500,7 @@ const SessionPanel = {
             const isAttn = this.attentionSessions.has(s.session_id);
             const title = s.title || s.session_id;
             const time = Utils.formatRelativeTime(s.end_time || s.start_time);
-            const tipData = JSON.stringify({ id: s.session_id, start: s.start_time || '', end: s.end_time || '', dir: s.root_dir || '', msg: s.message_count || 0 }).replace(/"/g, '&quot;');
+            const tipData = JSON.stringify({ id: s.session_id, title: title, start: s.start_time || '', end: s.end_time || '', dir: s.root_dir || '', msg: s.message_count || 0 }).replace(/"/g, '&quot;');
             h += `<div class="session-item ${isActive ? 'active' : ''}" data-sid="${s.session_id}" data-tip="${tipData}" draggable="true" ondragstart="SessionPanel._onDragStart(event, '${s.session_id}')" onclick="SessionPanel.selectSession('${s.session_id}', '${this._esc(rootDir)}')" onmouseenter="SessionPanel._showTip(this, event)" onmousemove="SessionPanel._moveTip(event)" onmouseleave="SessionPanel._hideTip()" ontouchstart="SessionPanel._showTip(this, event)">`;
             h += `<span class="session-icon">${icon('chat')}</span>`;
             h += `<div class="session-info"><div class="session-title">${Utils.escapeHtml(title)}</div><div class="session-meta">${time}</div></div>`;
@@ -894,7 +894,7 @@ const SessionPanel = {
         if (d.id) {
             // 会话 tooltip
             const fmtTime = t => t ? t.replace('T', ' ').substring(0, 19) : '-';
-            rows = [['ID', d.id], ['创建', fmtTime(d.start)], ['活跃', fmtTime(d.end)], ['路径', d.dir || '-'], ['消息', d.msg]];
+            rows = [['标题', d.title || '-'], ['ID', d.id], ['创建', fmtTime(d.start)], ['活跃', fmtTime(d.end)], ['路径', d.dir || '-'], ['消息', d.msg]];
         } else {
             // 项目 tooltip
             rows = [['路径', d.dir], ['创建', d.created || '-'], ['会话', d.sessions], ['最新', d.latest || '-']];
