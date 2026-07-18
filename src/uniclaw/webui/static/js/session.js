@@ -910,8 +910,6 @@ const SessionPanel = {
         tip.innerHTML = inner;
         tip.style.display = 'block';
         this._moveTip(event);
-        // 触摸设备: 阻止默认行为防止触发其他点击
-        if (event.type === 'touchstart') event.stopPropagation();
     },
 
     _moveTip(event) {

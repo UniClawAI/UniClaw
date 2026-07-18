@@ -189,6 +189,11 @@ const App = {
         p.classList.toggle('collapsed');
         d.style.display = p.classList.contains('collapsed') ? 'none' : '';
         localStorage.setItem('left_collapsed', p.classList.contains('collapsed'));
+        // 移动端: 面板打开时让会话列表只处理垂直滚动,水平滑动交给手势检测
+        if (this._isMobile()) {
+            const tree = document.getElementById('session-tree');
+            if (tree) tree.style.touchAction = p.classList.contains('collapsed') ? '' : 'pan-y';
+        }
     },
 
     _toggleRightPanel() {
@@ -197,6 +202,11 @@ const App = {
         d.style.display = p.classList.contains('collapsed') ? 'none' : '';
         if (!p.classList.contains('collapsed')) Sidebar.switchTab(Sidebar.currentTab);
         localStorage.setItem('right_collapsed', p.classList.contains('collapsed'));
+        // 移动端: 面板打开时让可滚动内容只处理垂直滚动
+        if (this._isMobile()) {
+            const content = p.querySelector('.panel-content');
+            if (content) content.style.touchAction = p.classList.contains('collapsed') ? '' : 'pan-y';
+        }
     },
 
     _toggleUsage() {
@@ -225,6 +235,19 @@ const App = {
         if (localStorage.getItem('right_collapsed') === 'true' || ((isMobile || isTablet) && localStorage.getItem('right_collapsed') === null)) {
             document.getElementById('right-panel').classList.add('collapsed');
             document.getElementById('right-drag').style.display = 'none';
+        }
+        // 移动端: 面板初始为打开状态时,设置 touch-action 以便手势检测
+        if (isMobile) {
+            const lp = document.getElementById('left-panel');
+            if (!lp.classList.contains('collapsed')) {
+                const tree = document.getElementById('session-tree');
+                if (tree) tree.style.touchAction = 'pan-y';
+            }
+            const rp = document.getElementById('right-panel');
+            if (!rp.classList.contains('collapsed')) {
+                const content = rp.querySelector('.panel-content');
+                if (content) content.style.touchAction = 'pan-y';
+            }
         }
         if (localStorage.getItem('show_usage') === '1') {
             document.getElementById('chat-messages').classList.add('show-usage');
@@ -305,10 +328,10 @@ const App = {
 
     /** 触摸滑动手势: 边缘滑动打开/关闭面板 */
     _bindTouchGestures() {
-        let startX = 0, startY = 0, tracking = false, side = null;
-        const EDGE = 20; // 边缘检测区域宽度 (px)
-        const MIN_DX = 60; // 最小水平滑动距离
-        const MAX_DY = 80; // 最大垂直偏移 (防止误判为滚动)
+        let startX = 0, startY = 0, tracking = false, side = null, decided = false, gestureWon = false;
+        const EDGE = 20;   // 边缘检测区域宽度 (px)
+        const MIN_DX = 50; // 最小水平滑动距离
+        const LOCK_RATIO = 1.5; // dx/dy 比值超过此值时判定为水平手势
 
         document.addEventListener('touchstart', e => {
             const t = e.touches[0];
@@ -316,6 +339,8 @@ const App = {
             startY = t.clientY;
             tracking = false;
             side = null;
+            decided = false;
+            gestureWon = false;
 
             // 左边缘右滑 → 打开左面板
             if (startX < EDGE && document.getElementById('left-panel').classList.contains('collapsed')) {
@@ -339,21 +364,48 @@ const App = {
             }
         }, { passive: true });
 
+        // touchmove 实时判定: passive=false 以便阻止浏览器默认滚动
+        document.addEventListener('touchmove', e => {
+            if (!tracking || !side) return;
+            const t = e.touches[0];
+            const dx = t.clientX - startX;
+            const dy = Math.abs(t.clientY - startY) + 1; // +1 防除零
+
+            if (!decided) {
+                // 水平位移足够大且方向明确 → 判定为手势
+                if (Math.abs(dx) > 20 && Math.abs(dx) / dy > LOCK_RATIO) {
+                    decided = true;
+                    gestureWon = true;
+                }
+                // 垂直滚动明显 → 放弃手势
+                else if (dy > Math.abs(dx) * 2 && dy > 30) {
+                    decided = true;
+                    gestureWon = false;
+                }
+            }
+            // 已判定为水平手势 → 阻止浏览器滚动
+            if (gestureWon) e.preventDefault();
+        }, { passive: false });
+
         document.addEventListener('touchend', e => {
             if (!tracking || !side) return;
             const t = e.changedTouches[0];
             const dx = t.clientX - startX;
-            const dy = Math.abs(t.clientY - startY);
 
-            if (dy > MAX_DY) return; // 垂直滑动过长,忽略
+            // touchmove 已判定为垂直滚动,跳过
+            if (decided && !gestureWon) return;
 
-            if (side === 'left' && dx > MIN_DX) {
+            // touchmove 判定为水平手势,或 move 阶段未判定但最终距离足够
+            const isSwipe = gestureWon || Math.abs(dx) >= MIN_DX;
+            if (!isSwipe) return;
+
+            if (side === 'left' && dx > 0) {
                 this._toggleLeftPanel(); // 打开左面板
-            } else if (side === 'right' && dx < -MIN_DX) {
+            } else if (side === 'right' && dx < 0) {
                 this._toggleRightPanel(); // 打开右面板
-            } else if (side === 'close-left' && dx < -MIN_DX) {
+            } else if (side === 'close-left' && dx < 0) {
                 this._toggleLeftPanel(); // 关闭左面板
-            } else if (side === 'close-right' && dx > MIN_DX) {
+            } else if (side === 'close-right' && dx > 0) {
                 this._toggleRightPanel(); // 关闭右面板
             }
         }, { passive: true });
