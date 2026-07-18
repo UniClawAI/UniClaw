@@ -388,11 +388,13 @@ const Input = {
 
             // 使用 AudioNodeVAD 复用已有 AudioContext,避免两个 AudioContext 争抢麦克风
             this._vad = await vad.AudioNodeVAD.new(audioContext, {
-                positiveSpeechThreshold: 0.5,
-                negativeSpeechThreshold: 0.35,
-                redemptionFrames: 8,
-                preSpeechPadFrames: 5,
-                minSpeechFrames: 3,
+                baseAssetPath: '/static/js/',
+                onnxWASMBasePath: 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.14.0/dist/',
+                positiveSpeechThreshold: 0.5,   // 语音概率超过此值判定为开始说话 (0~1, 越高越不灵敏)
+                negativeSpeechThreshold: 0.35,  // 语音概率低于此值判定为停止说话 (越高越容易结束)
+                redemptionFrames: 10,            // 连续 N 帧低于阈值后才确认停止 (防止单词间断误切)
+                preSpeechPadFrames: 7,          // 说话开始前回填 N 帧音频 (避免截掉开头)
+                minSpeechFrames: 3,             // 至少连续 N 帧才视为有效语音 (过滤短噪声)
                 onSpeechStart: () => {
                     this._isSpeaking = true;
                     clearTimeout(this._speechSendTimer);
