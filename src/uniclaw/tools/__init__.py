@@ -87,7 +87,7 @@ async def _ensure_registry():
 
 
 async def get_core_tools(sub_agent: bool = False) -> list:
-    """获取核心工具 + search_tools(约 18 个)。
+    """获取核心工具 + search_tools(约 19 个)。
 
     核心工具始终加载完整 schema,是 prompt 缓存的稳定前缀。
     扩展工具通过 search_tools 按需发现和加载。

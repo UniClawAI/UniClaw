@@ -1,25 +1,19 @@
 # UniClaw 🦞
 
-[![Python Version](https://img.shields.io/badge/python-3.14+-blue.svg)](https://www.python.org/downloads/)
+[![Python Version](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 **UniClaw** 是一个基于大语言模型的智能代理系统,提供交互式命令行界面、WebUI 和微信集成,支持文件操作、Shell 命令执行、网络搜索、记忆管理、多智能体协作、定时任务调度等丰富功能。通过模块化的工具系统、全异步架构和权限管理机制,帮助用户高效完成各种编程和文本处理任务。
 
 > 📦 项目采用 **src layout** — 所有源码位于 `src/uniclaw/` 下。
 
-### 🆕 最近更新 (v0.1.0)
-
-- **知识图谱系统** (新增) — 基于 SQLite 的知识图谱,支持实体/关系管理、全文搜索、路径发现、AI 自动提取和可视化导出,用户级和项目级双层管理
-- **WebUI 增强** — 新增拖拽上传、多媒体附件支持、移动端响应式设计和触摸手势
-- **工具流式输出** — 工具执行过程中可实时推送输出到前端,提升用户体验
-- **文件大小限制** — 自动限制上传文件大小,优化性能
-- **任务取消事件传递** — WebUI 中任务取消事件实时同步到前端
-
 ## ✨ 特性
 
 - 🤖 **智能代理**: 基于 OpenAI SDK 和 Anthropic SDK 的全异步对话式 AI 助手,多 provider 自动路由,支持 reasoning_content 和思考标签流式解析,内置死循环检测防止工具调用陷入无限循环
-- 🔍 **工具注册表**: BM25 智能工具搜索,核心工具常驻加载 + 扩展工具按需发现,LRU + 能量机制(每工具 10 点能量,每轮-1,调用/搜索恢复满,归零淘汰)自动管理已加载工具,优化 prompt 缓存
-- 🌐 **WebUI 界面**: 基于 WebSocket 的 Web 用户界面,支持浏览器中与 AI 对话,可局域网共享,支持移动端响应式设计和触摸手势
+- 🔄 **多模型 Fallback**: 主模型失败时自动切换到备用模型,支持 `model_name` 列表配置多个模型,提高可用性
+- 🎓 **顾问模型**: 配置 `large_model_name` 作为顾问模型,遇到难题时可同时咨询多个更强力模型获取第二意见
+- 🔍 **工具注册表**: BM25 智能工具搜索,核心工具常驻加载 + 扩展工具按需发现,LRU + 能量机制(每工具 30 点能量,每轮-1,调用/搜索恢复满,归零淘汰)自动管理已加载工具,优化 prompt 缓存
+- 🌐 **WebUI 界面**: 基于 WebSocket 的 Web 用户界面,支持浏览器中与 AI 对话,可局域网共享,支持移动端响应式设计和触摸手势,支持 HTTPS 和 IPv6
 - ⚡ **工具流式输出**: 工具执行过程中实时推送输出到前端,无需等待完成即可看到进度
 - 💬 **微信集成**: 支持通过 iLink Bot 协议接入微信,实现移动端交互
 - 🧠 **记忆系统**: 持久化记忆管理,支持用户偏好、项目信息和反馈记录
@@ -32,7 +26,6 @@
 - ⏰ **定时任务**: 支持创建和管理周期性或一次性定时任务,支持权限模式配置和 monitor 监控类型(命令退出码触发 agent)
 - 🔄 **后台进程**: 启动和管理后台进程(异步实现),支持输入/输出流控制
 - 🛡️ **死循环检测**: 自动检测 AI 连续相同工具调用,智能打破循环并引导换策略
-- 🔄 **多模型 Fallback**: 主模型失败时自动切换到备用模型,提高可用性
 - 💾 **自动保存**: 会话和记忆在对话结束时自动持久化,数据不丢失
 - 🪝 **Hook 系统**: 事件驱动的 Shell 命令钩子,支持会话和工具调用生命周期事件
 - 🔔 **系统通知**: 支持 Windows/macOS/Linux 桌面通知,任务完成时自动提醒
@@ -77,7 +70,7 @@
 
 ### 前置要求
 
-- Python 3.14 或更高版本
+- Python 3.11 或更高版本
 - uv 包管理器
 - 可选：Docker(用于代码沙箱功能)、Everything(Windows 文件搜索加速)
 
@@ -119,6 +112,7 @@ uv tool install .
   "model_name": ["default/gpt-5.4"],
   "mini_model_name": [],
   "multimodal_model_name": [],
+  "large_model_name": [],
   "temperature": 0.7,
   "max_tokens": null,
   "top_p": null,
@@ -141,6 +135,7 @@ uv run uniclaw
 # 使用 uv 运行(WebUI 模式)
 uv run uniclaw --mode webui
 uv run uniclaw --mode webui --host 0.0.0.0  # 局域网可访问
+uv run uniclaw --mode webui --host 0.0.0.0 --ssl  # 启用 HTTPS
 
 # 使用 uv 运行(微信模式)
 uv run uniclaw --mode wechat
@@ -201,6 +196,9 @@ uv run uniclaw --mode webui
 
 # 局域网可访问
 uv run uniclaw --mode webui --host 0.0.0.0
+
+# 启用 HTTPS(自动生成自签名证书)
+uv run uniclaw --mode webui --host 0.0.0.0 --ssl --domain uniclaw.example.com
 ```
 
 详细使用方法请参考 [WebUI 模式](#-webui-模式) 章节。
@@ -318,13 +316,14 @@ UniClaw 使用工作空间概念管理文件访问范围：
 | `model_name` | 主模型列表(第一个为主,后续为 fallback) | 无 | `["default/gpt-5.4"]` |
 | `mini_model_name` | 迷你模型列表(用于简单任务) | 自动使用 model_name | `["default/gpt-4o-mini"]` |
 | `multimodal_model_name` | 多模态模型列表(主模型不支持多模态时使用) | 无 | `["default/gpt-4o"]` |
+| `large_model_name` | 顾问模型列表(用于获取更强力模型的建议) | 无 | `["default/o3"]` |
 | `temperature` | 生成温度(创造性) | `0.7` | `0.0`-`2.0` |
 | `max_tokens` | 最大输出 token 数 | `null`(不限制) | `512`, `2048` |
 | `top_p` | 核采样概率 | `null`(不限制) | `0.9` |
 | `proxy_url` | HTTP 代理地址 | `""` | `http://127.0.0.1:7890` |
 | `GITHUB_TOKEN` | GitHub Token(平台搜索提速) | 空 | `ghp_xxx` |
 | `EXA_API_KEY` | Exa API Key(语义搜索引擎,webSearch 优先使用) | 空 | `exa-xxx` |
-| `max_agent_depth` | 最大嵌套智能体深度 | `3` | `1`-`5` |
+| `max_agent_depth` | 最大嵌套智能体深度 | `2` | `1`-`5` |
 | `permission_timeout` | 权限对话框超时时间(秒) | `300` | `60`-`600` |
 
 **Provider 配置示例：**
@@ -700,6 +699,12 @@ uv run uniclaw --mode webui
 # 局域网可访问
 uv run uniclaw --mode webui --host 0.0.0.0
 
+# 启用 HTTPS(自动生成自签名证书)
+uv run uniclaw --mode webui --host 0.0.0.0 --ssl
+
+# 指定域名(用于 HTTPS 证书)
+uv run uniclaw --mode webui --host 0.0.0.0 --ssl --domain uniclaw.example.com
+
 # 或使用安装后的命令
 uniclaw --mode webui
 ```
@@ -707,11 +712,14 @@ uniclaw --mode webui
 ### 功能特性
 
 - ✅ **浏览器对话** — 在 Web 界面中与 AI 进行交互
-- ✅ **实时流式响应** — 基于 WebSocket 的实时消息推送
+- ✅ **实时流式响应** — 基于 WebSocket 的实时消息推送,支持自动重连
 - ✅ **WebSocket 会话任务管理** — 每个对话会话作为独立任务管理,支持并发会话
 - ✅ **子代理创建 API** — 通过 REST API 创建和管理子代理,支持多智能体协作
 - ✅ **微信 Bot 管理** — 在 WebUI 中直接管理微信 Bot 账号,支持异步登录
+- ✅ **HTTPS 支持** — `--ssl` 启用 HTTPS,自动生成自签名证书;`--domain` 指定域名
+- ✅ **IPv6 支持** — 支持 IPv6 监听地址(如 `::`)和访问
 - ✅ **局域网共享** — 通过 `--host 0.0.0.0` 让局域网内其他设备访问
+- ✅ **自定义系统提示词** — 每个会话可设置独立的系统提示词,AI 可优化提示词内容
 - ✅ **工具调用可视化** — 展示工具调用过程和结果
 - ✅ **Git 侧边栏** — 文件状态查看、暂存/取消暂存、提交操作,支持 AI 自动生成 commit message
 - ✅ **检查点管理** — 侧边栏 Git 面板中查看检查点列表、diff 对比(支持未跟踪文件)
@@ -725,6 +733,7 @@ uniclaw --mode webui
 - ✅ **拖拽上传** — 支持拖拽文件到聊天区域上传,自动识别文件类型并添加为附件
 - ✅ **多媒体附件** — 支持图片、音频、视频等多媒体文件作为附件发送给 AI 分析
 - ✅ **文件大小限制** — 自动限制上传文件大小,防止过大的文件影响性能
+- ✅ **登录自动跳转** — 已登录用户打开页面时自动跳转到聊天界面
 - ✅ **移动端响应式设计** — 完美适配手机和平板设备,支持触摸手势操作
 - ✅ **精美 UI 样式** — 基础 CSS 样式和动画效果,提升视觉体验
 
@@ -1036,8 +1045,11 @@ UniClaw 提供了丰富的内置工具,AI 助手可以自动调用这些工具�
 - **keyboard_key_down** / **keyboard_key_up** - 按键按下/释放控制
 - **wait** - 等待指定时间
 - **locate_on_screen** - 在屏幕上定位图像位置
+- **cu_get_elements** - 获取当前屏幕上的 UI 元素列表(基于 accessibility 树)
+- **cu_find_element** - 查找指定的 UI 元素(支持名称、角色、值等条件)
+- **cu_interact** - 操作 UI 元素(点击、聚焦、调用等)
 
-> 💡 **提示**: 计算机控制功能可通过全局热键 **Ctrl+U** 切换启用/禁用。依赖 `pyautogui`、`pynput`、`mss`、`pillow`。
+> 💡 **提示**: 计算机控制功能可通过全局热键 **Ctrl+U** 切换启用/禁用。依赖 `pyautogui`、`pynput`、`mss`、`pillow`。Windows 上额外依赖 `uiautomation`。
 
 #### 任务清单工具 📋
 
@@ -1132,6 +1144,16 @@ UniClaw 提供了丰富的内置工具,AI 助手可以自动调用这些工具�
 
 > 💡 **提示**: 知识图谱支持自动提取功能,AI 可以分析文本或文件,自动识别实体和关系并添加到图谱中。使用 `/kg` 命令管理图谱。
 
+#### 顾问模型工具 🎓
+
+- **advisor_list** - 列出已配置的顾问模型列表
+- **ask_advisor** - 向顾问模型提问,获取更强大模型的建议和分析(支持同时咨询多个模型)
+  - 适用场景:遇到知识不足、需要验证思路、涉及专业领域需要深入分析
+  - 支持并发调用多个顾问模型,汇总结果并标注模型来源
+  - 注意:一次性问答,无上下文,无探索能力;如需读取文件应先收集信息再提问
+
+> 💡 **提示**: 顾问模型通过 `large_model_name` 配置,仅当配置了顾问模型时才可用。可在 settings.json 中添加,或通过 `/model` 命令将模型设为顾问模型。
+
 #### AI 自助帮助工具 📖
 
 - **list_slash_commands** - 列出所有可用的斜杠命令及其简要说明
@@ -1186,7 +1208,7 @@ UniClaw 提供了丰富的内置工具,AI 助手可以自动调用这些工具�
 ```
 UniClaw/
 ├── pyproject.toml          # 项目配置(依赖、入口、构建)
-├── .python-version         # Python 版本锁定(>= 3.14)
+├── .python-version         # Python 版本锁定(本地开发用 3.14,最低要求 3.11)
 ├── tests/                  # 测试用例(位于仓库根目录)
 │
 └── src/uniclaw/            # 📦 包根目录
@@ -1199,13 +1221,14 @@ UniClaw/
     │
     ├── provider/           # LLM 层:多 provider 路由(OpenAI / Anthropic)
     │   ├── router.py       # 统一 API:stream/astream/chat/achat + 多模型 fallback
+    │   ├── fallback.py     # LLM 调用回退:主模型失败时自动尝试备用模型
     │   ├── openai_provider.py
     │   ├── anthropic_provider.py
     │   ├── thought_parser.py   # 流式解析 <thought>/<think> 标签
     │   ├── types.py        # Provider/Effort 枚举,StreamChunk,AIMessage
     │   └── common.py       # get_provider(),compare_urls()
     │
-    ├── commands/           # 斜杠命令系统 📝 (28 个命令 + 6 个别名)
+    ├── commands/           # 斜杠命令系统 📝 (29 个命令 + 7 个别名)
     │   ├── __init__.py     # 命令注册中心(COMMANDS dict)
     │   ├── session.py      # 会话管理(clear/compact/export)
     │   ├── resume.py       # 会话恢复(list/del/search/fork) 💬
@@ -1279,6 +1302,8 @@ UniClaw/
     │   ├── session/        # 会话持久化 + 历史消息检索 + 自动保存 💬
     │   ├── hooks/          # Hook 系统 🪝
     │   ├── tts/            # 语音合成(TTS) 🔊
+    │   ├── advisor.py      # 顾问模型工具(ask_advisor 多模型并发咨询) 🎓
+    │   ├── wechat.py       # 微信工具(联系人/发送文本/图片/文件)
     │   ├── help.py         # AI 自助帮助工具 📖
     │   └── send_file.py    # 文件发送工具 📤
     │
@@ -1312,9 +1337,9 @@ UniClaw/
   - 计划: `enter/exit_plan_mode`
   - 技能: `skill_suggest/read/run_command`
   - 元工具: `search_tools`
-- **扩展工具** (131 个): 初始不加载,通过 `search_tools` 元工具按需发现
+- **扩展工具** (133 个): 初始不加载,通过 `search_tools` 元工具按需发现
   - 基于 BM25 算法搜索,支持中英文关键词 + 语义同义词
-  - **LRU + 能量机制**: 每个扩展工具初始 10 点能量,每轮对话 -1,被调用或搜索命中恢复满能量,归零自动卸载;最多同时加载 25 个扩展工具,超出时按 LRU 顺序淘汰能量最低者
+  - **LRU + 能量机制**: 每个扩展工具初始 30 点能量,每轮对话 -1,被调用或搜索命中恢复满能量,归零自动卸载;最多同时加载 25 个扩展工具,超出时按 LRU 顺序淘汰能量最低者
   - 搜索结果自动注入到当前任务的可用工具集
   - 按类别组织: 计算机操作、多智能体、任务清单、进程监控、会话管理、定时任务、MCP 管理、安全管理、Hook 管理、沙箱、媒体、知识图谱等
 
@@ -1325,7 +1350,8 @@ UniClaw/
 多 provider 架构,支持配置多个 API 提供商并自动路由。`provider/router.py` 暴露 `stream()`、`astream()`、`chat()`、`achat()`,根据 model_name 中的 provider 前缀自动选择对应的 provider,调用方无需感知后端差异。
 
 - **ProviderProfile**: 每个 provider 独立配置 protocol/api_key/base_url,支持 OpenAI 和 Anthropic 两种协议
-- **Fallback 机制**: `model_name` 列表支持多模型 fallback,主模型失败时自动切换下一个
+- **Fallback 机制**: `model_name` 列表支持多模型 fallback,主模型失败时自动切换下一个;`provider/fallback.py` 提供 `chat()`/`achat()` 包装,支持 model_name 为 list 时按顺序回退
+- **顾问模型**: `large_model_name` 配置顾问模型列表,AI 遇到难题时可通过 `ask_advisor` 工具并发咨询多个更强力模型
 - **OpenAI SDK**: 流式 + 异步,支持 `reasoning_content` 和思考模型
 - **Anthropic SDK**: 等价接口,自动路由
 - **ThoughtParser**: 流式解析 `<thought>`/`<think>` 标签,分离思考过程和正文内容
@@ -1659,6 +1685,21 @@ A: 系统支持 OpenAI 和 Anthropic 两种协议,通过 `providers` 配置多�
 - **Fallback 机制**: `model_name` 列表中多个模型自动 fallback,主模型失败时自动切换到下一个
 - **首次配置**: 运行配置向导自动完成 provider 设置
 
+### Q: 如何使用顾问模型？
+
+A: 顾问模型允许 AI 在遇到难题时咨询更强力的模型获取第二意见：
+
+1. **配置顾问模型**: 在 `settings.json` 的 `large_model_name` 中添加顾问模型
+   ```json
+   {
+     "large_model_name": ["default/o3", "anthropic/claude-opus-4-20250514"]
+   }
+   ```
+2. **自动可用**: 配置后,AI 会自动识别并使用 `advisor_list` 和 `ask_advisor` 工具
+3. **同时咨询**: 支持同时向多个顾问模型提问,结果会汇总并标注来源
+
+**适用场景**: 遇到知识不足、需要验证思路、涉及专业领域需要深入分析时。
+
 ### Q: Token 使用率过高怎么办？
 
 A: 系统会自动进行上下文压缩,采用三级压力策略(50%/70%/85%),详见 [无限上下文机制](#-无限上下文机制)。
@@ -1850,6 +1891,8 @@ A:
 
 局域网共享：`uv run uniclaw --mode webui --host 0.0.0.0`,其他设备可通过你的 IP 地址访问。
 
+**HTTPS 模式**：`uv run uniclaw --mode webui --host 0.0.0.0 --ssl`,自动生成自签名证书。也可指定域名：`--ssl --domain uniclaw.example.com`。
+
 ### Q: 支持哪些操作系统？
 
 A: 支持 Windows、Linux 和 macOS。部分工具(如 Everything 搜索)仅在 Windows 上可用。WebUI 模式支持所有平台。
@@ -1943,6 +1986,7 @@ A: 在 REPL 中输入斜杠命令后按空格,会自动显示该命令的子命�
 - `/task` - `list`, `output`, `stop`, `matched`
 - `/overseer` - `start`, `stop`
 - `/checkpoint` - `create`, `pop`, `apply`, `delete`, `diff`
+- `/goal` - `clear`, `status`
 - `/export` - `markdown`, `json`
 - `/kg` - `stats`, `search`, `list`, `export`, `clear`
 
