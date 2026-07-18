@@ -8,8 +8,6 @@
 
 from uniclaw.config import AppConfig
 
-REVIEW_TIMEOUT = 60
-
 
 class OverseerManager:
     """监工模式管理器,每个 TodoList 实例持有独立的 OverseerManager。"""
@@ -41,7 +39,10 @@ async def _run_reviewer(prompt: str, config: AppConfig) -> tuple[bool, str]:
         agent_defs = load_agent_definitions(root_dir)
         reviewer_def = agent_defs.get("reviewer")
         if not reviewer_def.model_name:
-            reviewer_def = replace(reviewer_def, model_name=config.mini_model_name[0] if config.mini_model_name else "")
+            reviewer_def = replace(
+                reviewer_def,
+                model_name=config.mini_model_name[0] if config.mini_model_name else "",
+            )
         task = await mgr.start_sub_agent(
             user_message=prompt,
             system_prompt="你是一个严格的审核员。只回复 PASS 或 FAIL:<原因>,不要多说。",
@@ -52,7 +53,7 @@ async def _run_reviewer(prompt: str, config: AppConfig) -> tuple[bool, str]:
         if task.status == AgentStatus.FAILED:
             return False, f"审核子代理启动失败: {task.result}"
 
-        await mgr.wait(task.id, timeout=REVIEW_TIMEOUT)
+        await mgr.wait(task.id, timeout=300)
 
         # 检查任务是否真正完成
         if task.status == AgentStatus.FAILED:
@@ -107,7 +108,11 @@ async def verify_completion(task_content: str, config: AppConfig) -> tuple[bool,
 
 
 async def verify_modification(
-    action: str, old_items: list[str], new_items: list[str], reason: str, config: AppConfig
+    action: str,
+    old_items: list[str],
+    new_items: list[str],
+    reason: str,
+    config: AppConfig,
 ) -> tuple[bool, str]:
     """用子代理审核 TodoList 修改是否合理。
 

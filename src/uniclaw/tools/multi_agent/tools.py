@@ -70,8 +70,8 @@ async def subagent_create(
 
     # 根据 wait 参数决定是同步等待还是异步返回
     if wait:
-        # 异步等待任务完成,每次超时60秒
-        await mgr.wait(task.id, timeout=60)
+        # 异步等待任务完成,每次超时300秒
+        await mgr.wait(task.id, timeout=300)
         result = task.result or f"(无输出 — 状态:{task.status})"
         header = f"[智能体:{task.name}"
         if subagent_type:

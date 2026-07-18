@@ -1312,7 +1312,7 @@ async def create_sub_agent(body: SubAgentCreate):
             "status": "failed",
             "result": f"启动子代理失败: {task.result}",
         }
-    await mgr.wait(task.id, timeout=600)
+    await mgr.wait(task.id, timeout=300)
 
     return {
         "task_id": task.id,
