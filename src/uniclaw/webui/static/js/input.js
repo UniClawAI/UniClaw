@@ -66,15 +66,13 @@ const Input = {
     /** TTS 播放状态变更回调(由 AudioPlayer._setPlaying 调用) */
     _onTtsPlayback(isPlaying) {
         this._ttsPlaying = isPlaying;
-        // 仅免提模式下阻断用户输入(非免提模式用户是打字,不存在回声问题)
+        // 仅免提模式下阻断语音输入(非免提模式用户是打字,不存在回声问题)
+        // 底层已有 _ttsPlaying 标志过滤音频发送和 ASR 结果,无需禁用按钮
         if (!this._handsfree) return;
         const input = document.getElementById('chat-input');
-        const sendBtn = document.getElementById('send-btn');
         if (isPlaying) {
             if (input) input.placeholder = '🔊 AI 正在说话...';
-            if (sendBtn) sendBtn.disabled = true;
         } else {
-            if (sendBtn) sendBtn.disabled = false;
             this._clearSpeechBuffer();
         }
     },
