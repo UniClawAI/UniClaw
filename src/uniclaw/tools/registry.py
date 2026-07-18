@@ -107,7 +107,7 @@ def _build_extended_keywords() -> dict[str, list[str]]:
         kg_delete_entity, kg_delete_relation, kg_merge_entities, kg_get_entity, kg_search,
         kg_neighbors, kg_path, kg_stats, kg_export, kg_list, kg_extract, kg_clear,
     )
-    from .advisor import advisor_list, ask_advisor
+    from .advisor import advisor_list, ask_advisor, investigate
 
     # tool.name → 关键词列表(中英文+语义同义词)
     return {
@@ -255,6 +255,7 @@ def _build_extended_keywords() -> dict[str, list[str]]:
         kg_clear.name: ["清空图谱", "clear knowledge", "知识图谱", "清除图谱", "重置图谱"],
         advisor_list.name: ["顾问模型", "advisor", "咨询模型", "列出顾问", "list advisors", "大模型", "顾问列表"],
         ask_advisor.name: ["问顾问", "咨询顾问", "ask advisor", "consult", "询问模型", "请教", "ask model", "顾问提问"],
+        investigate.name: ["调查", "调查研究", "investigate", "侦察", "搜集信息", "调研", "查一下", "了解一下"],
     }
 
 
@@ -322,7 +323,7 @@ def _build_tool_categories() -> dict[str, str]:
         kg_delete_entity, kg_delete_relation, kg_merge_entities, kg_get_entity, kg_search,
         kg_neighbors, kg_path, kg_stats, kg_export, kg_list, kg_extract, kg_clear,
     )
-    from .advisor import advisor_list, ask_advisor
+    from .advisor import advisor_list, ask_advisor, investigate
 
     # tool.name → 类别
     return {
@@ -390,7 +391,7 @@ def _build_tool_categories() -> dict[str, str]:
         kg_path.name: "知识图谱", kg_stats.name: "知识图谱", kg_export.name: "知识图谱",
         kg_list.name: "知识图谱", kg_extract.name: "知识图谱", kg_clear.name: "知识图谱",
         # 顾问工具
-        advisor_list.name: "顾问", ask_advisor.name: "顾问",
+        advisor_list.name: "顾问", ask_advisor.name: "顾问", investigate.name: "顾问",
     }
 
 
@@ -490,6 +491,21 @@ class ToolRegistry:
     def get_all_entries(self) -> dict[str, ToolEntry]:
         """获取所有注册的工具条目。"""
         return dict(self._entries)
+
+    def resolve_tools(self, names: list) -> list:
+        """将工具名/Tool对象混合列表解析为 Tool 对象列表。未找到的工具会被跳过并记录警告。"""
+        resolved = []
+        for item in names:
+            if not isinstance(item, str):
+                resolved.append(item)
+            elif item in self._entries:
+                resolved.append(self._entries[item].tool)
+            else:
+                from uniclaw.utils.logger import get_logger
+                get_logger("registry").warning(
+                    f"工具 '{item}' 未在注册表中找到,已忽略"
+                )
+        return resolved
 
     def get_core_names(self) -> set[str]:
         """获取核心工具名集合。"""

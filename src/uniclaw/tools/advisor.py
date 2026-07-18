@@ -1,9 +1,23 @@
-"""顾问模型工具 — 查询和调用配置的顾问模型。"""
+"""顾问模型工具 — 通过调查代理收集信息后向顾问模型提问。"""
 
 import asyncio
 
 from uniclaw.tools.base import tool
 from uniclaw.config import AppConfig
+from uniclaw.utils.constants import TOOL_ERROR
+
+
+def _strip_provider(model: str) -> str:
+    """去掉提供商前缀,如 'openai/gpt-4o' → 'gpt-4o'。"""
+    return model.split("/", 1)[-1] if "/" in model else model
+
+
+def _match_model(name: str, candidates: list[str]) -> str | None:
+    """从候选列表中匹配模型。支持全名或去掉了提供商前缀的名称。"""
+    for full in candidates:
+        if name == full or name == _strip_provider(full):
+            return full
+    return None
 
 
 @tool
@@ -19,31 +33,63 @@ def advisor_list(config: AppConfig = None) -> str:
 
     lines = [f"已配置 {len(config.large_model_name)} 个顾问模型:"]
     for i, model in enumerate(config.large_model_name, 1):
-        lines.append(f"  [{i}] {model}")
+        lines.append(f"  [{i}] {_strip_provider(model)}")
     lines.append("\n使用 ask_advisor 工具向指定顾问模型提问。")
     return "\n".join(lines)
 
 
-async def _call_advisor(model: str, system_message: str, user_message: str, config: AppConfig) -> str:
-    """调用单个顾问模型。"""
-    from uniclaw.provider.router import achat
-    from uniclaw.tools.session.session import Session, UserMessage
+@tool
+async def investigate(query: str, config: AppConfig = None) -> str:
+    """
+    调查项目信息并返回精炼摘要。内部启动侦察代理收集和整理数据。
 
-    try:
-        session = Session()
-        session._messages = [UserMessage(content=user_message)]
+    适用场景:
+    - 需要了解某个模块/函数的实现细节
+    - 需要搜索项目中与某个主题相关的代码和文档
+    - 需要收集信息后再做判断
 
-        result = await achat(
-            system_prompt=system_message,
-            session=session,
-            model_name=model,
-            config=config,
-            enable_thinking=True,
-            thinking=True,
-        )
-        return result.content or "(顾问模型未返回内容)"
-    except Exception as e:
-        return f"调用失败: {e}"
+    注意:
+    - 返回的是精炼摘要,不是原始数据
+    - 提出具体的调查问题会得到更好的结果
+    - 可以多次调用以从不同角度调查
+
+    Args:
+        query: 具体的调查问题,越详细越好(例如"auth 模块的登录流程是怎样实现的")
+    """
+    if not config:
+        return f"{TOOL_ERROR}: 无法获取配置"
+
+    from uniclaw.agent import MultiAgent
+
+    mgr = MultiAgent.get_instance()
+    sub_config = config.create_sub_config(name="recon", prompt=query)
+    # recon 使用主 agent 的默认模型(非顾问模型)
+    if hasattr(config, "_parent_model_name"):
+        sub_config.model_name = list(config._parent_model_name)
+    # recon 由工具启动,需要额外一层深度余量
+    sub_config.max_agent_depth += 1
+
+    from uniclaw.tools.multi_agent.sub_agent import load_agent_definitions
+
+    from uniclaw.agent import AgentStatus
+
+    recon_def = load_agent_definitions().get("recon")
+    if not recon_def:
+        return f"{TOOL_ERROR}: 未找到侦察代理(recon)定义"
+
+    task = await mgr.start_sub_agent(
+        user_message=query,
+        config=sub_config,
+        agent_def=recon_def,
+        isolation=False,
+        inherit_events=True,
+    )
+
+    if task.status == AgentStatus.FAILED:
+        return f"{TOOL_ERROR}: 侦察代理启动失败: {task.result}"
+
+    await mgr.wait(task.id, timeout=300)
+    return task.result or f"(侦察代理未返回结果 — 状态: {task.status})"
 
 
 @tool
@@ -56,42 +102,77 @@ async def ask_advisor(
     """
     向顾问模型提问,获取更强大模型的建议和分析。
 
+    顾问模型通过调查工具(investigate)收集项目信息,基于调查结果给出建议。
+    顾问模型不会直接接触项目原始数据,只看到调查代理返回的精炼摘要。
+
     适用场景:
     - 遇到知识不足、不确定该用什么方案时
     - 需要验证思路或获取第二意见时
     - 涉及专业领域需要更深入的分析时
 
-    注意事项:
-    - 这是一次性问答,没有除 system_message 和 user_message 以外的上下文
-    - 此工具没有探索能力,无法读取文件、搜索代码或执行命令
-    - 如果是项目本身的问题(如代码结构、文件内容),应先收集信息再提问
-    - user_message 中应尽可能详细地描述:当前遇到的问题、运行环境、已有的信息、可用的工具等
-
     Args:
-        model: 顾问模型名称列表(格式: provider/model),通过 advisor_list 获取可用列表,可指定多个模型同时咨询
-        system_message: 系统提示词,定义顾问的角色和专业领域
+        model: 顾问模型名称列表,通过 advisor_list 获取可用列表,可指定多个模型同时咨询
+        system_message: 系统提示词,定义顾问的角色和专业领域(例如"你是一个专注于性能优化的资深工程师")
         user_message: 用户提问内容,应包含完整的问题描述和背景信息
     """
     if not config:
-        return "错误: 无法获取配置"
+        return f"{TOOL_ERROR}: 无法获取配置"
 
-    # 验证模型是否在顾问列表中
-    invalid = [m for m in model if m not in config.large_model_name]
-    if invalid:
-        available = ", ".join(config.large_model_name) if config.large_model_name else "无"
-        return f"错误: 模型 '{', '.join(invalid)}' 不在顾问模型列表中。可用的顾问模型: {available}"
+    # 验证并解析模型名(支持省略提供商前缀)
+    resolved = []
+    for m in model:
+        full = _match_model(m, config.large_model_name)
+        if not full:
+            available = ", ".join(_strip_provider(x) for x in config.large_model_name) if config.large_model_name else "无"
+            return f"{TOOL_ERROR}: 模型 '{m}' 不在顾问列表中。可用: {available}"
+        resolved.append(full)
+
+    # 构建顾问代理定义: 只有 investigate 一个工具
+    from uniclaw.tools.multi_agent.sub_agent import AgentDefinition
+
+    advisor_def = AgentDefinition(
+        name="advisor",
+        description="顾问代理,通过调查工具收集信息后给出专业建议",
+        system_prompt=system_message,
+        tools=[investigate.name],
+        source="built-in",
+    )
+
+    # 为每个模型启动一个顾问子代理
+    async def _call_one(m: str) -> str:
+        from uniclaw.agent import MultiAgent, AgentStatus
+
+        mgr = MultiAgent.get_instance()
+        sub_config = config.create_sub_config(name="advisor", prompt=user_message)
+        # 保存主 agent 的默认模型,recon 子代理需要用它
+        sub_config._parent_model_name = list(config.model_name)
+        sub_config.model_name = [m]
+
+        task = await mgr.start_sub_agent(
+            user_message=user_message,
+            config=sub_config,
+            agent_def=advisor_def,
+            isolation=False,
+            inherit_events=True,
+        )
+
+        if task.status == AgentStatus.FAILED:
+            return f"{TOOL_ERROR}: 顾问代理 ({m}) 启动失败: {task.result}"
+
+        await mgr.wait(task.id, timeout=300)
+        return task.result or f"(顾问模型未返回结果 — 状态: {task.status})"
 
     # 并发调用所有顾问模型
-    tasks = [_call_advisor(m, system_message, user_message, config) for m in model]
+    tasks = [_call_one(m) for m in resolved]
     results = await asyncio.gather(*tasks)
 
     # 汇总结果,标注模型来源
-    if len(model) == 1:
+    if len(resolved) == 1:
         return results[0]
 
     parts = []
-    for m, r in zip(model, results):
-        parts.append(f"=== {m} ===\n{r}")
+    for m, r in zip(resolved, results):
+        parts.append(f"=== {_strip_provider(m)} ===\n{r}")
     return "\n\n".join(parts)
 
 
@@ -102,9 +183,9 @@ def get_tools(config=None) -> list:
     """
     if not config or not config.large_model_name:
         return []
-    return [advisor_list, ask_advisor]
+    return [advisor_list, ask_advisor, investigate]
 
 
 def get_all_tools() -> list:
     """返回此模块的全部工具"""
-    return [advisor_list, ask_advisor]
+    return [advisor_list, ask_advisor, investigate]

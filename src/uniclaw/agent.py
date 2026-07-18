@@ -575,20 +575,9 @@ class MultiAgent:
 
         if not allowed_tools:
             allowed_tools = await get_tools(config)
-        elif allowed_tools and isinstance(allowed_tools[0], str):
-            # agent_def.tools 是字符串名,转为 Tool 对象
+        else:
             from uniclaw.tools.registry import ToolRegistry
-
-            entries = ToolRegistry.get_instance().get_all_entries()
-            resolved = []
-            for name in allowed_tools:
-                if name in entries:
-                    resolved.append(entries[name].tool)
-                else:
-                    get_logger("agent", task.session.root_dir).warning(
-                        f"agent_def.tools 中的工具 '{name}' 未在注册表中找到,已忽略"
-                    )
-            allowed_tools = resolved
+            allowed_tools = ToolRegistry.get_instance().resolve_tools(allowed_tools)
         # 子代理展示可搜索的扩展工具
         from uniclaw.tools.registry import get_registry_system_prompt
 
