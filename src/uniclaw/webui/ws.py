@@ -84,6 +84,9 @@ async def get_or_load_session(session_id: str) -> AppConfig:
         # 确保 event_queue 已初始化
         if config.current_agent.event_queue is None:
             config.current_agent.event_queue = asyncio.Queue()
+        # 刷新 spinner 的回调和 event loop 引用(WS 重连后可能过期)
+        if isinstance(config.spinner, WebSpinner):
+            config.spinner.set_send_callback(_broadcast)
         return config
     # 从磁盘加载
     session = SessionManager.load_session(session_id)
@@ -100,6 +103,8 @@ async def get_or_load_session(session_id: str) -> AppConfig:
     # 初始化 event_queue
     config.current_agent.event_queue = asyncio.Queue()
     session_cache[session_id] = config
+    # 绑定 spinner 回调(新加载的 spinner 缺少 send_callback)
+    spinner.set_send_callback(_broadcast)
     return config
 
 
@@ -646,11 +651,7 @@ async def handle_ws_message(ws: WebSocket, msg: dict):
             spinner.set_session_id(session_id)
             config.current_agent.event_queue = asyncio.Queue()
             session_cache[session_id] = config
-
-            async def _broadcast_send_free(data):
-                await _broadcast(data)
-
-            spinner.set_send_callback(_broadcast_send_free)
+            spinner.set_send_callback(_broadcast)
             config.output_callback = _make_broadcast_callback(session_id)
             await _broadcast(
                 {
@@ -668,11 +669,7 @@ async def handle_ws_message(ws: WebSocket, msg: dict):
             spinner.set_session_id(session_id)
             config.current_agent.event_queue = asyncio.Queue()
             session_cache[session_id] = config
-
-            async def _broadcast_send(data):
-                await _broadcast(data)
-
-            spinner.set_send_callback(_broadcast_send)
+            spinner.set_send_callback(_broadcast)
             config.output_callback = _make_broadcast_callback(session_id)
             await _broadcast(
                 {
