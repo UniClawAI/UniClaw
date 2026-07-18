@@ -47,28 +47,42 @@ class MonitorManager:
             except re.error as e:
                 return f"{TOOL_ERROR}: 无效的正则表达式 - {e}"
 
-        # 异步创建子进程
-        try:
-            creationflags = 0
-            if os.name == "nt":
-                creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
-
-            process = await asyncio.create_subprocess_shell(
-                command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-                stdin=asyncio.subprocess.PIPE,
-                cwd=str(cwd) if cwd else None,
-                limit=2**20,
-                **({"creationflags": creationflags} if creationflags else {}),
-            )
-        except Exception as e:
-            return f"{TOOL_ERROR}: {e}"
-
         async with self._manager_lock:
+            # 先检查并发数,再创建进程
             if len(self._monitors) >= self._max_concurrent:
-                process.kill()
-                return f"{TOOL_ERROR}: 已达到最大并发数({self._max_concurrent})"
+                # 列出当前进程供 agent 决策关闭哪些
+                info_lines = []
+                for m in self._monitors.values():
+                    uptime = int((datetime.now() - m.start_time).total_seconds())
+                    info_lines.append(
+                        f"  [{m.status.value}] {m.description or m.command[:30]} "
+                        f"(ID:{m.id} | 运行:{uptime}s)"
+                    )
+                proc_list = "\n".join(info_lines)
+                from .tools import monitor_stop
+                return (
+                    f"{TOOL_ERROR}: 已达到最大并发数({self._max_concurrent})\n"
+                    f"当前进程列表:\n{proc_list}\n"
+                    f"请先用 {monitor_stop.name} 关闭不需要的进程,再重新启动。"
+                )
+
+            # 异步创建子进程
+            try:
+                creationflags = 0
+                if os.name == "nt":
+                    creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
+
+                process = await asyncio.create_subprocess_shell(
+                    command,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.STDOUT,
+                    stdin=asyncio.subprocess.PIPE,
+                    cwd=str(cwd) if cwd else None,
+                    limit=2**20,
+                    **({"creationflags": creationflags} if creationflags else {}),
+                )
+            except Exception as e:
+                return f"{TOOL_ERROR}: {e}"
 
             monitor_id = uuid.uuid4().hex[:8]
             monitor = Monitor(
