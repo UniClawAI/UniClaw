@@ -456,7 +456,7 @@ async def Grep(
             case_insensitive=case_insensitive,
             context=context,
         )
-        return out[:20000] if len(out) > 20000 else out
+        return out
 
     use_rg = await _has_rg()
     cmd = ["rg" if use_rg else "grep", "--no-heading"]
