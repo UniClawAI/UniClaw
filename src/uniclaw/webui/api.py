@@ -452,8 +452,13 @@ async def get_settings():
 
 @router.put("/settings")
 async def update_settings(body: SettingsUpdate):
-    """保存全局 settings.json。"""
+    """保存 settings.json。session_id 非空时更新会话级配置(内存),否则更新全局配置(磁盘)。"""
 
+    # === 会话级配置更新 ===
+    if body.session_id:
+        await _update_session_settings(body)
+
+    # === 全局配置更新 ===
     # 读取原始配置,用于恢复未修改的脱敏 key
     path, original = _read_settings_raw()
     original_providers = original.get("providers", {})
@@ -531,6 +536,51 @@ async def update_settings(body: SettingsUpdate):
     path.write_text(json.dumps(cleaned, ensure_ascii=False, indent=2), encoding="utf-8")
 
     return {"ok": True, "config_path": str(path)}
+
+
+async def _update_session_settings(body: SettingsUpdate) -> dict:
+    """更新会话级配置(仅修改内存中的 AppConfig,不写磁盘)。"""
+    session_id = body.session_id
+
+    # 获取会话 config(优先缓存,否则从磁盘加载)
+    try:
+        config = await get_or_load_session(session_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail=f"会话 {session_id} 不存在")
+
+    # 验证模型名的 provider 前缀(使用会话已有的 providers)
+    provider_names = set(config.providers.keys())
+    for field_name in ("model_name", "mini_model_name", "multimodal_model_name", "large_model_name"):
+        models = getattr(body, field_name)
+        for m in models:
+            if "/" not in m:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"{field_name} 格式错误:'{m}' 必须是 'provider/model' 格式",
+                )
+            prefix = m.split("/", 1)[0]
+            if prefix not in provider_names:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"{field_name} 中的 '{m}' 引用了不存在的 provider '{prefix}'",
+                )
+
+    # 更新会话级字段
+    config.model_name = body.model_name
+    config.mini_model_name = body.mini_model_name
+    config.multimodal_model_name = body.multimodal_model_name
+    config.large_model_name = body.large_model_name
+    config.tts_model = body.tts_model
+    config.asr_model = body.asr_model
+    config.audio = body.audio if body.audio else None
+    config.temperature = body.temperature
+    config.max_tokens = body.max_tokens
+    config.top_p = body.top_p
+    config.proxy_url = body.proxy_url
+    config.max_agent_depth = body.max_agent_depth
+    config.permission_timeout = body.permission_timeout
+
+    return {"ok": True, "session_id": session_id}
 
 
 @router.post("/models")

@@ -598,6 +598,7 @@ const Settings = {
         if (audio === undefined) return;
 
         const body = {
+            session_id: SessionPanel.activeSessionId || '',
             model_name: modelName,
             mini_model_name: miniModel,
             multimodal_model_name: multimodalModel,
@@ -642,8 +643,12 @@ const Settings = {
                 return;
             }
 
-            Utils.showToast('设置已保存');
+            Utils.showToast(body.session_id ? '会话设置已保存' : '全局设置已保存');
             this.close();
+            // 会话设置保存后刷新状态栏(模型名等)
+            if (body.session_id) {
+                SessionPanel._updateStatusBar(SessionPanel.activeProjectDir, body.session_id);
+            }
         } catch (e) {
             errEl.textContent = '网络错误: ' + e.message;
         } finally {
