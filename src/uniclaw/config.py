@@ -69,6 +69,7 @@ class AppConfig:
     large_model_name: list[str] = field(default_factory=list)  # 顾问模型列表
     tts_model: str = ""  # TTS 模型名称
     asr_model: str = ""  # ASR 模型名称
+    image_model: str = ""  # 图片生成模型名称
     audio: dict | None = None  # TTS 音频配置 (voice, format 等)
     providers: dict[str, ProviderProfile] = field(
         default_factory=dict
@@ -189,6 +190,7 @@ class AppConfig:
             large_model_name=list(self.large_model_name),
             tts_model=self.tts_model,
             asr_model=self.asr_model,
+            image_model=self.image_model,
             audio=self.audio,
             providers=dict(self.providers),
             temperature=self.temperature,
@@ -403,6 +405,7 @@ def _create_config_from_data(data: dict[str, Any]) -> AppConfig:
         large_model_name=data.get("large_model_name", []),
         tts_model=data.get("tts_model", ""),
         asr_model=data.get("asr_model", ""),
+        image_model=data.get("image_model", ""),
         audio=data.get("audio"),
         providers=providers,
         temperature=data.get("temperature"),
@@ -559,6 +562,7 @@ def load_config(
         large_model_name=data.get("large_model_name", []),
         tts_model=data.get("tts_model", ""),
         asr_model=data.get("asr_model", ""),
+        image_model=data.get("image_model", ""),
         audio=data.get("audio"),
         providers=providers,
         temperature=data.get("temperature"),
@@ -602,6 +606,7 @@ def save_config(config: AppConfig) -> None:
         "large_model_name": config.large_model_name,
         "tts_model": config.tts_model,
         "asr_model": config.asr_model,
+        "image_model": config.image_model,
         "audio": config.audio,
         "temperature": config.temperature,
         "max_tokens": config.max_tokens,

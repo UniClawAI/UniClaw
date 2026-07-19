@@ -261,6 +261,7 @@ class SettingsUpdate(BaseModel):
     large_model_name: list[str] = Field(default_factory=list)
     tts_model: str = ""
     asr_model: str = ""
+    image_model: str = ""
     audio: dict | None = None  # TTS 音频配置 (voice, format, speed 等,自由键值)
     temperature: float | None = None
     max_tokens: int | None = None

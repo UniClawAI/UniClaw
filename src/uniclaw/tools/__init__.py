@@ -126,7 +126,7 @@ async def get_tools(config) -> list:
         *web_get_tools(),
         *web_browse_get_tools(),
         *memory_get_tools(),
-        *media_get_tools(),
+        *media_get_tools(config),
         *await sandbox_get_tools(config),
         *scheduler_get_tools(),
         sleep_wait,  # wait 子代理可用

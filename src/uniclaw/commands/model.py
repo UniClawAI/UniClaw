@@ -128,7 +128,8 @@ async def _apply_model(model_ref: str, config: AppConfig) -> None:
         "  [4] 设为顾问模型\n"
         "  [5] 设为 TTS 模型\n"
         "  [6] 设为 ASR 模型\n"
-        "选择 (1-6, 回车取消): ",
+        "  [7] 设为图片生成模型\n"
+        "选择 (1-7, 回车取消): ",
         config=config,
     )
     choice = choice.strip()
@@ -167,6 +168,11 @@ async def _apply_model(model_ref: str, config: AppConfig) -> None:
         config.asr_model = model_ref
         save_config(config)
         await ok(f"✓ 已设为 ASR 模型: {model_ref}", config)
+        await _notify_webui()
+    elif choice == "7":
+        config.image_model = model_ref
+        save_config(config)
+        await ok(f"✓ 已设为图片生成模型: {model_ref}", config)
         await _notify_webui()
 
 
@@ -256,6 +262,7 @@ async def cmd_model(args: str, config: AppConfig) -> bool:
     current_large = config.large_model_name[0] if config.large_model_name else ""
     current_tts = config.tts_model
     current_asr = config.asr_model
+    current_image = config.image_model
 
     title = provider_name if provider_name and provider_name in search_providers else "所有"
     prompt_list = [f"\n{title} 可用模型:"]
@@ -264,6 +271,8 @@ async def cmd_model(args: str, config: AppConfig) -> bool:
         prompt_list.append(f"  当前 TTS: {current_tts}" + (f" (语音: {voice})" if voice and len(voice) < 20 else ""))
     if current_asr:
         prompt_list.append(f"  当前 ASR: {current_asr}")
+    if current_image:
+        prompt_list.append(f"  当前图片生成: {current_image}")
     for i, m in enumerate(all_models, 1):
         tags = []
         if m == current_main:
@@ -278,6 +287,8 @@ async def cmd_model(args: str, config: AppConfig) -> bool:
             tags.append("TTS")
         if m == current_asr:
             tags.append("ASR")
+        if m == current_image:
+            tags.append("图片生成")
         marker = f" ← {', '.join(tags)}" if tags else ""
         prompt_list.append(f"  [{i}] {m}{marker}")
 

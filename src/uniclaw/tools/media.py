@@ -61,7 +61,9 @@ def _check_ffmpeg() -> bool:
 
 def _read_image(p: Path, suffix: str) -> list:
     size_kb = p.stat().st_size / 1024
-    blocks = [{"type": "text", "text": f"{SYSTEM_PREFIX}[图片: {p.name}, {size_kb:.0f} KB]"}]
+    blocks = [
+        {"type": "text", "text": f"{SYSTEM_PREFIX}[图片: {p.name}, {size_kb:.0f} KB]"}
+    ]
     if suffix == ".svg":
         text = p.read_text(encoding="utf-8")
         blocks.append({"type": "text", "text": text})
@@ -84,11 +86,18 @@ def _get_media_info(p: Path) -> dict:
     try:
         result = subprocess.run(
             [
-                "ffprobe", "-v", "error",
-                "-show_entries", "format=duration,bit_rate:stream=codec_name,sample_rate,channels",
-                "-of", "json", str(p),
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration,bit_rate:stream=codec_name,sample_rate,channels",
+                "-of",
+                "json",
+                str(p),
             ],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         if result.returncode == 0:
             import json
@@ -212,16 +221,16 @@ def _read_media_impl(file_path: str, fps: int = 2) -> list | str:
     media_type = _detect_media_type(suffix)
     if media_type is None:
         all_exts = sorted(IMAGE_EXTENSIONS | AUDIO_EXTENSIONS | VIDEO_EXTENSIONS)
-        return f"{TOOL_ERROR}: 不支持的格式 '{suffix}',支持的格式: {', '.join(all_exts)}"
+        return (
+            f"{TOOL_ERROR}: 不支持的格式 '{suffix}',支持的格式: {', '.join(all_exts)}"
+        )
 
     size_limit = SIZE_LIMITS[media_type]
     size_bytes = p.stat().st_size
     if size_bytes > size_limit:
         size_mb = size_bytes / (1024 * 1024)
         limit_mb = size_limit / (1024 * 1024)
-        return (
-            f"{TOOL_ERROR}: 文件过大 ({size_mb:.1f} MB),{media_type} 最大支持 {limit_mb:.0f} MB"
-        )
+        return f"{TOOL_ERROR}: 文件过大 ({size_mb:.1f} MB),{media_type} 最大支持 {limit_mb:.0f} MB"
 
     try:
         if media_type == "image":
@@ -258,9 +267,75 @@ async def ReadMedia(file_path: str, fps: int = 2) -> list | str:
     return await asyncio.to_thread(_read_media_impl, file_path, fps)
 
 
-def get_tools() -> list:
-    return [ReadMedia]
+@tool
+async def GenerateImage(
+    prompt: str,
+    path: str | None = None,
+    size: str = "1024x768",
+    config=None,
+) -> list | str:
+    """
+    使用 AI 生成图片。可以保存到文件或返回多模态数据供分析。
+
+    Args:
+        prompt: 图片描述提示词
+        path: 保存路径(如 "output.png"),为空时返回多模态数据供 AI 直接分析
+        size: 图片尺寸,如 "2K", "1024x1024", "1024x768"
+
+    Returns:
+        path 非空时返回保存路径字符串;path 为空时返回多模态内容块列表(可直接用于视觉分析)
+    """
+    from uniclaw.provider.openai_provider import agenerate_image
+
+    model_name = config.image_model
+
+    try:
+        results = await agenerate_image(
+            prompt=prompt,
+            model_name=model_name,
+            size=size,
+            config=config,
+        )
+    except Exception as e:
+        return f"{TOOL_ERROR}: 图片生成失败: {e}"
+
+    if not results:
+        return f"{TOOL_ERROR}: 图片生成返回为空"
+
+    result = results[0]
+    is_url = result.startswith("http://") or result.startswith("https://")
+
+    # 保存到文件
+    if path:
+        p = Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        if is_url:
+            import urllib.request
+
+            urllib.request.urlretrieve(result, str(p))
+        else:
+            import base64 as b64mod
+
+            p.write_bytes(b64mod.b64decode(result))
+        return f"已保存到: {p.resolve()}"
+
+    # 返回多模态数据
+    image_url = result if is_url else f"data:image/png;base64,{result}"
+    return [
+        {"type": "text", "text": f"{SYSTEM_PREFIX}[AI 生成图片, prompt: {prompt}]"},
+        {
+            "type": "image_url",
+            "image_url": {"url": image_url},
+        },
+    ]
+
+
+def get_tools(config=None) -> list:
+    tools = [ReadMedia]
+    if config and config.image_model:
+        tools.append(GenerateImage)
+    return tools
 
 
 def get_all_tools() -> list:
-    return get_tools()
+    return [ReadMedia, GenerateImage]

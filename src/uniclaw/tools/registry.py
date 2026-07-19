@@ -83,7 +83,7 @@ def _build_extended_keywords() -> dict[str, list[str]]:
     from .hooks.tools import hook_docs, hook_read, hook_add, hook_remove
     from .sandbox import RunCode
     from .sleep import sleep_timer, wait
-    from .media import ReadMedia
+    from .media import ReadMedia, GenerateImage
     from .ask import AskUserQuestion
     from .notify import push_notification
     from .tts.tools import text_to_speech
@@ -181,6 +181,11 @@ def _build_extended_keywords() -> dict[str, list[str]]:
             "image", "photo", "picture", "video", "audio", "read image",
             "OCR", "识别图片", "图片识别", "看图", "读图", "analyze image",
             "image recognition", "text recognition", "extract text",
+        ],
+        GenerateImage.name: [
+            "生成图片", "生图", "AI画图", "图片生成", "画图", "生成",
+            "generate image", "create image", "AI image", "image generation",
+            "draw", "painting", "illustration", "图片创作",
         ],
         AskUserQuestion.name: ["询问用户", "ask user", "用户问题", "确认", "confirm", "question", "用户选择", "让用户决定", "问需求", "确认需求", "用户偏好"],
         push_notification.name: ["通知", "notification", "推送通知", "桌面通知", "push notify"],
@@ -299,7 +304,7 @@ def _build_tool_categories() -> dict[str, str]:
     from .hooks.tools import hook_docs, hook_read, hook_add, hook_remove
     from .sandbox import RunCode
     from .sleep import sleep_timer, wait
-    from .media import ReadMedia
+    from .media import ReadMedia, GenerateImage
     from .ask import AskUserQuestion
     from .notify import push_notification
     from .tts.tools import text_to_speech
@@ -357,6 +362,7 @@ def _build_tool_categories() -> dict[str, str]:
         RunCode.name: "沙箱",
         sleep_timer.name: "睡眠/等待", wait.name: "睡眠/等待",
         ReadMedia.name: "媒体",
+        GenerateImage.name: "媒体",
         AskUserQuestion.name: "用户交互",
         push_notification.name: "通知",
         # Web Browse 工具

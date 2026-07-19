@@ -603,3 +603,70 @@ async def _response_to_ai_message_async(response) -> AIMessage:
     ai_msg = _response_to_ai_message(response)
     await record_usage_async(ai_msg.model_name, ai_msg.usage)
     return ai_msg
+
+
+# ── 图片生成 ───────────────────────────────────────────────────
+
+
+def generate_image(
+    prompt: str,
+    model_name: str,
+    size: str = "1024x768",
+    config=None,
+) -> list[str]:
+    """同步图片生成,返回图片 URL 或 base64 列表。
+
+    Args:
+        prompt: 图片描述提示词
+        model_name: 模型名称(含提供商前缀),为空时使用配置中的模型
+        size: 图片尺寸,如 "2K", "1024x1024"
+        config: 应用配置
+
+    Returns:
+        图片 URL 或 base64 编码字符串列表
+    """
+    p = resolve_params(config, model_name=model_name)
+    client = _build_openai_client(
+        p["openai_api_base"], p["openai_api_key"], p["proxy_url"]
+    )
+
+    kwargs = dict(
+        model=p["model_name"],
+        prompt=prompt,
+        size=size,
+    )
+
+    response = client.images.generate(**kwargs)
+    return [item.url or item.b64_json for item in response.data]
+
+
+async def agenerate_image(
+    prompt: str,
+    model_name: str,
+    size: str = "1024x768",
+    config=None,
+) -> list[str]:
+    """异步图片生成,返回图片 URL 或 base64 列表。
+
+    Args:
+        prompt: 图片描述提示词
+        model_name: 模型名称(含提供商前缀),为空时使用配置中的模型
+        size: 图片尺寸,如 "2K", "1024x1024"
+        config: 应用配置
+
+    Returns:
+        图片 URL 或 base64 编码字符串列表
+    """
+    p = resolve_params(config, model_name=model_name)
+    client = _build_async_openai_client(
+        p["openai_api_base"], p["openai_api_key"], p["proxy_url"]
+    )
+
+    kwargs = dict(
+        model=p["model_name"],
+        prompt=prompt,
+        size=size,
+    )
+
+    response = await client.images.generate(**kwargs)
+    return [item.url or item.b64_json for item in response.data]

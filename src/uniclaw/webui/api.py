@@ -310,6 +310,7 @@ async def get_config(session_id: str):
             "voice_available": bool(config.tts_model and config.audio),
             "voice_mode": config.voice_mode,
             "asr_available": bool(config.asr_model),
+            "image_available": bool(config.image_model),
             "computer_use_enabled": config.computer_use_enabled,
         }
         # todolist 信息
@@ -436,6 +437,7 @@ async def get_settings():
         "large_model_name": _norm_model(data.get("large_model_name")),
         "tts_model": data.get("tts_model", "") or "",
         "asr_model": data.get("asr_model", "") or "",
+        "image_model": data.get("image_model", "") or "",
         "audio": data.get("audio") or None,
         "temperature": data.get("temperature"),
         "max_tokens": data.get("max_tokens"),
@@ -517,6 +519,7 @@ async def update_settings(body: SettingsUpdate):
         "large_model_name": body.large_model_name,
         "tts_model": body.tts_model,
         "asr_model": body.asr_model,
+        "image_model": body.image_model,
         "temperature": body.temperature,
         "max_tokens": body.max_tokens,
         "top_p": body.top_p,
@@ -572,6 +575,7 @@ async def _update_session_settings(body: SettingsUpdate) -> dict:
     config.large_model_name = body.large_model_name
     config.tts_model = body.tts_model
     config.asr_model = body.asr_model
+    config.image_model = body.image_model
     config.audio = body.audio if body.audio else None
     config.temperature = body.temperature
     config.max_tokens = body.max_tokens
