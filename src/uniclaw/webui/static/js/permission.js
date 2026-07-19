@@ -4,6 +4,7 @@ const Permission = {
     currentRequest: null,
     _countdownTimer: null,
     _countdownSeconds: 300,
+    _countdownCancelled: false,
     _pendingBySession: {},  // session_id → [msg, ...] 缓存未匹配的权限请求
 
     init() {
@@ -18,6 +19,7 @@ const Permission = {
         });
         document.getElementById('perm-allow').onclick = () => this._respond(true);
         document.getElementById('perm-deny').onclick = () => this._respond(false);
+        document.getElementById('perm-cancel-countdown').onclick = () => this._cancelCountdown();
         document.getElementById('status-permission').onclick = e => { e.stopPropagation(); this.showModeMenu(); };
     },
 
@@ -65,6 +67,11 @@ const Permission = {
         }
         document.getElementById('perm-reason').value = '';
         document.getElementById('perm-always').checked = false;
+        this._countdownCancelled = false;
+        const countdownEl = document.getElementById('perm-countdown');
+        if (countdownEl) countdownEl.style.display = '';
+        const cancelBtn = document.getElementById('perm-cancel-countdown');
+        if (cancelBtn) cancelBtn.style.display = '';
         document.getElementById('permission-modal').classList.remove('hidden');
         this._startCountdown(msg.created_at, msg.timeout);
     },
@@ -111,6 +118,7 @@ const Permission = {
         el.textContent = this._fmtTime(this._countdownSeconds);
         if (this._countdownSeconds <= 0) { this._respond(false); Utils.showToast('权限请求已超时自动拒绝'); return; }
         this._countdownTimer = setInterval(() => {
+            if (this._countdownCancelled) return;
             this._countdownSeconds--;
             el.textContent = this._fmtTime(this._countdownSeconds);
             if (this._countdownSeconds <= 30) el.classList.add('urgent');
@@ -118,7 +126,25 @@ const Permission = {
         }, 1000);
     },
 
-    _stopCountdown() { if (this._countdownTimer) { clearInterval(this._countdownTimer); this._countdownTimer = null; } const el = document.getElementById('perm-countdown'); if (el) el.classList.remove('urgent'); },
+    _stopCountdown() {
+        if (this._countdownTimer) { clearInterval(this._countdownTimer); this._countdownTimer = null; }
+        this._countdownCancelled = false;
+        const el = document.getElementById('perm-countdown');
+        if (el) el.classList.remove('urgent');
+    },
+
+    _cancelCountdown() {
+        this._countdownCancelled = true;
+        this._stopCountdown();
+        const el = document.getElementById('perm-countdown');
+        if (el) el.style.display = 'none';
+        const btn = document.getElementById('perm-cancel-countdown');
+        if (btn) btn.style.display = 'none';
+        if (this.currentRequest) {
+            WS.send({ type: 'permission_cancel_countdown', id: this.currentRequest.id, session_id: this.currentRequest.session_id });
+        }
+    },
+
     _fmtTime(s) { return `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`; },
 
     _cycleMode() {

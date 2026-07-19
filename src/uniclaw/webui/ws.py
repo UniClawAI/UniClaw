@@ -50,6 +50,9 @@ _connected_ws_lock = asyncio.Lock()
 pending_permissions: dict[str, asyncio.Future] = {}
 _permissions_lock = asyncio.Lock()
 
+# 取消倒计时时 set_result 的哨兵值
+_CANCELLED_SENTINEL = "__countdown_cancelled__"
+
 # 挂起的输入请求:req_id → asyncio.Future(需要锁保护)
 pending_inputs: dict[str, asyncio.Future] = {}
 _inputs_lock = asyncio.Lock()
@@ -197,12 +200,28 @@ async def handle_permission_response(
         future.set_result({"approved": approved, "reason": reason, "always": always})
 
 
+async def handle_permission_cancel_countdown(req_id: str):
+    """取消权限请求的倒计时,之后不再自动超时。"""
+    async with _permissions_lock:
+        future = pending_permissions.get(req_id)
+    if future and not future.done():
+        future.set_result(_CANCELLED_SENTINEL)  # 让 wait_for 立即返回哨兵值
+
+
 async def handle_input_response(req_id: str, value: str = ""):
     """处理输入响应,唤醒等待的命令。"""
     async with _inputs_lock:
         future = pending_inputs.get(req_id)
     if future and not future.done():
         future.set_result(value)
+
+
+async def handle_input_cancel_countdown(req_id: str):
+    """取消输入请求的倒计时,之后不再自动超时。"""
+    async with _inputs_lock:
+        future = pending_inputs.get(req_id)
+    if future and not future.done():
+        future.set_result(_CANCELLED_SENTINEL)
 
 
 async def bridge_events(session_id: str, config: AppConfig):
@@ -289,6 +308,12 @@ async def bridge_events(session_id: str, config: AppConfig):
 
             try:
                 response = await asyncio.wait_for(perm_future, timeout=_timeout)
+                # 用户取消了倒计时:换一个新 future 继续等真实响应(无超时)
+                if response == _CANCELLED_SENTINEL:
+                    new_future = asyncio.get_event_loop().create_future()
+                    async with _permissions_lock:
+                        pending_permissions[req_id] = new_future
+                    response = await new_future
             except asyncio.TimeoutError:
                 response = {"approved": False, "reason": "权限请求超时"}
             finally:
@@ -829,11 +854,17 @@ async def handle_ws_message(ws: WebSocket, msg: dict):
             msg.get("always", False),
         )
 
+    elif msg_type == "permission_cancel_countdown":
+        await handle_permission_cancel_countdown(msg.get("id", ""))
+
     elif msg_type == "input_response":
         await handle_input_response(
             msg.get("id", ""),
             msg.get("value", ""),
         )
+
+    elif msg_type == "input_cancel_countdown":
+        await handle_input_cancel_countdown(msg.get("id", ""))
 
     elif msg_type == "cancel":
         task.cancel_event.set()
@@ -1309,7 +1340,13 @@ async def web_input(prompt: str, title: str = "输入", config=None) -> str:
     await _broadcast(input_msg)
 
     try:
-        return await asyncio.wait_for(input_future, timeout=300)
+        result = await asyncio.wait_for(input_future, timeout=_timeout)
+        if result == _CANCELLED_SENTINEL:
+            new_future = asyncio.get_event_loop().create_future()
+            async with _inputs_lock:
+                pending_inputs[req_id] = new_future
+            result = await new_future
+        return result
     except asyncio.TimeoutError:
         return ""
     finally:
@@ -1352,7 +1389,13 @@ async def web_multi_input(
     await _broadcast(input_msg)
 
     try:
-        return await asyncio.wait_for(input_future, timeout=300)
+        result = await asyncio.wait_for(input_future, timeout=_timeout)
+        if result == _CANCELLED_SENTINEL:
+            new_future = asyncio.get_event_loop().create_future()
+            async with _inputs_lock:
+                pending_inputs[req_id] = new_future
+            result = await new_future
+        return result
     except asyncio.TimeoutError:
         return ""
     finally:

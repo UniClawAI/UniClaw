@@ -4,6 +4,7 @@ const MultiInputDialog = {
     currentRequest: null,
     _countdownTimer: null,
     _countdownSeconds: 300,
+    _countdownCancelled: false,
     _questions: [],
     _currentTab: 0,
     _selections: {},   // {tabIndex: optionIndex}
@@ -13,6 +14,7 @@ const MultiInputDialog = {
     init() {
         WS.on('multi_input_request', msg => this._onRequest(msg));
         document.getElementById('multi-input-submit').onclick = () => this._submit();
+        document.getElementById('multi-input-cancel-countdown').onclick = () => this._cancelCountdown();
     },
 
     _onRequest(msg) {
@@ -28,6 +30,11 @@ const MultiInputDialog = {
         this._renderTabs();
         this._renderQuestion();
         this._renderOptions();
+        this._countdownCancelled = false;
+        const countdownEl = document.getElementById('multi-input-countdown');
+        if (countdownEl) countdownEl.style.display = '';
+        const cancelBtn = document.getElementById('multi-input-cancel-countdown');
+        if (cancelBtn) cancelBtn.style.display = '';
         document.getElementById('multi-input-modal').classList.remove('hidden');
         this._startCountdown(msg.created_at, msg.timeout);
     },
@@ -210,6 +217,7 @@ const MultiInputDialog = {
             return;
         }
         this._countdownTimer = setInterval(() => {
+            if (this._countdownCancelled) return;
             this._countdownSeconds--;
             el.textContent = this._fmtTime(this._countdownSeconds);
             if (this._countdownSeconds <= 0) {
@@ -223,6 +231,19 @@ const MultiInputDialog = {
         if (this._countdownTimer) {
             clearInterval(this._countdownTimer);
             this._countdownTimer = null;
+        }
+        this._countdownCancelled = false;
+    },
+
+    _cancelCountdown() {
+        this._countdownCancelled = true;
+        this._stopCountdown();
+        const el = document.getElementById('multi-input-countdown');
+        if (el) el.style.display = 'none';
+        const btn = document.getElementById('multi-input-cancel-countdown');
+        if (btn) btn.style.display = 'none';
+        if (this.currentRequest) {
+            WS.send({ type: 'input_cancel_countdown', id: this.currentRequest.id, session_id: this.currentRequest.session_id });
         }
     },
 

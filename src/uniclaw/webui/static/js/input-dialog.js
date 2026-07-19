@@ -4,10 +4,12 @@ const InputDialog = {
     currentRequest: null,
     _countdownTimer: null,
     _countdownSeconds: 300,
+    _countdownCancelled: false,
 
     init() {
         WS.on('input_request', msg => this._onRequest(msg));
         document.getElementById('input-dialog-confirm').onclick = () => this._respond();
+        document.getElementById('input-cancel-countdown').onclick = () => this._cancelCountdown();
         document.getElementById('input-dialog-text').addEventListener('keydown', e => {
             if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this._respond(); }
         });
@@ -20,6 +22,11 @@ const InputDialog = {
         document.getElementById('input-dialog-prompt').textContent = msg.prompt || '';
         const input = document.getElementById('input-dialog-text');
         input.value = '';
+        this._countdownCancelled = false;
+        const countdownEl = document.getElementById('input-countdown');
+        if (countdownEl) countdownEl.style.display = '';
+        const cancelBtn = document.getElementById('input-cancel-countdown');
+        if (cancelBtn) cancelBtn.style.display = '';
         document.getElementById('input-dialog-modal').classList.remove('hidden');
         this._resizeDialog();
         setTimeout(() => input.focus(), 0);
@@ -99,12 +106,29 @@ const InputDialog = {
         el.textContent = this._fmtTime(this._countdownSeconds);
         if (this._countdownSeconds <= 0) { this._respond(''); Utils.showToast('输入请求已超时'); return; }
         this._countdownTimer = setInterval(() => {
+            if (this._countdownCancelled) return;
             this._countdownSeconds--;
             el.textContent = this._fmtTime(this._countdownSeconds);
             if (this._countdownSeconds <= 0) { this._respond(''); Utils.showToast('输入请求已超时'); }
         }, 1000);
     },
 
-    _stopCountdown() { if (this._countdownTimer) { clearInterval(this._countdownTimer); this._countdownTimer = null; } },
+    _stopCountdown() {
+        if (this._countdownTimer) { clearInterval(this._countdownTimer); this._countdownTimer = null; }
+        this._countdownCancelled = false;
+    },
+
+    _cancelCountdown() {
+        this._countdownCancelled = true;
+        this._stopCountdown();
+        const el = document.getElementById('input-countdown');
+        if (el) el.style.display = 'none';
+        const btn = document.getElementById('input-cancel-countdown');
+        if (btn) btn.style.display = 'none';
+        if (this.currentRequest) {
+            WS.send({ type: 'input_cancel_countdown', id: this.currentRequest.id, session_id: this.currentRequest.session_id });
+        }
+    },
+
     _fmtTime(s) { return `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`; },
 };

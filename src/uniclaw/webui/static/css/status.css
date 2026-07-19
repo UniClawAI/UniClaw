@@ -222,10 +222,31 @@
     font-family: var(--font-mono);
     font-size: var(--text-xs);
     color: var(--text-3);
+    user-select: none;
 }
 .perm-countdown.urgent {
     color: var(--neon-pink);
     animation: pulseDot 1s ease-in-out infinite;
+}
+.perm-cancel-btn {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    color: var(--text-3);
+    font-size: 11px;
+    width: 24px;
+    height: 24px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    padding: 0;
+    transition: color 0.15s, border-color 0.15s;
+    line-height: 1;
+}
+.perm-cancel-btn:hover {
+    color: var(--neon-orange);
+    border-color: var(--neon-orange);
 }
 
 /* ---- 输入弹窗样式覆盖 ---- */
