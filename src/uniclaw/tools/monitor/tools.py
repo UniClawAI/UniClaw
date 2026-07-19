@@ -16,6 +16,7 @@ async def monitor_start(
     启动后台进程。可选监控输出模式,匹配时自动通知。
     适用于:启动服务、运行命令、监控日志等场景。
     AI 休息前要使用 sleep_timer 设置唤醒,防止长时间无响应。
+    运行结束后及时使用 monitor_stop 关闭进程,避免资源泄漏。
 
     Args:
         command: 要执行的命令(如 "npm run dev"、"cargo build")
