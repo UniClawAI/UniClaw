@@ -341,12 +341,6 @@ def subagent_list_definitions(config: AppConfig = None) -> str:
             lines.append(f"                           {model_info}")
         if tools_info:
             lines.append(f"                           {tools_info}")
-
-    # 添加自定义智能体创建指引
-    lines.append("")
-    lines.append(
-        f"创建自定义智能体:将 .md 文件放置在 ~/.{APP_NAME}/agents/ 或 .{APP_NAME}/agents/ 中"
-    )
     return "\n".join(lines)
 
 
