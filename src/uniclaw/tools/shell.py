@@ -138,14 +138,14 @@ async def Bash(command: str, timeout: int = 30, config: AppConfig = None) -> str
     - man:`MANPAGER=cat man <command>` 或 `man <command> | cat`
 
     重要提示:
-    - 超时上限为 60 秒。如果命令执行时间可能超过 60 秒,请使用 monitor_start 工具而非本函数。
+    - 超时上限为 180 秒。如果命令执行时间可能超过 180 秒,请使用 monitor_start 工具而非本函数。
     - 如果需要启动长期运行的后台服务(如 Web 服务器、数据库等),请使用 monitor_start 工具,否则总是超时。
     - 如果需要下载大文件,请使用 monitor_start 工具(如 `monitor_start("curl -O <url>")` 或 `monitor_start("wget <url>")`),可以后台下载并监控进度。
     monitor_start 提供了更好的进程管理功能,包括进程监控、日志捕获和生命周期管理。
 
     Args:
         command (str): 要执行的 shell 命令字符串。
-        timeout (int): 命令执行的超时时间(秒),默认为 30 秒,最大 60 秒。
+        timeout (int): 命令执行的超时时间(秒),默认为 30 秒,最大 180 秒。
                        小于等于 0 时进入异步模式,命令在后台运行,立即返回进程 ID。
 
     Returns:
@@ -157,9 +157,9 @@ async def Bash(command: str, timeout: int = 30, config: AppConfig = None) -> str
     root_dir = config.root_dir
     cancel_event = config.current_agent.cancel_event
 
-    # 超时上限校验:超过 60 秒直接拒绝,引导使用 monitor_start
-    if timeout > 60:
-        return f"{TOOL_ERROR}: 超时上限 60 秒,请改用 monitor_start 工具。"
+    # 超时上限校验:超过 180 秒直接拒绝,引导使用 monitor_start
+    if timeout > 180:
+        return f"{TOOL_ERROR}: 超时上限 180 秒,请改用 monitor_start 工具。"
 
     # Windows 上 asyncio.subprocess.DEVNULL 可能无法打开 nul 设备(Python 3.14+)
     if sys.platform == "win32":
@@ -217,15 +217,20 @@ async def Bash(command: str, timeout: int = 30, config: AppConfig = None) -> str
     # 用于流式输出和最终结果收集
     _collected = {"stdout": [], "stderr": []}
 
-    async def _read_stream_line_by_line(stream, key):
-        """逐行读取流,同时推送流式输出到前端。"""
+    async def _read_stream(stream, key):
+        """批量读取流,读多少发多少,直接收集原始数据。
+
+        流式输出和最终结果都直接存原始解码数据,
+        sanitize_progress_line 在最终拼接时统一处理 \r 进度条。
+        """
         try:
-            async for raw_line in stream:
-                # sanitize_progress_line 处理进度条的 \r 回车(取最后一帧)
-                line = sanitize_progress_line(smart_decode(raw_line)).rstrip("\n\r")
-                if line:
-                    _collected[key].append(line)
-                    await tool_stream(line + "\n")
+            while True:
+                chunk = await stream.read(4096)
+                if not chunk:
+                    break
+                text = smart_decode(chunk)
+                _collected[key].append(text)
+                await tool_stream(text)
         except (asyncio.CancelledError, Exception):
             pass
 
@@ -234,11 +239,11 @@ async def Bash(command: str, timeout: int = 30, config: AppConfig = None) -> str
         read_tasks = []
         if proc.stdout:
             read_tasks.append(
-                asyncio.create_task(_read_stream_line_by_line(proc.stdout, "stdout"))
+                asyncio.create_task(_read_stream(proc.stdout, "stdout"))
             )
         if proc.stderr:
             read_tasks.append(
-                asyncio.create_task(_read_stream_line_by_line(proc.stderr, "stderr"))
+                asyncio.create_task(_read_stream(proc.stderr, "stderr"))
             )
 
         try:
@@ -266,8 +271,8 @@ async def Bash(command: str, timeout: int = 30, config: AppConfig = None) -> str
     try:
         status = await asyncio.wait_for(_wait_with_cancel(), timeout=timeout)
 
-        stdout = sanitize_progress_line("\n".join(_collected["stdout"]))
-        stderr = sanitize_progress_line("\n".join(_collected["stderr"]))
+        stdout = sanitize_progress_line("".join(_collected["stdout"]))
+        stderr = sanitize_progress_line("".join(_collected["stderr"]))
         out = stdout
         if stderr:
             out += ("\n" if out else "") + f"{STDERR_MARKER}" + stderr
@@ -284,8 +289,8 @@ async def Bash(command: str, timeout: int = 30, config: AppConfig = None) -> str
         # 等待一小段时间让读取任务收集最后的输出
         await asyncio.sleep(0.1)
 
-        stdout = sanitize_progress_line("\n".join(_collected["stdout"]))
-        stderr = sanitize_progress_line("\n".join(_collected["stderr"]))
+        stdout = sanitize_progress_line("".join(_collected["stdout"]))
+        stderr = sanitize_progress_line("".join(_collected["stderr"]))
         out = stdout
         if stderr:
             out += ("\n" if out else "") + f"{STDERR_MARKER}" + stderr
