@@ -182,7 +182,7 @@ def _build_extended_keywords() -> dict[str, list[str]]:
             "OCR", "识别图片", "图片识别", "看图", "读图", "analyze image",
             "image recognition", "text recognition", "extract text",
         ],
-        AskUserQuestion.name: ["询问用户", "ask user", "用户问题", "确认", "confirm", "question"],
+        AskUserQuestion.name: ["询问用户", "ask user", "用户问题", "确认", "confirm", "question", "用户选择", "让用户决定", "问需求", "确认需求", "用户偏好"],
         push_notification.name: ["通知", "notification", "推送通知", "桌面通知", "push notify"],
         # Web Browse 工具(都带 browser 关键词)
         browser_start.name: ["browser", "启动浏览器", "browser start", "打开浏览器", "start browser", "playwright", "open browser"],
@@ -253,8 +253,8 @@ def _build_extended_keywords() -> dict[str, list[str]]:
         kg_delete_relation.name: ["删除关系", "delete relation", "知识图谱", "移除关系"],
         kg_merge_entities.name: ["合并实体", "merge entities", "知识图谱", "实体合并", "去重", "实体去重", "deduplicate entity"],
         kg_clear.name: ["清空图谱", "clear knowledge", "知识图谱", "清除图谱", "重置图谱"],
-        advisor_list.name: ["顾问模型", "advisor", "咨询模型", "列出顾问", "list advisors", "大模型", "顾问列表"],
-        ask_advisor.name: ["问顾问", "咨询顾问", "ask advisor", "consult", "询问模型", "请教", "ask model", "顾问提问"],
+        advisor_list.name: ["顾问模型", "advisor", "咨询模型", "列出顾问", "list advisors", "大模型", "顾问列表", "AI模型列表", "高级模型"],
+        ask_advisor.name: ["问顾问", "咨询顾问", "ask advisor", "consult", "询问模型", "请教", "ask model", "顾问提问", "问方案", "怎么做", "技术方案", "AI分析"],
         investigate.name: ["调查", "调查研究", "investigate", "侦察", "搜集信息", "调研", "查一下", "了解一下"],
     }
 
