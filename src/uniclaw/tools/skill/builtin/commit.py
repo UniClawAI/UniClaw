@@ -43,7 +43,7 @@ _COMMIT_PROMPT = r"""## AI Commit
 
 ### 用户自定义参数
 
-如果用户提供了参数 `$ARGUMENTS`,将其作为 commit message 的参考或补充说明:
+如果用户提供了参数,将其作为 commit message 的参考或补充说明:
 - 如果参数看起来像完整的 commit message,直接使用
 - 如果参数是简短描述,将其融入生成的 message 中
 - 如果参数为空,完全由 AI 生成"""

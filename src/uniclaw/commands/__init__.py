@@ -154,10 +154,7 @@ async def handle_slash(line: str, config: AppConfig) -> Union[bool, str]:
             # prompt-based skill:注入 prompt + 设置工具白名单
             if skill.tools:
                 set_active_skill_tools(skill.tools)
-            # 替换参数占位符
-            from uniclaw.tools.skill.loader import substitute_arguments
-
-            prompt = substitute_arguments(skill.prompt, skill_args, skill.arguments)
-            return f"[skill: {skill.name}]\n\n{prompt}"
+            task = skill_args if skill_args else ""
+            return f"[skill: {skill.name}] 请使用这个skill帮我完成以下任务: {task}"
 
     return False

@@ -15,10 +15,6 @@ class SkillDef:
     # 增强字段
     when_to_use: str = ""  # Claude 应自动调用此技能的时机
     argument_hint: str = ""  # 例如 "[分支] [描述]"
-    arguments: list[str] = field(default_factory=list)  # 命名参数名称列表
-    model: str = ""  # 模型覆盖设置
-    user_invocable: bool = True  # 是否出现在 /skills 列表中
-    context: str = "inline"  # "inline"(内联)或 "fork"(子智能体)
     source: str = "user"  # "user"(用户)、"project"(项目)、"builtin"(内置)
 
 
@@ -86,8 +82,7 @@ def _parse_skill_file(path: Path, source: str = "user") -> Optional[SkillDef]:
 
     前置元数据字段:
         name, description, triggers, tools / allowed-tools,
-        when_to_use, argument-hint, arguments, model,
-        user-invocable, context
+        when_to_use, argument-hint
     """
     try:
         text = path.read_text(encoding="utf-8")
@@ -107,16 +102,6 @@ def _parse_skill_file(path: Path, source: str = "user") -> Optional[SkillDef]:
     if not triggers:
         triggers = [f"/{name}"]
 
-    arguments = _coerce_list_field(metadata.get("arguments", []))
-
-    user_invocable = metadata.get("user-invocable", "true")
-    if isinstance(user_invocable, str):
-        user_invocable = user_invocable.lower() not in ("false", "0", "no")
-
-    context = str(metadata.get("context", "inline")).strip().lower()
-    if context not in ("inline", "fork"):
-        context = "inline"
-
     return SkillDef(
         name=name,
         description=metadata.get("description", ""),
@@ -126,10 +111,6 @@ def _parse_skill_file(path: Path, source: str = "user") -> Optional[SkillDef]:
         file_path=str(path),
         when_to_use=metadata.get("when_to_use", metadata.get("when-to-use", "")),
         argument_hint=metadata.get("argument-hint", ""),
-        arguments=arguments,
-        model=metadata.get("model", ""),
-        user_invocable=user_invocable,
-        context=context,
         source=source,
     )
 
@@ -185,24 +166,3 @@ def find_skill(root_dir: Path | None, query: str) -> Optional[SkillDef]:
             if trigger.startswith(first_word + " "):
                 return skill
     return None
-
-
-# ── 参数替换 ─────────────────────────────────────────────────────────
-
-
-def substitute_arguments(prompt: str, args: str, arg_names: list[str]) -> str:
-    """替换 $ARGUMENTS(完整参数字符串)和 $ARG_NAME 占位符。
-
-    命名参数按位置对应:第一个单词 → 第一个名称,依此类推。
-    """
-    # 始终替换 $ARGUMENTS
-    result = prompt.replace("$ARGUMENTS", args)
-
-    # 命名参数:按空白字符分割
-    arg_values = args.split()
-    for i, arg_name in enumerate(arg_names):
-        placeholder = f"${arg_name.upper()}"
-        value = arg_values[i] if i < len(arg_values) else ""
-        result = result.replace(placeholder, value)
-
-    return result

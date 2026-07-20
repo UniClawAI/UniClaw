@@ -38,7 +38,7 @@ _PR_CREATE_PROMPT = r"""## 创建 Pull Request
 
 4. **创建 PR**
    - `gh pr create --title "<title>" --body "<body>"`
-   - 如果用户指定了参数 `$ARGUMENTS`,将其作为 PR 的补充说明融入 body
+   - 如果用户指定了参数,将其作为 PR 的补充说明融入 body
    - 输出 PR 链接
 
 ### 注意
