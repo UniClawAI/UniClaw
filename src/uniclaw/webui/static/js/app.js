@@ -138,7 +138,6 @@ const App = {
         WS.on('connected', () => {
             const dot = document.getElementById('connection-dot');
             if (dot) dot.className = 'connection-dot connected';
-            document.getElementById('status-model').textContent = '已连接';
             if (_hasConnected) {
                 Utils.showSuccess('已重新连接到服务器');
             } else {
@@ -149,7 +148,6 @@ const App = {
         WS.on('disconnected', () => {
             const dot = document.getElementById('connection-dot');
             if (dot) dot.className = 'connection-dot disconnected';
-            document.getElementById('status-model').textContent = '未连接';
             Utils.showError('连接断开,正在重连...');
         });
 
