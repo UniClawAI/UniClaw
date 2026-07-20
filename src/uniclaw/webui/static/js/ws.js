@@ -6,6 +6,7 @@ const WS = {
     reconnectTimer: null,
     reconnectDelay: 1000,
     connected: false,
+    _pendingMessages: [],
 
     /** 从 cookie 获取 token */
     _getCookie(name) {
@@ -33,6 +34,11 @@ const WS = {
             this.connected = true;
             this.reconnectDelay = 1000;
             this._updateStatus(true);
+            // flush 连接期间缓存的消息(如 set_active)
+            while (this._pendingMessages.length > 0) {
+                const msg = this._pendingMessages.shift();
+                try { this.socket.send(JSON.stringify(msg)); } catch (_) { break; }
+            }
             this._emit('connected');
         };
 
@@ -52,6 +58,7 @@ const WS = {
         this.socket.onclose = (e) => {
             console.log('[WS] 连接断开, code:', e.code, 'reason:', e.reason, 'wasClean:', e.wasClean);
             this.connected = false;
+            this._pendingMessages = [];
             this._updateStatus(false);
             this._emit('disconnected');
             // 认证失败,跳转登录页
@@ -80,6 +87,9 @@ const WS = {
     send(msg) {
         if (this.socket && this.socket.readyState === WebSocket.OPEN) {
             this.socket.send(JSON.stringify(msg));
+        } else if (this.socket && this.socket.readyState === WebSocket.CONNECTING) {
+            // 连接建立中,缓存消息,open 后自动 flush
+            this._pendingMessages.push(msg);
         } else {
             console.warn('[WS] 未连接,无法发送消息');
             Utils.showError('未连接到服务器');

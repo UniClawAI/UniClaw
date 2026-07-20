@@ -67,13 +67,25 @@ const Permission = {
         }
         document.getElementById('perm-reason').value = '';
         document.getElementById('perm-always').checked = false;
-        this._countdownCancelled = false;
+
         const countdownEl = document.getElementById('perm-countdown');
-        if (countdownEl) countdownEl.style.display = '';
         const cancelBtn = document.getElementById('perm-cancel-countdown');
-        if (cancelBtn) cancelBtn.style.display = '';
+        if (msg.countdown_cancelled) {
+            // 重发的请求且用户之前已取消计时:显示对话框但不显示计时
+            this._countdownCancelled = true;
+            this._stopCountdown();
+            if (countdownEl) countdownEl.style.display = 'none';
+            if (cancelBtn) cancelBtn.style.display = 'none';
+        } else {
+            // 正常请求或未取消计时的重发:显示计时
+            this._countdownCancelled = false;
+            if (countdownEl) countdownEl.style.display = '';
+            if (cancelBtn) cancelBtn.style.display = '';
+        }
         document.getElementById('permission-modal').classList.remove('hidden');
-        this._startCountdown(msg.created_at, msg.timeout);
+        if (!msg.countdown_cancelled) {
+            this._startCountdown(msg.created_at, msg.timeout);
+        }
     },
 
     closeIfSessionMismatch(targetSid) {

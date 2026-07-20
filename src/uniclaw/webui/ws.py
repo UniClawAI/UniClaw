@@ -73,6 +73,7 @@ class PendingRequest:
     msg_type: str  # "permission_request" | "input_request"
     msg_data: dict  # 发给前端的完整消息(用于重发)
     future: asyncio.Future  # 等待前端响应的 Future
+    countdown_cancelled: bool = False  # 用户取消了计时,刷新后不再重发
 
 
 # session_id → {req_id → PendingRequest},不随 WS 断开清除
@@ -178,16 +179,21 @@ async def _broadcast(data: dict):
 
 
 async def _resend_pending_requests(session_id: str):
-    """当 set_active 或 chat 时,重新发送该会话的所有待处理请求。"""
+    """当 set_active 或 chat 时,重新发送该会话的所有待处理请求。
+
+    注意:不检查 future.done()。请求在 pending_session_requests 中即表示
+    还在等待响应(收到响应后由 _unregister_pending 移除)。
+    取消倒计时等场景会使旧 future done 但请求仍有效(bridge_events 会创建新 future),
+    检查 done 会因竞态条件跳过有效请求。
+    """
     async with _pending_session_lock:
         reqs = dict(pending_session_requests.get(session_id, {}))
-    if reqs:
-        get_logger("webui", Path.cwd()).info(
-            f"[{session_id}] 重发 {len(reqs)} 个待处理请求: {list(reqs.keys())}"
-        )
-    for req_id, req in reqs.items():
-        if not req.future.done():
-            await _broadcast(req.msg_data)
+    if not reqs:
+        return
+    for req in reqs.values():
+        # 携带 countdown_cancelled 状态,让前端决定是否显示计时
+        req.msg_data["countdown_cancelled"] = req.countdown_cancelled
+        await _broadcast(req.msg_data)
 
 
 async def handle_permission_response(
@@ -200,12 +206,17 @@ async def handle_permission_response(
         future.set_result({"approved": approved, "reason": reason, "always": always})
 
 
-async def handle_permission_cancel_countdown(req_id: str):
+async def handle_permission_cancel_countdown(req_id: str, session_id: str = ""):
     """取消权限请求的倒计时,之后不再自动超时。"""
+    if session_id:
+        async with _pending_session_lock:
+            session_reqs = pending_session_requests.get(session_id)
+            if session_reqs and req_id in session_reqs:
+                session_reqs[req_id].countdown_cancelled = True
     async with _permissions_lock:
         future = pending_permissions.get(req_id)
     if future and not future.done():
-        future.set_result(_CANCELLED_SENTINEL)  # 让 wait_for 立即返回哨兵值
+        future.set_result(_CANCELLED_SENTINEL)
 
 
 async def handle_input_response(req_id: str, value: str = ""):
@@ -216,8 +227,14 @@ async def handle_input_response(req_id: str, value: str = ""):
         future.set_result(value)
 
 
-async def handle_input_cancel_countdown(req_id: str):
+async def handle_input_cancel_countdown(req_id: str, session_id: str = ""):
     """取消输入请求的倒计时,之后不再自动超时。"""
+    # 标记请求已取消计时,刷新后不再重发
+    if session_id:
+        async with _pending_session_lock:
+            session_reqs = pending_session_requests.get(session_id)
+            if session_reqs and req_id in session_reqs:
+                session_reqs[req_id].countdown_cancelled = True
     async with _inputs_lock:
         future = pending_inputs.get(req_id)
     if future and not future.done():
@@ -288,6 +305,7 @@ async def bridge_events(session_id: str, config: AppConfig):
                 "description": event.description,
                 "explanation": event.explanation,
                 "agent_name": event.agent_name,
+                "countdown_cancelled": False,
                 "created_at": _created_at,
                 "timeout": _timeout,
             }
@@ -309,7 +327,8 @@ async def bridge_events(session_id: str, config: AppConfig):
             try:
                 response = await asyncio.wait_for(perm_future, timeout=_timeout)
                 # 用户取消了倒计时:换一个新 future 继续等真实响应(无超时)
-                if response == _CANCELLED_SENTINEL:
+                # 用循环处理:多次取消计时时,每次创建新 future 直到收到真实响应
+                while response == _CANCELLED_SENTINEL:
                     new_future = asyncio.get_event_loop().create_future()
                     async with _permissions_lock:
                         pending_permissions[req_id] = new_future
@@ -855,7 +874,7 @@ async def handle_ws_message(ws: WebSocket, msg: dict):
         )
 
     elif msg_type == "permission_cancel_countdown":
-        await handle_permission_cancel_countdown(msg.get("id", ""))
+        await handle_permission_cancel_countdown(msg.get("id", ""), session_id)
 
     elif msg_type == "input_response":
         await handle_input_response(
@@ -864,7 +883,7 @@ async def handle_ws_message(ws: WebSocket, msg: dict):
         )
 
     elif msg_type == "input_cancel_countdown":
-        await handle_input_cancel_countdown(msg.get("id", ""))
+        await handle_input_cancel_countdown(msg.get("id", ""), session_id)
 
     elif msg_type == "cancel":
         task.cancel_event.set()
@@ -1324,6 +1343,7 @@ async def web_input(prompt: str, title: str = "输入", config=None) -> str:
         "title": title,
         "created_at": _created_at,
         "timeout": _timeout,
+        "countdown_cancelled": False,
     }
 
     # 创建 Future 并注册到会话级注册表
@@ -1373,6 +1393,7 @@ async def web_multi_input(
         "title": title,
         "created_at": _created_at,
         "timeout": _timeout,
+        "countdown_cancelled": False,
     }
 
     # 创建 Future 并注册到会话级注册表(复用 input_response 处理)

@@ -22,15 +22,24 @@ const InputDialog = {
         document.getElementById('input-dialog-prompt').textContent = msg.prompt || '';
         const input = document.getElementById('input-dialog-text');
         input.value = '';
-        this._countdownCancelled = false;
         const countdownEl = document.getElementById('input-countdown');
-        if (countdownEl) countdownEl.style.display = '';
         const cancelBtn = document.getElementById('input-cancel-countdown');
-        if (cancelBtn) cancelBtn.style.display = '';
+        if (msg.countdown_cancelled) {
+            this._countdownCancelled = true;
+            this._stopCountdown();
+            if (countdownEl) countdownEl.style.display = 'none';
+            if (cancelBtn) cancelBtn.style.display = 'none';
+        } else {
+            this._countdownCancelled = false;
+            if (countdownEl) countdownEl.style.display = '';
+            if (cancelBtn) cancelBtn.style.display = '';
+        }
         document.getElementById('input-dialog-modal').classList.remove('hidden');
         this._resizeDialog();
         setTimeout(() => input.focus(), 0);
-        this._startCountdown(msg.created_at, msg.timeout);
+        if (!msg.countdown_cancelled) {
+            this._startCountdown(msg.created_at, msg.timeout);
+        }
     },
 
     closeIfSessionMismatch(targetSid) {

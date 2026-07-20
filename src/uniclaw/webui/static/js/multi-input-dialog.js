@@ -30,13 +30,22 @@ const MultiInputDialog = {
         this._renderTabs();
         this._renderQuestion();
         this._renderOptions();
-        this._countdownCancelled = false;
         const countdownEl = document.getElementById('multi-input-countdown');
-        if (countdownEl) countdownEl.style.display = '';
         const cancelBtn = document.getElementById('multi-input-cancel-countdown');
-        if (cancelBtn) cancelBtn.style.display = '';
+        if (msg.countdown_cancelled) {
+            this._countdownCancelled = true;
+            this._stopCountdown();
+            if (countdownEl) countdownEl.style.display = 'none';
+            if (cancelBtn) cancelBtn.style.display = 'none';
+        } else {
+            this._countdownCancelled = false;
+            if (countdownEl) countdownEl.style.display = '';
+            if (cancelBtn) cancelBtn.style.display = '';
+        }
         document.getElementById('multi-input-modal').classList.remove('hidden');
-        this._startCountdown(msg.created_at, msg.timeout);
+        if (!msg.countdown_cancelled) {
+            this._startCountdown(msg.created_at, msg.timeout);
+        }
     },
 
     closeIfSessionMismatch(targetSid) {
