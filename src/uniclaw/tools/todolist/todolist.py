@@ -37,14 +37,17 @@ class TodoList:
 
     def update_status(self, index: int, status: TodoStatus | str) -> str:
         if index < 0 or index >= len(self.items):
-            return f"{TOOL_ERROR}: 索引 {index} 超出范围,当前共 {len(self.items)} 项"
+            count = len(self.items)
+            hint = f",有效范围: 0~{count - 1}" if count > 0 else ",列表为空"
+            return f"{TOOL_ERROR}: 索引 {index} 超出范围,当前共 {count} 项{hint}"
 
         status = TodoStatus(status)
         old_status = self.items[index].status
 
         # 只有 IN_PROGRESS 才能改成 COMPLETED
         if status == TodoStatus.COMPLETED and old_status != TodoStatus.IN_PROGRESS:
-            return f"{TOOL_ERROR}: 任务 {index} 当前状态为 {old_status},只有 in_progress 状态的任务才能标记为 completed"
+            task_content = self.items[index].content
+            return f"{TOOL_ERROR}: 任务 [{index}] \"{task_content}\" 当前状态为 {old_status},只有 in_progress 状态的任务才能标记为 completed"
 
         self.items[index].status = status
 

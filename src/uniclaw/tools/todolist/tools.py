@@ -4,12 +4,13 @@ from uniclaw.config import AppConfig
 
 from .todolist import TodoList, TodoStatus
 
-
 # ── 普通模式工具 ──────────────────────────────────────────────
 
 
 @tool
-async def todolist_create(items: list[str], reason: str = "", config: AppConfig = None) -> str:
+async def todolist_create(
+    items: list[str], reason: str = "", config: AppConfig = None
+) -> str:
     """
     创建一个新的任务清单(todolist),替换现有内容。如果已有清单则覆盖。
     用于将复杂任务分解为尽可能多的细粒度步骤进行跟踪。
@@ -33,7 +34,9 @@ async def todolist_create(items: list[str], reason: str = "", config: AppConfig 
 
 
 @tool
-async def todolist_update(step: int, status: str, reason: str = "", config: AppConfig = None) -> str:
+async def todolist_update(
+    step: int, status: str, reason: str = "", config: AppConfig = None
+) -> str:
     """
     更新任务清单中指定步骤的状态。
     同一时间只能有一个步骤处于 in_progress 状态,设置新的 in_progress 时,原有的 in_progress 会自动变为 pending。
@@ -53,8 +56,7 @@ async def todolist_update(step: int, status: str, reason: str = "", config: AppC
         return await _overseer_update(step, todo_status, reason, config)
     if todo.is_empty():
         return f"{TOOL_ERROR}: 当前没有任务清单,请先使用 {todolist_create.name} 创建"
-    result = todo.update_status(step, todo_status)
-    return f"已更新步骤 {step} 状态为 {todo_status}:\n{result}"
+    return todo.update_status(step, todo_status)
 
 
 @tool
@@ -116,7 +118,9 @@ async def _overseer_create(items: list[str], reason: str, config: AppConfig) -> 
     return f"✅ 已重建清单(共 {len(todo.items)} 个步骤):\n{todo.get_list()}"
 
 
-async def _overseer_update(step: int, status: TodoStatus, reason: str, config: AppConfig) -> str:
+async def _overseer_update(
+    step: int, status: TodoStatus, reason: str, config: AppConfig
+) -> str:
     """
     监工模式:更新步骤状态,完成时需经审核。
     调用方已将 status 转为 TodoStatus,此处直接使用。
@@ -149,7 +153,6 @@ async def _overseer_update(step: int, status: TodoStatus, reason: str, config: A
     return f"已更新步骤 {step} 状态为 {status}:\n{result}"
 
 
-
 # ── 系统提示 ────────────────────────────────────────────────
 
 
@@ -168,7 +171,9 @@ def get_list_system_prompt(todolist: TodoList) -> str:
 
     if not todolist.items:
         lines.append("")
-        lines.append(f"遇到复杂任务时,使用 {todolist_create.name} 将其拆解为多个步骤并逐步完成。")
+        lines.append(
+            f"遇到复杂任务时,使用 {todolist_create.name} 将其拆解为多个步骤并逐步完成。"
+        )
         return "\n".join(lines)
 
     is_overseer = todolist.overseer.active
@@ -178,10 +183,16 @@ def get_list_system_prompt(todolist: TodoList) -> str:
     lines.append("- 你必须主动推进任务完成,不要等待用户催促")
 
     if is_overseer:
-        lines.append(f"- 每完成一步,立即调用 {todolist_update.name} 将状态更新为 {TodoStatus.COMPLETED} 并在 reason 中说明做了什么,然后将下一步更新为 {TodoStatus.IN_PROGRESS}")
-        lines.append(f"- 需要重建清单时,调用 {todolist_create.name} 并在 reason 中说明原清单问题和新清单改进")
+        lines.append(
+            f"- 每完成一步,立即调用 {todolist_update.name} 将状态更新为 {TodoStatus.COMPLETED} 并在 reason 中说明做了什么,然后将下一步更新为 {TodoStatus.IN_PROGRESS}"
+        )
+        lines.append(
+            f"- 需要重建清单时,调用 {todolist_create.name} 并在 reason 中说明原清单问题和新清单改进"
+        )
     else:
-        lines.append(f"- 每完成一步,立即调用 {todolist_update.name} 将状态更新为 {TodoStatus.COMPLETED},然后将下一步更新为 {TodoStatus.IN_PROGRESS},reason 参数无需填写")
+        lines.append(
+            f"- 每完成一步,立即调用 {todolist_update.name} 将状态更新为 {TodoStatus.COMPLETED},然后将下一步更新为 {TodoStatus.IN_PROGRESS},reason 参数无需填写"
+        )
     lines.append(f"- 全部完成后调用 {todolist_clear.name} 清空清单")
 
     lines.append("- 完成当前步骤后,自动开始下一步,不要停下来问用户")
@@ -195,9 +206,21 @@ def get_list_system_prompt(todolist: TodoList) -> str:
 
 def get_tools() -> list:
     """获取 todolist 工具(仅 root agent 使用)"""
-    return [todolist_create, todolist_update, todolist_clear, todolist_list, todolist_cancel]
+    return [
+        todolist_create,
+        todolist_update,
+        todolist_clear,
+        todolist_list,
+        todolist_cancel,
+    ]
 
 
 def get_all_tools() -> list:
     """获取所有待办工具(文档用)"""
-    return [todolist_create, todolist_update, todolist_clear, todolist_list, todolist_cancel]
+    return [
+        todolist_create,
+        todolist_update,
+        todolist_clear,
+        todolist_list,
+        todolist_cancel,
+    ]
