@@ -68,10 +68,8 @@ const App = {
         btn.addEventListener('click', async () => {
             const newPwd = document.getElementById('new-pwd-input').value;
             const confirm = document.getElementById('new-pwd-confirm').value;
-            const errEl = document.getElementById('change-pwd-error');
-            errEl.textContent = '';
-            if (newPwd.length < 6) { errEl.textContent = '密码至少 6 位'; return; }
-            if (newPwd !== confirm) { errEl.textContent = '两次输入不一致'; return; }
+            if (newPwd.length < 6) { Utils.showError('密码至少 6 位'); return; }
+            if (newPwd !== confirm) { Utils.showError('两次输入不一致'); return; }
             try {
                 const hashedPwd = await this._sha256(newPwd);
                 const token = localStorage.getItem('uniclaw_token');
@@ -85,7 +83,7 @@ const App = {
                 });
                 if (!resp.ok) {
                     const data = await resp.json();
-                    errEl.textContent = data.detail || '修改失败';
+                    Utils.showError(data.detail || '修改失败');
                     return;
                 }
                 document.getElementById('change-pwd-modal').classList.add('hidden');
@@ -93,7 +91,7 @@ const App = {
                 document.getElementById('new-pwd-confirm').value = '';
                 Utils.showToast('密码已修改');
             } catch (e) {
-                errEl.textContent = '网络错误';
+                Utils.showError('网络错误');
             }
         });
     },

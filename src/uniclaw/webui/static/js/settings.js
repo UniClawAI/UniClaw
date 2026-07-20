@@ -10,8 +10,6 @@ const Settings = {
 
     async open() {
         const modal = document.getElementById('settings-modal');
-        const errEl = document.getElementById('settings-error');
-        errEl.textContent = '';
         modal.classList.remove('hidden');
 
         try {
@@ -22,7 +20,7 @@ const Settings = {
             const settingsResp = await fetch('/api/settings', { headers: authHeaders });
             if (!settingsResp.ok) {
                 const d = await settingsResp.json();
-                errEl.textContent = d.detail || '加载失败';
+                Utils.showError(d.detail || '加载失败');
                 return;
             }
             this._data = await settingsResp.json();
@@ -52,7 +50,7 @@ const Settings = {
 
             this._render();
         } catch (e) {
-            errEl.textContent = '网络错误: ' + e.message;
+            Utils.showError('网络错误: ' + e.message);
         }
     },
 
@@ -526,9 +524,6 @@ const Settings = {
     // ── 保存 ──────────────────────────────────────────────
 
     async save() {
-        const errEl = document.getElementById('settings-error');
-        errEl.textContent = '';
-
         // 收集 providers
         const providers = {};
         const cards = document.querySelectorAll('.settings-provider-card');
@@ -541,12 +536,12 @@ const Settings = {
             const proxyUrl = card.querySelector('.settings-p-proxy').value.trim();
 
             if (!newName) {
-                errEl.textContent = 'Provider 名称不能为空';
+                Utils.showError('Provider 名称不能为空');
                 return;
             }
 
             if (newName !== oldName && providers[newName]) {
-                errEl.textContent = `Provider 名称 "${newName}" 重复`;
+                Utils.showError(`Provider 名称 "${newName}" 重复`);
                 return;
             }
 
@@ -581,12 +576,12 @@ const Settings = {
         ];
         for (const { field, value } of allModels) {
             if (!value.includes('/')) {
-                errEl.textContent = `${field} 格式错误:"${value}" 必须是 "provider/model" 格式`;
+                Utils.showError(`${field} 格式错误:"${value}" 必须是 "provider/model" 格式`);
                 return;
             }
             const prefix = value.split('/')[0];
             if (!providerNames.has(prefix)) {
-                errEl.textContent = `${field} "${value}" 引用了不存在的 provider "${prefix}"`;
+                Utils.showError(`${field} "${value}" 引用了不存在的 provider "${prefix}"`);
                 return;
             }
         }
@@ -597,7 +592,7 @@ const Settings = {
         const topP = document.getElementById('settings-top-p').value;
 
         // 解析 audio JSON(可能返回 undefined 表示格式错误)
-        const audio = this._parseAudio(errEl);
+        const audio = this._parseAudio();
         if (audio === undefined) return;
 
         const body = {
@@ -643,7 +638,7 @@ const Settings = {
 
             if (!resp.ok) {
                 const d = await resp.json();
-                errEl.textContent = d.detail || '保存失败';
+                Utils.showError(d.detail || '保存失败');
                 return;
             }
 
@@ -654,7 +649,7 @@ const Settings = {
                 SessionPanel._updateStatusBar(SessionPanel.activeProjectDir, body.session_id);
             }
         } catch (e) {
-            errEl.textContent = '网络错误: ' + e.message;
+            Utils.showError('网络错误: ' + e.message);
         } finally {
             saveBtn.disabled = false;
             saveBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg> 保存`;
@@ -664,18 +659,18 @@ const Settings = {
     // ── 工具方法 ──────────────────────────────────────────
 
     /** 解析 audio textarea 为 dict,空或无效返回 null */
-    _parseAudio(errEl) {
+    _parseAudio() {
         const raw = document.getElementById('settings-audio').value.trim();
         if (!raw) return null;
         try {
             const obj = JSON.parse(raw);
             if (typeof obj !== 'object' || obj === null || Array.isArray(obj)) {
-                if (errEl) errEl.textContent = 'audio 必须是 JSON 对象';
+                Utils.showError('audio 必须是 JSON 对象');
                 return undefined;
             }
             return obj;
         } catch (e) {
-            if (errEl) errEl.textContent = 'audio JSON 格式错误: ' + e.message;
+            Utils.showError('audio JSON 格式错误: ' + e.message);
             return undefined;
         }
     },

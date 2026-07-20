@@ -551,7 +551,22 @@ async def _update_session_settings(body: SettingsUpdate) -> dict:
     except ValueError:
         raise HTTPException(status_code=404, detail=f"会话 {session_id} 不存在")
 
-    # 验证模型名的 provider 前缀(使用会话已有的 providers)
+    # 更新 providers(在模型名验证之前,确保新 provider 可用于验证)
+    if body.providers:
+        from uniclaw.config import ProviderProfile
+
+        config.providers = {
+            name: ProviderProfile(
+                name=p.name or name,
+                protocol=p.protocol,
+                api_key=p.api_key,
+                base_url=p.base_url,
+                proxy_url=p.proxy_url,
+            )
+            for name, p in body.providers.items()
+        }
+
+    # 验证模型名的 provider 前缀(使用更新后的 providers)
     provider_names = set(config.providers.keys())
     for field_name in ("model_name", "mini_model_name", "multimodal_model_name", "large_model_name"):
         models = getattr(body, field_name)
