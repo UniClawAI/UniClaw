@@ -59,7 +59,6 @@ async def send_file(
         file_path: 文件的绝对路径或相对于工作目录的路径
         file_name: 自定义文件名(可选,默认使用原始文件名)
         expire_minutes: 下载链接有效期(分钟),默认30分钟
-        config: 应用配置(运行时自动注入)
 
     Returns:
         str: 发送结果消息

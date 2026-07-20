@@ -28,7 +28,6 @@ async def subagent_create(
             - True: 同步执行,等待任务完成后返回结果,不需要调用 subagent_close
             - False: 异步执行,立即返回任务信息,需要使用 subagent_close 关闭智能体
         isolation (bool, optional): 是否启用隔离模式,默认False
-        config: 内部使用参数,由系统自动注入
 
     Returns:
         str: 执行结果或任务信息。异步模式(wait=False)下可使用 subagent_check_result 查询状态、

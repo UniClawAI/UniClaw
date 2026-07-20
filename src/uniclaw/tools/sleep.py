@@ -15,7 +15,6 @@ def sleep_timer(seconds: int, name: str = "", config: AppConfig = None) -> str:
     Args:
         seconds: 等待秒数(1-3600)
         name: 可选的等待原因描述,用于日志
-        config: 内部参数,由系统自动注入
 
     Returns:
         str: 确认消息
