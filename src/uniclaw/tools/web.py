@@ -181,7 +181,10 @@ async def webFetch(url: str, max_length: int = 25000, config: AppConfig = None) 
             text = re.sub(r"<[^>]+>", " ", text)
             text = re.sub(r"\s+", " ", text).strip()
 
-        return text[:max_length]
+        result = text[:max_length]
+        if not result:
+            return "(网页内容为空)"
+        return result
     except Exception as e:
         return f"{TOOL_ERROR}: {e}"
 
