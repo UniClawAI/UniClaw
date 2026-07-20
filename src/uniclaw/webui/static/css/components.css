@@ -876,6 +876,12 @@ textarea.input {
     padding-right: 4px;
 }
 
+.settings-banner {
+    color: var(--red, #ff4444);
+    font-size: var(--text-sm);
+    font-weight: 600;
+}
+
 .settings-section {
     margin-bottom: 20px;
 }

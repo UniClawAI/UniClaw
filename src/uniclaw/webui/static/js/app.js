@@ -49,10 +49,33 @@ const App = {
         this._restorePanelState();
         this._bindResizeHandler();
         this._bindTouchGestures();
-        this._syncControlsWithRightPanel();
 
         Utils.hideLoading();
         console.log('[App] UniClaw WebUI 已初始化');
+
+        // 检查是否配置了模型,未配置则引导用户打开设置
+        this._checkModelConfig();
+    },
+
+    /** 检查模型配置,未配置时自动打开设置页面 */
+    async _checkModelConfig() {
+        try {
+            const token = localStorage.getItem('uniclaw_token');
+            const headers = token ? { 'Authorization': 'Bearer ' + token } : {};
+            const resp = await fetch('/api/settings', { headers });
+            if (!resp.ok) return;
+            const data = await resp.json();
+            if (!data.model_name?.length) {
+                Settings.open();
+                const banner = document.getElementById('settings-banner');
+                if (banner) {
+                    banner.textContent = '⚠️ 尚未配置模型,请先添加模型厂商并选择模型';
+                    banner.style.display = 'block';
+                }
+            }
+        } catch {
+            // 静默失败,不影响正常使用
+        }
     },
 
     /** SHA-256 哈希(密码不过明文) */

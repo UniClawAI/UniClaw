@@ -11,6 +11,9 @@ const Settings = {
     async open() {
         const modal = document.getElementById('settings-modal');
         modal.classList.remove('hidden');
+        // 隐藏 banner(如果是正常打开设置,不需要显示提示)
+        const banner = document.getElementById('settings-banner');
+        if (banner) banner.style.display = 'none';
 
         try {
             const token = localStorage.getItem('uniclaw_token');
@@ -60,6 +63,9 @@ const Settings = {
         this._providers = {};
         this._models = [];
         this._providersInfo = {};
+        // 隐藏 banner
+        const banner = document.getElementById('settings-banner');
+        if (banner) banner.style.display = 'none';
     },
 
     // ── 渲染表单 ─────────────────────────────────────────
@@ -426,7 +432,7 @@ const Settings = {
 
         const names = Object.keys(this._providers);
         if (names.length === 0) {
-            container.innerHTML = '<div style="color:var(--text-3);font-size:var(--text-sm);padding:8px 0">暂无 Provider,点击上方"添加"按钮创建</div>';
+            container.innerHTML = '<div style="color:var(--text-3);font-size:var(--text-sm);padding:8px 0">暂无模型提供商,点击上方"添加"按钮创建</div>';
             return;
         }
 
