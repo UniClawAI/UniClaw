@@ -196,8 +196,11 @@ def _copy_files_sync(root_dir: Path, all_files: list[str], cp_path: Path) -> lis
         dst = files_path / rel_path
         if src.exists() and src.is_file():
             dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dst)
-            copied_files.append(rel_path)
+            try:
+                shutil.copy2(src, dst)
+                copied_files.append(rel_path)
+            except PermissionError:
+                pass
     return copied_files
 
 
