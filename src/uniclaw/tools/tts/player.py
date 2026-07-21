@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 import numpy as np
 
 
@@ -64,22 +66,20 @@ class StreamPlayer:
                 self._stream.start()
         self._queue.put(pcm.astype(np.float32))
 
-    def stop(self):
+    async def stop(self):
         """停止播放,等待缓冲区播完。"""
         if self._stream is None:
             self._start = False
             return
         self._queue.put(None)  # 结束标记
         while self._start:
-            import time
-
-            time.sleep(0.01)
+            await asyncio.sleep(0.01)
         self._stream.stop()
         self._stream.close()
 
-    def __enter__(self):
+    async def __aenter__(self):
         self.start()
         return self
 
-    def __exit__(self, *args):
-        self.stop()
+    async def __aexit__(self, *args):
+        await self.stop()

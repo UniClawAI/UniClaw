@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Optional
 
 from uniclaw.tools.base import tool
@@ -234,7 +235,7 @@ def _format_detail(element) -> str:
     return "\n".join(lines)
 
 
-def interact(
+async def interact(
     name: Optional[str] = None,
     action: str = "click",
     type_text: Optional[str] = None,
@@ -260,7 +261,7 @@ def interact(
     # 降级到坐标
     if el is None:
         if x is not None and y is not None:
-            return _fallback(x, y, action, type_text)
+            return await _fallback(x, y, action, type_text)
         return f"{TOOL_ERROR}: 未找到元素,且未提供降级坐标"
 
     try:
@@ -278,8 +279,7 @@ def interact(
             if not type_text:
                 return f"{TOOL_ERROR}: action='type' 时必须提供 type_text"
             ax.AXUIElementPerformAction(el, "AXPress")
-            import time
-            time.sleep(0.1)
+            await asyncio.sleep(0.1)
             pyautogui.typewrite(type_text, interval=0.05)
             return f"已输入文本到: {_format_label(el)}"
         else:
@@ -288,7 +288,7 @@ def interact(
         return f"{TOOL_ERROR}: 操作失败: {e}"
 
 
-def _fallback(x: int, y: int, action: str, type_text: Optional[str]) -> str:
+async def _fallback(x: int, y: int, action: str, type_text: Optional[str]) -> str:
     """坐标降级。"""
     import pyautogui
     if action in ("click", "invoke", "focus"):
@@ -297,8 +297,7 @@ def _fallback(x: int, y: int, action: str, type_text: Optional[str]) -> str:
     elif action == "type":
         pyautogui.click(x, y)
         if type_text:
-            import time
-            time.sleep(0.1)
+            await asyncio.sleep(0.1)
             pyautogui.typewrite(type_text, interval=0.05)
         return f"已降级到坐标输入: ({x}, {y})"
     return f"{TOOL_ERROR}: 不支持的操作 '{action}'"
@@ -358,7 +357,7 @@ def cu_find_element(
 
 
 @tool
-def cu_interact(
+async def cu_interact(
     name: Optional[str] = None,
     action: str = "click",
     type_text: Optional[str] = None,
@@ -379,4 +378,4 @@ def cu_interact(
     Returns:
         操作结果消息。
     """
-    return interact(name=name, action=action, type_text=type_text, x=x, y=y)
+    return await interact(name=name, action=action, type_text=type_text, x=x, y=y)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Optional
 
 import uiautomation as auto
@@ -312,7 +313,7 @@ def _activate_window(hwnd: int) -> None:
     user32.SetForegroundWindow(hwnd)
 
 
-def _check_occluded(ctrl) -> Optional[str]:
+async def _check_occluded(ctrl) -> Optional[str]:
     """用 WindowFromPoint 检测元素中心点是否被其他窗口遮挡。
 
     Returns:
@@ -341,9 +342,7 @@ def _check_occluded(ctrl) -> Optional[str]:
         # 被其他窗口遮挡,尝试激活所属窗口
         try:
             _activate_window(ctrl_hwnd)
-            import time
-
-            time.sleep(0.3)
+            await asyncio.sleep(0.3)
         except Exception:
             pass
 
@@ -363,7 +362,7 @@ def _check_occluded(ctrl) -> Optional[str]:
         return None  # 检测失败时不阻塞操作
 
 
-def _ensure_visible(ctrl) -> Optional[str]:
+async def _ensure_visible(ctrl) -> Optional[str]:
     """确保控件可见且未被遮挡。
 
     检查顺序:离屏 → 边界矩形 → 遮挡(WindowFromPoint)。
@@ -377,9 +376,7 @@ def _ensure_visible(ctrl) -> Optional[str]:
             hwnd = _get_native_handle(ctrl)
             if hwnd:
                 _activate_window(hwnd)
-                import time
-
-                time.sleep(0.3)
+                await asyncio.sleep(0.3)
             if ctrl.IsOffscreen:
                 return f"{TOOL_ERROR}: 元素 {_element_label(ctrl)} 不在屏幕上(最小化或滚动出视野)"
     except Exception:
@@ -394,7 +391,7 @@ def _ensure_visible(ctrl) -> Optional[str]:
         pass
 
     # 3. 遮挡检查
-    occluded = _check_occluded(ctrl)
+    occluded = await _check_occluded(ctrl)
     if occluded:
         return occluded
 
@@ -441,7 +438,7 @@ def find_element(
         return f"{TOOL_ERROR}: 查找失败: {e}"
 
 
-def interact(
+async def interact(
     name: Optional[str] = None,
     automation_id: Optional[str] = None,
     control_type: Optional[str] = None,
@@ -489,7 +486,7 @@ def interact(
     try:
         # 点击/调用前检查元素可见性
         if action in ("click", "invoke"):
-            warn = _ensure_visible(ctrl)
+            warn = await _ensure_visible(ctrl)
             if warn:
                 return warn
 
@@ -511,9 +508,7 @@ def interact(
             if not type_text:
                 return f"{TOOL_ERROR}: action='type' 时必须提供 type_text"
             ctrl.SetFocus()
-            import time
-
-            time.sleep(0.1)
+            await asyncio.sleep(0.1)
             # 优先使用 ValuePattern
             try:
                 vp = ctrl.GetPattern(auto.PatternId.ValuePattern)
@@ -726,7 +721,7 @@ def cu_find_element(
 
 
 @tool
-def cu_interact(
+async def cu_interact(
     name: Optional[str] = None,
     automation_id: Optional[str] = None,
     control_type: Optional[str] = None,
@@ -748,4 +743,4 @@ def cu_interact(
     Returns:
         操作结果消息。
     """
-    return interact(name, automation_id, control_type, action, type_text)
+    return await interact(name, automation_id, control_type, action, type_text)

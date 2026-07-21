@@ -133,7 +133,7 @@ async def _finish_stream(config, ai_message=None, stream_id: str = ""):
             {"event": "audio_end", "session_id": session_id, "stream_id": stream_id}
         )
     elif _console_player:
-        _console_player.stop()
+        await _console_player.stop()
         _console_player = None
 
 

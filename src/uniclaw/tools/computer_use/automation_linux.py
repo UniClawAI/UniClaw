@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import subprocess
 from typing import Optional
 
@@ -103,7 +104,7 @@ def find_element(
         return f"{TOOL_ERROR}: {e}"
 
 
-def interact(
+async def interact(
     name: Optional[str] = None,
     action: str = "click",
     type_text: Optional[str] = None,
@@ -143,8 +144,7 @@ def interact(
                 return f"{TOOL_ERROR}: action='type' 时必须提供 type_text"
             if x is not None and y is not None:
                 _run(f"xdotool mousemove {x} {y} click 1")
-                import time
-                time.sleep(0.1)
+                await asyncio.sleep(0.1)
             # xdotool type 不支持中文,用 xdotool key 逐字符
             _run(f"xdotool type -- '{type_text}'")
             return f"已输入文本: {type_text}"
@@ -188,7 +188,7 @@ def cu_find_element(
 
 
 @tool
-def cu_interact(
+async def cu_interact(
     name: Optional[str] = None,
     action: str = "click",
     type_text: Optional[str] = None,
@@ -209,4 +209,4 @@ def cu_interact(
     Returns:
         操作结果消息。
     """
-    return interact(name=name, action=action, type_text=type_text, x=x, y=y)
+    return await interact(name=name, action=action, type_text=type_text, x=x, y=y)
