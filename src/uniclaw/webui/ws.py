@@ -35,6 +35,7 @@ from uniclaw.tools.base import tc_name, tc_args
 from uniclaw.tools.shell import Bash
 from uniclaw.webui.spinner import WebSpinner
 from uniclaw.utils.constants import SYSTEM_PREFIX
+from uniclaw.utils.format import format_args_for_display
 from uniclaw.utils.logger import get_logger
 from uniclaw.utils.message import MessageRole
 from pathlib import Path
@@ -402,7 +403,10 @@ async def bridge_events(session_id: str, config: AppConfig):
                 tts_enqueue(session_id, event.content, config)
 
         elif isinstance(event, ToolPreparingEvent):
-            config.spinner.start(f"'{event.name}'...", wait_id=queued_task.id)
+            args_display = format_args_for_display(event.args, max_length=30)
+            config.spinner.start(
+                f"'{event.name}({args_display})'...", wait_id=queued_task.id
+            )
             await _broadcast(
                 {
                     "event": "tool_preparing",
@@ -460,7 +464,10 @@ async def bridge_events(session_id: str, config: AppConfig):
 
         elif isinstance(event, ToolStartEvent):
             config.spinner.stop(wait_id=queued_task.id)
-            config.spinner.start(f"'{event.name}' 执行中...", wait_id=queued_task.id)
+            args_display = format_args_for_display(event.args, max_length=30)
+            config.spinner.start(
+                f"'{event.name}({args_display})' 执行中...", wait_id=queued_task.id
+            )
             await _broadcast(
                 {
                     "event": "tool_start",
