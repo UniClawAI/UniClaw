@@ -364,6 +364,10 @@ pre:hover .code-copy-btn {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0 6px;
 }
 .tool-args-preview {
     color: var(--text-3);
@@ -374,6 +378,19 @@ pre:hover .code-copy-btn {
     color: var(--text-3);
     margin-left: 8px;
     font-size: 11px;
+}
+.tool-explain {
+    flex-basis: 100%;
+    font-size: 11px;
+    color: var(--text-3);
+    margin-top: 2px;
+    line-height: 1.4;
+    white-space: normal;
+}
+.tool-explain::before {
+    content: '💡';
+    margin-right: 4px;
+    font-size: 10px;
 }
 .tool-status {
     margin-left: auto;

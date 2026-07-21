@@ -1127,15 +1127,16 @@ class TUIApp:
             elif isinstance(event, ToolStartEvent):
                 self.config.spinner.stop(wait_id=queued_task.id)
                 args_display = format_args_for_display(event.args)
+                explain_hint = f" 💡{event.explain}" if event.explain else ""
                 wait_id = event.tool_call_id
                 if args_display:
                     self.config.spinner.start(
-                        f"{agent_prefix}🔧 运行工具 '{event.name}({args_display})'...",
+                        f"{agent_prefix}🔧 运行工具 {explain_hint}'{event.name}({args_display})'...",
                         wait_id=wait_id,
                     )
                 else:
                     self.config.spinner.start(
-                        f"{agent_prefix}🔧 运行工具 '{event.name}'...",
+                        f"{agent_prefix}🔧 运行工具 {explain_hint}'{event.name}'...",
                         wait_id=wait_id,
                     )
             elif isinstance(event, ToolEvent):

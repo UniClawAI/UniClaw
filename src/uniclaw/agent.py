@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 from enum import StrEnum
-import inspect
 import json
 import os
 import threading
@@ -28,7 +27,7 @@ if TYPE_CHECKING:
     from uniclaw.tools.todolist import TodoList
     from uniclaw.tools.todolist.goal import GoalManager
 from uniclaw.tools.fs import Edit, Write
-from uniclaw.tools.base import tc_name as _tc_name, tc_args as _tc_args, Tool
+from uniclaw.tools.base import tc_name as _tc_name, tc_args as _tc_args, Tool, extract_explains
 
 # 死循环检测:连续相同工具调用次数阈值
 LOOP_DETECTION_THRESHOLD = 5
@@ -109,6 +108,7 @@ class ToolStartEvent:
     name: str
     args: dict
     tool_call_id: str = ""
+    explain: str = ""
 
 
 @dataclass
@@ -773,10 +773,16 @@ class MultiAgent:
             raise  # 向上抛出异常,由调用方处理 fallback
 
     async def _process_response(self, resp, task, config: AppConfig):
-        """处理 LLM 响应:构建消息、记录 usage、发送事件。返回 tool_calls 列表。"""
+        """处理 LLM 响应:构建消息、记录 usage、发送事件。返回 (tool_calls, tool_explains)。"""
         content = resp.content or ""
         tool_calls = resp.tool_calls
         reasoning = resp.reasoning_content or ""
+
+        # 提取 _explain 参数并从 tool_calls 中移除(explain 模式,sub-agent 不受影响)
+        if config.explain_mode and not config.is_sub and tool_calls:
+            tool_calls, tool_explains = extract_explains(tool_calls)
+        else:
+            tool_explains = {}
 
         in_tokens = resp.usage.input_tokens if resp.usage else 0
         out_tokens = resp.usage.output_tokens if resp.usage else 0
@@ -826,10 +832,10 @@ class MultiAgent:
         await record_usage(
             in_tokens, out_tokens, len(resp.tool_calls), model=actual_model
         )
-        return resp.tool_calls
+        return tool_calls, tool_explains
 
     async def _execute_single_tool(
-        self, tool_call, name2tool, config: AppConfig
+        self, tool_call, name2tool, config: AppConfig, explain: str | None = None
     ) -> tuple[dict, Any]:
         """执行单个工具调用(权限检查 + hooks + 执行 + UI 事件)。
 
@@ -910,42 +916,16 @@ class MultiAgent:
             if permitted is True:
                 tc_id = tool_call.get("id", "")
                 await self.send_event_to_user(
-                    ToolStartEvent(tc_name, dict(tc_args), tool_call_id=tc_id),
+                    ToolStartEvent(tc_name, dict(tc_args), tool_call_id=tc_id, explain=explain or ""),
                     config,
                 )
                 try:
-                    sig = inspect.signature(tool.func)
-                    kwargs = (
-                        {**tc_args, "config": config}
-                        if "config" in sig.parameters
-                        else dict(tc_args)
-                    )
-                    # 设置流式输出回调:工具执行过程中可通过 tool_stream() 推送实时输出
-                    from uniclaw.tools.stream import (
-                        set_stream_callback,
-                        reset_stream_callback,
-                    )
-
-                    # 支持异步工具:检测是否为协程函数
-                    if inspect.iscoroutinefunction(tool.func):
-                        # 设置流式输出回调(仅异步工具可用 tool_stream())
-                        async def _stream_cb(content: str, _tc_id=tc_id, _tc_name=tc_name):
-                            await self.send_event_to_user(
-                                ToolStreamEvent(
-                                    name=_tc_name,
-                                    content=content,
-                                    tool_call_id=_tc_id,
-                                ),
-                                config,
-                            )
-
-                        stream_token = set_stream_callback(_stream_cb)
-                        try:
-                            tool_resp_content = await tool.func(**kwargs)
-                        finally:
-                            reset_stream_callback(stream_token)
-                    else:
-                        tool_resp_content = tool.func(**kwargs)
+                    async def _stream_cb(content: str, _tc_id=tc_id, _tc_name=tc_name):
+                        await self.send_event_to_user(
+                            ToolStreamEvent(name=_tc_name, content=content, tool_call_id=_tc_id),
+                            config,
+                        )
+                    tool_resp_content = await tool(tc_args, config=config, stream_callback=_stream_cb)
                     # 标记扩展工具已使用(LRU:移到最前,防止被淘汰),核心工具不参与能量管理
                     from uniclaw.tools.registry import CORE_TOOL_NAMES
                     if tc_name not in CORE_TOOL_NAMES:
@@ -1004,18 +984,23 @@ class MultiAgent:
         name2tool,
         config: AppConfig,
         tools: list = None,
+        tool_explains: dict[str, str] | None = None,
     ) -> bool:
         """并行执行工具调用列表。返回 True 表示被 cancel。"""
         task = config.current_agent
+        if tool_explains is None:
+            tool_explains = {}
 
         # 并行执行所有工具
         results = await asyncio.gather(
-            *[self._execute_single_tool(tc, name2tool, config) for tc in tool_calls]
+            *[self._execute_single_tool(tc, name2tool, config, tool_explains.get(tc.get("id", ""), "")) for tc in tool_calls]
         )
 
         # 按顺序处理结果: add_message + cancel 检查
         for tool_call, tool_resp_content in results:
             tc_name = _tc_name(tool_call)
+            tc_id = tool_call.get("id", "")
+            explain_text = tool_explains.get(tc_id, "")
             # 检查是否为多模态内容(如图片),需要特殊处理
             _mm_types = {"image_url", "input_audio", "video_url"}
             if isinstance(tool_resp_content, list) and any(
@@ -1028,7 +1013,8 @@ class MultiAgent:
                     MessageRole.TOOL,
                     extracted or "(见下方多媒体内容)",
                     name=tc_name,
-                    tool_call_id=tool_call.get("id", ""),
+                    tool_call_id=tc_id,
+                    explain=explain_text,
                 )
                 # 将多模态内容作为 user 消息,让 LLM 能看到图片/音频/视频
                 task.session.add_message(MessageRole.USER, tool_resp_content)
@@ -1047,7 +1033,8 @@ class MultiAgent:
                     MessageRole.TOOL,
                     final_content,
                     name=tc_name,
-                    tool_call_id=tool_call.get("id", ""),
+                    tool_call_id=tc_id,
+                    explain=explain_text,
                 )
         if task.cancel_event.is_set():
             task.status = AgentStatus.CANCELLED
@@ -1209,7 +1196,7 @@ class MultiAgent:
                     await compact_task
                 compact_task = None
 
-                tool_calls = await self._process_response(resp, task, config)
+                tool_calls, tool_explains = await self._process_response(resp, task, config)
                 if not tool_calls:
                     content = await task.drain_user_queue(self, config)
                     if content:
@@ -1254,7 +1241,7 @@ class MultiAgent:
                     task.status = AgentStatus.CANCELLED
                     await self.send_event_to_user(InterruptedEvent(), config)
                     break
-                if await self._execute_tool_calls(tool_calls, name2tool, config, tools):
+                if await self._execute_tool_calls(tool_calls, name2tool, config, tools, tool_explains):
                     break
                 content = await task.drain_user_queue(self, config)
 

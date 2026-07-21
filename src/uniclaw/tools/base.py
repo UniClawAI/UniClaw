@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import json
 from dataclasses import dataclass, field
 from typing import Any, Callable, get_type_hints
 
@@ -159,24 +160,61 @@ class Tool:
         """参数属性字典(兼容旧接口)。"""
         return self.parameters.get("properties", {})
 
-    def to_openai_schema(self) -> dict:
+    def _maybe_inject_explain(self, parameters: dict) -> dict:
+        """在 parameters schema 中注入 _explain 参数(explain 模式)。"""
+        import copy
+
+        params = copy.deepcopy(parameters)
+        params["properties"]["_explain"] = {
+            "type": "string",
+            "description": "简要说明这个工具的作用以及为什么要调用它。",
+        }
+        if "_explain" not in params.get("required", []):
+            params.setdefault("required", []).append("_explain")
+        return params
+
+    def to_openai_schema(self, explain: bool = False) -> dict:
         """转换为 OpenAI function calling 格式。"""
+        parameters = self._maybe_inject_explain(self.parameters) if explain else self.parameters
         return {
             "type": "function",
             "function": {
                 "name": self.name,
                 "description": self.description,
-                "parameters": self.parameters,
+                "parameters": parameters,
             },
         }
 
-    def to_anthropic_schema(self) -> dict:
+    def to_anthropic_schema(self, explain: bool = False) -> dict:
         """转换为 Anthropic tool 格式。"""
+        parameters = self._maybe_inject_explain(self.parameters) if explain else self.parameters
         return {
             "name": self.name,
             "description": self.description,
-            "input_schema": self.parameters,
+            "input_schema": parameters,
         }
+
+    async def __call__(self, args: dict, config=None, stream_callback=None):
+        """调用工具,自动处理:
+        - 过滤 _explain 参数
+        - 注入 config (如果函数签名需要)
+        - 异步/同步自动适配
+        - 流式回调设置/清理
+        """
+        kwargs = {k: v for k, v in args.items() if k != "_explain"}
+        if config is not None and "config" in inspect.signature(self.func).parameters:
+            kwargs["config"] = config
+        if not inspect.iscoroutinefunction(self.func):
+            return self.func(**kwargs)
+        # 异步工具:支持流式回调
+        if stream_callback:
+            from uniclaw.tools.stream import set_stream_callback, reset_stream_callback
+            token = set_stream_callback(stream_callback)
+            try:
+                return await self.func(**kwargs)
+            finally:
+                reset_stream_callback(token)
+        return await self.func(**kwargs)
 
 
 def tool(func: Callable = None, *, name: str = None) -> Tool:
@@ -202,6 +240,35 @@ def tool(func: Callable = None, *, name: str = None) -> Tool:
     if func is not None:
         return decorator(func)
     return decorator
+
+
+# ── explain 模式辅助函数 ────────────────────────────────────────────────
+
+def extract_explains(tool_calls: list[dict]) -> tuple[list[dict], dict[str, str]]:
+    """从 tool_calls 中提取 _explain 参数并移除,返回 (清理后的 tool_calls, {id: explain})。"""
+    tool_explains: dict[str, str] = {}
+    for tc in tool_calls:
+        fn = tc.get("function")
+        if not fn:
+            continue
+        raw = fn.get("arguments", "{}")
+        args = json.loads(raw) if isinstance(raw, str) else (raw if isinstance(raw, dict) else {})
+        explain_text = args.pop("_explain", None)
+        if explain_text:
+            tool_explains[tc.get("id", "")] = explain_text
+            fn["arguments"] = json.dumps(args, ensure_ascii=False)
+    return tool_calls, tool_explains
+
+
+def should_explain(tool_name: str, explain_mode: bool | set, is_sub: bool = False) -> bool:
+    """判断指定工具是否需要注入 _explain 参数。sub-agent 不受影响。"""
+    if is_sub:
+        return False
+    if explain_mode is True:
+        return True
+    if isinstance(explain_mode, set):
+        return tool_name in explain_mode
+    return False
 
 
 # ── tool_call 解析辅助函数 ──────────────────────────────────────────────

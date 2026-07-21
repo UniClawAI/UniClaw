@@ -51,6 +51,7 @@ class ConfigUpdate(BaseModel):
     temperature: float | None = None
     max_tokens: int | None = None
     computer_use_enabled: bool | None = None
+    explain_mode: bool | list[str] | None = None
 
     @field_validator("temperature")
     @classmethod

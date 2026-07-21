@@ -97,6 +97,7 @@ class AppConfig:
     ) = field(default=None, repr=False)
     voice_mode: bool = False  # 语音模式:AI 回复自动 TTS 播放(运行时状态,不持久化)
     computer_use_enabled: bool = False  # Computer Use 模式(运行时状态,不持久化)
+    explain_mode: bool | set[str] = False  # 工具解释模式(运行时状态,不持久化): False=关|True=全部|set=指定工具
 
     @property
     def is_sub(self) -> bool:

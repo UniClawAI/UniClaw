@@ -425,6 +425,7 @@ class ToolCallMessage(BaseMessage):
     name: str = ""
     tool_call_id: str = ""
     args: dict[str, Any] = field(default_factory=dict)
+    explain: str = ""  # AI 对本次工具调用的解释(explain 模式)
 
     @property
     def role(self) -> str:
@@ -453,6 +454,8 @@ class ToolCallMessage(BaseMessage):
     def to_dict(self) -> dict[str, Any]:
         data = self.to_openai_message()
         data["args"] = self.args
+        if self.explain:
+            data["explain"] = self.explain
         return data
 
     @classmethod
@@ -462,6 +465,7 @@ class ToolCallMessage(BaseMessage):
             tool_call_id=data.get("tool_call_id", ""),
             content=data.get("content", ""),
             args=data.get("args", {}),
+            explain=data.get("explain", ""),
         )
 
     def to_content(self) -> str:
@@ -826,6 +830,7 @@ class Session:
             tool_call_id=tool_call.get("tool_call_id", ""),
             content=content,
             args=tool_call.get("args", {}),
+            explain=tool_call.get("explain", ""),
         )
         self._messages.append(tool_call_message)
         self.history.append(tool_call_message)
@@ -886,6 +891,7 @@ class Session:
                     "name": kwargs.get("name", ""),
                     "tool_call_id": kwargs.get("tool_call_id", ""),
                     "args": kwargs.get("args", {}),
+                    "explain": kwargs.get("explain", ""),
                 },
             )
         else:

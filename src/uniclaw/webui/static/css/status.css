@@ -95,6 +95,28 @@
     filter: brightness(1.2);
 }
 
+/* 工具解释模式状态 */
+.status-explain {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: var(--r-full);
+    background: var(--bg-inset);
+    color: var(--text-3);
+    cursor: pointer;
+    transition: all var(--duration-fast, 0.15s) var(--ease, ease);
+}
+.status-explain.active {
+    background: var(--neon-yellow-dim, rgba(234, 179, 8, 0.15));
+    color: var(--neon-yellow, #eab308);
+}
+.status-explain.partial {
+    background: var(--neon-orange-dim, rgba(249, 115, 22, 0.15));
+    color: var(--neon-orange, #f97316);
+}
+.status-explain:hover {
+    filter: brightness(1.2);
+}
+
 /* 语音模式状态 */
 .status-voice {
     transition: all var(--duration-fast, 0.15s) var(--ease, ease);

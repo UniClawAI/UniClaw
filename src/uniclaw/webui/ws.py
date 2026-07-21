@@ -468,6 +468,7 @@ async def bridge_events(session_id: str, config: AppConfig):
                     "name": event.name,
                     "args": event.args,
                     "tool_call_id": event.tool_call_id,
+                    "explain": event.explain,
                     "is_subagent": is_subagent,
                     "agent_name": agent_name,
                 }

@@ -312,6 +312,11 @@ async def get_config(session_id: str):
             "asr_available": bool(config.asr_model),
             "image_available": bool(config.image_model),
             "computer_use_enabled": config.computer_use_enabled,
+            "explain_mode": (
+                True if config.explain_mode is True
+                else sorted(config.explain_mode) if isinstance(config.explain_mode, set)
+                else False
+            ),
         }
         # todolist 信息
         todo = config.current_agent.todolist
@@ -341,6 +346,11 @@ async def update_config(body: ConfigUpdate):
             config.permission_mode = Permissions(body.permission_mode)
         if body.computer_use_enabled is not None:
             config.computer_use_enabled = body.computer_use_enabled
+        if body.explain_mode is not None:
+            if isinstance(body.explain_mode, list):
+                config.explain_mode = set(body.explain_mode)
+            else:
+                config.explain_mode = body.explain_mode
         if body.temperature is not None:
             config.temperature = body.temperature
         if body.max_tokens is not None:

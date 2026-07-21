@@ -146,7 +146,8 @@ const Chat = {
                         const result = toolResults[tcId];
                         const resultContent = result ? this._extractText(result.content) : null;
                         const success = result ? !(resultContent?.startsWith('[TOOL_ERROR]')) : null;
-                        this._appendToolBlock(el, name, args, resultContent, success, tcId);
+                        const explain = result?.explain || '';
+                        this._appendToolBlock(el, name, args, resultContent, success, tcId, explain);
                     });
                 }
                 this._appendUsageInfo(el, msg.usage?.input_tokens, msg.usage?.output_tokens, msg.model_name);
@@ -444,7 +445,7 @@ const Chat = {
         return block;
     },
 
-    _appendToolBlock(parentEl, name, args, content, success, toolCallId) {
+    _appendToolBlock(parentEl, name, args, content, success, toolCallId, explain) {
         const block = document.createElement('div');
         block.className = 'tool-block';
         if (toolCallId) {
@@ -458,7 +459,9 @@ const Chat = {
         const resultPreview = content ? Utils.truncate(content.split('\n')[0], 60) : '';
 
         let headerHtml = `<span class="tool-icon">${icon('tool')}</span>`;
-        headerHtml += `<span class="tool-text"><span class="tool-name">${Utils.escapeHtml(name)}</span>`;
+        headerHtml += `<span class="tool-text">`;
+        if (explain) headerHtml += `<span class="tool-explain">${Utils.escapeHtml(explain)}</span>`;
+        headerHtml += `<span class="tool-name">${Utils.escapeHtml(name)}</span>`;
         if (argPreview) headerHtml += `<span class="tool-args-preview">(${Utils.escapeHtml(argPreview)})</span>`;
         if (resultPreview) headerHtml += `<span class="tool-result-preview">→ ${Utils.escapeHtml(resultPreview)}</span>`;
         headerHtml += `</span>`;
@@ -922,10 +925,25 @@ const Chat = {
         const existing = key ? this.toolBlocks[key] : null;
         if (existing) {
             const header = existing.querySelector('.tool-header');
-            if (header) { const status = header.querySelector('.tool-status'); if (status) { status.className = 'tool-status running'; status.textContent = '执行中'; } }
+            if (header) {
+                const status = header.querySelector('.tool-status');
+                if (status) { status.className = 'tool-status running'; status.textContent = '执行中'; }
+                // 更新 explain(从 AssistantEvent 创建时没有,tool_start 才带过来)
+                if (msg.explain && !header.querySelector('.tool-explain')) {
+                    const toolText = header.querySelector('.tool-text');
+                    if (toolText) {
+                        const explainEl = document.createElement('span');
+                        explainEl.className = 'tool-explain';
+                        explainEl.textContent = msg.explain;
+                        const toolName = toolText.querySelector('.tool-name');
+                        if (toolName) toolText.insertBefore(explainEl, toolName);
+                        else toolText.appendChild(explainEl);
+                    }
+                }
+            }
         } else {
             const parent = this.streamingEl || document.getElementById('chat-messages');
-            this._appendToolBlock(parent, msg.name, msg.args, '执行中...', null, msg.tool_call_id);
+            this._appendToolBlock(parent, msg.name, msg.args, '执行中...', null, msg.tool_call_id, msg.explain);
         }
 
     },
@@ -1085,6 +1103,20 @@ const Chat = {
                 pel.className = `perm-mode ${d.permission_mode}`;
             }
             this._renderTodolist(d.todolist);
+            // 更新 EX 按钮状态
+            const exEl = document.getElementById('status-explain');
+            if (exEl) {
+                if (d.explain_mode === true) {
+                    exEl.className = 'status-explain active';
+                    exEl.title = '工具解释模式: 所有工具 (/explain)';
+                } else if (Array.isArray(d.explain_mode) && d.explain_mode.length > 0) {
+                    exEl.className = 'status-explain partial';
+                    exEl.title = `工具解释模式: ${d.explain_mode.join(', ')} (/explain)`;
+                } else {
+                    exEl.className = 'status-explain';
+                    exEl.title = '工具解释模式: 关闭 (/explain)';
+                }
+            }
         }).catch(() => {});
     },
 
@@ -1100,7 +1132,23 @@ const Chat = {
     },
 
     _fetchAndRenderTodolist(sid) {
-        fetch(`/api/config?session_id=${sid}`).then(r => r.json()).then(d => this._renderTodolist(d.todolist)).catch(() => { const a = document.getElementById('todolist-area'); if (a) a.style.display = 'none'; });
+        fetch(`/api/config?session_id=${sid}`).then(r => r.json()).then(d => {
+            this._renderTodolist(d.todolist);
+            // 更新 EX 按钮状态
+            const exEl = document.getElementById('status-explain');
+            if (exEl) {
+                if (d.explain_mode === true) {
+                    exEl.className = 'status-explain active';
+                    exEl.title = '工具解释模式: 所有工具 (/explain)';
+                } else if (Array.isArray(d.explain_mode) && d.explain_mode.length > 0) {
+                    exEl.className = 'status-explain partial';
+                    exEl.title = `工具解释模式: ${d.explain_mode.join(', ')} (/explain)`;
+                } else {
+                    exEl.className = 'status-explain';
+                    exEl.title = '工具解释模式: 关闭 (/explain)';
+                }
+            }
+        }).catch(() => { const a = document.getElementById('todolist-area'); if (a) a.style.display = 'none'; });
     },
 
     /** 解析 send_file 工具返回的文件下载标记,生成 HTML */

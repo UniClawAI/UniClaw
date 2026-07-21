@@ -26,6 +26,7 @@ from uniclaw.commands.undo import cmd_undo
 from uniclaw.commands.voice import cmd_voice
 from uniclaw.commands.cu import cmd_cu
 from uniclaw.commands.knowledge import cmd_knowledge
+from uniclaw.commands.explain import cmd_explain
 
 # 导入子命令列表
 from uniclaw.commands import session as _session_mod
@@ -98,6 +99,7 @@ COMMANDS["voice"] = cmd_voice
 COMMANDS["cu"] = cmd_cu
 COMMANDS["kg"] = cmd_knowledge
 COMMANDS["knowledge"] = cmd_knowledge
+COMMANDS["explain"] = cmd_explain
 
 
 async def handle_slash(line: str, config: AppConfig) -> Union[bool, str]:

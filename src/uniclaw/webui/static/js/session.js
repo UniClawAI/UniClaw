@@ -683,6 +683,21 @@ const SessionPanel = {
                 cuEl.title = d.computer_use_enabled ? 'Computer Use 已启用 (点击关闭)' : 'Computer Use 已关闭 (点击启用)';
                 cuEl.onclick = () => this._toggleComputerUse(!d.computer_use_enabled);
             }
+            // 工具解释模式状态
+            const exEl = document.getElementById('status-explain');
+            if (exEl) {
+                if (d.explain_mode === true) {
+                    exEl.className = 'status-explain active';
+                    exEl.title = '工具解释模式: 所有工具 (点击关闭)';
+                } else if (Array.isArray(d.explain_mode) && d.explain_mode.length > 0) {
+                    exEl.className = 'status-explain partial';
+                    exEl.title = `工具解释模式: ${d.explain_mode.join(', ')} (点击关闭)`;
+                } else {
+                    exEl.className = 'status-explain';
+                    exEl.title = '工具解释模式: 关闭 (点击开启)';
+                }
+                exEl.onclick = () => this._toggleExplain(d.explain_mode ? false : true);
+            }
         }).catch(() => {});
         this._fetchContextUsage(sessionId);
         this._startContextTimer(sessionId);
@@ -698,6 +713,22 @@ const SessionPanel = {
                 body: JSON.stringify({ session_id: sid, computer_use_enabled: enabled }),
             });
             Utils.showToast(enabled ? 'Computer Use 已启用 (下条消息生效)' : 'Computer Use 已关闭 (下条消息生效)');
+            this._updateStatusBar(this.activeProjectDir, sid);
+        } catch (_) {
+            Utils.showError('切换失败');
+        }
+    },
+
+    async _toggleExplain(enabled) {
+        const sid = this.activeSessionId;
+        if (!sid) return;
+        try {
+            await fetch('/api/config', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: sid, explain_mode: enabled }),
+            });
+            Utils.showToast(enabled ? '工具解释模式已开启 (下条消息生效)' : '工具解释模式已关闭 (下条消息生效)');
             this._updateStatusBar(this.activeProjectDir, sid);
         } catch (_) {
             Utils.showError('切换失败');
