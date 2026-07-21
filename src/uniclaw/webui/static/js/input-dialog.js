@@ -13,6 +13,12 @@ const InputDialog = {
         document.getElementById('input-dialog-text').addEventListener('keydown', e => {
             if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this._respond(); }
         });
+        // 拦截 backspace 防止浏览器后退
+        document.getElementById('input-dialog-modal').addEventListener('keydown', e => {
+            if (e.key === 'Backspace' && !e.target.matches('input, textarea')) {
+                e.preventDefault();
+            }
+        });
     },
 
     _onRequest(msg) {

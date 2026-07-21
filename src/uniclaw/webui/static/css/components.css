@@ -625,14 +625,61 @@ textarea.input {
     max-width: 600px;
 }
 
+.multi-input-tabs-wrap {
+    position: relative;
+    margin-bottom: 12px;
+}
+
 .multi-input-tabs {
     display: flex;
     gap: 0;
     padding: 0;
     border-bottom: 1px solid var(--border);
-    margin-bottom: 12px;
     overflow-x: auto;
-    scrollbar-width: thin;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    scroll-behavior: smooth;
+}
+
+.multi-input-tabs::-webkit-scrollbar {
+    display: none;
+}
+
+/* 左右箭头 */
+.multi-input-arrow {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 28px;
+    border: none;
+    background: transparent;
+    color: var(--text-2);
+    font-size: 18px;
+    cursor: pointer;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: color var(--duration-fast) var(--ease);
+    padding: 0;
+}
+
+.multi-input-arrow:hover {
+    color: var(--text-0);
+}
+
+.multi-input-arrow.left {
+    left: 0;
+    background: linear-gradient(to right, var(--bg-0) 60%, transparent);
+}
+
+.multi-input-arrow.right {
+    right: 0;
+    background: linear-gradient(to left, var(--bg-0) 60%, transparent);
+}
+
+.multi-input-arrow.hidden {
+    display: none;
 }
 
 .multi-input-tab {

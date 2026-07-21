@@ -15,6 +15,12 @@ const MultiInputDialog = {
         WS.on('multi_input_request', msg => this._onRequest(msg));
         document.getElementById('multi-input-submit').onclick = () => this._submit();
         document.getElementById('multi-input-cancel-countdown').onclick = () => this._cancelCountdown();
+        // 拦截 backspace 防止浏览器后退
+        document.getElementById('multi-input-modal').addEventListener('keydown', e => {
+            if (e.key === 'Backspace' && !e.target.matches('input, textarea')) {
+                e.preventDefault();
+            }
+        });
     },
 
     _onRequest(msg) {
@@ -68,6 +74,39 @@ const MultiInputDialog = {
             tab.textContent = `Q${i + 1}: ${shortQ}`;
             tab.onclick = () => this._switchTab(i);
             container.appendChild(tab);
+        });
+        this._setupTabScroll();
+    },
+
+    _setupTabScroll() {
+        const container = document.getElementById('multi-input-tabs');
+        const arrowL = document.getElementById('multi-input-arrow-left');
+        const arrowR = document.getElementById('multi-input-arrow-right');
+
+        const updateArrows = () => {
+            const sl = container.scrollLeft;
+            const maxSl = container.scrollWidth - container.clientWidth;
+            arrowL.classList.toggle('hidden', sl <= 2);
+            arrowR.classList.toggle('hidden', sl >= maxSl - 2);
+        };
+
+        // 移除旧监听器, 绑定新的
+        container.onscroll = updateArrows;
+        arrowL.onclick = () => container.scrollBy({ left: -120, behavior: 'smooth' });
+        arrowR.onclick = () => container.scrollBy({ left: 120, behavior: 'smooth' });
+
+        // 需要等 DOM 渲染完再检测溢出
+        requestAnimationFrame(() => {
+            const hasOverflow = container.scrollWidth > container.clientWidth + 4;
+            if (!hasOverflow) {
+                arrowL.classList.add('hidden');
+                arrowR.classList.add('hidden');
+            } else {
+                updateArrows();
+                // 滚动当前激活 tab 到可见区域
+                const active = container.querySelector('.multi-input-tab.active');
+                if (active) active.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+            }
         });
     },
 
@@ -155,6 +194,10 @@ const MultiInputDialog = {
         }
         this._renderOptions();
         this._checkCanSubmit();
+        // 如果选中的是"其他", 恢复输入框焦点
+        if (idx === options.length) {
+            this._activateOther();
+        }
     },
 
     _activateOther() {
