@@ -565,16 +565,28 @@ async def _update_session_settings(body: SettingsUpdate) -> dict:
     if body.providers:
         from uniclaw.config import ProviderProfile
 
-        config.providers = {
-            name: ProviderProfile(
+        # 恢复脱敏的 API key(会话级也需要检测,防止脱敏 key 覆盖原始值)
+        _, original = _read_settings_raw()
+        original_providers = original.get("providers", {})
+        masked_to_original: dict[str, str] = {}
+        for p in original_providers.values():
+            orig_key = p.get("api_key", "")
+            if orig_key:
+                masked_to_original[_mask_key(orig_key)] = orig_key
+
+        resolved_providers = {}
+        for name, p in body.providers.items():
+            api_key = p.api_key
+            if "****" in api_key:
+                api_key = masked_to_original.get(api_key, "")
+            resolved_providers[name] = ProviderProfile(
                 name=p.name or name,
                 protocol=p.protocol,
-                api_key=p.api_key,
+                api_key=api_key,
                 base_url=p.base_url,
                 proxy_url=p.proxy_url,
             )
-            for name, p in body.providers.items()
-        }
+        config.providers = resolved_providers
 
     # 验证模型名的 provider 前缀(使用更新后的 providers)
     provider_names = set(config.providers.keys())
