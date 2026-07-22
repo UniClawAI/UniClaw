@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+import shutil
 import json
 import re
 from pathlib import Path
@@ -37,10 +37,16 @@ class SessionManager:
             return None
 
     @classmethod
-    def list_sessions(cls, limit: int = 0, root_dir: str | None = None, include_wechat: bool = False) -> list[dict]:
+    def list_sessions(
+        cls, limit: int = 0, root_dir: str | None = None, include_wechat: bool = False
+    ) -> list[dict]:
         items = list(cls._load_metadata().values())
         if not include_wechat:
-            items = [item for item in items if item.get("session_type", SessionType.CONSOLE) != SessionType.WECHAT]
+            items = [
+                item
+                for item in items
+                if item.get("session_type", SessionType.CONSOLE) != SessionType.WECHAT
+            ]
         if root_dir:
             items = [item for item in items if item.get("root_dir") == root_dir]
         items.sort(
@@ -52,9 +58,19 @@ class SessionManager:
         return items
 
     @classmethod
-    def delete_session(cls, session_id: str) -> bool:
+    def delete_session(cls, session_id: str, config: AppConfig | None = None) -> bool:
         metadata = cls._load_metadata()
         meta = metadata.pop(session_id, None)
+        # 判断是否为自由聊天并获取 root_dir:config 优先,meta 兜底
+        is_free_chat = (config and config.is_free_chat) or (
+            meta and meta.get("session_type") == SessionType.FREE_CHAT
+        )
+        root_dir = (config.root_dir if config else None) or (
+            Path(meta["root_dir"]) if meta and meta.get("root_dir") else None
+        )
+        # 清理自由聊天的独立工作目录
+        if is_free_chat and root_dir and root_dir.is_dir():
+            shutil.rmtree(root_dir, ignore_errors=True)
         if not meta:
             return False
         path = Path(meta.get("file_path", ""))
@@ -131,7 +147,9 @@ class SessionManager:
         return True
 
     @classmethod
-    async def fork_session(cls, session_id: str, message_idx: int, config: AppConfig) -> Session | None:
+    async def fork_session(
+        cls, session_id: str, message_idx: int, config: AppConfig
+    ) -> Session | None:
         """从指定会话的消息处分叉,创建新会话。
 
         Args:

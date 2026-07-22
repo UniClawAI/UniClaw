@@ -214,19 +214,16 @@ async def get_session(session_id: str):
 @router.delete("/sessions/{session_id}")
 async def delete_session(session_id: str):
     """删除会话。"""
-    # 先获取 root_dir(删除后就找不到了)
-    root_dir = None
-    if session_id in session_cache:
-        root_dir = session_cache[session_id].current_agent.session.root_dir
-    else:
-        session = SessionManager.load_session(session_id)
-        if session:
-            root_dir = session.root_dir
-    SessionManager.delete_session(session_id)
+    from uniclaw.webui.ws import get_or_load_session, notify_session_deleted
+
+    try:
+        config = await get_or_load_session(session_id)
+    except ValueError:
+        config = None
+    root_dir = config.root_dir if config else None
+    SessionManager.delete_session(session_id, config=config)
     session_cache.pop(session_id, None)
     # 通知前端会话已删除
-    from uniclaw.webui.ws import notify_session_deleted
-
     await notify_session_deleted(session_id, root_dir)
     return {"ok": True}
 
