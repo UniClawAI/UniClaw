@@ -1,5 +1,188 @@
 /* input.js — 输入框组件 */
 
+/** 等待发送消息管理 */
+const PendingMessages = {
+    _messages: [],  // { id, text }
+    _counter: 0,
+
+    /** 添加一条等待消息 */
+    add(text) {
+        const id = ++this._counter;
+        const displayText = text.length > 60 ? text.substring(0, 60) + '...' : text;
+        this._messages.push({ id, text: displayText });
+        this._render();
+        return id;
+    },
+
+    /** 删除一条等待消息(收到后端确认后调用) */
+    removeById(id) {
+        this._fadeOutAndRemove(id);
+    },
+
+    /** 根据消息内容模糊匹配删除(后端返回的 content 可能不完全一致) */
+    removeByContent(content) {
+        if (!content) return;
+        const normalized = content.trim();
+        // 尝试精确匹配
+        let idx = this._messages.findIndex(m => m.text === normalized || m.text === normalized.substring(0, 60) + '...');
+        if (idx === -1) {
+            // 模糊匹配:等待消息是否是 content 的前缀
+            idx = this._messages.findIndex(m => normalized.startsWith(m.text) || m.text.startsWith(normalized.substring(0, 60)));
+        }
+        if (idx !== -1) {
+            this._fadeOutAndRemove(this._messages[idx].id);
+        }
+    },
+
+    /** 清空所有等待消息 */
+    clear() {
+        this._messages = [];
+        this._render();
+    },
+
+    /** 淡出动画后移除 */
+    _fadeOutAndRemove(id) {
+        const el = document.querySelector(`.pending-msg[data-id="${id}"]`);
+        if (el) {
+            el.style.animation = 'pendingOut 0.2s ease-out forwards';
+            setTimeout(() => {
+                const idx = this._messages.findIndex(m => m.id === id);
+                if (idx !== -1) {
+                    this._messages.splice(idx, 1);
+                    this._render();
+                }
+            }, 200);
+        } else {
+            const idx = this._messages.findIndex(m => m.id === id);
+            if (idx !== -1) {
+                this._messages.splice(idx, 1);
+                this._render();
+            }
+        }
+    },
+
+    /** 渲染等待区域 */
+    _render() {
+        const container = document.getElementById('pending-messages');
+        const textarea = document.getElementById('chat-input');
+        if (!container || !textarea) return;
+
+        if (this._messages.length === 0) {
+            container.style.display = 'none';
+            container.innerHTML = '';
+            container.className = 'pending-messages';
+            return;
+        }
+
+        // 合并所有消息到一行,换行替换为空格
+        const combinedText = this._messages
+            .map(m => m.text.replace(/\n/g, ' '))
+            .join(' ');
+
+        container.style.display = 'block';
+        container.className = 'pending-messages active';
+        container.innerHTML = `
+            <div class="pending-header">等待中...</div>
+            <div class="pending-msg">
+                <span class="pending-text">${Utils.escapeHtml(combinedText)}</span>
+            </div>
+        `;
+    }
+};
+
+// 添加动画样式
+if (!document.getElementById('pending-messages-style')) {
+    const style = document.createElement('style');
+    style.id = 'pending-messages-style';
+    style.textContent = `
+        @keyframes pendingIn {
+            from { opacity: 0; transform: translateY(-6px) scale(0.98); }
+            to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        @keyframes pendingOut {
+            from { opacity: 1; transform: translateY(0) scale(1); }
+            to { opacity: 0; transform: translateY(-6px) scale(0.98); }
+        }
+        @keyframes pendingPulse {
+            0%, 100% { opacity: 0.4; }
+            50% { opacity: 1; }
+        }
+
+        #pending-messages.active {
+            position: relative;
+            background: var(--bg-2);
+            border: 1px solid var(--border);
+            border-bottom: none;
+            border-left: none;
+            border-radius: 0 6px 0 0;
+            padding: 5px 12px 6px 16px;
+            margin-bottom: -1px;
+            margin-left: 30px;
+            z-index: 1;
+            animation: pendingIn 0.2s ease-out;
+        }
+
+        #pending-messages.active::before {
+            content: '';
+            position: absolute;
+            left: -30px;
+            bottom: 0;
+            width: 200px;
+            height: 100%;
+            background: var(--bg-2);
+            border-left: 1px solid var(--border);
+            border-top: 1px solid var(--border);
+            border-radius: 6px 0 0 0;
+            transform: skewX(-25deg);
+            transform-origin: bottom right;
+            z-index: -1;
+        }
+
+        #pending-messages.active::after {
+            content: '';
+            position: absolute;
+            right: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 5px;
+            height: 5px;
+            border-radius: 50%;
+            background: var(--primary);
+            animation: pendingPulse 1.5s ease-in-out infinite;
+        }
+
+        .pending-header {
+            font-size: 10px;
+            color: var(--text-3);
+            margin-bottom: 1px;
+            padding-left: 2px;
+            letter-spacing: 0.5px;
+        }
+
+        .pending-msg {
+            display: flex;
+            align-items: center;
+            animation: pendingIn 0.2s ease-out;
+        }
+
+        .pending-text {
+            color: var(--text-1);
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            font-size: 13px;
+            line-height: 1.4;
+        }
+
+        #chat-input {
+            position: relative;
+            z-index: 2;
+        }
+    `;
+    document.head.appendChild(style);
+}
+
 const Input = {
     attachedFiles: [],
     completionPopup: null,
@@ -153,7 +336,8 @@ const Input = {
             if (!sid) { Utils.showToast('会话创建中,请稍候'); return; }
             const msg = { type: 'chat', session_id: sid, content: text, files: this.attachedFiles.map(f => ({ name: f.name, data: f.data, mime: f.mime })) };
             WS.send(msg);
-            // 不在本地追加——服务端会广播 UserEvent 回来,由 _onUser 统一显示
+            // 添加到等待区——收到后端 UserEvent 确认后会移除
+            PendingMessages.add(text);
         }
         if (text && (!this._history.length || this._history[this._history.length - 1] !== text)) this._history.push(text);
         this._historyIdx = -1;

@@ -286,7 +286,7 @@ const SessionPanel = {
             this.activeSessionId = null;
             Chat.currentSessionId = null;
             Chat.clear();
-            Chat._appendSystemMessage('会话已删除，请选择其他会话或创建新会话');
+            Chat._appendSystemMessage('会话已删除,请选择其他会话或创建新会话');
         }
         this._refreshSessions();
     },
@@ -411,12 +411,12 @@ const SessionPanel = {
                 this.projects[dir].sessions = grouped[dir].sort((a, b) => (b.end_time || b.start_time || '').localeCompare(a.end_time || a.start_time || ''));
             });
 
-            // 第二步：找到当前活动会话所在的项目（此时 sessions 已更新）
+            // 第二步：找到当前活动会话所在的项目(此时 sessions 已更新)
             const urlSid = new URLSearchParams(window.location.search).get('session_id');
             const activeSid = this.activeSessionId || urlSid || localStorage.getItem('uniclaw_active_session');
             const activeSessionProject = activeSid ? this._findSession(activeSid)?.rootDir : null;
 
-            // 第三步：会话数超过 50 的项目，根据当前活动会话判断是否折叠
+            // 第三步：会话数超过 50 的项目,根据当前活动会话判断是否折叠
             Object.keys(grouped).forEach(dir => {
                 if (this.projects[dir].sessions.length > 50) {
                     this.projects[dir].expanded = (dir === activeSessionProject);
@@ -542,6 +542,8 @@ const SessionPanel = {
         this._saveSessionToUrl(sessionId);
         this.attentionSessions.delete(sessionId);
         Chat._resetStreamingState();
+        // 切换会话时清空等待区
+        if (typeof PendingMessages !== 'undefined') PendingMessages.clear();
         Permission.closeIfSessionMismatch(sessionId);
         InputDialog.closeIfSessionMismatch(sessionId);
         MultiInputDialog.closeIfSessionMismatch(sessionId);
@@ -560,6 +562,8 @@ const SessionPanel = {
         this.activeProjectDir = rootDir;
         Chat.currentSessionId = null;
         Chat._resetStreamingState();
+        // 创建新会话时清空等待区
+        if (typeof PendingMessages !== 'undefined') PendingMessages.clear();
         this._updateStatusBar(rootDir, null, true);
         Chat.clear();
         Chat._appendWelcomeScreen();
@@ -648,6 +652,8 @@ const SessionPanel = {
         this.activeProjectDir = '__free__';
         Chat.currentSessionId = null;
         Chat._resetStreamingState();
+        // 创建自由聊天时清空等待区
+        if (typeof PendingMessages !== 'undefined') PendingMessages.clear();
         this._updateStatusBar('__free__', null, true);
         Chat.clear();
         Chat._appendWelcomeScreen();

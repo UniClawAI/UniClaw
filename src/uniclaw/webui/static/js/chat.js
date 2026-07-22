@@ -231,7 +231,7 @@ const Chat = {
             { icon: '🔊', text: '把这段话朗读给我听' },
             { icon: '⏰', text: '每天早上 9 点提醒我喝水' },
             { icon: '📸', text: '帮我识别一下这张图片里的内容' },
-            { icon: '📑', text: '帮我记住这个知识点，以后能查到' },
+            { icon: '📑', text: '帮我记住这个知识点,以后能查到' },
             { icon: '🖥️', text: '帮我运行一下这段代码看看结果' },
             { icon: '📑', text: '帮我总结一下这个网页的内容' },
             { icon: '📐', text: '帮我截图并分析屏幕上的内容' },
@@ -649,6 +649,10 @@ const Chat = {
     _onUser(msg) {
         if (!msg || !this.currentSessionId || msg.session_id !== this.currentSessionId) return;
         this._removeWelcomeScreen();
+        // 收到用户消息确认,清空等待区
+        if (typeof PendingMessages !== 'undefined') {
+            PendingMessages.clear();
+        }
         let el;
         if (Array.isArray(msg.content)) {
             const text = this._extractText(msg.content);

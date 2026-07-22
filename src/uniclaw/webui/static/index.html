@@ -105,7 +105,10 @@
                         <button id="mic-btn" class="btn-icon mic-btn" title="语音输入">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
                         </button>
-                        <textarea id="chat-input" class="input" placeholder="输入消息... (!Shell /命令 @文件)" rows="1" style="flex:1;min-height:38px;max-height:150px;resize:none;font-size:var(--text-md)"></textarea>
+                        <div style="flex:1;position:relative">
+                            <div id="pending-messages" class="pending-messages" style="display:none"></div>
+                            <textarea id="chat-input" class="input" placeholder="输入消息... (!Shell /命令 @文件)" rows="1" style="width:100%;min-height:38px;max-height:150px;resize:none;font-size:var(--text-md)"></textarea>
+                        </div>
                         <button id="send-btn" class="btn btn-primary" title="发送 (Enter)" style="width:38px;height:38px;padding:0;flex-shrink:0;border-radius:var(--r-md)">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M22 2 11 13"/><path d="M22 2 15 22 11 13 2 9Z"/></svg>
                         </button>

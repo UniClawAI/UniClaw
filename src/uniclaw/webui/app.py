@@ -262,12 +262,24 @@ async def auth_me(request: Request):
         token = auth_header[7:]
     if not token:
         token = request.cookies.get("uniclaw_token")
-    if not token or not auth.verify_token(token):
-        return JSONResponse(status_code=401, content={"detail": "未登录或 token 已过期"})
-    user = auth.get_user()
-    if not user:
+
+    # 验证 token
+    if token and auth.verify_token(token):
+        user = auth.get_user()
+        if user:
+            return {"username": user.username, "created_at": user.created_at}
         return JSONResponse(status_code=404, content={"detail": "无用户"})
-    return {"username": user.username, "created_at": user.created_at}
+
+    # 可信 IP 无需 token,返回默认用户信息
+    client_ip = request.client.host if request.client else ""
+    if _is_trusted_ip(client_ip):
+        user = auth.get_user()
+        if user:
+            return {"username": user.username, "created_at": user.created_at, "trusted_ip": True}
+        # 可信 IP 且无用户,返回特殊状态让前端跳转注册
+        return JSONResponse(status_code=404, content={"detail": "无用户", "trusted_ip": True})
+
+    return JSONResponse(status_code=401, content={"detail": "未登录或 token 已过期"})
 
 
 @app.post("/api/auth/change-password")
@@ -314,13 +326,13 @@ async def index():
 
 @app.get("/login.html")
 async def login_page(request: Request):
-    """返回登录页面。已认证用户或可信 IP 直接跳转主页。"""
-    # 可信 IP 跳转
-    client_ip = request.client.host if request.client else ""
-    if _is_trusted_ip(client_ip):
-        return RedirectResponse(url="/", status_code=302)
+    """返回登录页面。已认证用户或可信IP直接跳转主页。"""
     # 已登录跳转
     token = request.cookies.get("uniclaw_token")
     if token and auth.verify_token(token):
+        return RedirectResponse(url="/", status_code=302)
+    # 可信 IP 直接跳转(无需登录)
+    client_ip = request.client.host if request.client else ""
+    if _is_trusted_ip(client_ip):
         return RedirectResponse(url="/", status_code=302)
     return _serve_html(STATIC_DIR / "login.html")
