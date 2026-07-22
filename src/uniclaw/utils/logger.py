@@ -1,6 +1,7 @@
 import hashlib
 import logging
 import os
+import threading
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -10,6 +11,10 @@ LOG_FORMAT = "[%(asctime)s] %(levelname)s: %(message)s"
 LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 MAX_LOG_SIZE = 10 * 1024 * 1024  # 10MB
 BACKUP_COUNT = 5
+
+# 同一日志文件共享 handler, 避免 Windows 上多 handler 轮转时文件锁定冲突
+_handler_cache: dict[str, RotatingFileHandler] = {}
+_handler_lock = threading.Lock()
 
 
 def _log_dir_for(root_dir: Path | None) -> str:
@@ -21,10 +26,30 @@ def _log_dir_for(root_dir: Path | None) -> str:
     return str(get_app_dir(root_dir) / "logs")
 
 
+def _get_or_create_handler(log_file: str) -> RotatingFileHandler:
+    """获取或创建日志文件对应的 RotatingFileHandler, 同一路径共享实例。"""
+    if log_file in _handler_cache:
+        return _handler_cache[log_file]
+    with _handler_lock:
+        if log_file in _handler_cache:
+            return _handler_cache[log_file]
+        handler = RotatingFileHandler(
+            log_file,
+            maxBytes=MAX_LOG_SIZE,
+            backupCount=BACKUP_COUNT,
+            encoding="utf-8",
+        )
+        handler.setLevel(logging.DEBUG)
+        formatter = logging.Formatter(LOG_FORMAT, datefmt=LOG_DATE_FORMAT)
+        handler.setFormatter(formatter)
+        _handler_cache[log_file] = handler
+        return handler
+
+
 def get_logger(name: str, root_dir: Path | None) -> logging.Logger:
     """获取指定名称和工作目录的 logger。
 
-    每个 (name, root_dir) 组合对应独立的 logger 和日志文件。
+    每个 (name, root_dir) 组合对应独立的 logger, 但同一日志文件共享 handler。
     """
     log_dir = _log_dir_for(root_dir)
     # 用 root_dir 的哈希区分不同项目的同名 logger
@@ -38,16 +63,8 @@ def get_logger(name: str, root_dir: Path | None) -> logging.Logger:
     os.makedirs(log_dir, exist_ok=True)
     logger.setLevel(logging.DEBUG)
 
-    file_handler = RotatingFileHandler(
-        os.path.join(log_dir, "uniclaw.agent.log"),
-        maxBytes=MAX_LOG_SIZE,
-        backupCount=BACKUP_COUNT,
-        encoding="utf-8",
-    )
-    file_handler.setLevel(logging.DEBUG)
-
-    formatter = logging.Formatter(LOG_FORMAT, datefmt=LOG_DATE_FORMAT)
-    file_handler.setFormatter(formatter)
+    log_file = os.path.join(log_dir, "uniclaw.agent.log")
+    file_handler = _get_or_create_handler(log_file)
     logger.addHandler(file_handler)
 
     logger.propagate = False
