@@ -254,7 +254,16 @@ async def auth_login(req: _AuthRequest):
 
 @app.get("/api/auth/me")
 async def auth_me(request: Request):
-    """获取当前用户信息(也可用于验证 token 有效性)。"""
+    """获取当前用户信息(验证 token 有效性)。"""
+    # 此端点在白名单中(跳过中间件),需要自行验证 token
+    token = None
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:]
+    if not token:
+        token = request.cookies.get("uniclaw_token")
+    if not token or not auth.verify_token(token):
+        return JSONResponse(status_code=401, content={"detail": "未登录或 token 已过期"})
     user = auth.get_user()
     if not user:
         return JSONResponse(status_code=404, content={"detail": "无用户"})
