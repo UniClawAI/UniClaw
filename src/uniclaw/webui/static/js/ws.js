@@ -49,6 +49,19 @@ const WS = {
         this.socket.onmessage = (e) => {
             try {
                 const msg = JSON.parse(e.data);
+                // 非当前会话的消息到达时,自动显示 attention 提示 + 吐司
+                if (msg.session_id && typeof SessionPanel !== 'undefined'
+                    && SessionPanel.activeSessionId
+                    && msg.session_id !== SessionPanel.activeSessionId
+                    && !['session_attention', 'session_attention_clear', 'status',
+                         'session_deleted', 'session_switched', 'session_created'].includes(msg.event)) {
+                    if (!SessionPanel.attentionSessions.has(msg.session_id)) {
+                        SessionPanel.attentionSessions.add(msg.session_id);
+                        SessionPanel._render();
+                        const title = SessionPanel.getSessionTitle(msg.session_id);
+                        Utils.showToast(`${title} 有新消息`);
+                    }
+                }
                 this._emit(msg.event, msg);
             } catch (err) {
                 console.error('[WS] 解析消息失败:', err);

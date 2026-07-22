@@ -12,6 +12,7 @@ from pathlib import Path
 
 from croniter import croniter
 
+from uniclaw.config import AppConfig, RunMode
 from uniclaw.console.ui import info, warn, err
 from uniclaw.context import get_app_dir, Scope
 
@@ -24,9 +25,9 @@ class Task:
     name: str
     schedule: str
     action: str
-    root_dir: str
+    root_dir: str = ""
     enabled: bool = True
-    permission_mode: str = "auto"
+    session_id: str | None = None
     last_run: str | None = None
     created: str | None = None
     updated: str | None = None
@@ -43,7 +44,7 @@ class Task:
             action=data.get("action", ""),
             root_dir=data.get("root_dir", ""),
             enabled=data.get("enabled", True),
-            permission_mode=data.get("permission_mode", "auto"),
+            session_id=data.get("session_id"),
             last_run=data.get("last_run"),
             created=data.get("created"),
             updated=data.get("updated"),
@@ -93,7 +94,7 @@ class Scheduler:
 
     # ── 配置 CRUD ──────────────────────────────────────────────────
 
-    def load_config(self, config=None):
+    def load_config(self):
         """从 JSON 文件加载任务,转为 Task 对象"""
         if not self._config_path.exists():
             self._tasks = {}
@@ -115,19 +116,14 @@ class Scheduler:
             encoding="utf-8",
         )
 
-    def _task_dir(self, task_id: str) -> Path:
-        """获取任务专属目录路径。"""
-        return self._config_path.parent / task_id
-
     def add_task(
         self,
         name: str,
         schedule: str,
         action: str,
-        permission_mode: str = "auto",
         unique_by_name: bool = False,
-        config=None,
-    ) -> str:
+        config: AppConfig | None = None,
+    ) -> Task:
         """添加任务,自动生成 UUID 作为任务 ID,并分配独立工作目录。
 
         schedule 格式为 Cron 表达式,例如:
@@ -137,12 +133,12 @@ class Scheduler:
         - '0 9 * * 1-5' — 工作日 9:00
 
         Returns:
-            str: 成功时返回任务 ID
+            Task: 成功时返回任务对象
 
         Raises:
             ValueError: 当 Cron 表达式无效时
         """
-        self.load_config(config)
+        self.load_config()
         _parse_cron(schedule)
         now = datetime.now().isoformat(timespec="seconds")
 
@@ -154,7 +150,6 @@ class Scheduler:
                 task.name = name
                 task.schedule = schedule
                 task.action = action
-                task.permission_mode = permission_mode
                 task.enabled = True
                 task.updated = now
                 for duplicate in matches[1:]:
@@ -163,16 +158,20 @@ class Scheduler:
                 return task
 
         task_id = uuid.uuid4().hex[:8]
-        task_dir = self._task_dir(task_id)
-        task_dir.mkdir(parents=True, exist_ok=True)
+        session_id = None
+        root_dir = ""
+        if config:
+            root_dir = str(config.root_dir or "")
+            if config.current_agent:
+                session_id = config.current_agent.session.id
         task = Task(
             id=task_id,
             name=name or task_id,
             schedule=schedule,
             action=action,
-            root_dir=str(task_dir),
+            root_dir=root_dir,
             enabled=True,
-            permission_mode=permission_mode,
+            session_id=session_id,
             last_run=now if unique_by_name else None,
             created=now,
         )
@@ -180,26 +179,26 @@ class Scheduler:
         self.save_config()
         return task
 
-    def remove_task(self, task_id: str, config=None) -> bool:
-        self.load_config(config)
+    def remove_task(self, task_id: str) -> bool:
+        self.load_config()
         if task_id not in self._tasks:
             return False
         del self._tasks[task_id]
         self.save_config()
         return True
 
-    def list_tasks(self, config=None) -> list[dict]:
-        self.load_config(config)
+    def list_tasks(self) -> list[dict]:
+        self.load_config()
         return [{"id": tid, **task.to_dict()} for tid, task in self._tasks.items()]
 
-    def get_task(self, task_id: str, config=None) -> Task | None:
+    def get_task(self, task_id: str) -> Task | None:
         """获取单个任务。"""
-        self.load_config(config)
+        self.load_config()
         return self._tasks.get(task_id)
 
-    def update_action(self, task_id: str, action: str, config=None) -> bool:
+    def update_action(self, task_id: str, action: str) -> bool:
         """更新任务的 action。"""
-        self.load_config(config)
+        self.load_config()
         task = self._tasks.get(task_id)
         if task is None:
             return False
@@ -208,22 +207,9 @@ class Scheduler:
         self.save_config()
         return True
 
-    def update_permission_mode(
-        self, task_id: str, permission_mode: str, config=None
-    ) -> bool:
-        """更新任务的权限模式。"""
-        self.load_config(config)
-        task = self._tasks.get(task_id)
-        if task is None:
-            return False
-        task.permission_mode = permission_mode
-        task.updated = datetime.now().isoformat(timespec="seconds")
-        self.save_config()
-        return True
-
-    def update_schedule(self, task_id: str, schedule: str, config=None) -> bool:
+    def update_schedule(self, task_id: str, schedule: str) -> bool:
         """更新任务的调度时间。"""
-        self.load_config(config)
+        self.load_config()
         task = self._tasks.get(task_id)
         if task is None:
             return False
@@ -233,8 +219,8 @@ class Scheduler:
         self.save_config()
         return True
 
-    def toggle_task(self, task_id: str, enabled: bool, config=None) -> bool:
-        self.load_config(config)
+    def toggle_task(self, task_id: str, enabled: bool) -> bool:
+        self.load_config()
         task = self._tasks.get(task_id)
         if task is None:
             return False
@@ -244,7 +230,7 @@ class Scheduler:
 
     # ── 后台调度 ──────────────────────────────────────────────────
 
-    async def start(self, config=None):
+    async def start(self, config: AppConfig | None = None):
         """启动后台调度任务"""
         if self._task and not self._task.done():
             return
@@ -259,7 +245,7 @@ class Scheduler:
             self._task.cancel()
             self._task = None
 
-    async def _run_loop(self, config=None):
+    async def _run_loop(self, config: AppConfig | None = None):
         """后台循环:每 10 秒检查一次到期任务"""
         while not self._stop_event.is_set():
             try:
@@ -271,9 +257,9 @@ class Scheduler:
             except asyncio.TimeoutError:
                 pass
 
-    async def _check_and_run_tasks(self, config=None):
+    async def _check_and_run_tasks(self, config: AppConfig | None = None):
         """检查所有任务,执行到期的任务"""
-        self.load_config(config)
+        self.load_config()
         now = datetime.now()
         changed = False
         pending = []
@@ -309,42 +295,123 @@ class Scheduler:
 
     async def _run_agent(
         self,
-        agent_type: str,
         message: str,
         task_name: str,
-        root_dir: str | None,
-        permission_mode: str = "auto",
-        config=None,
+        session_id: str | None,
+        config: AppConfig | None = None,
     ):
-        """执行子代理。"""
-        from uniclaw.config import create_sub_agent_config, Permissions
-        from uniclaw.agent import MultiAgent
-        from uniclaw.tools.multi_agent.sub_agent import load_agent_definitions
+        """复用当前会话执行 agent 消息。
 
-        rd = Path(root_dir) if root_dir else Path.cwd()
-        sub_config = create_sub_agent_config(
-            root_dir=rd, name=task_name, prompt=message
-        )
-        sub_config.permission_mode = Permissions(permission_mode)
-        multi_agent = MultiAgent.get_instance()
-        agent_def = load_agent_definitions(rd).get(agent_type)
+        - TUI 模式且当前会话 != 任务会话 → 后台执行
+        - 其他情况 → 注入消息到 user_queue
+        """
+        from uniclaw.utils.constants import SYSTEM_PREFIX
 
-        sub_task = await multi_agent.start_sub_agent(
-            user_message=message,
-            system_prompt=None,
-            config=sub_config,
-            agent_def=agent_def,
-        )
-        from uniclaw.agent import AgentStatus
-
-        if sub_task.status == AgentStatus.FAILED:
-            await info(f"[{task_name}] 启动失败: {sub_task.result}", config)
+        config = await self._find_config(session_id, config)
+        if config is None:
+            await err(
+                f"[{task_name}] 会话 {session_id or '(无)'} 不存在,已跳过", config
+            )
             return
-        await multi_agent.wait(sub_task.id, timeout=300)
-        if sub_task.result:
-            await info(f"[{task_name}] {sub_task.result}", config)
 
-    async def _execute_task(self, task_id: str, task: Task, config=None):
+        # TUI 模式:检查当前活跃会话是否就是任务的会话
+        is_tui = config.run_mode == RunMode.CONSOLE
+        if is_tui:
+            active_id = self._get_active_session_id()
+            if active_id and active_id != session_id:
+                # 当前会话不匹配 → 后台执行
+                await self._run_in_background(config, message, task_name)
+                return
+
+        # agent 运行中:注入队列;空闲:start_agent
+        from uniclaw.agent import MultiAgent, AgentStatus
+
+        full_message = f"{SYSTEM_PREFIX}(scheduler:{task_name})\n{message}"
+        if config.current_agent.status == AgentStatus.RUNNING:
+            config.current_agent.user_queue.put_nowait(full_message)
+        else:
+            multi_agent = MultiAgent.get_instance()
+            
+            # WebUI 模式需要启动 bridge 才能把事件推到前端
+            if config.run_mode == RunMode.WEBUI:
+                try:
+                    from uniclaw.webui.ws import _start_bridge
+
+                    await _start_bridge(session_id, config)
+                except ImportError:
+                    pass
+            multi_agent.start_agent(full_message, config=config)
+
+    async def _find_config(
+        self, session_id: str | None, config: AppConfig | None = None
+    ):
+        """根据 session_id 查找对应的 AppConfig。
+
+        根据启动模式选择加载方式:
+        - WebUI: 使用 get_or_load_session
+        - TUI: 当前会话匹配则直接返回,否则从磁盘加载
+        """
+        if not session_id:
+            return None
+        from uniclaw.console.run import TUIApp
+        tui = TUIApp.get_instance()
+        # WebUI 模式:使用 get_or_load_session
+        is_webui = tui is None
+        if is_webui:
+            try:
+                from uniclaw.webui.ws import get_or_load_session
+
+                return await get_or_load_session(session_id)
+            except Exception:
+                pass
+
+        else:
+            try:
+                if tui and tui.config:
+                    tui_session_id = tui.config.current_agent.session.id
+                    if tui_session_id == session_id:
+                        return tui.config
+            except Exception:
+                pass
+
+        # 从磁盘加载 session
+        from uniclaw.tools.session.session_manager import SessionManager
+        from uniclaw.config import load_config
+        from uniclaw.spinner import NoopSpinner
+
+        session = SessionManager.load_session(session_id)
+        if session:
+            return load_config(session=session, spinner=NoopSpinner())
+
+        return None
+
+    def _get_active_session_id(self) -> str | None:
+        """获取当前 UI 活跃的会话 ID(仅 TUI)。"""
+        try:
+            from uniclaw.console.run import TUIApp
+
+            tui = TUIApp.get_instance()
+            if tui and tui.config:
+                return tui.config.current_agent.session.id
+        except Exception:
+            pass
+        return None
+
+    async def _run_in_background(self, config: AppConfig, message: str, task_name: str):
+        """后台执行定时任务(TUI 当前会话不匹配时)。"""
+        from uniclaw.agent import MultiAgent
+        from uniclaw.tools.notify import push_notification
+
+        multi_agent = MultiAgent.get_instance()
+        agent_task = multi_agent.start_agent(message, config=config)
+        await multi_agent.wait(agent_task.id, timeout=300)
+        if agent_task.result:
+            await info(f"[{task_name}] {agent_task.result}")
+            await push_notification.func(f"{task_name} 执行完成", title="定时任务")
+
+    async def _execute_task(
+        self, task_id: str, task: Task, config: AppConfig | None = None
+    ):
         """执行单个任务(JSON 格式)。"""
         action = task.action
         name = task.name or task_id
@@ -358,13 +425,10 @@ class Scheduler:
                 await self._exec_shell(data["command"], task, config)
 
             elif action_type == "agent":
-                agent_type = data.get("agent_type", "general-purpose")
                 await self._run_agent(
-                    agent_type,
                     data["message"],
                     f"scheduler:{name}",
-                    task.root_dir,
-                    task.permission_mode,
+                    task.session_id,
                     config,
                 )
 
@@ -382,9 +446,11 @@ class Scheduler:
         except Exception as e:
             await err(f"任务 {name} 执行失败: {e}", config)
 
-    async def _exec_shell(self, cmd: str, task: Task, config=None):
+    async def _exec_shell(self, cmd: str, task: Task, config: AppConfig | None = None):
         """执行 shell 命令。"""
-        cwd = task.root_dir if task.root_dir else None
+        from uniclaw.tools.notify import push_notification
+
+        cwd = task.root_dir or None
         proc = await asyncio.create_subprocess_shell(
             cmd,
             stdout=asyncio.subprocess.PIPE,
@@ -392,20 +458,26 @@ class Scheduler:
             cwd=cwd,
         )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
-        if stdout:
-            out = stdout.decode("utf-8", errors="replace").strip()
-            if out:
-                await info(out, config)
-        if stderr:
-            err_text = stderr.decode("utf-8", errors="replace").strip()
-            if err_text:
-                await warn(f"[stderr] {err_text}", config)
+        out = stdout.decode("utf-8", errors="replace").strip() if stdout else ""
+        err_text = stderr.decode("utf-8", errors="replace").strip() if stderr else ""
+        if out:
+            await info(out, config)
+        if err_text:
+            await warn(f"[stderr] {err_text}", config)
+        name = task.name or task.id
+        status = "成功" if proc.returncode == 0 else f"失败(exit={proc.returncode})"
+        await push_notification.func(f"{name} {status}", title="定时任务")
 
     async def _exec_monitor(
-        self, cmd: str, agent_data: dict, task: Task, name: str, config=None
+        self,
+        cmd: str,
+        agent_data: dict,
+        task: Task,
+        name: str,
+        config: AppConfig | None = None,
     ):
         """执行 monitor: shell 命令,退出码非零时触发 agent。"""
-        cwd = task.root_dir if task.root_dir else None
+        cwd = task.root_dir or None
         proc = await asyncio.create_subprocess_shell(
             cmd,
             stdout=asyncio.subprocess.PIPE,
@@ -427,7 +499,6 @@ class Scheduler:
 
             # 将触发命令、退出码、stdout/stderr 拼接到 agent 提示词前面
             # 这些上下文信息帮助 agent 理解当前状况,便于排查和处理问题
-            agent_type = agent_data.get("agent_type", "general-purpose")
             message = agent_data.get("message", "")
             full_message = (
                 f"用户刚才执行了以下命令\n\n"
@@ -440,18 +511,16 @@ class Scheduler:
                 full_message += f"\n错误输出(stderr):\n{err_text}\n"
             full_message += f"\n用户要求: {message}"
             await self._run_agent(
-                agent_type,
                 full_message,
                 f"monitor:{name}",
-                task.root_dir,
-                task.permission_mode,
+                task.session_id,
                 config,
             )
         else:
             out = stdout.decode("utf-8", errors="replace").strip() if stdout else ""
             await info(f"[monitor] 未触发 ({cmd}): {out or '(无输出)'}", config)
 
-    async def _exec_py(self, code: str, config=None):
+    async def _exec_py(self, code: str, config: AppConfig | None = None):
         """执行 Python 代码。"""
         stdout = io.StringIO()
         env = {"__builtins__": __builtins__}

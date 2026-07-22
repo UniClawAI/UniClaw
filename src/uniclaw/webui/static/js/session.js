@@ -492,6 +492,15 @@ const SessionPanel = {
         return h;
     },
 
+    /** 根据 session_id 查找会话标题 */
+    getSessionTitle(sessionId) {
+        for (const dir of Object.keys(this.projects)) {
+            const s = (this.projects[dir].sessions || []).find(s => s.session_id === sessionId);
+            if (s) return s.title || sessionId.substring(0, 8);
+        }
+        return sessionId.substring(0, 8);
+    },
+
     _renderSessionItems(sessions, rootDir) {
         let h = '';
         sessions.forEach(s => {
@@ -531,6 +540,7 @@ const SessionPanel = {
         this.activeProjectDir = rootDir;
         Chat.currentSessionId = sessionId;
         this._saveSessionToUrl(sessionId);
+        this.attentionSessions.delete(sessionId);
         Chat._resetStreamingState();
         Permission.closeIfSessionMismatch(sessionId);
         InputDialog.closeIfSessionMismatch(sessionId);
