@@ -843,10 +843,6 @@ const Chat = {
             });
         }
         if (this.streamingEl) this._appendUsageInfo(this.streamingEl, msg.in_tokens, msg.out_tokens, msg.model_name);
-        if (msg.in_tokens !== undefined || msg.out_tokens !== undefined) {
-            const inp = msg.in_tokens || 0, out = msg.out_tokens || 0;
-            document.getElementById('status-tokens').textContent = `Tokens: ${this._fmtTk(inp)}→${this._fmtTk(out)} (${this._fmtTk(inp + out)})`;
-        }
         this.streamingEl = null; this.streamingContent = ''; this.streamingBody = null;
     },
 

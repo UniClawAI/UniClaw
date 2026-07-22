@@ -753,12 +753,30 @@ const SessionPanel = {
     _updateContextDisplay(data) {
         const pctEl = document.getElementById('context-pct');
         const fillEl = document.getElementById('context-bar-fill');
+        const contextEl = document.getElementById('status-context');
         if (!pctEl || !fillEl) return;
-        if (!data || data.percentage === undefined) { pctEl.textContent = '-'; fillEl.style.width = '0%'; fillEl.className = 'context-mini-fill'; return; }
+        if (!data || data.percentage === undefined) {
+            pctEl.textContent = '-';
+            fillEl.style.width = '0%';
+            fillEl.className = 'context-mini-fill';
+            if (contextEl) contextEl.title = '上下文使用率';
+            return;
+        }
         const pct = data.percentage;
         pctEl.textContent = `${pct}%`;
         fillEl.style.width = `${Math.min(100, pct)}%`;
         fillEl.className = 'context-mini-fill' + (pct >= 85 ? ' critical' : pct >= 70 ? ' warn' : '');
+        if (contextEl) {
+            const fmt = n => !n ? '0' : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`;
+            const lines = [
+                `已用: ${fmt(data.used_tokens)} / ${fmt(data.limit)} (${pct}%)`,
+                `系统提示: ${fmt(data.system_prompt_tokens)}`,
+                `工具: ${fmt(data.tool_tokens)}`,
+                `消息: ${fmt(data.message_tokens)}`,
+                `剩余: ${fmt(data.free_tokens)}`,
+            ];
+            contextEl.title = lines.join('\n');
+        }
     },
 
     _startContextTimer(sid) { this._clearContextTimer(); this._contextTimer = setInterval(() => { if (this.activeSessionId === sid) this._fetchContextUsage(sid); }, 30000); },
