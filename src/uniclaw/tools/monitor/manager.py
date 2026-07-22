@@ -137,7 +137,7 @@ class MonitorManager:
                     monitor.matched_lines.append(line)
                     monitor.match_time = datetime.now()
                     monitor.status = MonitorStatus.MATCHED
-                    self._notify_match(monitor, line)
+                    await self._notify_match(monitor, line)
 
                 # 检查超时
                 if deadline and asyncio.get_event_loop().time() > deadline:
@@ -159,7 +159,7 @@ class MonitorManager:
             if monitor.process and monitor.process.returncode is None:
                 await self._kill_process_tree(monitor.process)
 
-    def _notify_match(self, monitor: Monitor, line: str):
+    async def _notify_match(self, monitor: Monitor, line: str):
         """匹配成功时通知用户和模型"""
         # 1. 发送桌面通知给用户
         try:
@@ -167,7 +167,7 @@ class MonitorManager:
 
             desc = f" [{monitor.description}]" if monitor.description else ""
             msg = f"监控{desc}匹配到: {line[:100]}"
-            push_notification.invoke({"message": msg, "title": "UniClaw 监控"})
+            await push_notification(message=msg, title="UniClaw 监控")
         except Exception:
             pass
 

@@ -520,7 +520,7 @@ async def bridge_events(session_id: str, config: AppConfig):
                 }
             )
             try:
-                out = await Bash.func(event.command, config=config)
+                out = await Bash(event.command, config=config)
             except Exception as e:
                 out = f"命令执行失败: {e}"
             # 计算 msg_idx: drain_user_queue 会在 send_event_to_user 返回后
@@ -828,7 +828,7 @@ async def handle_ws_message(ws: WebSocket, msg: dict):
         else:
             # Agent 空闲:直接执行；仅聊天区命令注入 session
             try:
-                output = await Bash.func(cmd, config=config)
+                output = await Bash(cmd, config=config)
             except Exception as e:
                 output = f"命令执行失败: {e}"
             if source == "chat":

@@ -5,7 +5,7 @@ from __future__ import annotations
 import inspect
 import json
 from dataclasses import dataclass, field
-from typing import Any, Callable, get_type_hints
+from typing import Any, Awaitable, Callable, get_type_hints
 
 
 # 类型映射: Python type → JSON Schema type
@@ -194,16 +194,23 @@ class Tool:
             "input_schema": parameters,
         }
 
-    async def __call__(self, args: dict, config=None, stream_callback=None):
+    async def __call__(self, *args, stream_callback: Callable[[str], Awaitable[None]] | None = None, **kwargs):
         """调用工具,自动处理:
         - 过滤 _explain 参数
-        - 注入 config (如果函数签名需要)
         - 异步/同步自动适配
         - 流式回调设置/清理
+
+        支持位置参数和关键字参数,与直接调用函数一致:
+            await tool("ls", timeout=30, config=config)
+            await tool(command="ls", timeout=30, config=config)
         """
-        kwargs = {k: v for k, v in args.items() if k != "_explain"}
-        if config is not None and "config" in inspect.signature(self.func).parameters:
-            kwargs["config"] = config
+        # 将位置参数映射到函数参数名
+        if args:
+            params = list(inspect.signature(self.func).parameters)
+            for i, arg in enumerate(args):
+                if i < len(params):
+                    kwargs[params[i]] = arg
+        kwargs.pop("_explain", None)
         if not inspect.iscoroutinefunction(self.func):
             return self.func(**kwargs)
         # 异步工具:支持流式回调

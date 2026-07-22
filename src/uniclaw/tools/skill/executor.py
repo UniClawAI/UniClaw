@@ -32,7 +32,7 @@ async def _run_command(
     # 创建子配置,修改 root_dir 为 cwd,避免并发时修改共享对象
     sub_config = config.create_sub_config(name=config.current_agent.name, prompt="")
     sub_config.current_agent.session = Session(root_dir=cwd)
-    return await Bash.func(command, timeout=timeout, config=sub_config)
+    return await Bash(command, timeout=timeout, config=sub_config)
 
 
 async def run_skill(skill_name: str, command: str, config: AppConfig | None = None) -> str:

@@ -407,7 +407,7 @@ class Scheduler:
         await multi_agent.wait(agent_task.id, timeout=300)
         if agent_task.result:
             await info(f"[{task_name}] {agent_task.result}")
-            await push_notification.func(f"{task_name} 执行完成", title="定时任务")
+            await push_notification(f"{task_name} 执行完成", title="定时任务")
 
     async def _execute_task(
         self, task_id: str, task: Task, config: AppConfig | None = None
@@ -466,7 +466,7 @@ class Scheduler:
             await warn(f"[stderr] {err_text}", config)
         name = task.name or task.id
         status = "成功" if proc.returncode == 0 else f"失败(exit={proc.returncode})"
-        await push_notification.func(f"{name} {status}", title="定时任务")
+        await push_notification(f"{name} {status}", title="定时任务")
 
     async def _exec_monitor(
         self,

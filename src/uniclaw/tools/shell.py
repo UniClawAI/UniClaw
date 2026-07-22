@@ -588,7 +588,7 @@ async def search_files_with_everything(
         search_cmd += f" -n {max_results}"
     search_cmd += f' "{query}"'
 
-    result = await Bash.func(search_cmd)
+    result = await Bash(search_cmd)
     return result
 
 

@@ -925,7 +925,7 @@ class MultiAgent:
                             ToolStreamEvent(name=_tc_name, content=content, tool_call_id=_tc_id),
                             config,
                         )
-                    tool_resp_content = await tool(tc_args, config=config, stream_callback=_stream_cb)
+                    tool_resp_content = await tool(**tc_args, config=config, stream_callback=_stream_cb)
                     # 标记扩展工具已使用(LRU:移到最前,防止被淘汰),核心工具不参与能量管理
                     from uniclaw.tools.registry import CORE_TOOL_NAMES
                     if tc_name not in CORE_TOOL_NAMES:
