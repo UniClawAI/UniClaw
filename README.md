@@ -15,21 +15,24 @@
 - 🔍 **工具注册表**: BM25 智能工具搜索,核心工具常驻加载 + 扩展工具按需发现,LRU + 能量机制(每工具 30 点能量,每轮-1,调用/搜索恢复满,归零淘汰)自动管理已加载工具,优化 prompt 缓存
 - 🌐 **WebUI 界面**: 基于 WebSocket 的 Web 用户界面,支持浏览器中与 AI 对话,可局域网共享,支持移动端响应式设计和触摸手势,支持 HTTPS 和 IPv6
 - ⚡ **工具流式输出**: 工具执行过程中实时推送输出到前端,无需等待完成即可看到进度
+- 🔐 **可信 IP 免登录**: 配置 `trusted_ips` 后,指定 IP 地址的客户端可跳过 WebUI 登录认证,适合家庭/办公网络环境
 - 💬 **微信集成**: 支持通过 iLink Bot 协议接入微信,实现移动端交互
 - 🧠 **记忆系统**: 持久化记忆管理,支持用户偏好、项目信息和反馈记录
 - 🗺️ **知识图谱**: 基于 SQLite 的知识图谱系统,支持实体/关系管理、全文搜索、路径发现、自动提取和可视化导出,用户级和项目级双层管理
 - 👥 **多智能体协作**: 全异步架构支持创建和管理多个专业智能体,实现任务分工协作和智能体间通信
-- 🖥️ **计算机控制**: 屏幕截图、鼠标/键盘自动化操作,支持全局热键 (Ctrl+U) 切换,`/cu` 命令一键开关
+- 🖥️ **计算机控制**: 屏幕截图、鼠标/键盘自动化操作(全平台异步实现),支持全局热键 (Ctrl+U) 切换,`/cu` 命令一键开关
 - 🔊 **语音合成**: TTS 文本转语音,支持多种风格/情绪/方言控制,`/voice` 命令切换语音模式
+- 🎨 **图片生成**: 配置 `image_model` 后支持 AI 文生图,可保存为文件或直接分析,支持自定义尺寸
 - 📤 **文件发送**: AI 可将生成的文件发送给用户,WebUI 提供下载链接,微信直接发送
 - 📋 **任务清单**: 任务分解与跟踪,支持自动进度管理和状态流转
-- ⏰ **定时任务**: 支持创建和管理周期性或一次性定时任务,支持权限模式配置和 monitor 监控类型(命令退出码触发 agent)
+- ⏰ **定时任务**: 支持创建和管理周期性或一次性定时任务,支持会话关联和 monitor 监控类型(命令退出码触发 agent)
 - 🔄 **后台进程**: 启动和管理后台进程(异步实现),支持输入/输出流控制
 - 🛡️ **死循环检测**: 自动检测 AI 连续相同工具调用,智能打破循环并引导换策略
 - 💾 **自动保存**: 会话和记忆在对话结束时自动持久化,数据不丢失
 - 🪝 **Hook 系统**: 事件驱动的 Shell 命令钩子,支持会话和工具调用生命周期事件
 - 🔔 **系统通知**: 支持 Windows/macOS/Linux 桌面通知,任务完成时自动提醒
 - 📝 **计划模式**: 支持进入计划模式进行任务规划,暂存方案后再执行
+- 🔧 **工具解释模式**: 通过 `/explain` 命令开启,AI 调用工具前会解释原因,便于理解和调试工具调用逻辑
 - 🛠️ **丰富的工具集**: 内置文件系统操作、Shell 命令、网络搜索、技能系统等工具
 - 🔒 **权限管理**: 支持多种权限模式(自动/手动/全部接受),保障操作安全
 - 📋 **持久化规则**: 自定义权限规则,记住您的权限偏好,避免重复确认
@@ -42,7 +45,6 @@
 - 🌍 **浏览器自动化**: 基于 Playwright 的浏览器控制,支持导航/点击/输入/截图/JS 执行等操作
 - 🎯 **技能系统**: 可扩展的技能机制,支持自定义任务模板和工作流
 - 🔌 **MCP 集成**: 支持 Model Context Protocol,异步命令管理,可连接多种外部工具服务
-- ⏰ **定时任务**: 支持创建和管理周期性或一次性定时任务
 - ⏱️ **异步等待**: sleep_timer 工具支持延时唤醒,不阻塞主线程
 - 📸 **Git 检查点**: 自动创建 git stash 检查点,支持一键回滚 AI 的文件编辑,智能处理 .gitignore,不污染 git 历史
 - 📝 **斜杠命令**: 丰富的内置命令系统,支持会话管理、模型切换、任务管理等
@@ -51,6 +53,7 @@
 - 💬 **对话管理**: 支持历史对话的查看、加载、删除和搜索功能
 - 🎨 **TUI 界面**: 精美的终端用户界面,支持详细/简洁模式切换(F2),侧边栏显示对话列表
 - 📈 **用量统计**: 实时监控 Token 使用情况、工具调用统计和费用明细,价格自动从 OpenRouter API 获取
+- ⚙️ **会话级配置**: WebUI 支持带 `session_id` 保存配置,当前会话内存立即生效,同时写入全局配置
 - 🌐 **跨平台支持**: 兼容 Windows、Linux 和 macOS 系统
 
 ## 📋 目录
@@ -113,6 +116,7 @@ uv tool install .
   "mini_model_name": [],
   "multimodal_model_name": [],
   "large_model_name": [],
+  "image_model": "",
   "temperature": 0.7,
   "max_tokens": null,
   "top_p": null,
@@ -120,7 +124,8 @@ uv tool install .
   "GITHUB_TOKEN": "",
   "EXA_API_KEY": "",
   "max_agent_depth": 3,
-  "permission_timeout": 300
+  "permission_timeout": 300,
+  "trusted_ips": []
 }
 ```
 
@@ -275,6 +280,7 @@ UniClaw 的斜杠命令支持子命令自动补全,输入命令后按空格会�
 | `/goal` | `clear`, `status` |
 | `/export` | `markdown`, `json` |
 | `/kg` | `stats`, `search`, `list`, `export`, `clear` |
+| `/explain` | `on`, `off`, 或指定工具名 |
 
 #### 使用示例
 
@@ -317,6 +323,7 @@ UniClaw 使用工作空间概念管理文件访问范围：
 | `mini_model_name` | 迷你模型列表(用于简单任务) | 自动使用 model_name | `["default/gpt-4o-mini"]` |
 | `multimodal_model_name` | 多模态模型列表(主模型不支持多模态时使用) | 无 | `["default/gpt-4o"]` |
 | `large_model_name` | 顾问模型列表(用于获取更强力模型的建议) | 无 | `["default/o3"]` |
+| `image_model` | 图片生成模型(文生图,留空禁用) | `""` | `"default/dall-e-3"` |
 | `temperature` | 生成温度(创造性) | `0.7` | `0.0`-`2.0` |
 | `max_tokens` | 最大输出 token 数 | `null`(不限制) | `512`, `2048` |
 | `top_p` | 核采样概率 | `null`(不限制) | `0.9` |
@@ -325,6 +332,7 @@ UniClaw 使用工作空间概念管理文件访问范围：
 | `EXA_API_KEY` | Exa API Key(语义搜索引擎,webSearch 优先使用) | 空 | `exa-xxx` |
 | `max_agent_depth` | 最大嵌套智能体深度 | `2` | `1`-`5` |
 | `permission_timeout` | 权限对话框超时时间(秒) | `300` | `60`-`600` |
+| `trusted_ips` | 可信 IP 列表(跳过 WebUI 登录认证) | `[]` | `["192.168.1.100"]` |
 
 **Provider 配置示例：**
 
@@ -532,7 +540,7 @@ UniClaw 提供了丰富的斜杠命令(`/command`),用于管理系统功能和�
 
 | 命令 | 说明 | 示例 |
 |------|------|------|
-| `/model` | 查看或切换当前使用的模型 | `/model gpt-4o` |
+| `/model` | 查看或切换当前使用的模型(含图片生成模型) | `/model gpt-4o` |
 
 #### 工作目录命令
 
@@ -588,10 +596,10 @@ UniClaw 提供了丰富的斜杠命令(`/command`),用于管理系统功能和�
 - `py: <Python代码>` - 在当前 Python 环境执行代码
 - `monitor: <命令> → agent[:<类型>]: <消息>` - 先执行 shell 命令,退出码非零时触发 agent
 
-**权限模式：**
-- 每个定时任务可独立配置权限模式(`auto`/`manual`/`accept-all`)
-- 默认为 `auto`,agent 自动判断是否需要权限确认
-- 可通过 `schedule_update` 或 `schedule_monitor_update` 修改
+**会话关联：**
+- 定时任务创建时自动关联当前会话,执行时复用该会话的 agent
+- 跨会话执行:TUI 模式下如果当前会话与任务会话不匹配,任务在后台执行
+- WebUI 模式下非活跃会话的消息会触发注意力指示器和 toast 通知
 
 **监控任务(Monitor)：**
 - 周期执行 shell 命令,退出码 = 0 表示正常(不触发 agent),非零表示需要处理
@@ -672,6 +680,7 @@ monitor_start("npm run dev", name="开发服务器")
 | `/overseer` | 监工模式,自动审核任务执行质量 | `/overseer` |
 | `/voice` | 切换语音模式(需配置 TTS) | `/voice on`、`/voice off` |
 | `/cu` | 切换 Computer Use 模式 | `/cu on`、`/cu off` |
+| `/explain` | 工具解释模式,AI 调用工具前解释原因 | `/explain on`、`/explain off`、`/explain Bash Read` |
 | `/exit` 或 `/quit` | 退出程序 | `/exit` |
 
 > 💡 **提示**: 所有命令在控制台和微信模式下都可用。输入 `/help` 可查看完整的命令列表,输入 `/<命令> help` 可查看特定命令的详细说明(如 `/memory help`)。未匹配到内置命令时,会自动回退到技能查找系统。
@@ -716,11 +725,13 @@ uniclaw --mode webui
 - ✅ **WebSocket 会话任务管理** — 每个对话会话作为独立任务管理,支持并发会话
 - ✅ **子代理创建 API** — 通过 REST API 创建和管理子代理,支持多智能体协作
 - ✅ **微信 Bot 管理** — 在 WebUI 中直接管理微信 Bot 账号,支持异步登录
+- ✅ **可信 IP 免登录** — 配置 `trusted_ips` 后指定 IP 跳过登录认证,适合家庭/办公网络
 - ✅ **HTTPS 支持** — `--ssl` 启用 HTTPS,自动生成自签名证书;`--domain` 指定域名
 - ✅ **IPv6 支持** — 支持 IPv6 监听地址(如 `::`)和访问
 - ✅ **局域网共享** — 通过 `--host 0.0.0.0` 让局域网内其他设备访问
 - ✅ **自定义系统提示词** — 每个会话可设置独立的系统提示词,AI 可优化提示词内容
-- ✅ **工具调用可视化** — 展示工具调用过程和结果
+- ✅ **工具调用可视化** — 展示工具调用过程、结果和参数信息
+- ✅ **工具解释模式** — 开启后工具调用前显示 AI 的调用原因说明
 - ✅ **Git 侧边栏** — 文件状态查看、暂存/取消暂存、提交操作,支持 AI 自动生成 commit message
 - ✅ **检查点管理** — 侧边栏 Git 面板中查看检查点列表、diff 对比(支持未跟踪文件)
 - ✅ **会话分叉** — 从历史消息处分叉创建新会话,保留上下文继续对话
@@ -729,11 +740,13 @@ uniclaw --mode webui
 - ✅ **Token 用量显示** — 每条消息显示 Token 消耗量和处理时长
 - ✅ **TodoList 同步** — 任务清单实时同步到 WebUI 界面
 - ✅ **权限模式切换** — WebUI 中直接切换权限模式(auto/manual/accept-all/plan)
-- ✅ **输入对话框** — 权限请求时弹出输入框,支持倒计时自动处理
+- ✅ **输入对话框** — 权限请求时弹出输入框,支持倒计时和取消按钮
+- ✅ **会话级配置** — 带 `session_id` 保存时,当前会话内存配置立即生效,同时写入全局配置
 - ✅ **拖拽上传** — 支持拖拽文件到聊天区域上传,自动识别文件类型并添加为附件
 - ✅ **多媒体附件** — 支持图片、音频、视频等多媒体文件作为附件发送给 AI 分析
 - ✅ **文件大小限制** — 自动限制上传文件大小,防止过大的文件影响性能
 - ✅ **登录自动跳转** — 已登录用户打开页面时自动跳转到聊天界面
+- ✅ **跨会话通知** — 非活跃会话的消息触发注意力指示器和 toast 通知
 - ✅ **移动端响应式设计** — 完美适配手机和平板设备,支持触摸手势操作
 - ✅ **精美 UI 样式** — 基础 CSS 样式和动画效果,提升视觉体验
 
@@ -883,6 +896,7 @@ UniClaw 提供了丰富的内置工具,AI 助手可以自动调用这些工具�
 #### 多媒体工具
 
 - **ReadMedia** - 读取媒体文件(图片/音频/视频)并以多模态方式发送给 LLM 进行分析,支持本地路径和网络 URL
+- **GenerateImage** - AI 文生图工具(需配置 `image_model`),支持自定义尺寸(如 `"2K"`, `"1024x1024"`),可保存为文件或直接返回多模态数据供 AI 分析
 
 #### 代码沙箱工具
 
@@ -1228,15 +1242,15 @@ UniClaw/
     │   ├── types.py        # Provider/Effort 枚举,StreamChunk,AIMessage
     │   └── common.py       # get_provider(),compare_urls()
     │
-    ├── commands/           # 斜杠命令系统 📝 (29 个命令 + 7 个别名)
+    ├── commands/           # 斜杠命令系统 📝 (30 个命令 + 7 个别名)
     │   ├── __init__.py     # 命令注册中心(COMMANDS dict)
     │   ├── session.py      # 会话管理(clear/compact/export)
     │   ├── resume.py       # 会话恢复(list/del/search/fork) 💬
-    │   ├── model.py        # 模型切换
+    │   ├── model.py        # 模型切换(含图片生成模型)
     │   ├── system.py       # 系统命令(cwd/skills/exit/help/usage)
     │   ├── memory.py       # 记忆管理
     │   ├── mcp.py          # MCP 管理
-    │   ├── schedule.py     # 定时任务 ⏰
+    │   ├── schedule.py     # 定时任务 ⏰(支持会话关联)
     │   ├── permissions.py  # 权限规则管理
     │   ├── context_usage.py # 上下文使用分析
     │   ├── init.py         # 项目初始化(生成 CLAUDE.md)
@@ -1251,7 +1265,8 @@ UniClaw/
     │   ├── checkpoint.py   # Git 检查点
     │   ├── undo.py         # 撤销文件编辑
     │   ├── voice.py        # 语音模式切换 🔊
-    │   └── cu.py           # Computer Use 模式切换 🖥️
+    │   ├── cu.py           # Computer Use 模式切换 🖥️
+    │   └── explain.py      # 工具解释模式切换 🔧
     │
     ├── console/            # 控制台交互界面(prompt_toolkit REPL)
     │   ├── launcher.py     # 控制台启动器
@@ -1278,7 +1293,7 @@ UniClaw/
     │   ├── shell.py        # Shell(Bash/Grep/Everything)
     │   ├── web.py          # Web(webFetch/webSearch)
     │   ├── search.py       # 平台搜索(GitHub/arXiv/Stack Overflow 等)
-    │   ├── media.py        # 多媒体(ReadMedia 多模态)
+    │   ├── media.py        # 多媒体(ReadMedia 多模态 + GenerateImage 文生图)
     │   ├── sandbox.py      # 代码沙箱(Docker 隔离执行)
     │   ├── plan.py         # 计划模式(enter/exit)
     │   ├── sleep.py        # 异步等待
@@ -1287,7 +1302,7 @@ UniClaw/
     │   ├── computer_use.py # 计算机控制(截图/鼠标/键盘) 🖥️
     │   ├── web_browse/     # 浏览器自动化(Playwright) 🌍
     │   ├── security/       # 安全检查和权限管理 🔒
-    │   ├── scheduler/      # 调度器 ⏰(权限模式 + monitor 监控类型)
+    │   ├── scheduler/      # 调度器 ⏰(会话关联 + monitor 监控类型)
     │   ├── skill/          # 技能系统(加载/执行/内置技能)
     │   ├── multi_agent/    # 多智能体(全异步 + worktree 隔离)
     │   ├── mcp/            # MCP 集成 🔌
@@ -1893,6 +1908,8 @@ A:
 
 **HTTPS 模式**：`uv run uniclaw --mode webui --host 0.0.0.0 --ssl`,自动生成自签名证书。也可指定域名：`--ssl --domain uniclaw.example.com`。
 
+**可信 IP 免登录**：在 `settings.json` 中配置 `trusted_ips` 后,指定 IP 的客户端无需登录即可访问 WebUI。
+
 ### Q: 支持哪些操作系统？
 
 A: 支持 Windows、Linux 和 macOS。部分工具(如 Everything 搜索)仅在 Windows 上可用。WebUI 模式支持所有平台。
@@ -1934,7 +1951,7 @@ A:
 
 A: 在 REPL 中输入 `/` 开头的命令即可：
 - `/clear` - 清空对话历史
-- `/model gpt-4o` - 切换模型
+- `/model gpt-4o` - 切换模型(含图片生成模型选项)
 - `/cd /path/to/dir` - 切换工作目录
 - `/skills` - 查看可用技能
 - `/memory list` - 查看记忆列表
@@ -1946,6 +1963,7 @@ A: 在 REPL 中输入 `/` 开头的命令即可：
 - `/undo` - 撤销 AI 的文件编辑
 - `/resume fork` - 从历史消息处分叉会话
 - `/goal` - 设置目标停止条件
+- `/explain` - 工具解释模式(on/off/指定工具)
 - `/help` - 查看所有可用命令
 
 完整命令列表请参考 [斜杠命令系统](#斜杠命令系统) 章节。
@@ -1989,6 +2007,68 @@ A: 在 REPL 中输入斜杠命令后按空格,会自动显示该命令的子命�
 - `/goal` - `clear`, `status`
 - `/export` - `markdown`, `json`
 - `/kg` - `stats`, `search`, `list`, `export`, `clear`
+
+### Q: 如何使用工具解释模式？
+
+A: 工具解释模式让 AI 在调用工具前解释原因,便于理解和调试：
+
+**使用方式**：
+```
+/explain on              # 开启(所有工具)
+/explain off             # 关闭
+/explain Bash Read Edit  # 仅对指定工具开启
+```
+
+**效果**：开启后,AI 调用工具时会在 `_explain` 参数中说明调用原因,WebUI 和 TUI 都会显示解释文本。
+
+**适用场景**：
+- 调试 AI 的工具调用逻辑
+- 学习 AI 如何使用工具完成任务
+- 审查 AI 的操作意图
+
+### Q: 如何使用图片生成功能？
+
+A: 图片生成功能需要配置支持图片生成的模型(如 DALL-E)：
+
+1. **配置模型**: 在 `settings.json` 中设置 `image_model`
+   ```json
+   {
+     "image_model": "default/dall-e-3"
+   }
+   ```
+2. **使用方式**: 直接告诉 AI 生成图片,如 "帮我生成一张 sunset 海滩的图片"
+3. **保存文件**: AI 可指定 `path` 参数将图片保存到本地
+4. **直接分析**: 不指定路径时,图片以多模态数据返回供 AI 直接分析
+
+> 💡 配置 `image_model` 后,`GenerateImage` 工具自动可用。`/model` 命令中选择选项 7 可设置图片生成模型。
+
+### Q: 如何配置可信 IP 免登录？
+
+A: 在 `settings.json` 中添加 `trusted_ips` 配置：
+
+```json
+{
+  "trusted_ips": ["127.0.0.1"]
+}
+```
+
+配置后,来自这些 IP 的客户端访问 WebUI 时无需登录认证。适合家庭或办公网络环境中信任的设备。
+
+> ⚠️ **安全提示**: 仅将可信的内部网络 IP 添加到列表中,不要在公网环境中使用此功能。
+
+### Q: 如何使用会话级配置？
+
+A: WebUI 支持为每个会话独立配置模型和参数。当请求带 `session_id` 时,修改会同时生效于两个层面：
+
+1. **全局**: 配置写入 `settings.json`(所有会话下次加载时生效)
+2. **会话内存**: 当前会话的 `AppConfig` 立即更新(本轮对话立即生效,无需重启)
+
+1. 在 WebUI 设置页面修改配置
+2. 选择"会话级保存" — 配置立即应用于当前会话,同时也保存到全局配置文件
+
+**适用场景**：
+- 不同任务使用不同模型
+- 临时调整温度参数进行实验,当前会话立即生效
 
 ### Q: 如何使用定时任务功能？
 
