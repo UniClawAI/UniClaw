@@ -462,11 +462,22 @@ class MultiAgent:
     async def send_event_to_user(self, event, config: AppConfig):
         """将事件放入队列。对于有 return_event 的事件,等待 UI 处理后返回内容。
         普通事件:仅发送到 task 自己的队列;无队列则丢弃。
-        阻塞事件(带 return_event):无队列时 fallback 到 root_config 的队列。"""
+        阻塞事件(带 return_event):队列查找链 → task 自身 → root_config → TUI 当前会话。"""
         task = config.current_agent
         queue = task.event_queue
-        if not queue and hasattr(event, "return_event") and config.root_config:
-            queue = config.root_config.current_agent.event_queue
+        if not queue and hasattr(event, "return_event"):
+            # root_config: 祖子代理场景的父级队列
+            if config.root_config:
+                queue = config.root_config.current_agent.event_queue
+            # TUI: 后台任务(如 scheduler)路由到当前活跃会话
+            if not queue:
+                try:
+                    from uniclaw.console.run import TUIApp
+                    tui = TUIApp.get_instance()
+                    if tui and tui.config:
+                        queue = tui.config.current_agent.event_queue
+                except Exception:
+                    pass
         if queue:
             await queue.put((task, event))
 
