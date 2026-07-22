@@ -211,6 +211,11 @@ class Tool:
                 if i < len(params):
                     kwargs[params[i]] = arg
         kwargs.pop("_explain", None)
+        # 过滤函数签名中不接受的注入参数(如 config)
+        func_params = inspect.signature(self.func).parameters
+        for injected in _INJECTED_PARAMS:
+            if injected in kwargs and injected not in func_params:
+                kwargs.pop(injected)
         if not inspect.iscoroutinefunction(self.func):
             return self.func(**kwargs)
         # 异步工具:支持流式回调
