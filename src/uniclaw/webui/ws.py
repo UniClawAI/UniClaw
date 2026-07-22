@@ -854,24 +854,20 @@ async def handle_ws_message(ws: WebSocket, msg: dict):
     elif msg_type == "command":
         from uniclaw.commands import handle_slash
 
-        # 始终绑定当前 WebSocket 的回调(与 chat 路径一致)
+        command = msg.get("command", "")
+        # 直接执行 handle_slash
         config.output_callback = _make_output_callback(ws, session_id)
         config.ws_send = ws.send_json
-        source = msg.get("source", "chat")
-        result = await handle_slash(msg.get("command", ""), config)
-        # info/ok/warn/err 已通过 output_callback 实时发送
-        # 仅 str 返回值(技能路径)需要额外发送
+        result = await handle_slash(command, config)
         if isinstance(result, str) and result:
-            await _safe_send(
-                ws,
-                {
-                    "event": "command_result",
-                    "session_id": session_id,
-                    "command": msg.get("command", ""),
-                    "output": result,
-                    "source": source,
-                },
-            )
+            if task.status == AgentStatus.RUNNING:
+                # Agent 运行中:放入 user_queue
+                task.user_queue.put_nowait(result)
+            else:
+                # Agent 空闲:启动 agent
+                multi_agent = MultiAgent.get_instance()
+                multi_agent.start_agent(result, config)
+                await _start_bridge(session_id, config)
 
     elif msg_type == "permission_response":
         await handle_permission_response(

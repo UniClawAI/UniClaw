@@ -427,7 +427,9 @@ class AgentTask:
                         )
             elif stripped.startswith("/"):
                 event = SlashCommandEvent(stripped)
-                await multi_agent.send_event_to_user(event, config)
+                slash_output = await multi_agent.send_event_to_user(event, config)
+                if isinstance(slash_output, str) and slash_output:
+                    self.session.add_message(MessageRole.USER, slash_output)
             else:
                 text_parts.append(msg)
 

@@ -1189,9 +1189,11 @@ class TUIApp:
                 slash_result = await handle_slash(event.command, self.config)
                 if isinstance(slash_result, str):
                     self.print(slash_result)
+                    event.content = slash_result
+                else:
+                    event.content = ""
                 self.refresh_session_items()
                 self.app.invalidate()
-                event.content = ""
                 event.return_event.set()
                 continue
             elif isinstance(event, InterruptedEvent):

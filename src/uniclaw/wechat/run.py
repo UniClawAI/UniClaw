@@ -210,11 +210,11 @@ async def _collect_response(
             await info(f"[微信] 用户执行斜杠命令: {event.command}", config)
             buf = io.StringIO()
             with redirect_stdout(buf):
-                await handle_slash(event.command, config)
+                result = await handle_slash(event.command, config)
             output = _ANSI_RE.sub("", buf.getvalue()).strip()
             if output:
                 print(clr(output, C.WHITE))
-            event.content = ""
+            event.content = result if isinstance(result, str) else ""
             event.return_event.set()
         elif isinstance(event, EndEvent):
             if event.depth == 0:
@@ -260,8 +260,26 @@ def make_handler():
             with redirect_stdout(buf):
                 result = await handle_slash(text, config)
             output = _ANSI_RE.sub("", buf.getvalue()).strip()
-            if isinstance(result, str):
-                bot.reply_text(result)
+            if isinstance(result, str) and result:
+                # 结果作为用户消息,交给 AI 处理
+                if task.status == AgentStatus.RUNNING:
+                    task.user_queue.put_nowait(result)
+                    print(f"[微信] 用户 {user_id} 的 agent 正在运行,消息已排队")
+                    await info("⏳ 已排队,将在当前任务处理间隙自动补充。", config)
+                    return
+                # 启动 agent
+                try:
+                    bot.send_typing()
+                except Exception:
+                    pass
+                try:
+                    system_prompt = await build_system_prompt(config)
+                    multi_agent.start_agent(result, config=config, system_prompt=system_prompt)
+                    reply = await _collect_response(config, client=bot)
+                    if reply:
+                        bot.reply_text(reply)
+                except Exception as e:
+                    bot.reply_text(f"❌ 执行出错: {e}")
             elif output:
                 bot.reply_text(output.replace("\n", "\n\n"))
             elif result:
