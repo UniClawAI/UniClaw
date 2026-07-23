@@ -264,7 +264,7 @@ async def _check_permission(tc: dict, config: AppConfig) -> tuple[bool, str]:
                     abs_dir = Path(d).resolve()
                     if abs_file.is_relative_to(abs_dir):
                         return (True, "")
-            except (ValueError, Exception):
+            except (ValueError, OSError):
                 pass
 
     # 所有快速路径都未命中,调用 LLM 检测安全性
@@ -598,7 +598,9 @@ class MultiAgent:
         if registry_ctx:
             base_system_prompt += f"\n\n{registry_ctx}"
         # 用户传递的系统提示词放在最后
-        system_prompt = f"{base_system_prompt}\n\n{'' if system_prompt is None else system_prompt}"
+        if system_prompt:
+            base_system_prompt += f"\n\n{system_prompt}"
+        system_prompt = base_system_prompt
         
         if isolation:
             if root_dir is None:
@@ -637,7 +639,7 @@ class MultiAgent:
                     try:
                         msg = await asyncio.wait_for(
                             task.user_queue.get(),
-                            timeout=0.2 if keep_alive else None,
+                            timeout=1.0 if keep_alive else None,
                         )
                     except asyncio.TimeoutError:
                         if keep_alive:
