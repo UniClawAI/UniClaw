@@ -14,7 +14,6 @@ from uniclaw.config import AppConfig
 # 标准错误输出标记前缀,用于标识错误信息
 STDERR_MARKER = "[stderr]"
 
-
 # 匹配 bash 中误用 Windows nul 设备名的重定向: >nul, 2>nul, >>nul, <nul 等
 # 在 bash 中 nul 只是普通文件名,需要替换为 /dev/null
 _RE_BASH_NUL = re.compile(r"(\d?>+|<)\s*nul\b", re.IGNORECASE)
@@ -179,6 +178,10 @@ async def Bash(command: str, timeout: int = 30, config: AppConfig = None) -> str
         if sys.platform == "win32"
         else asyncio.subprocess.DEVNULL
     )
+
+    # 如果是 bash 命令,自动修正 nul 重定向
+    if command.strip().lower().startswith("bash "):
+        command = fix_bash_nul_redirect(command)
 
     # 根据平台准备命令参数
     if sys.platform != "win32":
