@@ -117,6 +117,8 @@ uv tool install .
   "multimodal_model_name": [],
   "large_model_name": [],
   "image_model": "",
+  "tts_model": "",
+  "asr_model": "",
   "temperature": 0.7,
   "max_tokens": null,
   "top_p": null,
@@ -324,6 +326,8 @@ UniClaw 使用工作空间概念管理文件访问范围：
 | `multimodal_model_name` | 多模态模型列表(主模型不支持多模态时使用) | 无 | `["default/gpt-4o"]` |
 | `large_model_name` | 顾问模型列表(用于获取更强力模型的建议) | 无 | `["default/o3"]` |
 | `image_model` | 图片生成模型(文生图,留空禁用) | `""` | `"default/dall-e-3"` |
+| `tts_model` | TTS 语音合成模型(留空禁用) | `""` | `"default/tts-1"` |
+| `asr_model` | ASR 语音识别模型(留空禁用) | `""` | `"default/whisper-1"` |
 | `temperature` | 生成温度(创造性) | `0.7` | `0.0`-`2.0` |
 | `max_tokens` | 最大输出 token 数 | `null`(不限制) | `512`, `2048` |
 | `top_p` | 核采样概率 | `null`(不限制) | `0.9` |
@@ -878,7 +882,7 @@ UniClaw 提供了丰富的内置工具,AI 助手可以自动调用这些工具�
 
 > 💡 **流式输出**: Bash 工具执行过程中会实时推送输出到前端(WebUI),无需等待命令完成即可看到进度。
 
-> 💡 **Windows 用户提示**: 在 Windows 系统上,如果检测到 Git Bash,Bash 工具会自动使用 Git Bash 执行命令,提供更好的 Unix 命令兼容性。建议安装 [Git for Windows](https://git-scm.com/download/win) 以获得最佳的 Shell 体验。
+> 💡 **Windows 用户提示**: 在 Windows 系统上,如果检测到 Git Bash,Bash 工具会自动使用 Git Bash 执行命令,提供更好的 Unix 命令兼容性。建议安装 [Git for Windows](https://git-scm.com/download/win) 以获得最佳的 Shell 体验。Bash 工具还会自动修正 Windows 环境下 `nul` 重定向为 `/dev/null`,避免 Git Bash 兼容性问题。
 
 > ⚠️ **注意事项**: 某些命令可能触发分页器(如 `git log`、`man` 等),导致进程阻塞等待用户交互。解决方法：
 > - Git 命令添加 `--no-pager` 参数：`git --no-pager log`
@@ -1087,6 +1091,7 @@ UniClaw 提供了丰富的内置工具,AI 助手可以自动调用这些工具�
 
 #### Hook 系统工具 🪝
 
+- **hook_docs** - 查看 Hook 系统的详细文档和使用说明
 - **hook_read** - 读取当前 Hook 配置
 - **hook_add** - 添加事件 Hook(执行 Shell 命令)
 - **hook_remove** - 移除指定 Hook
@@ -1123,6 +1128,13 @@ UniClaw 提供了丰富的内置工具,AI 助手可以自动调用这些工具�
   - WebUI 模式: 生成临时下载链接(默认 30 分钟有效)
   - 微信模式: 通过 Bot 直接发送文件
   - Console 模式: 不支持(忽略)
+
+#### 微信工具 💬
+
+- **wechat_list_contacts** - 列出当前已登录的微信机器人名称
+- **wechat_send_text** - 通过微信向当前对话用户发送文字消息
+- **wechat_send_image** - 通过微信向当前对话用户发送图片(支持附带文字说明)
+- **wechat_send_file** - 通过微信向当前对话用户发送文件(支持自定义文件名)
 
 #### 知识图谱工具 🗺️
 
@@ -1165,6 +1177,8 @@ UniClaw 提供了丰富的内置工具,AI 助手可以自动调用这些工具�
   - 适用场景:遇到知识不足、需要验证思路、涉及专业领域需要深入分析
   - 支持并发调用多个顾问模型,汇总结果并标注模型来源
   - 注意:一次性问答,无上下文,无探索能力;如需读取文件应先收集信息再提问
+- **investigate** - 调查项目信息并返回精炼摘要,内部启动侦察代理收集和整理数据
+  - 适用场景:了解模块/函数实现细节、搜索项目中与某主题相关的代码和文档、收集信息后再做判断
 
 > 💡 **提示**: 顾问模型通过 `large_model_name` 配置,仅当配置了顾问模型时才可用。可在 settings.json 中添加,或通过 `/model` 命令将模型设为顾问模型。
 
@@ -1207,7 +1221,10 @@ UniClaw 提供了丰富的内置工具,AI 助手可以自动调用这些工具�
 #### 调度器工具 ⏰
 
 - **schedule_create** - 创建定时任务(支持周期性或一次性执行)
+- **schedule_monitor** - 创建监控任务(周期执行 shell 命令,退出码非零时触发 agent)
 - **schedule_list** - 列出所有定时任务及其状态
+- **schedule_update** - 修改定时任务的动作和调度时间
+- **schedule_monitor_update** - 修改监控任务的检查命令、agent 提示词和调度时间
 - **schedule_remove** - 删除指定的定时任务
 - **schedule_toggle** - 启用或禁用定时任务
 
@@ -1344,15 +1361,15 @@ UniClaw/
 
 采用核心/扩展工具分层架构,对齐 Anthropic 的 `defer_loading` 模式：
 
-- **核心工具** (19 个): 始终加载完整 schema,是 prompt 缓存的稳定前缀
+- **核心工具** (18 个 + 1 个元工具): 始终加载完整 schema,是 prompt 缓存的稳定前缀
   - 文件系统: `Read`, `Write`, `Edit`, `Glob`
   - Shell: `Bash`, `Grep`
   - Web: `webFetch`, `webSearch`, `platform_search`
   - 记忆: `memory_save/delete/list/search`
   - 计划: `enter/exit_plan_mode`
   - 技能: `skill_suggest/read/run_command`
-  - 元工具: `search_tools`
-- **扩展工具** (133 个): 初始不加载,通过 `search_tools` 元工具按需发现
+  - 元工具: `search_tools`（按需发现和加载扩展工具）
+- **扩展工具** (135 个): 初始不加载,通过 `search_tools` 元工具按需发现
   - 基于 BM25 算法搜索,支持中英文关键词 + 语义同义词
   - **LRU + 能量机制**: 每个扩展工具初始 30 点能量,每轮对话 -1,被调用或搜索命中恢复满能量,归零自动卸载;最多同时加载 25 个扩展工具,超出时按 LRU 顺序淘汰能量最低者
   - 搜索结果自动注入到当前任务的可用工具集
