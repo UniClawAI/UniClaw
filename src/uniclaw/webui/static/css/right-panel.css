@@ -182,10 +182,23 @@
     white-space: nowrap;
     font-family: var(--font-mono);
 }
+.monitor-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 2px;
+}
+.monitor-id {
+    font-size: 10px;
+    color: var(--text-3);
+    font-family: var(--font-mono);
+    background: var(--bg-2);
+    padding: 1px 4px;
+    border-radius: 3px;
+}
 .monitor-status {
     font-size: 10px;
     color: var(--text-3);
-    margin-top: 2px;
 }
 .monitor-stop {
     padding: 4px 10px;

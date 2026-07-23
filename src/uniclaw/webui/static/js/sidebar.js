@@ -420,7 +420,10 @@ const Sidebar = {
                     <span class="monitor-dot ${isRunning ? 'running' : 'stopped'}"></span>
                     <div class="monitor-info">
                         <div class="monitor-name">${Utils.escapeHtml(m.description || m.command)}</div>
-                        <div class="monitor-status">${isRunning ? '运行中' : '已停止'}</div>
+                        <div class="monitor-meta">
+                            <span class="monitor-id">${Utils.escapeHtml(m.id)}</span>
+                            <span class="monitor-status">${isRunning ? '运行中' : '已停止'}</span>
+                        </div>
                     </div>
                 `;
                 if (isRunning) {
