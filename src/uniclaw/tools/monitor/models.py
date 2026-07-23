@@ -42,7 +42,7 @@ class Monitor:
         self.matched_lines: list[str] = []
         self.start_time = datetime.now()
         self.match_time: datetime | None = None
-        self._task = None
+        self._config = None
 
     def to_dict(self) -> dict:
         uptime = (datetime.now() - self.start_time).total_seconds()

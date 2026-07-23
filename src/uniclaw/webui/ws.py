@@ -62,9 +62,6 @@ _inputs_lock = asyncio.Lock()
 _bridge_tasks: dict[str, asyncio.Task] = {}
 _bridge_tasks_lock = asyncio.Lock()
 
-# 正在运行的 _watch_user_queue 任务:session_id → asyncio.Task
-_watch_tasks: dict[str, asyncio.Task] = {}
-_watch_tasks_lock = asyncio.Lock()
 
 
 @dataclass
@@ -617,49 +614,6 @@ async def _notify_config_changed(session_id: str):
     await _broadcast({"event": "config_changed", "session_id": session_id})
 
 
-async def _cancel_watch_task(session_id: str):
-    """取消指定 session 的 _watch_user_queue 任务(如有)。"""
-    async with _watch_tasks_lock:
-        wt = _watch_tasks.pop(session_id, None)
-    if wt and not wt.done():
-        wt.cancel()
-
-
-async def _watch_user_queue(session_id: str, config: AppConfig):
-    """bridge_events 结束后监听 user_queue,捕获延迟唤醒消息(如 sleep_timer)并重新触发 agent。
-
-    超时 5 分钟无唤醒消息则自动退出,避免 task 泄漏。
-    agent 被其他入口(如 handle_ws_message)启动时,主循环会检测到并退出。
-    """
-    async with _watch_tasks_lock:
-        _watch_tasks[session_id] = asyncio.current_task()
-    task = config.current_agent
-    try:
-        while True:
-            if task.status == AgentStatus.RUNNING:
-                break
-            try:
-                msg = task.user_queue.get_nowait()
-            except asyncio.QueueEmpty:
-                await asyncio.sleep(1)
-                continue
-            if not msg:
-                continue
-            multi_agent = MultiAgent.get_instance()
-            multi_agent.start_agent(msg, config)
-            await _start_bridge(session_id, config)
-            break
-    except asyncio.CancelledError:
-        pass
-    except Exception:
-        get_logger("webui", Path.cwd()).warning(
-            f"[{session_id}] _watch_user_queue 异常: {traceback.format_exc()}"
-        )
-    finally:
-        async with _watch_tasks_lock:
-            _watch_tasks.pop(session_id, None)
-
-
 async def _start_bridge(session_id: str, config: AppConfig):
     """启动 bridge_events 任务(按 session 管理,不绑 WebSocket)。"""
     async with _bridge_tasks_lock:
@@ -671,9 +625,6 @@ async def _start_bridge(session_id: str, config: AppConfig):
 
         def _on_bridge_done(done_task: asyncio.Task):
             _bridge_tasks.pop(session_id, None)
-            # bridge 结束后启动 user_queue 监听
-            wt = asyncio.create_task(_watch_user_queue(session_id, config))
-            wt.add_done_callback(_log_task_error)
 
         t.add_done_callback(_on_bridge_done)
         t.add_done_callback(_log_task_error)
@@ -777,7 +728,6 @@ async def handle_ws_message(ws: WebSocket, msg: dict):
         )
         if task.status != AgentStatus.RUNNING:
             get_logger("webui", Path.cwd()).info(f"[{session_id}] 启动 agent")
-            await _cancel_watch_task(session_id)
             multi_agent = MultiAgent.get_instance()
             agent_task = multi_agent.start_agent(content, config)
             get_logger("webui", Path.cwd()).info(

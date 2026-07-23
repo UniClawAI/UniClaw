@@ -124,102 +124,108 @@ async def _collect_response(
     current_args: dict = {}
     thinking_stream = False
     text_stream = False
-    while True:
-        _agent_task, event = await task.event_queue.get()
-        if spinner_wait_id:
-            spinner.stop(spinner_wait_id)
-            spinner_wait_id = None
-        if isinstance(event, ThinkingStartEvent):
-            spinner_wait_id = spinner.start("Thinking...")
-        elif isinstance(event, ThinkingChunkEvent):
-            if not thinking_stream:
-                print(clr("  [思考中]", C.DIM))
-            thinking_stream = True
-            print(clr(event.content, C.DIM), end="")
-        elif isinstance(event, TextChunkEvent):
-            if not text_stream:
-                print(clr("  [回复]", C.WHITE))
-            text_stream = True
-            parts.append(event.content)
-            print(clr(event.content, C.WHITE), end="")
-        elif isinstance(event, AssistantEvent):
-            thinking_stream = False
-            text_stream = False
-            print()
-            if event.tool_calls:
-                print(clr(f"  工具调用 x{len(event.tool_calls)}", C.CYAN))
-                for tc in event.tool_calls:
-                    fn = tc.get("function", {})
-                    print(
-                        clr(
-                            f"    - {fn.get('name', '?')}({fn.get('arguments', '')})",
-                            C.CYAN,
-                        )
-                    )
-            print(
-                clr(
-                    f"  模型:{event.model_name}  输入:{event.in_tokens} 输出:{event.out_tokens}",
-                    C.DIM,
-                )
-            )
-        elif isinstance(event, ToolPreparingEvent):
-            label = _format_tool_call(event.name, event.args)
-            spinner_wait_id = spinner.start(f"准备调用 '{label}'...")
-        elif isinstance(event, ToolStartEvent):
-            current_name = event.name
-            current_args = event.args
-            label = _format_tool_call(event.name, event.args)
-            spinner_wait_id = spinner.start(f"工具 '{label}' 执行中...")
-            if client:
-                try:
-                    client.reply_text(f"🔧 {label}")
-                except Exception:
-                    pass
-        elif isinstance(event, ToolEvent):
-            print(
-                clr(
-                    f"  [工具] {_format_tool_call(current_name, current_args)}", C.GREEN
-                )
-            )
-            print(clr(f"    {event.content}", C.DIM))
-        elif isinstance(event, UserEvent):
-            # 显示用户输入消息(微信模式下通常不需要显示,但保留用于调试)
-            pass
-        elif isinstance(event, PermissionRequestEvent):
-            agent_label = f" [子代理: {event.agent_name}]" if event.agent_name else ""
-            prompt = f"🔧{agent_label} {event.description}"
-            if event.explanation:
-                prompt += f"\n{event.explanation}"
-            prompt += "\n\n输入 y 同意,其他内容为拒绝:"
-            reply = await wechat_input(prompt, title="权限请求", config=config)
-            reply = reply.strip()
-            if reply.lower() == "y":
-                event.content = True
-            else:
-                event.content = reply
-            event.return_event.set()
-        elif isinstance(event, ShellCommandEvent):
-            await info(f"[微信] 用户执行Shell命令: {event.command}", config)
-            result = await Bash(event.command, config=config)
-            output = _ANSI_RE.sub("", result).strip()
-            print(clr(f"  $ {event.command}", C.CYAN))
-            print(clr(output or "(无输出)", C.DIM))
-            event.content = output
-            event.return_event.set()
-        elif isinstance(event, SlashCommandEvent):
-            await info(f"[微信] 用户执行斜杠命令: {event.command}", config)
-            buf = io.StringIO()
-            with redirect_stdout(buf):
-                result = await handle_slash(event.command, config)
-            output = _ANSI_RE.sub("", buf.getvalue()).strip()
-            if output:
-                print(clr(output, C.WHITE))
-            event.content = result if isinstance(result, str) else ""
-            event.return_event.set()
-        elif isinstance(event, EndEvent):
-            if event.depth == 0:
 
-                break
+    from uniclaw.utils.wakeup import mark_draining
+
+    mark_draining(task, True)
+    try:
+        while True:
+            _agent_task, event = await task.event_queue.get()
+            if spinner_wait_id:
+                spinner.stop(spinner_wait_id)
+                spinner_wait_id = None
+            if isinstance(event, ThinkingStartEvent):
+                spinner_wait_id = spinner.start("Thinking...")
+            elif isinstance(event, ThinkingChunkEvent):
+                if not thinking_stream:
+                    print(clr("  [思考中]", C.DIM))
+                thinking_stream = True
+                print(clr(event.content, C.DIM), end="")
+            elif isinstance(event, TextChunkEvent):
+                if not text_stream:
+                    print(clr("  [回复]", C.WHITE))
+                text_stream = True
+                parts.append(event.content)
+                print(clr(event.content, C.WHITE), end="")
+            elif isinstance(event, AssistantEvent):
+                thinking_stream = False
+                text_stream = False
+                print()
+                if event.tool_calls:
+                    print(clr(f"  工具调用 x{len(event.tool_calls)}", C.CYAN))
+                    for tc in event.tool_calls:
+                        fn = tc.get("function", {})
+                        print(
+                            clr(
+                                f"    - {fn.get('name', '?')}({fn.get('arguments', '')})",
+                                C.CYAN,
+                            )
+                        )
+                print(
+                    clr(
+                        f"  模型:{event.model_name}  输入:{event.in_tokens} 输出:{event.out_tokens}",
+                        C.DIM,
+                    )
+                )
+            elif isinstance(event, ToolPreparingEvent):
+                label = _format_tool_call(event.name, event.args)
+                spinner_wait_id = spinner.start(f"准备调用 '{label}'...")
+            elif isinstance(event, ToolStartEvent):
+                current_name = event.name
+                current_args = event.args
+                label = _format_tool_call(event.name, event.args)
+                spinner_wait_id = spinner.start(f"工具 '{label}' 执行中...")
+                if client:
+                    try:
+                        client.reply_text(f"🔧 {label}")
+                    except Exception:
+                        pass
+            elif isinstance(event, ToolEvent):
+                print(
+                    clr(
+                        f"  [工具] {_format_tool_call(current_name, current_args)}", C.GREEN
+                    )
+                )
+                print(clr(f"    {event.content}", C.DIM))
+            elif isinstance(event, UserEvent):
+                # 显示用户输入消息(微信模式下通常不需要显示,但保留用于调试)
+                pass
+            elif isinstance(event, PermissionRequestEvent):
+                agent_label = f" [子代理: {event.agent_name}]" if event.agent_name else ""
+                prompt = f"🔧{agent_label} {event.description}"
+                if event.explanation:
+                    prompt += f"\n{event.explanation}"
+                prompt += "\n\n输入 y 同意,其他内容为拒绝:"
+                reply = await wechat_input(prompt, title="权限请求", config=config)
+                reply = reply.strip()
+                if reply.lower() == "y":
+                    event.content = True
+                else:
+                    event.content = reply
+                event.return_event.set()
+            elif isinstance(event, ShellCommandEvent):
+                await info(f"[微信] 用户执行Shell命令: {event.command}", config)
+                result = await Bash(event.command, config=config)
+                output = _ANSI_RE.sub("", result).strip()
+                print(clr(f"  $ {event.command}", C.CYAN))
+                print(clr(output or "(无输出)", C.DIM))
+                event.content = output
+                event.return_event.set()
+            elif isinstance(event, SlashCommandEvent):
+                await info(f"[微信] 用户执行斜杠命令: {event.command}", config)
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    result = await handle_slash(event.command, config)
+                output = _ANSI_RE.sub("", buf.getvalue()).strip()
+                if output:
+                    print(clr(output, C.WHITE))
+                event.content = result if isinstance(result, str) else ""
+                event.return_event.set()
+            elif isinstance(event, EndEvent):
+                if event.depth == 0:
+                    break
+    finally:
+        mark_draining(task, False)
     print()
     return "".join(parts)
 

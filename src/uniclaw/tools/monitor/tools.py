@@ -34,14 +34,12 @@ async def monitor_start(
     if not command.strip():
         return f"{TOOL_ERROR}: 命令不能为空"
 
-    # 从 config 中获取当前任务对象
-    task = config.current_agent
     root_dir = config.root_dir
 
     from .manager import MonitorManager
     manager = MonitorManager.get_instance()
     return await manager.start_monitor(
-        command.strip(), watch_pattern.strip(), name, timeout, notify_on_match, task, root_dir
+        command.strip(), watch_pattern.strip(), name, timeout, notify_on_match, root_dir, config=config
     )
 
 

@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-from uniclaw.utils.constants import SYSTEM_PREFIX, TOOL_ERROR
+from uniclaw.utils.constants import TOOL_ERROR
 from uniclaw.utils.format import sanitize_progress_line
 
 from .models import Monitor, MonitorStatus
@@ -36,8 +36,8 @@ class MonitorManager:
         description: str,
         timeout: int,
         notify_model: bool = True,
-        task=None,
         cwd: Path | None = None,
+        config=None,
     ) -> str:
         """启动新进程监控"""
         # 验证正则表达式
@@ -88,7 +88,7 @@ class MonitorManager:
             monitor = Monitor(
                 monitor_id, command, pattern, description, timeout, notify_model, cwd
             )
-            monitor._task = task
+            monitor._config = config
             monitor.process = process
             self._monitors[monitor_id] = monitor
 
@@ -171,22 +171,25 @@ class MonitorManager:
         except Exception:
             pass
 
-        # 2. 通知模型
-        if monitor.notify_model and monitor._task:
+        # 2. 通知模型(使用 wake_agent 统一唤醒逻辑)
+        if monitor.notify_model and monitor._config:
             try:
+                from uniclaw.utils.wakeup import wake_agent
+                from uniclaw.utils.constants import SYSTEM_PREFIX
+
                 desc = (
                     f"[{monitor.description}]"
                     if monitor.description
                     else f"[监控 {monitor.id}]"
                 )
-                system_msg = (
+                message = (
                     f"{SYSTEM_PREFIX}(monitor) {desc} 监控匹配成功！\n"
                     f"  匹配模式: {monitor.pattern}\n"
                     f"  匹配内容: {line}\n"
                     f"  监控 ID: {monitor.id}\n"
                     f"请根据匹配结果继续处理。"
                 )
-                monitor._task.user_queue.put_nowait(system_msg)
+                await wake_agent(message, monitor._config)
             except Exception:
                 pass
 

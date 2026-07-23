@@ -2,6 +2,7 @@ import asyncio
 import time
 from datetime import datetime, timedelta
 from uniclaw.utils.constants import SYSTEM_PREFIX, TOOL_ERROR
+from uniclaw.utils.wakeup import wake_agent
 from uniclaw.tools.base import tool
 from uniclaw.config import AppConfig
 
@@ -23,24 +24,27 @@ def sleep_timer(seconds: int, name: str = "", config: AppConfig = None) -> str:
     if seconds <= 0 or seconds > 3600:
         return f"{TOOL_ERROR}: 等待秒数必须在 1-3600 之间"
 
-    async def _wakeup(task):
-        """后台线程执行的等待与唤醒逻辑"""
+    async def _wakeup():
+        """后台任务执行的等待与唤醒逻辑"""
         try:
             await asyncio.sleep(seconds)
             reason = f"({name})" if name else ""
-            task.user_queue.put_nowait(
-                f"{SYSTEM_PREFIX}(sleep_timer) 已等待{reason}{seconds} 秒,请继续工作。"
+            await wake_agent(
+                f"{SYSTEM_PREFIX}(sleep_timer) 已等待{reason}{seconds} 秒,请继续工作。",
+                config,
             )
         except asyncio.CancelledError:
-            task.user_queue.put_nowait(
-                f"{SYSTEM_PREFIX}(sleep_timer) 等待被取消(原定 {seconds} 秒)。"
+            await wake_agent(
+                f"{SYSTEM_PREFIX}(sleep_timer) 等待被取消(原定 {seconds} 秒)。",
+                config,
             )
         except Exception as e:
-            task.user_queue.put_nowait(
-                f"{SYSTEM_PREFIX}(sleep_timer) 等待出错: {type(e).__name__}: {e}"
+            await wake_agent(
+                f"{SYSTEM_PREFIX}(sleep_timer) 等待出错: {type(e).__name__}: {e}",
+                config,
             )
 
-    asyncio.create_task(_wakeup(config.current_agent))
+    asyncio.create_task(_wakeup())
 
     # 计算并格式化预计唤醒的时间点
     wakeup_time = datetime.now() + timedelta(seconds=seconds)

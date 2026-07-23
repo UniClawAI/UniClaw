@@ -12,7 +12,7 @@ from pathlib import Path
 
 from croniter import croniter
 
-from uniclaw.config import AppConfig, RunMode
+from uniclaw.config import AppConfig
 from uniclaw.console.ui import info, warn, err
 from uniclaw.context import get_app_dir, Scope
 
@@ -300,13 +300,7 @@ class Scheduler:
         session_id: str | None,
         config: AppConfig | None = None,
     ):
-        """复用当前会话执行 agent 消息。
-
-        - TUI 模式且当前会话 != 任务会话 → 后台执行
-        - 其他情况 → 注入消息到 user_queue
-        """
-        from uniclaw.utils.constants import SYSTEM_PREFIX
-
+        """复用当前会话执行 agent 消息。由 wake_agent 统一处理唤醒策略。"""
         config = await self._find_config(session_id, config)
         if config is None:
             await err(
@@ -314,33 +308,11 @@ class Scheduler:
             )
             return
 
-        # TUI 模式:检查当前活跃会话是否就是任务的会话
-        is_tui = config.run_mode == RunMode.CONSOLE
-        if is_tui:
-            active_id = self._get_active_session_id()
-            if active_id and active_id != session_id:
-                # 当前会话不匹配 → 后台执行
-                await self._run_in_background(config, message, task_name)
-                return
-
-        # agent 运行中:注入队列;空闲:start_agent
-        from uniclaw.agent import MultiAgent, AgentStatus
+        from uniclaw.utils.wakeup import wake_agent
+        from uniclaw.utils.constants import SYSTEM_PREFIX
 
         full_message = f"{SYSTEM_PREFIX}(scheduler:{task_name})\n{message}"
-        if config.current_agent.status == AgentStatus.RUNNING:
-            config.current_agent.user_queue.put_nowait(full_message)
-        else:
-            multi_agent = MultiAgent.get_instance()
-            
-            # WebUI 模式需要启动 bridge 才能把事件推到前端
-            if config.run_mode == RunMode.WEBUI:
-                try:
-                    from uniclaw.webui.ws import _start_bridge
-
-                    await _start_bridge(session_id, config)
-                except ImportError:
-                    pass
-            multi_agent.start_agent(full_message, config=config)
+        await wake_agent(full_message, config)
 
     async def _find_config(
         self, session_id: str | None, config: AppConfig | None = None
@@ -384,30 +356,6 @@ class Scheduler:
             return load_config(session=session, spinner=NoopSpinner())
 
         return None
-
-    def _get_active_session_id(self) -> str | None:
-        """获取当前 UI 活跃的会话 ID(仅 TUI)。"""
-        try:
-            from uniclaw.console.run import TUIApp
-
-            tui = TUIApp.get_instance()
-            if tui and tui.config:
-                return tui.config.current_agent.session.id
-        except Exception:
-            pass
-        return None
-
-    async def _run_in_background(self, config: AppConfig, message: str, task_name: str):
-        """后台执行定时任务(TUI 当前会话不匹配时)。"""
-        from uniclaw.agent import MultiAgent
-        from uniclaw.tools.notify import push_notification
-
-        multi_agent = MultiAgent.get_instance()
-        agent_task = multi_agent.start_agent(message, config=config)
-        await multi_agent.wait(agent_task.id, timeout=300)
-        if agent_task.result:
-            await info(f"[{task_name}] {agent_task.result}")
-            await push_notification(f"{task_name} 执行完成", title="定时任务")
 
     async def _execute_task(
         self, task_id: str, task: Task, config: AppConfig | None = None
