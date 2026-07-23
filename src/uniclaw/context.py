@@ -129,26 +129,41 @@ def get_platform_hints() -> str:
     import platform as _plat
 
     if _plat.system() == "Windows":
-        from uniclaw.tools.shell import _GIT_BASH_PATH
+        from uniclaw.tools.shell import GIT_BASH_PATH
 
-        if _GIT_BASH_PATH:
-            from uniclaw.tools.shell import Bash
-
+        if GIT_BASH_PATH:
             return (
                 "\n## Windows Shell 提示\n"
-                "你在 Windows 上,可以直接使用 bash 命令(ls、cat、grep、find、管道等)。\n"
-                "注意:bash 环境中的路径分隔符为 `/`,Windows 路径如 `C:\\Users` 在 bash 中写作 `/c/Users`。\n"
-                "也可以混用 Windows 命令(如 `where`、`dir`),bash 环境下两者皆可执行。\n"
-                f"对于非 {Bash.name} 工具(如 monitor_start、文件操作工具等),必须使用正常 Windows 路径格式(如 `C:\\Users\\name`)。\n"
+                "你在 Windows 上,有以下 shell 可用:\n"
+                '- **Git Bash**: 使用 `bash -c "命令"` 调用,支持 ls、cat、grep、find、管道等 Unix 命令\n'
+                '- **PowerShell**: 使用 `powershell -c "命令"` 调用\n'
+                "- **cmd.exe**: 直接写命令即可(默认)\n"
+                "\n"
+                "选择建议:\n"
+                "- 需要 Unix 工具(ls、cat、grep、find、管道) → 使用 Git Bash\n"
+                "- 需要 Windows 原生功能(注册表、WMI、COM 对象) → 使用 PowerShell\n"
+                "- 简单 Windows 命令(dir、del、copy) → 直接写命令\n"
+                "\n"
+                "注意:\n"
+                '- bash 中路径用 `/`,Windows 路径如 `C:\\Users` 写作 `/c/Users`\n'
+                '- bash 中 `nul` 不是设备名,要用 `/dev/null` 代替(如 `command > /dev/null 2>&1`)\n'
+                "- 文件操作工具(Read/Write/Edit/Glob 等)使用 Windows 路径格式(如 `C:\\Users\\name`)\n"
             )
         return (
             "\n## Windows Shell 提示\n"
-            "你在 Windows 上,请使用 Windows 命令:\n"
+            "你在 Windows 上,有以下 shell 可用:\n"
+            "- **PowerShell**: 在命令前加 `powershell -c` 使用(如 `powershell -c \"Get-Process\"`)\n"
+            "- **cmd.exe**: 直接写命令即可(默认),支持 dir、type、copy 等 Windows 命令\n"
+            "\n"
+            "选择建议:\n"
+            "- 需要高级功能(管道、对象操作、注册表、WMI) → 使用 `powershell -c \"...\"`\n"
+            "- 简单 Windows 命令(dir、del、copy) → 直接写命令\n"
+            "\n"
             "- 使用 `type file.txt` 而不是 `cat file.txt`\n"
             '- 使用 `type file.txt | findstr /n /i "pattern"` 而不是 `grep`\n'
-            '- 使用 `powershell -Command "Get-Content file.txt -Tail 20"` 而不是 `tail -n 20`\n'
-            '- 使用 `powershell -Command "Get-Content file.txt -Head 20"` 而不是 `head -n 20`\n'
-            "- 使用 `dir /s /b *.py` 或 `powershell -Command \"Get-ChildItem -Recurse -Filter *.py\"` 而不是 `find . -name '*.py'`\n"
+            '- 使用 `powershell -c "Get-Content file.txt -Tail 20"` 而不是 `tail -n 20`\n'
+            '- 使用 `powershell -c "Get-Content file.txt -Head 20"` 而不是 `head -n 20`\n'
+            "- 使用 `dir /s /b *.py` 或 `powershell -c \"Get-ChildItem -Recurse -Filter *.py\"` 而不是 `find . -name '*.py'`\n"
             "- 使用 `del file.txt` 而不是 `rm file.txt`\n"
             "- `mkdir folder` 在两者上都可用(不需要 -p)\n"
             "- 使用 `copy` / `move` 而不是 `cp` / `mv`\n"

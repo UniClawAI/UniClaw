@@ -14,12 +14,13 @@ from uniclaw.config import AppConfig
 # 标准错误输出标记前缀,用于标识错误信息
 STDERR_MARKER = "[stderr]"
 
+
 # 匹配 bash 中误用 Windows nul 设备名的重定向: >nul, 2>nul, >>nul, <nul 等
 # 在 bash 中 nul 只是普通文件名,需要替换为 /dev/null
 _RE_BASH_NUL = re.compile(r"(\d?>+|<)\s*nul\b", re.IGNORECASE)
 
 
-def _fix_bash_nul_redirect(cmd: str) -> str:
+def fix_bash_nul_redirect(cmd: str) -> str:
     """将 bash 命令中误用的 >nul / 2>nul 替换为 >/dev/null。"""
     return _RE_BASH_NUL.sub(r"\1/dev/null", cmd)
 
@@ -52,61 +53,59 @@ def smart_decode(data: bytes) -> str:
     return data.decode("utf-8", errors="replace")
 
 
-async def _find_git_bash() -> str | None:
-    """在 Windows 上查找 Git 自带的 bash.exe,返回路径或 None"""
+def _find_git_bash() -> str | None:
+    """查找 Git Bash,如果找到则将其 bin 目录加入 PATH,返回 bash 路径或 None"""
     if sys.platform != "win32":
         return None
 
-    # 常见安装路径
+    # 优先查找常见 Git 安装路径
     candidates = [
+        os.path.join(os.environ.get("PROGRAMFILES", r"C:\Program Files"), "Git"),
         os.path.join(
-            os.environ.get("PROGRAMFILES", r"C:\Program Files"),
-            "Git",
-            "bin",
-            "bash.exe",
+            os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)"), "Git"
         ),
-        os.path.join(
-            os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)"),
-            "Git",
-            "bin",
-            "bash.exe",
-        ),
-        os.path.join(
-            os.environ.get("LOCALAPPDATA", ""), "Programs", "Git", "bin", "bash.exe"
-        ),
+        os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "Git"),
     ]
 
-    # 从 PATH 中的 git 推断
-    proc = await asyncio.create_subprocess_exec(
-        "where", "git",
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
-    if proc.returncode == 0:
-        for line in stdout.decode("utf-8", errors="replace").strip().splitlines():
-            git_exe = line.strip()
-            if git_exe:
-                git_dir = os.path.dirname(os.path.dirname(git_exe))
-                bash_candidate = os.path.join(git_dir, "bin", "bash.exe")
-                candidates.insert(0, bash_candidate)
+    for git_dir in candidates:
+        bash_path = os.path.join(git_dir, "bin", "bash.exe")
+        if os.path.isfile(bash_path):
+            # 把 Git 的 bin 加入当前进程的 PATH
+            bin_dir = os.path.join(git_dir, "bin")
+            current_path = os.environ.get("PATH", "")
+            os.environ["PATH"] = f"{bin_dir};{current_path}"
+            return bash_path
 
-    for p in candidates:
-        if p and os.path.isfile(p):
-            return p
+    # 最后检查 PATH 中是否已有 bash
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["where", "bash"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip().splitlines()[0]
+    except Exception:
+        pass
+
     return None
 
 
-# 懒加载:Bash 工具首次调用时才检测
-_GIT_BASH_PATH: str | None = None
-_GIT_BASH_DETECTED = False
+GIT_BASH_PATH: str | None = _find_git_bash()
 
 
 async def _kill_proc_tree(pid: int) -> None:
     """Kill a process and all its children."""
     if sys.platform == "win32":
         proc = await asyncio.create_subprocess_exec(
-            "taskkill", "/F", "/T", "/PID", str(pid),
+            "taskkill",
+            "/F",
+            "/T",
+            "/PID",
+            str(pid),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -129,8 +128,8 @@ async def Bash(command: str, timeout: int = 30, config: AppConfig = None) -> str
     执行 shell 命令并返回输出结果。
 
     该函数通过 asyncio.subprocess 执行指定的 shell 命令,不阻塞事件循环。
-    在 Windows 上优先使用 Git bash,未找到时回退到 cmd.exe。
-    在 Unix/Linux/macOS 上使用 /bin/sh。
+    Windows 上默认使用 cmd.exe,可用 `bash -c "命令"` 调用 Git Bash,用 `powershell -c "命令"` 调用 PowerShell。
+    Unix/Linux/macOS 上使用 /bin/sh。
     如果命令执行超时,会自动终止进程及其子进程树。
 
     注意:某些命令可能触发分页器(如 git log、man),导致阻塞等待用户交互。建议添加禁用分页参数:
@@ -166,41 +165,37 @@ async def Bash(command: str, timeout: int = 30, config: AppConfig = None) -> str
         stdout_flag = asyncio.subprocess.PIPE
         stderr_flag = asyncio.subprocess.PIPE
     else:
-        stdout_flag = asyncio.subprocess.PIPE if timeout > 0 else asyncio.subprocess.DEVNULL
-        stderr_flag = asyncio.subprocess.PIPE if timeout > 0 else asyncio.subprocess.DEVNULL
-
-    # 懒加载:首次调用时检测 git bash
-    global _GIT_BASH_PATH, _GIT_BASH_DETECTED
-    if not _GIT_BASH_DETECTED:
-        _GIT_BASH_PATH = await _find_git_bash()
-        _GIT_BASH_DETECTED = True
+        stdout_flag = (
+            asyncio.subprocess.PIPE if timeout > 0 else asyncio.subprocess.DEVNULL
+        )
+        stderr_flag = (
+            asyncio.subprocess.PIPE if timeout > 0 else asyncio.subprocess.DEVNULL
+        )
 
     # Windows 上 asyncio.subprocess.DEVNULL 可能无法正确打开 nul 设备
     # 在 Windows 上始终使用 PIPE 作为 stdin 来避免这个问题
-    stdin_flag = asyncio.subprocess.PIPE if sys.platform == "win32" else asyncio.subprocess.DEVNULL
+    stdin_flag = (
+        asyncio.subprocess.PIPE
+        if sys.platform == "win32"
+        else asyncio.subprocess.DEVNULL
+    )
 
     # 根据平台准备命令参数
-    if _GIT_BASH_PATH:
-        # bash 中 nul 不是设备名,自动替换为 /dev/null 防止创建误名文件
-        command = _fix_bash_nul_redirect(command)
-        proc = await asyncio.create_subprocess_exec(
-            _GIT_BASH_PATH, "-c", command.strip(),
-            stdin=stdin_flag,
-            stdout=stdout_flag, stderr=stderr_flag,
-            cwd=root_dir,
-        )
-    elif sys.platform != "win32":
+    if sys.platform != "win32":
         proc = await asyncio.create_subprocess_shell(
             command.strip(),
             stdin=asyncio.subprocess.DEVNULL,
-            stdout=stdout_flag, stderr=stderr_flag,
-            cwd=root_dir, start_new_session=True,
+            stdout=stdout_flag,
+            stderr=stderr_flag,
+            cwd=root_dir,
+            start_new_session=True,
         )
     else:
         proc = await asyncio.create_subprocess_shell(
             command.strip(),
             stdin=stdin_flag,
-            stdout=stdout_flag, stderr=stderr_flag,
+            stdout=stdout_flag,
+            stderr=stderr_flag,
             cwd=root_dir,
         )
 
@@ -238,13 +233,9 @@ async def Bash(command: str, timeout: int = 30, config: AppConfig = None) -> str
         """等待进程完成,同时逐行推送输出。"""
         read_tasks = []
         if proc.stdout:
-            read_tasks.append(
-                asyncio.create_task(_read_stream(proc.stdout, "stdout"))
-            )
+            read_tasks.append(asyncio.create_task(_read_stream(proc.stdout, "stdout")))
         if proc.stderr:
-            read_tasks.append(
-                asyncio.create_task(_read_stream(proc.stderr, "stderr"))
-            )
+            read_tasks.append(asyncio.create_task(_read_stream(proc.stderr, "stderr")))
 
         try:
             while proc.returncode is None:
@@ -279,7 +270,9 @@ async def Bash(command: str, timeout: int = 30, config: AppConfig = None) -> str
 
         if status == "cancelled":
             elapsed_time = time.monotonic() - start_time
-            cancel_msg = f"{TOOL_ERROR}: 用户中断(进程已终止,用时 {elapsed_time:.1f} 秒)"
+            cancel_msg = (
+                f"{TOOL_ERROR}: 用户中断(进程已终止,用时 {elapsed_time:.1f} 秒)"
+            )
             return (out.strip() + "\n" + cancel_msg).strip()
 
         return out.strip() or "(没有输出)"
@@ -307,7 +300,8 @@ async def Bash(command: str, timeout: int = 30, config: AppConfig = None) -> str
 async def _has_rg() -> bool:
     try:
         proc = await asyncio.create_subprocess_exec(
-            "rg", "--version",
+            "rg",
+            "--version",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -323,7 +317,8 @@ async def _has_native_grep() -> bool:
         return True
     try:
         proc = await asyncio.create_subprocess_exec(
-            "grep", "--version",
+            "grep",
+            "--version",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -486,7 +481,8 @@ async def Grep(
             stderr=asyncio.subprocess.PIPE,
         )
         stdout_bytes, stderr_bytes = await asyncio.wait_for(
-            proc.communicate(), timeout=30,
+            proc.communicate(),
+            timeout=30,
         )
         stdout = smart_decode(stdout_bytes)
         out = stdout.strip()
@@ -501,7 +497,8 @@ async def _check_es() -> str | None:
     """检查 Everything (es.exe) 是否可用,返回错误信息或 None"""
     try:
         proc = await asyncio.create_subprocess_exec(
-            "es", "test_sandbox_check",
+            "es",
+            "test_sandbox_check",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -600,7 +597,10 @@ _tools_cache_ttl = 60 * 30
 async def get_tools(config=None) -> list:
     """获取Shell工具列表(带缓存,避免重复检测依赖)"""
     now = time.monotonic()
-    if _tools_cache["result"] is not None and now - _tools_cache["time"] < _tools_cache_ttl:
+    if (
+        _tools_cache["result"] is not None
+        and now - _tools_cache["time"] < _tools_cache_ttl
+    ):
         return _tools_cache["result"]
 
     from uniclaw.console.ui import warn
