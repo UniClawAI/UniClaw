@@ -135,10 +135,6 @@ const WS = {
         if (dot) {
             dot.className = `connection-dot ${connected ? 'connected' : 'disconnected'}`;
         }
-        const model = document.getElementById('status-model');
-        if (model) {
-            model.textContent = connected ? '已连接' : '未连接';
-        }
     },
 
     /** 自动重连 */
