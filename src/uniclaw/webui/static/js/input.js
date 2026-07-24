@@ -214,6 +214,7 @@ const Input = {
         const sendBtn = document.getElementById('send-btn');
         const attachBtn = document.getElementById('attach-btn');
         const fileInput = document.getElementById('file-input');
+        const optimizeBtn = document.getElementById('optimize-btn');
 
         sendBtn.onclick = () => this.send();
         input.addEventListener('keydown', e => {
@@ -240,6 +241,7 @@ const Input = {
         fileInput.onchange = e => this._onFilesSelected(e.target.files);
         const micBtn = document.getElementById('mic-btn');
         if (micBtn) micBtn.onclick = () => this.toggleMic();
+        if (optimizeBtn) optimizeBtn.onclick = () => this.optimizePrompt();
         this._setupDragDrop();
 
         // 注册免提语音 WebSocket 事件
@@ -871,6 +873,64 @@ const Input = {
     },
 
     removeFile(i) { this.attachedFiles.splice(i, 1); this._updateFilePreview(); },
+
+    /** 优化输入框中的提示词 */
+    async optimizePrompt() {
+        const input = document.getElementById('chat-input');
+        const optimizeBtn = document.getElementById('optimize-btn');
+        const text = input.value.trim();
+
+        if (!text) {
+            Utils.showToast('请先输入需要优化的内容');
+            return;
+        }
+
+        const sid = SessionPanel.activeSessionId;
+        if (!sid) {
+            Utils.showToast('请先选择或创建一个会话');
+            return;
+        }
+
+        let optimizing = false;
+        if (optimizing) return;
+        optimizing = true;
+        optimizeBtn.textContent = '⏳';
+        optimizeBtn.disabled = true;
+        optimizeBtn.style.opacity = '1';
+
+        try {
+            const resp = await fetch('/api/optimize-user-prompt', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    prompt: text,
+                    session_id: sid,
+                }),
+            });
+
+            if (resp.ok) {
+                const data = await resp.json();
+                if (data.optimized) {
+                    input.value = data.optimized;
+                    input.style.height = 'auto';
+                    input.style.height = Math.min(input.scrollHeight, 150) + 'px';
+                    input.focus();
+                    Utils.showToast('提示词已优化');
+                }
+            } else {
+                const err = await resp.json().catch(() => ({ detail: '优化失败' }));
+                Utils.showToast('优化失败: ' + (err.detail || resp.statusText));
+            }
+        } catch (e) {
+            console.error('优化失败:', e);
+            Utils.showToast('优化失败: ' + e.message);
+        } finally {
+            optimizing = false;
+            optimizeBtn.textContent = '✨';
+            optimizeBtn.disabled = false;
+            optimizeBtn.style.opacity = '0.5';
+        }
+    },
 
     _historyNav(delta) {
         const input = document.getElementById('chat-input');

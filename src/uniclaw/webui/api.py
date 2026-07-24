@@ -25,6 +25,7 @@ from uniclaw.webui.models import (
     SessionRename,
     SettingsUpdate,
     SubAgentCreate,
+    UserPromptOptimize,
     WechatBotCreate,
 )
 from uniclaw.webui.ws import get_or_load_session, session_cache
@@ -381,6 +382,54 @@ async def optimize_prompt(body: PromptOptimize):
             config=config,
         )
         return {"optimized": resp.content.strip()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/optimize-user-prompt")
+async def optimize_user_prompt(body: UserPromptOptimize):
+    """优化用户输入的提示词(带会话上下文)。"""
+    if not body.prompt.strip():
+        return {"optimized": ""}
+
+    try:
+        # 获取会话配置和历史消息
+        config = await get_or_load_session(body.session_id)
+        session = config.current_agent.session
+
+        # 使用 to_str() 获取会话上下文
+        context_summary = session.to_str(include_tools=False)
+
+        # 构建优化提示词
+        system_prompt = (
+            "你是一个提示词优化专家。用户会给你一段用户输入的提示词,请根据会话上下文优化它,使其更清晰、更具体、更有效。"
+            "保持用户的原始意图不变,只改进表达。如果会话上下文有助于理解用户意图,请参考上下文进行优化。"
+            "直接输出优化后的提示词,不要解释。"
+        )
+
+        # 构建用户消息
+        user_message = body.prompt
+        if context_summary:
+            user_message = f"会话上下文:\n{context_summary}\n\n用户提示词:\n{body.prompt}"
+
+        from uniclaw.tools.session.session import Session, SessionType
+        from uniclaw.provider.fallback import achat
+
+        # 创建临时会话用于优化
+        optimize_session = Session()
+        optimize_session.add_user_message(user_message)
+
+        resp = await achat(
+            system_prompt,
+            optimize_session,
+            model_name=config.mini_model_name,
+            enable_thinking=False,
+            thinking=False,
+            config=config,
+        )
+        return {"optimized": resp.content.strip()}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

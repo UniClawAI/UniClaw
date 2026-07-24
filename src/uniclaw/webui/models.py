@@ -235,6 +235,13 @@ class PromptOptimize(BaseModel):
     type: str = "system"  # "system" | "user"
 
 
+class UserPromptOptimize(BaseModel):
+    """优化用户输入的提示词(带会话上下文)。"""
+
+    prompt: str
+    session_id: str
+
+
 class ProviderConfig(BaseModel):
     """单个 Provider 配置。"""
 
