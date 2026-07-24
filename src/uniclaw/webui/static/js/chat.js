@@ -456,7 +456,7 @@ const Chat = {
         const statusClass = success === false ? 'error' : success === null ? 'running' : 'done';
         const statusText = success === false ? '失败' : success === null ? '执行中' : '完成';
         const argPreview = Utils.formatArgs(args, 60);
-        const resultPreview = content ? Utils.truncate(content.split('\n')[0], 60) : '';
+        const resultPreview = content ? content.split('\n')[0] : '';
 
         let headerHtml = `<span class="tool-icon">${icon('tool')}</span>`;
         headerHtml += `<span class="tool-text">`;
@@ -1017,7 +1017,7 @@ const Chat = {
                 const toolText = toolBlock.querySelector('.tool-header .tool-text');
                 if (toolText && msg.content) {
                     let preview = toolText.querySelector('.tool-result-preview');
-                    const resultPreview = Utils.truncate(msg.content.split('\n')[0], 60);
+                    const resultPreview = msg.content.split('\n')[0];
                     if (resultPreview) {
                         if (!preview) { preview = document.createElement('span'); preview.className = 'tool-result-preview'; toolText.appendChild(preview); }
                         preview.textContent = `→ ${resultPreview}`;
@@ -1052,7 +1052,7 @@ const Chat = {
             const toolText = header.querySelector('.tool-text');
             if (toolText && msg.content) {
                 let preview = toolText.querySelector('.tool-result-preview');
-                const resultPreview = Utils.truncate(msg.content.split('\n')[0], 60);
+                const resultPreview = msg.content.split('\n')[0];
                 if (resultPreview) {
                     if (!preview) { preview = document.createElement('span'); preview.className = 'tool-result-preview'; toolText.appendChild(preview); }
                     preview.textContent = `→ ${resultPreview}`;

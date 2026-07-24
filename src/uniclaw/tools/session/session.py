@@ -660,6 +660,7 @@ class Session:
                         "name": message.get("name", ""),
                         "tool_call_id": message.get("tool_call_id", ""),
                         "args": message.get("args", {}),
+                        "explain": message.get("explain", ""),
                     },
                 )
 
