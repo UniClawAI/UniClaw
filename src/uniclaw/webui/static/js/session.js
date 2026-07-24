@@ -337,20 +337,15 @@ const SessionPanel = {
             }
         }
         await this._refreshSessions();
-        // 恢复上次选中的 session：URL 参数优先,localStorage 兜底
+        // 恢复 URL 中指定的 session；无参数则显示欢迎页面
         const urlSid = new URLSearchParams(window.location.search).get('session_id');
-        const savedSid = urlSid || localStorage.getItem('uniclaw_active_session');
-        if (savedSid) {
-            const found = this._findSession(savedSid);
+        if (urlSid) {
+            const found = this._findSession(urlSid);
             if (found) {
-                this.selectSession(savedSid, found.rootDir);
-            } else if (urlSid) {
-                // URL 中的 session_id 无效,清除参数并显示主页
-                this._clearSessionFromUrl();
-                localStorage.removeItem('uniclaw_active_session');
+                this.selectSession(urlSid, found.rootDir);
             } else {
-                // localStorage 中的 session 无效,清除
-                localStorage.removeItem('uniclaw_active_session');
+                // URL 中的 session_id 无效,清除参数并显示欢迎页面
+                this._clearSessionFromUrl();
             }
         }
     },
@@ -369,7 +364,6 @@ const SessionPanel = {
         const url = new URL(window.location);
         url.searchParams.set('session_id', sessionId);
         history.replaceState(null, '', url);
-        localStorage.setItem('uniclaw_active_session', sessionId);
     },
 
     /** 从 URL 中移除 session_id 参数 */
@@ -377,7 +371,6 @@ const SessionPanel = {
         const url = new URL(window.location);
         url.searchParams.delete('session_id');
         history.replaceState(null, '', url);
-        localStorage.removeItem('uniclaw_active_session');
     },
 
     async _refreshSessions() {
@@ -413,7 +406,7 @@ const SessionPanel = {
 
             // 第二步：找到当前活动会话所在的项目(此时 sessions 已更新)
             const urlSid = new URLSearchParams(window.location.search).get('session_id');
-            const activeSid = this.activeSessionId || urlSid || localStorage.getItem('uniclaw_active_session');
+            const activeSid = this.activeSessionId || urlSid;
             const activeSessionProject = activeSid ? this._findSession(activeSid)?.rootDir : null;
 
             // 第三步：会话数超过 50 的项目,根据当前活动会话判断是否折叠
