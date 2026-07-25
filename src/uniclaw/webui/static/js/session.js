@@ -28,7 +28,6 @@ const SessionPanel = {
     },
 
     _bindEvents() {
-        document.getElementById('new-project-btn').onclick = () => this._showNewProjectDialog();
         document.getElementById('search-input').oninput = Utils.debounce(e => this._onSearch(e.target.value), 300);
         // 触摸设备: 点击空白区域关闭 tooltip
         document.addEventListener('touchstart', e => {

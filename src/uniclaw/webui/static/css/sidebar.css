@@ -269,31 +269,6 @@
     }
 }
 
-/* ---- 新建项目按钮 ---- */
-.new-project-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    width: 100%;
-    padding: 8px;
-    background: var(--accent-subtle);
-    border: 1px dashed var(--border);
-    border-radius: var(--r-sm);
-    color: var(--text-accent);
-    font-size: var(--text-sm);
-    cursor: pointer;
-    transition: all var(--duration-fast) var(--ease);
-}
-.new-project-btn:hover {
-    background: var(--accent-dim);
-    border-color: var(--accent);
-    border-style: solid;
-}
-.new-project-btn svg {
-    width: 14px;
-    height: 14px;
-}
 
 /* ---- 会话/项目 Tooltip ---- */
 #session-tooltip {
