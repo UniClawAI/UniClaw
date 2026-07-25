@@ -382,7 +382,7 @@ async def run_hooks(
             continue
         try:
             scope_results = await _run_entries(
-                event, entries, hook_input, input_text, root_dir, scope
+                event, entries, hook_input, input_text, str(root_dir) if root_dir else None, scope
             )
             results.extend(scope_results)
         except HookError:
