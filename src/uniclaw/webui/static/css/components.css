@@ -789,6 +789,10 @@ textarea.input {
     display: block;
 }
 
+.tree-category.expanded .wechat-bot-list {
+    display: block;
+}
+
 .wechat-bot-list {
     display: none;
 }

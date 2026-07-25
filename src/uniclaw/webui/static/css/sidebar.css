@@ -205,11 +205,68 @@
     font-size: var(--text-sm);
 }
 
-/* ---- 自由聊天分组 ---- */
-.free-chat-group {
-    border-top: 1px dashed var(--border);
-    margin-top: 4px;
-    padding-top: 4px;
+/* ---- 顶级分类节点 ---- */
+.tree-category {
+    margin-bottom: 4px;
+}
+.tree-category-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 14px;
+    cursor: pointer;
+    user-select: none;
+    transition: background var(--duration-fast) var(--ease);
+}
+.tree-category-header:hover {
+    background: var(--bg-3);
+}
+.tree-category-chevron {
+    width: 14px;
+    height: 14px;
+    color: var(--text-3);
+    transition: transform var(--duration-fast) var(--ease);
+    flex-shrink: 0;
+}
+.tree-category.expanded .tree-category-chevron {
+    transform: rotate(90deg);
+}
+.tree-category-icon {
+    font-size: 14px;
+    flex-shrink: 0;
+}
+.tree-category-title {
+    flex: 1;
+    font-size: var(--text-sm);
+    font-weight: 700;
+    color: var(--text-0);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.tree-category-count {
+    font-size: 10px;
+    color: var(--text-3);
+    background: var(--bg-4);
+    padding: 1px 6px;
+    border-radius: var(--r-full);
+}
+.tree-category-content {
+    display: none;
+    padding-left: 12px;
+}
+.tree-category.expanded .tree-category-content {
+    display: block;
+}
+
+/* ---- 响应式: 手机 (≤768px) ---- */
+@media (max-width: 768px) {
+    .tree-category-header {
+        padding: 8px 12px;
+    }
+    .tree-category-content {
+        padding-left: 8px;
+    }
 }
 
 /* ---- 新建项目按钮 ---- */

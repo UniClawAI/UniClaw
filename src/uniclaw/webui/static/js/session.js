@@ -8,7 +8,7 @@ const SessionPanel = {
     attentionSessions: new Set(),
     _contextTimer: null,
     wechatBots: [],
-    wechatExpanded: false,
+    categoryExpanded: { projects: true, sessions: true, wechat: true },
 
     init() {
         this._bindEvents();
@@ -55,18 +55,7 @@ const SessionPanel = {
     },
 
     _renderWechatSection() {
-        const isExp = this.wechatExpanded;
-        let html = '';
-        html += `<div class="wechat-section ${isExp ? 'expanded' : ''}">`;
-        html += `<div class="wechat-section-header" onclick="SessionPanel.toggleWechat()">`;
-        html += `<span class="wechat-chevron">${icon('chevronRight')}</span>`;
-        html += '<span class="wechat-icon">💬</span>';
-        html += '<span class="wechat-title">微信会话</span>';
-        html += `<span class="project-count">${this.wechatBots.length}</span>`;
-        html += `<button class="btn-icon compact" onclick="event.stopPropagation(); SessionPanel.showCreateWechatDialog()" title="创建微信会话">${icon('plus')}</button>`;
-        html += '</div>';
-        html += '<div class="wechat-bot-list">';
-
+        let html = '<div class="wechat-bot-list">';
         this.wechatBots.forEach(bot => {
             const statusClass = bot.is_logged_in ? 'online' : 'offline';
             const statusText = bot.is_logged_in ? '在线' : '离线';
@@ -80,13 +69,13 @@ const SessionPanel = {
             html += `<button class="btn-icon compact" onclick="event.stopPropagation(); SessionPanel._deleteWechatBot('${this._esc(bot.name)}')" title="删除">${icon('trash')}</button>`;
             html += '</div>';
         });
-
-        html += '</div></div>';
+        html += '</div>';
         return html;
     },
 
-    toggleWechat() {
-        this.wechatExpanded = !this.wechatExpanded;
+    toggleCategory(category) {
+        this.categoryExpanded[category] = !this.categoryExpanded[category];
+        this._saveProjects();
         this._render();
     },
 
@@ -336,6 +325,14 @@ const SessionPanel = {
                 });
             }
         }
+        // 恢复顶级分类展开状态
+        const catSaved = localStorage.getItem('uniclaw_category_expanded');
+        if (catSaved) {
+            try {
+                const catData = JSON.parse(catSaved);
+                Object.assign(this.categoryExpanded, catData);
+            } catch {}
+        }
         await this._refreshSessions();
         // 恢复 URL 中指定的 session；无参数则显示欢迎页面
         const urlSid = new URLSearchParams(window.location.search).get('session_id');
@@ -429,22 +426,40 @@ const SessionPanel = {
             return tb.localeCompare(ta);
         });
 
-        let html = '';
-
-        // 微信会话区域
-        html += this._renderWechatSection();
-
         // 普通项目(排除自由聊天)
         const normalProjects = sorted.filter(([dir]) => dir !== '__free__');
+        let projectsHtml = '';
         normalProjects.forEach(([rootDir, proj]) => {
-            html += this._renderProjectGroup(rootDir, proj);
+            projectsHtml += this._renderProjectGroup(rootDir, proj);
         });
 
-        // 自由聊天 — 永远显示在底部
+        // 自由聊天
         const freeProj = this.projects['__free__'] || { sessions: [], expanded: true };
-        html += this._renderFreeChatGroup(freeProj);
+        const freeChatHtml = this._renderFreeChatGroup(freeProj);
 
-        if (!normalProjects.length && !this.wechatBots.length && !freeProj.sessions.length) html += '<div class="no-results">暂无会话</div>';
+        // 微信会话
+        const wechatHtml = this._renderWechatSection();
+
+        // 计算各分类的计数
+        const projectCount = normalProjects.length;
+        const sessionCount = freeProj.sessions.length;
+        const wechatCount = this.wechatBots.length;
+
+        let html = '';
+
+        // 顶级分类: 项目
+        const projectAction = `<button class="btn-icon compact" onclick="event.stopPropagation(); SessionPanel._showNewProjectDialog()" title="新建项目">${icon('plus')}</button>`;
+        html += this._renderTopCategory('projects', '📁', '项目', projectCount, projectsHtml, projectAction);
+
+        // 顶级分类: 会话
+        const sessionAction = `<button class="btn-icon compact" onclick="event.stopPropagation(); SessionPanel.createFreeChat()" title="新建自由聊天">${icon('plus')}</button>`;
+        html += this._renderTopCategory('sessions', '💬', '会话', sessionCount, freeChatHtml, sessionAction);
+
+        // 顶级分类: wechat
+        const wechatAction = `<button class="btn-icon compact" onclick="event.stopPropagation(); SessionPanel.showCreateWechatDialog()" title="创建微信会话">${icon('plus')}</button>`;
+        html += this._renderTopCategory('wechat', '📱', 'wechat', wechatCount, wechatHtml, wechatAction);
+
+        if (!projectCount && !wechatCount && !sessionCount) html += '<div class="no-results">暂无会话</div>';
         tree.innerHTML = html;
     },
 
@@ -469,19 +484,21 @@ const SessionPanel = {
     },
 
     _renderFreeChatGroup(proj) {
-        const isExp = proj.expanded;
-        const runCount = proj.sessions.filter(s => this.runningSessions.has(s.session_id)).length;
-        let h = `<div class="project-group free-chat-group ${isExp ? 'expanded' : ''}" data-dir="__free__">`;
-        h += `<div class="project-header" onclick="SessionPanel.toggleProject('__free__')">`;
-        h += `<span class="project-chevron">${icon('chevronRight')}</span>`;
-        h += `<span class="project-icon">💬</span>`;
-        h += `<span class="project-name">会话</span>`;
-        h += `<span class="project-count">${proj.sessions.length}</span>`;
-        if (runCount) h += '<span class="running-indicator"></span>';
-        h += `<button class="btn-icon compact" onclick="event.stopPropagation(); SessionPanel.createFreeChat()" title="新建自由聊天">${icon('plus')}</button>`;
-        h += `</div><div class="project-sessions">`;
-        h += this._renderSessionItems(proj.sessions, '__free__');
-        h += `</div></div>`;
+        return this._renderSessionItems(proj.sessions, '__free__');
+    },
+
+    _renderTopCategory(category, emoji, title, count, innerHtml, actionHtml) {
+        const isExp = this.categoryExpanded[category];
+        let h = `<div class="tree-category ${isExp ? 'expanded' : ''}" data-category="${category}">`;
+        h += `<div class="tree-category-header" onclick="SessionPanel.toggleCategory('${category}')">`;
+        h += `<span class="tree-category-chevron">${icon('chevronRight')}</span>`;
+        h += `<span class="tree-category-icon">${emoji}</span>`;
+        h += `<span class="tree-category-title">${title}</span>`;
+        h += `<span class="tree-category-count">${count}</span>`;
+        if (actionHtml) h += actionHtml;
+        h += `</div>`;
+        h += `<div class="tree-category-content">${innerHtml}</div>`;
+        h += `</div>`;
         return h;
     },
 
@@ -930,6 +947,7 @@ const SessionPanel = {
             data[dir] = { expanded: proj.expanded, created_at: proj.created_at || null };
         });
         localStorage.setItem('uniclaw_projects', JSON.stringify(data));
+        localStorage.setItem('uniclaw_category_expanded', JSON.stringify(this.categoryExpanded));
     },
     _esc(s) { return s.replace(/\\/g, '\\\\').replace(/'/g, "\\'"); },
     _now() { const d = new Date(); const pad = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`; },
