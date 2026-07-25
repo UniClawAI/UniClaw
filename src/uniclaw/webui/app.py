@@ -228,18 +228,32 @@ async def auth_register(req: _AuthRequest):
 
 
 @app.post("/api/auth/login")
-async def auth_login(req: _AuthRequest):
+async def auth_login(req: _AuthRequest, request: Request):
     """登录,返回 JWT。"""
+    client_ip = request.client.host if request.client else ""
+
+    # 检查 IP 限流
+    wait = auth.login_rate_limiter.check(client_ip)
+    if wait is not None:
+        return JSONResponse(
+            status_code=429,
+            content={"detail": f"登录失败次数过多,请等待 {wait} 秒后重试", "retry_after": wait},
+        )
+
     if not auth.user_exists():
         return JSONResponse(
             status_code=400,
             content={"detail": "账号不存在,请先创建"},
         )
     if not auth.verify_user(req.username, req.password):
+        # 记录失败
+        auth.login_rate_limiter.record_failure(client_ip)
         return JSONResponse(
             status_code=401,
             content={"detail": "用户名或密码错误"},
         )
+    # 登录成功,清除失败记录
+    auth.login_rate_limiter.record_success(client_ip)
     token = auth.create_token(req.username)
     resp = JSONResponse(content={"token": token, "username": req.username})
     resp.set_cookie(
