@@ -13,9 +13,9 @@ def main():
     parser = argparse.ArgumentParser(description="UniClaw - AI Agent")
     parser.add_argument(
         "--mode",
-        choices=["console", "wechat", "webui"],
+        choices=["console", "webui"],
         default="console",
-        help="启动模式: console(控制台, 默认), wechat(微信), webui(Web界面)",
+        help="启动模式: console(控制台, 默认), webui(Web界面)",
     )
     parser.add_argument(
         "--port",
@@ -71,9 +71,7 @@ def main():
     threading.Thread(target=_preload_openai, daemon=True).start()
     threading.Thread(target=_preload_mcp, daemon=True).start()
 
-    if args.mode == "wechat":
-        from uniclaw.wechat.launcher import launch
-    elif args.mode == "webui":
+    if args.mode == "webui":
         from uniclaw.webui.launcher import launch
     else:
         from uniclaw.console.launcher import launch
@@ -82,7 +80,7 @@ def main():
         ssl = not args.no_ssl  # 默认启用 SSL
         asyncio.run(launch(host=args.host, port=args.port, ssl=ssl, domain=args.domain))
     else:
-        # 首次启动引导(console 和 wechat 共用)
+        # 首次启动引导(console 模式)
         if is_first_launch():
             asyncio.run(run_setup_wizard())
         asyncio.run(launch())

@@ -144,16 +144,12 @@ uv run uniclaw --mode webui
 uv run uniclaw --mode webui --host 0.0.0.0  # 局域网可访问
 uv run uniclaw --mode webui --host 0.0.0.0 --ssl  # 启用 HTTPS
 
-# 使用 uv 运行(微信模式)
-uv run uniclaw --mode wechat
-
 # 或者直接运行入口文件
 uv run python src/uniclaw/main.py
 
 # 如果通过 uv tool install 安装,可直接运行
 uniclaw
 uniclaw --mode webui
-uniclaw --mode wechat
 ```
 
 **常用 uv 命令**
@@ -212,9 +208,10 @@ uv run uniclaw --mode webui --host 0.0.0.0 --ssl --domain uniclaw.example.com
 
 ### 启动微信机器人
 
+微信机器人功能已集成在 WebUI 模式中，启动 WebUI 后在侧边栏管理微信账号：
+
 ```
-# 启动微信模式
-uv run uniclaw --mode wechat
+uv run uniclaw --mode webui
 ```
 
 详细使用方法请参考 [微信机器人集成](#-微信机器人集成) 章节。
@@ -762,21 +759,15 @@ UniClaw 支持通过 iLink Bot 协议接入微信,让您可以通过微信与 AI
 
 ### 启动微信机器人
 
-```bash
-# 通过 --mode 参数启动微信模式
-uv run uniclaw --mode wechat
+微信机器人功能已集成在 WebUI 模式中。启动 WebUI 后，在侧边栏的微信区域管理账号：
 
-# 或使用安装后的命令
-uniclaw --mode wechat
+```bash
+uv run uniclaw --mode webui
 ```
 
 ### 基本操作
 
-启动后会进入微信机器人管理界面：
-
-```
-wechat> add mybot
-```
+在 WebUI 侧边栏中点击"添加微信账号"按钮，扫描二维码登录即可。
 
 **常用命令：**
 
@@ -1754,8 +1745,8 @@ A:
 ### Q: 如何使用微信机器人功能？
 
 A:
-1. **启动微信管理器**：运行 `uv run uniclaw --mode wechat`
-2. **添加账号**：使用 `add <名称>` 命令添加并登录微信账号
+1. **启动 WebUI**：运行 `uv run uniclaw --mode webui`
+2. **添加账号**：在侧边栏微信区域点击"添加微信账号"，扫描二维码登录
 3. **自动监听**：已登录的账号会自动启动消息监听
 4. **开始对话**：在微信中直接发送消息即可与 AI 交互
 

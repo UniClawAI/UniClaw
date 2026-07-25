@@ -33,7 +33,6 @@ class RunMode(StrEnum):
     """运行模式。"""
 
     CONSOLE = "console"
-    WECHAT = "wechat"
     WEBUI = "webui"
 
 

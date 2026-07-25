@@ -7,7 +7,7 @@ from uniclaw.console.ui import info, ok, err
 async def cmd_voice(args: str, config: AppConfig) -> bool:
     """切换语音模式。/voice [on|off]"""
 
-    if config.run_mode == RunMode.WECHAT:
+    if config.is_wechat:
         await err("微信模式不支持语音模式切换", config)
         return True
     if not config.tts_model or not config.audio:

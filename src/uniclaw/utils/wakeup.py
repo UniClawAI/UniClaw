@@ -82,7 +82,7 @@ def _needs_drain(config: AppConfig) -> bool:
         # TUI:仅当这不是活跃会话时需要消费
         return not _is_active_tui_session(config)
 
-    if config.run_mode == RunMode.WECHAT:
+    if config.is_wechat:
         # WeChat:如果 _collect_response 当前未运行则需要消费。
         # 该标志由 mark_draining() 设置 / _collect_response 退出时清除。
         return not getattr(task, "_wechat_draining", False)

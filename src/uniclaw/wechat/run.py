@@ -54,7 +54,7 @@ def _get_user_config(user_id: str) -> AppConfig:
             from uniclaw.tools.session.session import SessionType
             session.session_type = SessionType.WECHAT
 
-        config = load_config(session=session, run_mode=RunMode.WECHAT, session_type=SessionType.WECHAT)
+        config = load_config(session=session, run_mode=RunMode.WEBUI, session_type=SessionType.WECHAT)
         config.current_agent.name = f"wechat-{user_id}"
         config.current_agent.event_queue = asyncio.Queue()
         _user_configs[user_id] = config
