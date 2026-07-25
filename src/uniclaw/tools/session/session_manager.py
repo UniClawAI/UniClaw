@@ -22,12 +22,23 @@ class SessionManager:
         return cls._default_dir() / "metadata.json"
 
     @classmethod
+    def _resolve_path(cls, raw: str) -> Path:
+        """将 metadata 中的 file_path 解析为绝对路径。
+
+        兼容旧版绝对路径和新版相对路径 (相对于 sessions 目录).
+        """
+        p = Path(raw)
+        if p.is_absolute():
+            return p
+        return cls._default_dir() / p
+
+    @classmethod
     def load_session(cls, session_id: str) -> Session | None:
         """加载会话,返回 Session 对象。"""
         meta = cls._load_metadata().get(session_id)
         if not meta:
             return None
-        path = Path(meta.get("file_path", ""))
+        path = cls._resolve_path(meta.get("file_path", ""))
         if not path.exists():
             return None
         try:
@@ -73,7 +84,7 @@ class SessionManager:
             shutil.rmtree(root_dir, ignore_errors=True)
         if not meta:
             return False
-        path = Path(meta.get("file_path", ""))
+        path = cls._resolve_path(meta.get("file_path", ""))
         try:
             if path.exists():
                 path.unlink()
@@ -106,7 +117,7 @@ class SessionManager:
         meta = cls._load_metadata().get(session_id)
         if not meta:
             return False
-        path = Path(meta.get("file_path", ""))
+        path = cls._resolve_path(meta.get("file_path", ""))
         if not path.exists():
             return False
         try:
@@ -131,7 +142,7 @@ class SessionManager:
         if not meta:
             return False
         # 更新 session 文件中的 root_dir
-        path = Path(meta.get("file_path", ""))
+        path = cls._resolve_path(meta.get("file_path", ""))
         if path.exists():
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
@@ -163,7 +174,7 @@ class SessionManager:
         meta = cls._load_metadata().get(session_id)
         if not meta:
             return None
-        path = Path(meta.get("file_path", ""))
+        path = cls._resolve_path(meta.get("file_path", ""))
         if not path.exists():
             return None
         try:
@@ -212,7 +223,7 @@ class SessionManager:
         metadata = cls._load_metadata()
         existing_meta = metadata.get(task.id, None)
         if existing_meta:
-            file_path = Path(existing_meta["file_path"])
+            file_path = cls._resolve_path(existing_meta["file_path"])
         else:
             file_path = cls._default_dir() / f"{task.id}.json"
         file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -244,6 +255,12 @@ class SessionManager:
 
     @classmethod
     def _upsert_metadata(cls, data: dict, file_path: Path):
+        resolved = file_path.resolve()
+        try:
+            rel = str(resolved.relative_to(cls._default_dir().resolve()))
+        except ValueError:
+            # 不在 sessions 目录下的路径 (理论上不会发生), 降级为绝对路径
+            rel = str(resolved)
         metadata = cls._load_metadata()
         metadata[data["session_id"]] = {
             "session_id": data["session_id"],
@@ -253,6 +270,6 @@ class SessionManager:
             "message_count": data.get("message_count", 0),
             "root_dir": data.get("root_dir") or None,
             "session_type": data.get("session_type", SessionType.CONSOLE),
-            "file_path": str(file_path.resolve()),
+            "file_path": rel,
         }
         cls._save_metadata(metadata)
