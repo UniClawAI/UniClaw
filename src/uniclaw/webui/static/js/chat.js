@@ -137,7 +137,12 @@ const Chat = {
                 el.closest('.message').dataset.msgIdx = msgIdx;
                 const body = el.querySelector('.markdown-body');
                 if (msg.reasoning_content) this._appendThinkingBlock(el, msg.reasoning_content, true, body);
-                if (body && msg.content) { body.innerHTML = Utils.renderMarkdown(msg.content); Utils.addCopyButtons(body); }
+                if (body && msg.content) {
+                    body.innerHTML = Utils.renderMarkdown(msg.content);
+                    Utils.addCopyButtons(body);
+                    const btn = body.parentElement?.querySelector('.msg-copy-btn');
+                    if (btn && btn.style.display === 'none' && msg.content.trim()) btn.style.display = '';
+                }
                 if (msg.tool_calls?.length) {
                     msg.tool_calls.forEach(tc => {
                         const tcId = tc.id || '';
@@ -425,6 +430,24 @@ const Chat = {
         body.className = 'markdown-body';
         if (content) { body.innerHTML = Utils.renderMarkdown(content); Utils.addCopyButtons(body); }
         msgContent.appendChild(body);
+        // 消息整体复制按钮
+        const copyBtn = document.createElement('button');
+        copyBtn.className = 'msg-copy-btn';
+        copyBtn.innerHTML = icon('copy');
+        copyBtn.title = '复制';
+        if (!content || !content.trim()) copyBtn.style.display = 'none';
+        copyBtn.onclick = async () => {
+            const ok = await Utils.copyToClipboard(body.innerText);
+            if (ok) {
+                copyBtn.innerHTML = icon('check');
+                copyBtn.classList.add('copied');
+                setTimeout(() => {
+                    copyBtn.innerHTML = icon('copy');
+                    copyBtn.classList.remove('copied');
+                }, 1500);
+            }
+        };
+        msgContent.appendChild(copyBtn);
         el.innerHTML = `<div class="msg-avatar assistant">${icon('lobster')}</div><div class="msg-body"></div>`;
         el.querySelector('.msg-body').appendChild(msgContent);
         c.appendChild(el);
@@ -817,6 +840,8 @@ const Chat = {
         this.streamingContent += msg.content;
         this.streamingBody.innerHTML = Utils.renderMarkdown(this.streamingContent);
         Utils.addCopyButtons(this.streamingBody);
+        const btn = this.streamingBody.parentElement?.querySelector('.msg-copy-btn');
+        if (btn && btn.style.display === 'none' && this.streamingContent.trim()) btn.style.display = '';
         this._scrollToBottom();
     },
 
@@ -838,7 +863,12 @@ const Chat = {
             this.streamingBody = this.streamingEl.querySelector('.markdown-body');
             if (!this.streamingBody) { this.streamingBody = document.createElement('div'); this.streamingBody.className = 'markdown-body'; this.streamingEl.appendChild(this.streamingBody); }
         }
-        if (this.streamingBody && msg.content) { this.streamingBody.innerHTML = Utils.renderMarkdown(msg.content); Utils.addCopyButtons(this.streamingBody); }
+        if (this.streamingBody && msg.content) {
+            this.streamingBody.innerHTML = Utils.renderMarkdown(msg.content);
+            Utils.addCopyButtons(this.streamingBody);
+            const btn = this.streamingBody.parentElement?.querySelector('.msg-copy-btn');
+            if (btn && btn.style.display === 'none' && msg.content.trim()) btn.style.display = '';
+        }
         if (msg.tool_calls?.length && this.streamingEl) {
             msg.tool_calls.forEach(tc => {
                 const name = tc.function?.name || tc.name || 'tool';
