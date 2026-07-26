@@ -25,6 +25,8 @@ from uniclaw.agent import (
     UserEvent,
     SlashCommandEvent,
     ShellCommandEvent,
+    CheckpointStartEvent,
+    CheckpointEndEvent,
 )
 from uniclaw.commands import handle_slash
 from uniclaw.config import Permissions, RunMode, load_config, AppConfig
@@ -170,6 +172,12 @@ async def _collect_response(
             elif isinstance(event, ToolPreparingEvent):
                 label = _format_tool_call(event.name, event.args)
                 spinner_wait_id = spinner.start(f"准备调用 '{label}'...")
+            elif isinstance(event, CheckpointStartEvent):
+                spinner_wait_id = spinner.start("创建检查点...")
+            elif isinstance(event, CheckpointEndEvent):
+                if spinner_wait_id:
+                    spinner.stop(spinner_wait_id)
+                    spinner_wait_id = None
             elif isinstance(event, ToolStartEvent):
                 current_name = event.name
                 current_args = event.args

@@ -129,6 +129,16 @@ class ToolStreamEvent:
 
 
 @dataclass
+class CheckpointStartEvent:
+    """检查点创建开始事件,用于 UI 显示旋转器。"""
+
+
+@dataclass
+class CheckpointEndEvent:
+    """检查点创建结束事件,用于 UI 停止旋转器。"""
+
+
+@dataclass
 class EndEvent:
     depth: int
 
@@ -1137,9 +1147,11 @@ class MultiAgent:
             return
 
         # 自动创建 Git 检查点(使用用户消息的文本部分作为描述)
+        await self.send_event_to_user(CheckpointStartEvent(), config)
         await create_checkpoint(
             task.session.root_dir, message=extract_text(user_message)
         )
+        await self.send_event_to_user(CheckpointEndEvent(), config)
         if system_message is None:
             system_message = await build_system_prompt(config)
         # 使用核心工具(约 15 个)+ search_tools,扩展工具按需加载

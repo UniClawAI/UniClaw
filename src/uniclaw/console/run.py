@@ -35,6 +35,8 @@ from uniclaw.agent import (
     InterruptedEvent,
     SlashCommandEvent,
     ShellCommandEvent,
+    CheckpointStartEvent,
+    CheckpointEndEvent,
 )
 from uniclaw.utils.message import MessageRole, extract_text
 
@@ -1124,6 +1126,13 @@ class TUIApp:
                     f"{agent_prefix}🔄 '{event.name}({args_display})'...",
                     wait_id=queued_task.id,
                 )
+            elif isinstance(event, CheckpointStartEvent):
+                self.config.spinner.start(
+                    f"{agent_prefix}📸 创建检查点...",
+                    wait_id=f"checkpoint_{queued_task.id}",
+                )
+            elif isinstance(event, CheckpointEndEvent):
+                self.config.spinner.stop(wait_id=f"checkpoint_{queued_task.id}")
             elif isinstance(event, ToolStartEvent):
                 self.config.spinner.stop(wait_id=queued_task.id)
                 args_display = format_args_for_display(event.args)

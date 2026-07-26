@@ -28,6 +28,8 @@ from uniclaw.agent import (
     ToolEvent,
     AssistantEvent,
     UserEvent,
+    CheckpointStartEvent,
+    CheckpointEndEvent,
 )
 from uniclaw.config import AppConfig, RunMode, load_config
 from uniclaw.tools.session.session_manager import SessionManager
@@ -414,6 +416,14 @@ async def bridge_events(session_id: str, config: AppConfig):
                     "agent_name": agent_name,
                 }
             )
+
+        elif isinstance(event, CheckpointStartEvent):
+            checkpoint_wait_id = config.spinner.start(
+                "创建检查点...", wait_id=f"checkpoint_{queued_task.id}"
+            )
+
+        elif isinstance(event, CheckpointEndEvent):
+            config.spinner.stop(wait_id=checkpoint_wait_id)
 
         # === 批量事件 ===
         elif isinstance(event, UserEvent):
