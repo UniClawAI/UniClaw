@@ -43,7 +43,7 @@ body {
 
 /* ---- 选中文字 ---- */
 ::selection {
-    background: rgba(0, 212, 255, 0.35);
+    background: rgba(0, 120, 212, 0.3);
     color: #fff;
 }
 
@@ -54,7 +54,7 @@ a {
     transition: color var(--duration-fast) var(--ease);
 }
 a:hover {
-    color: var(--neon-cyan);
+    color: var(--accent-bright);
     text-decoration: underline;
 }
 
@@ -78,7 +78,7 @@ code {
     padding: 2px 6px;
     border-radius: var(--r-xs);
     font-size: 0.9em;
-    color: var(--neon-cyan);
+    color: var(--accent-bright);
 }
 
 pre code {
@@ -164,4 +164,12 @@ input:focus, textarea:focus, select:focus {
 .no-select {
     user-select: none;
     -webkit-user-select: none;
+}
+
+/* ---- 触屏设备: 禁用 hover 运动效果 ---- */
+@media (hover: none), (pointer: coarse) {
+    .welcome-suggestion-card:hover,
+    .image-grid img:hover {
+        transform: none !important;
+    }
 }

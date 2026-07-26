@@ -10,6 +10,11 @@
     overflow-x: hidden;
     padding: 20px 16px;
     scroll-behavior: smooth;
+    transition: filter var(--duration-fast) var(--ease);
+}
+.chat-messages.transitioning {
+    filter: blur(4px);
+    pointer-events: none;
 }
 
 /* ---- 消息项 ---- */
@@ -133,7 +138,7 @@
     opacity: 1;
 }
 .message.user .msg-delete-btn:hover {
-    background: var(--neon-pink);
+    background: var(--red);
     color: #fff;
 }
 .message.user .msg-delete-btn svg {
@@ -173,7 +178,7 @@
     color: var(--text-link);
 }
 .msg-content .markdown-body a:hover {
-    color: var(--neon-cyan);
+    color: var(--accent-bright);
 }
 
 .msg-content .markdown-body strong {
@@ -222,7 +227,10 @@
     font-size: 10px;
     cursor: pointer;
     opacity: 0;
-    transition: all var(--duration-fast) var(--ease);
+    transition: opacity var(--duration-fast) var(--ease),
+                background var(--duration-fast) var(--ease),
+                color var(--duration-fast) var(--ease),
+                border-color var(--duration-fast) var(--ease);
     display: flex;
     align-items: center;
     gap: 4px;
@@ -240,9 +248,9 @@ pre:hover .code-copy-btn {
     border-color: var(--accent);
 }
 .code-copy-btn.copied {
-    background: var(--neon-green-dim);
-    color: var(--neon-green);
-    border-color: var(--neon-green);
+    background: var(--green-dim);
+    color: var(--green);
+    border-color: var(--green);
 }
 
 /* 代码块语言标签 */
@@ -263,9 +271,9 @@ pre:hover .code-copy-btn {
 /* ---- 思考块 ---- */
 .thinking-block {
     margin: 2px 0;
-    border: 1px solid rgba(124, 92, 252, 0.12);
-    border-radius: var(--r-xs);
-    background: rgba(124, 92, 252, 0.04);
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    background: var(--bg-2);
     overflow: hidden;
 }
 .thinking-header {
@@ -277,10 +285,11 @@ pre:hover .code-copy-btn {
     color: var(--text-2);
     font-size: 11px;
     user-select: none;
-    transition: all var(--duration-fast) var(--ease);
+    transition: background var(--duration-fast) var(--ease),
+                color var(--duration-fast) var(--ease);
 }
 .thinking-header:hover {
-    background: var(--accent-subtle);
+    background: var(--bg-3);
     color: var(--text-1);
 }
 .thinking-header svg {
@@ -292,20 +301,26 @@ pre:hover .code-copy-btn {
     transform: rotate(90deg);
 }
 .thinking-content {
-    display: none;
     padding: 0 8px 6px;
     color: var(--text-2);
     font-size: 11px;
     line-height: 1.4;
     border-top: 1px solid var(--border);
+    clip-path: inset(0 0 100% 0);
+    max-height: 0;
+    overflow: hidden;
+    transition: clip-path var(--duration) var(--ease-out),
+                max-height var(--duration) var(--ease-out);
 }
 .thinking-block.expanded .thinking-content {
-    display: block;
+    clip-path: inset(0 0 0 0);
+    max-height: 2000px;
 }
 
 /* 流式思考 */
 .thinking-streaming .thinking-content {
-    display: block;
+    clip-path: inset(0 0 0 0);
+    max-height: 2000px;
 }
 .thinking-streaming .thinking-header::after {
     content: '';
@@ -327,6 +342,7 @@ pre:hover .code-copy-btn {
     overflow: hidden;
     border-left: 3px solid var(--accent);
     transition: border-color var(--duration-fast) var(--ease);
+    box-shadow: var(--shadow-sm);
 }
 .tool-block:hover {
     border-color: var(--border-hover);
@@ -344,7 +360,7 @@ pre:hover .code-copy-btn {
     white-space: nowrap;
 }
 .tool-header:hover {
-    background: var(--accent-subtle);
+    background: var(--bg-3);
 }
 .tool-icon {
     width: 18px;
@@ -406,12 +422,12 @@ pre:hover .code-copy-btn {
     white-space: nowrap;
 }
 .tool-status.running {
-    background: var(--neon-orange-dim);
-    color: var(--neon-orange);
+    background: var(--orange-dim);
+    color: var(--orange);
 }
 .tool-status.done {
-    background: var(--neon-green-dim);
-    color: var(--neon-green);
+    background: var(--green-dim);
+    color: var(--green);
 }
 .tool-status.error {
     background: var(--red-dim);
@@ -429,11 +445,16 @@ pre:hover .code-copy-btn {
 }
 
 .tool-body {
-    display: none;
     border-top: 1px solid var(--border);
+    clip-path: inset(0 0 100% 0);
+    max-height: 0;
+    overflow: hidden;
+    transition: clip-path var(--duration) var(--ease-out),
+                max-height var(--duration) var(--ease-out);
 }
 .tool-block.expanded > .tool-body {
-    display: block;
+    clip-path: inset(0 0 0 0);
+    max-height: 5000px;
 }
 
 .tool-args, .tool-result {
@@ -490,7 +511,7 @@ pre:hover .code-copy-btn {
 /* subagent 嵌套在 tool-block 内的样式 */
 .tool-body .subagent-tool {
     margin: 6px 10px;
-    border-left-color: var(--neon-purple, #a78bfa);
+    border-left-color: var(--accent);
 }
 .tool-body .subagent-tool .tool-header {
     padding: 6px 10px;
@@ -547,6 +568,7 @@ pre:hover .code-copy-btn {
     color: var(--accent);
     animation: cursorBlink 1s step-end infinite;
     margin-left: 2px;
+    will-change: opacity;
 }
 
 /* ---- 系统消息 ---- */
@@ -610,13 +632,12 @@ pre:hover .code-copy-btn {
 .welcome-logo {
     font-size: 64px;
     line-height: 1;
-    animation: welcomePulse 3s ease-in-out infinite;
+    animation: welcomePulse 4s ease-in-out infinite;
     margin-bottom: 8px;
-    filter: drop-shadow(0 0 24px var(--accent-glow));
 }
 @keyframes welcomePulse {
     0%, 100% { transform: scale(1); }
-    50% { transform: scale(1.08) rotate(-3deg); }
+    50% { transform: scale(1.06) rotate(-2deg); }
 }
 .welcome-title {
     font-size: 28px;
@@ -650,17 +671,28 @@ pre:hover .code-copy-btn {
     border: 1px solid var(--border);
     border-radius: var(--r-lg);
     cursor: pointer;
-    transition: all var(--duration) var(--ease);
+    transition: background var(--duration) var(--ease),
+                border-color var(--duration) var(--ease),
+                box-shadow var(--duration) var(--ease),
+                transform var(--duration) var(--ease);
     text-align: left;
     color: var(--text-1);
     font-size: var(--text-sm);
 }
 .welcome-suggestion-card:hover {
     background: var(--bg-3);
-    border-color: var(--accent);
-    box-shadow: 0 0 16px var(--accent-dim);
+    border-color: var(--border-hover);
+    box-shadow: var(--shadow-sm);
     transform: translateY(-1px);
 }
+/* 交错进入动画 */
+.welcome-suggestion-card {
+    animation: slideUp var(--duration-enter) var(--ease-out) both;
+}
+.welcome-suggestion-card:nth-child(1) { animation-delay: 0ms; }
+.welcome-suggestion-card:nth-child(2) { animation-delay: 50ms; }
+.welcome-suggestion-card:nth-child(3) { animation-delay: 100ms; }
+.welcome-suggestion-card:nth-child(4) { animation-delay: 150ms; }
 .welcome-suggestion-card .card-icon {
     font-size: 20px;
     flex-shrink: 0;
@@ -704,8 +736,8 @@ pre:hover .code-copy-btn {
     display: flex;
     align-items: center;
     justify-content: center;
-    background: rgba(10, 10, 15, 0.8);
-    backdrop-filter: blur(4px);
+    background: var(--glass-bg);
+    backdrop-filter: blur(var(--glass-blur));
     border: 2px dashed var(--accent);
     border-radius: var(--r-lg);
     opacity: 0;
@@ -914,7 +946,8 @@ pre:hover .code-copy-btn {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    transition: all var(--duration-fast) var(--ease);
+    transition: background var(--duration-fast) var(--ease),
+                color var(--duration-fast) var(--ease);
 }
 .msg-nav-item:hover {
     background: var(--accent-dim);
@@ -933,7 +966,9 @@ pre:hover .code-copy-btn {
     color: var(--text-3);
     font-size: 10px;
     cursor: pointer;
-    transition: all var(--duration-fast) var(--ease);
+    transition: background var(--duration-fast) var(--ease),
+                color var(--duration-fast) var(--ease),
+                border-color var(--duration-fast) var(--ease);
 }
 .copy-btn svg {
     width: 12px;
@@ -945,9 +980,9 @@ pre:hover .code-copy-btn {
     border-color: var(--accent);
 }
 .copy-btn.copied {
-    background: var(--neon-green-dim);
-    color: var(--neon-green);
-    border-color: var(--neon-green);
+    background: var(--green-dim);
+    color: var(--green);
+    border-color: var(--green);
 }
 
 /* ---- highlight.js 暗色覆盖 ---- */
@@ -955,21 +990,21 @@ pre:hover .code-copy-btn {
     background: transparent !important;
     color: var(--text-1) !important;
 }
-.hljs-keyword, .hljs-selector-tag { color: #c792ea; }
-.hljs-string, .hljs-attr { color: #c3e88d; }
-.hljs-number, .hljs-literal { color: #f78c6c; }
-.hljs-comment { color: #546e7a; font-style: italic; }
-.hljs-function .hljs-title, .hljs-title.function_ { color: #82aaff; }
-.hljs-type, .hljs-built_in { color: #ffcb6b; }
-.hljs-variable { color: #f07178; }
-.hljs-params { color: #e0e0f0; }
-.hljs-meta { color: #89ddff; }
-.hljs-tag { color: #f07178; }
-.hljs-name { color: #ff5370; }
-.hljs-attribute { color: #c792ea; }
-.hljs-symbol, .hljs-bullet { color: #c792ea; }
-.hljs-addition { color: #c3e88d; background: rgba(0, 255, 136, 0.05); }
-.hljs-deletion { color: #ff5370; background: rgba(255, 56, 96, 0.05); }
+.hljs-keyword, .hljs-selector-tag { color: var(--hljs-keyword); }
+.hljs-string, .hljs-attr { color: var(--hljs-string); }
+.hljs-number, .hljs-literal { color: var(--hljs-number); }
+.hljs-comment { color: var(--hljs-comment); font-style: italic; }
+.hljs-function .hljs-title, .hljs-title.function_ { color: var(--hljs-function); }
+.hljs-type, .hljs-built_in { color: var(--hljs-type); }
+.hljs-variable { color: var(--hljs-variable); }
+.hljs-params { color: var(--hljs-params); }
+.hljs-meta { color: var(--hljs-meta); }
+.hljs-tag { color: var(--hljs-tag); }
+.hljs-name { color: var(--hljs-name); }
+.hljs-attribute { color: var(--hljs-attribute); }
+.hljs-symbol, .hljs-bullet { color: var(--hljs-meta); }
+.hljs-addition { color: var(--hljs-addition); background: rgba(7, 179, 100, 0.06); }
+.hljs-deletion { color: var(--hljs-deletion); background: rgba(209, 52, 56, 0.06); }
 
 /* ---- 文件下载图标 ---- */
 .file-download {
@@ -981,7 +1016,8 @@ pre:hover .code-copy-btn {
     border: 1px solid var(--border);
     border-radius: var(--r-sm);
     cursor: pointer;
-    transition: all var(--duration-fast) var(--ease);
+    transition: background var(--duration-fast) var(--ease),
+                border-color var(--duration-fast) var(--ease);
 }
 .file-download:hover {
     background: var(--accent-dim);

@@ -1,11 +1,10 @@
 /* ============================================================
-   UniClaw WebUI — Design Tokens
-   Microsoft Fluent Design · Dark Theme
+   Fluent Dark Theme — Microsoft Fluent Design 暗色主题
    基于 FluentUI 官方令牌系统
    ============================================================ */
 
 :root {
-    /* ---- 背景层级 (FluentUI Grey Scale) ---- */
+    /* ---- 背景层级 ---- */
     --bg-0: #0a0a0a;
     --bg-1: #141414;
     --bg-2: #1f1f1f;
@@ -14,14 +13,14 @@
     --bg-inset: #0a0a0a;
     --bg-elevated: #1f1f1f;
 
-    /* ---- 品牌色 (FluentUI Brand Blue) ---- */
+    /* ---- 品牌色 ---- */
     --accent: #0078d4;
     --accent-bright: #2899f5;
     --accent-dim: rgba(0, 120, 212, 0.12);
     --accent-glow: rgba(0, 120, 212, 0.25);
     --accent-subtle: rgba(0, 120, 212, 0.06);
 
-    /* ---- 语义色 (FluentUI Status) ---- */
+    /* ---- 语义色 ---- */
     --neon-cyan: #2899f5;
     --neon-cyan-dim: rgba(40, 153, 245, 0.12);
     --neon-cyan-glow: rgba(40, 153, 245, 0.2);
@@ -52,7 +51,7 @@
     --orange: #f7630c;
     --orange-dim: rgba(247, 99, 12, 0.08);
 
-    /* ---- 文字 (FluentUI Foreground) ---- */
+    /* ---- 文字 ---- */
     --text-0: #ffffff;
     --text-1: #d6d6d6;
     --text-2: #adadad;
@@ -73,58 +72,20 @@
     --glass-border: rgba(255, 255, 255, 0.08);
     --glass-blur: 20px;
 
-    /* ---- 背景图片 (默认为空,主题可覆盖) ---- */
+    /* ---- 背景图片 ---- */
     --bg-image: none;
     --bg-image-size: cover;
     --bg-image-position: center;
     --bg-image-repeat: no-repeat;
     --bg-image-opacity: 0.15;
 
-    /* ---- 阴影 (FluentUI Elevation) ---- */
+    /* ---- 阴影 ---- */
     --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.14);
     --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.24);
     --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.32);
     --shadow-glow: 0 0 12px var(--accent-glow);
     --shadow-glow-sm: 0 0 6px rgba(0, 120, 212, 0.15);
     --shadow-neon-cyan: 0 0 12px var(--neon-cyan-glow);
-
-    /* ---- 圆角 (FluentUI Border Radius) ---- */
-    --r-xs: 2px;
-    --r-sm: 4px;
-    --r-md: 6px;
-    --r-lg: 8px;
-    --r-xl: 12px;
-    --r-full: 10000px;
-
-    /* ---- 面板 ---- */
-    --panel-min: 200px;
-    --panel-max: 500px;
-
-    /* ---- 过渡 (FluentUI Curves & Durations) ---- */
-    --ease: cubic-bezier(0.33, 0, 0.67, 1);
-    --ease-out: cubic-bezier(0, 0, 0, 1);
-    --ease-in-out: cubic-bezier(0.33, 0, 0.67, 1);
-    --ease-bounce: cubic-bezier(0.33, 0, 0.67, 1);
-    --ease-drawer: cubic-bezier(0.1, 0.9, 0.2, 1);
-    --duration-fast: 0.15s;
-    --duration: 0.2s;
-    --duration-slow: 0.3s;
-    --duration-enter: 0.25s;
-    --duration-exit: 0.15s;
-
-    /* ---- 字体 (FluentUI Typography) ---- */
-    --font-sans: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'SF Pro Text',
-                 'PingFang SC', 'Microsoft YaHei', sans-serif;
-    --font-mono: 'Cascadia Code', 'Fira Code', 'Consolas', 'Courier New', monospace;
-
-    /* ---- 字号 ---- */
-    --text-xs: 11px;
-    --text-sm: 12px;
-    --text-base: 13px;
-    --text-md: 14px;
-    --text-lg: 16px;
-    --text-xl: 20px;
-    --text-2xl: 24px;
 
     /* ---- 代码高亮 (VS Code Dark+) ---- */
     --hljs-keyword: #c586c0;

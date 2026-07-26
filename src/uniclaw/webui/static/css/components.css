@@ -17,7 +17,10 @@
     font-size: var(--text-base);
     font-weight: 500;
     cursor: pointer;
-    transition: all var(--duration-fast) var(--ease);
+    transition: background var(--duration-fast) var(--ease),
+                box-shadow var(--duration-fast) var(--ease),
+                transform 0.1s var(--ease),
+                opacity var(--duration-fast) var(--ease);
     white-space: nowrap;
     text-align: center;
     user-select: none;
@@ -96,7 +99,8 @@
     border-radius: var(--r-sm);
     color: var(--text-2);
     cursor: pointer;
-    transition: all var(--duration-fast) var(--ease);
+    transition: background var(--duration-fast) var(--ease),
+                color var(--duration-fast) var(--ease);
     flex-shrink: 0;
 }
 .btn-icon:hover {
@@ -129,7 +133,8 @@
     font-size: var(--text-sm);
     padding: 4px 8px;
     border-radius: var(--r-xs);
-    transition: all var(--duration-fast) var(--ease);
+    transition: background var(--duration-fast) var(--ease),
+                color var(--duration-fast) var(--ease);
 }
 .btn-text:hover {
     background: var(--accent-dim);
@@ -213,10 +218,14 @@ textarea.input {
     align-items: center;
     justify-content: center;
     z-index: 1000;
-    animation: fadeIn var(--duration) var(--ease);
+    opacity: 1;
+    transition: opacity var(--duration-enter) var(--ease-out);
 }
 .modal-overlay.hidden {
     display: none;
+}
+.modal-overlay.entering {
+    opacity: 0;
 }
 
 .modal-content {
@@ -228,8 +237,15 @@ textarea.input {
     max-width: 520px;
     max-height: 85vh;
     overflow-y: auto;
-    box-shadow: var(--shadow-lg), 0 0 40px rgba(124, 92, 252, 0.08);
-    animation: scaleIn var(--duration) var(--ease-bounce);
+    box-shadow: var(--shadow-lg), 0 0 40px rgba(0, 120, 212, 0.08);
+    transform: scale(1) translateY(0);
+    opacity: 1;
+    transition: transform var(--duration-enter) var(--ease-out),
+                opacity var(--duration-enter) var(--ease-out);
+}
+.modal-overlay.entering .modal-content {
+    transform: scale(0.96) translateY(8px);
+    opacity: 0;
 }
 
 .modal-title {
@@ -294,7 +310,9 @@ textarea.input {
     font-size: var(--text-sm);
     font-weight: 500;
     cursor: pointer;
-    transition: all var(--duration-fast) var(--ease);
+    transition: color var(--duration-fast) var(--ease),
+                background var(--duration-fast) var(--ease),
+                border-bottom-color var(--duration-fast) var(--ease);
     position: relative;
 }
 .tab-btn:hover {
@@ -338,25 +356,28 @@ textarea.input {
     backdrop-filter: blur(var(--glass-blur));
     -webkit-backdrop-filter: blur(var(--glass-blur));
     box-shadow: var(--shadow-md);
-    animation: slideDown var(--duration) var(--ease-bounce);
+    animation: slideDown var(--duration-enter) var(--ease-out);
     pointer-events: auto;
     display: flex;
     align-items: center;
     gap: 8px;
     max-width: 380px;
+    opacity: 1;
+    transform: translateY(0);
+    transition: opacity var(--duration-exit) var(--ease-out),
+                transform var(--duration-exit) var(--ease-out);
 }
 .toast.error {
-    border-color: var(--neon-pink);
-    box-shadow: var(--shadow-md), 0 0 12px rgba(255, 56, 96, 0.15);
+    border-color: var(--red);
+    box-shadow: var(--shadow-md);
 }
 .toast.success {
-    border-color: var(--neon-green);
+    border-color: var(--green);
 }
 .toast.fade-out {
-    animation: fadeOut var(--duration) var(--ease) forwards;
-}
-@keyframes fadeOut {
-    to { opacity: 0; transform: translateY(-8px); }
+    opacity: 0;
+    transform: translateY(-8px);
+    animation: none;
 }
 
 /* ============================================================
@@ -407,8 +428,8 @@ textarea.input {
 .loading-overlay {
     position: fixed;
     inset: 0;
-    background: rgba(10, 10, 15, 0.85);
-    backdrop-filter: blur(12px);
+    background: var(--glass-bg);
+    backdrop-filter: blur(var(--glass-blur));
     display: flex;
     align-items: center;
     justify-content: center;
@@ -525,7 +546,8 @@ textarea.input {
     cursor: pointer;
     font-size: 12px;
     color: var(--text-1);
-    transition: all var(--duration-fast) var(--ease);
+    transition: background var(--duration-fast) var(--ease),
+                color var(--duration-fast) var(--ease);
 }
 .ctx-icon {
     width: 14px;
@@ -573,7 +595,9 @@ textarea.input {
     color: var(--text-1);
     cursor: pointer;
     border-radius: var(--r-sm);
-    transition: all var(--duration-fast) var(--ease);
+    transition: background var(--duration-fast) var(--ease),
+                border-color var(--duration-fast) var(--ease),
+                color var(--duration-fast) var(--ease);
 }
 .completion-item .cmd-name {
     font-family: var(--font-mono);
@@ -688,7 +712,9 @@ textarea.input {
     color: var(--text-2);
     cursor: pointer;
     white-space: nowrap;
-    transition: all var(--duration-fast) var(--ease);
+    transition: color var(--duration-fast) var(--ease),
+                background var(--duration-fast) var(--ease),
+                border-bottom-color var(--duration-fast) var(--ease);
     background: transparent;
     border: none;
     border-bottom: 2px solid transparent;
@@ -725,7 +751,8 @@ textarea.input {
     gap: 8px;
     padding: 5px 14px;
     cursor: pointer;
-    transition: all var(--duration-fast) var(--ease);
+    transition: background var(--duration-fast) var(--ease),
+                color var(--duration-fast) var(--ease);
     background: transparent;
     border: none;
     color: var(--text-1);
@@ -853,8 +880,8 @@ textarea.input {
 }
 
 .wechat-bot-status.online {
-    background: var(--neon-green);
-    box-shadow: 0 0 4px var(--neon-green);
+    background: var(--green);
+    box-shadow: 0 0 4px var(--green);
 }
 
 .wechat-bot-status.offline {
@@ -877,18 +904,19 @@ textarea.input {
    Mic Button (语音输入)
    ============================================================ */
 .mic-btn {
-    transition: color 0.2s, background 0.2s;
+    transition: color var(--duration-fast) var(--ease),
+                background var(--duration-fast) var(--ease);
 }
 .mic-btn.recording {
-    color: var(--neon-pink);
+    color: var(--red);
     animation: mic-pulse 1s ease-in-out infinite;
 }
 .mic-btn.listening {
-    color: var(--neon-green);
+    color: var(--green);
     animation: mic-listen-pulse 1.5s ease-in-out infinite;
 }
 .mic-btn.processing {
-    color: var(--neon-blue);
+    color: var(--accent-bright);
     animation: mic-spin 1s linear infinite;
 }
 .mic-btn:disabled {
@@ -1061,7 +1089,7 @@ textarea.input {
     align-items: center;
     justify-content: center;
     opacity: 0.5;
-    transition: opacity 0.15s;
+    transition: opacity var(--duration-fast) var(--ease);
     z-index: 1;
 }
 
@@ -1151,7 +1179,8 @@ textarea.input {
     width: 14px;
     height: 14px;
     border-radius: 50%;
-    transition: opacity 0.15s, background 0.15s;
+    transition: opacity var(--duration-fast) var(--ease),
+                background var(--duration-fast) var(--ease);
 }
 
 .combo-tag .combo-tag-remove:hover {
@@ -1272,6 +1301,74 @@ textarea.input {
 .combo-tag.drag-over {
     border-color: var(--accent);
     background: var(--accent-glow);
+}
+
+/* ============================================================
+   Theme Dropdown (主题选择器)
+   ============================================================ */
+.theme-dropdown {
+    position: fixed;
+    z-index: 2000;
+    background: var(--glass-bg-light);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--r-md);
+    padding: 4px;
+    min-width: 220px;
+    max-width: 300px;
+    box-shadow: var(--shadow-lg);
+    backdrop-filter: blur(var(--glass-blur));
+    -webkit-backdrop-filter: blur(var(--glass-blur));
+    animation: scaleIn var(--duration-fast) var(--ease-out);
+}
+.theme-dropdown-title {
+    padding: 6px 10px;
+    font-size: var(--text-xs);
+    color: var(--text-3);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.theme-dropdown-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: var(--r-sm);
+    cursor: pointer;
+    transition: background var(--duration-fast) var(--ease);
+}
+.theme-dropdown-item:hover {
+    background: var(--bg-3);
+}
+.theme-dropdown-item.active {
+    background: var(--accent-dim);
+}
+.theme-swatch {
+    display: flex;
+    gap: 2px;
+    flex-shrink: 0;
+}
+.theme-swatch-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+}
+.theme-info {
+    flex: 1;
+    min-width: 0;
+}
+.theme-name {
+    font-size: var(--text-sm);
+    color: var(--text-0);
+    font-weight: 500;
+}
+.theme-desc {
+    font-size: var(--text-xs);
+    color: var(--text-3);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 /* ---- 响应式: 手机 (≤768px) ---- */

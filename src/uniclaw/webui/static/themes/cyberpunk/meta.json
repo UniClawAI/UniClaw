@@ -1,0 +1,8 @@
+{
+  "name": "Cyberpunk",
+  "description": "暗黑赛博风 · 霓虹紫蓝渐变 · 毛玻璃",
+  "author": "UniClaw",
+  "version": "1.0",
+  "colors": ["#7c5cfc", "#0a0a0f", "#1e1e2e", "#f0f0f8"],
+  "css": ["variables.css"]
+}

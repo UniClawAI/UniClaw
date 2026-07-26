@@ -1,0 +1,104 @@
+/* ============================================================
+   Fluent Light Theme — Microsoft Fluent Design 亮色主题
+   ============================================================ */
+
+:root {
+    /* ---- 背景层级 ---- */
+    --bg-0: #ffffff;
+    --bg-1: #f5f5f5;
+    --bg-2: #fafafa;
+    --bg-3: #f0f0f0;
+    --bg-4: #e6e6e6;
+    --bg-inset: #ffffff;
+    --bg-elevated: #ffffff;
+
+    /* ---- 品牌色 ---- */
+    --accent: #0078d4;
+    --accent-bright: #106ebe;
+    --accent-dim: rgba(0, 120, 212, 0.08);
+    --accent-glow: rgba(0, 120, 212, 0.15);
+    --accent-subtle: rgba(0, 120, 212, 0.04);
+
+    /* ---- 语义色 ---- */
+    --neon-cyan: #0078d4;
+    --neon-cyan-dim: rgba(0, 120, 212, 0.08);
+    --neon-cyan-glow: rgba(0, 120, 212, 0.12);
+    --neon-green: #07b364;
+    --neon-green-dim: rgba(7, 179, 100, 0.08);
+    --neon-pink: #d13438;
+    --neon-pink-dim: rgba(209, 52, 56, 0.08);
+    --neon-orange: #f7630c;
+    --neon-orange-dim: rgba(247, 99, 12, 0.08);
+    --neon-yellow: #eaa300;
+    --neon-yellow-dim: rgba(234, 163, 0, 0.08);
+
+    /* ---- 渐变 ---- */
+    --gradient-accent: linear-gradient(135deg, #0078d4 0%, #2899f5 100%);
+    --gradient-accent-hover: linear-gradient(135deg, #106ebe 0%, #3aa0f3 100%);
+    --gradient-accent-dim: linear-gradient(135deg, rgba(0, 120, 212, 0.08) 0%, rgba(40, 153, 245, 0.08) 100%);
+    --gradient-accent-subtle: linear-gradient(135deg, rgba(0, 120, 212, 0.04) 0%, rgba(40, 153, 245, 0.04) 100%);
+    --gradient-danger: linear-gradient(135deg, #d13438 0%, #e74856 100%);
+    --gradient-surface: linear-gradient(180deg, var(--bg-2) 0%, var(--bg-1) 100%);
+
+    /* ---- 语义色 ---- */
+    --red: #d13438;
+    --red-dim: rgba(209, 52, 56, 0.08);
+    --green: #07b364;
+    --green-dim: rgba(7, 179, 100, 0.06);
+    --yellow: #eaa300;
+    --yellow-dim: rgba(234, 163, 0, 0.06);
+    --orange: #f7630c;
+    --orange-dim: rgba(247, 99, 12, 0.06);
+
+    /* ---- 文字 ---- */
+    --text-0: #1a1a1a;
+    --text-1: #424242;
+    --text-2: #616161;
+    --text-3: #8a8a8a;
+    --text-4: #bdbdbd;
+    --text-accent: #0078d4;
+    --text-link: #0078d4;
+
+    /* ---- 边框 ---- */
+    --border: rgba(0, 0, 0, 0.08);
+    --border-hover: rgba(0, 0, 0, 0.16);
+    --border-focus: rgba(0, 120, 212, 0.5);
+    --border-glow: rgba(0, 120, 212, 0.15);
+
+    /* ---- 亚克力材质 ---- */
+    --glass-bg: rgba(255, 255, 255, 0.85);
+    --glass-bg-light: rgba(255, 255, 255, 0.92);
+    --glass-border: rgba(0, 0, 0, 0.08);
+    --glass-blur: 20px;
+
+    /* ---- 背景图片 ---- */
+    --bg-image: none;
+    --bg-image-size: cover;
+    --bg-image-position: center;
+    --bg-image-repeat: no-repeat;
+    --bg-image-opacity: 0.1;
+
+    /* ---- 阴影 ---- */
+    --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.06);
+    --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.1);
+    --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.14);
+    --shadow-glow: 0 0 12px var(--accent-glow);
+    --shadow-glow-sm: 0 0 6px rgba(0, 120, 212, 0.1);
+    --shadow-neon-cyan: 0 0 12px var(--neon-cyan-glow);
+
+    /* ---- 代码高亮 (VS Code Light+) ---- */
+    --hljs-keyword: #af00db;
+    --hljs-string: #a31515;
+    --hljs-number: #098658;
+    --hljs-comment: #008000;
+    --hljs-function: #795e26;
+    --hljs-type: #267f99;
+    --hljs-variable: #001080;
+    --hljs-params: #001080;
+    --hljs-meta: #0000ff;
+    --hljs-tag: #800000;
+    --hljs-name: #800000;
+    --hljs-attribute: #e50000;
+    --hljs-addition: #098658;
+    --hljs-deletion: #a31515;
+}

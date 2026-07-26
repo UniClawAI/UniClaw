@@ -1,0 +1,8 @@
+{
+  "name": "Fluent Dark",
+  "description": "Microsoft Fluent Design 暗色主题",
+  "author": "UniClaw",
+  "version": "1.0",
+  "colors": ["#0078d4", "#141414", "#292929", "#ffffff"],
+  "css": ["variables.css"]
+}

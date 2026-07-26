@@ -32,6 +32,7 @@ const App = {
         if (settingsBtn) settingsBtn.addEventListener('click', () => Settings.open());
 
         WS.connect();
+        Theme.init();
         Chat.init();
         Input.init();
         SessionPanel.init();

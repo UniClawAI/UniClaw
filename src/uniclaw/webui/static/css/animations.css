@@ -1,5 +1,6 @@
 /* ============================================================
    UniClaw WebUI — Animations & Effects
+   Microsoft Fluent Design 风格
    ============================================================ */
 
 /* ---- 淡入 ---- */
@@ -10,26 +11,20 @@
 
 /* ---- 上滑入 ---- */
 @keyframes slideUp {
-    from { opacity: 0; transform: translateY(12px); }
+    from { opacity: 0; transform: translateY(8px); }
     to   { opacity: 1; transform: translateY(0); }
 }
 
 /* ---- 下滑入 ---- */
 @keyframes slideDown {
-    from { opacity: 0; transform: translateY(-12px); }
+    from { opacity: 0; transform: translateY(-8px); }
     to   { opacity: 1; transform: translateY(0); }
 }
 
 /* ---- 缩放弹入 ---- */
 @keyframes scaleIn {
-    from { opacity: 0; transform: scale(0.92); }
+    from { opacity: 0; transform: scale(0.96); }
     to   { opacity: 1; transform: scale(1); }
-}
-
-/* ---- 霓虹发光脉冲 ---- */
-@keyframes glowPulse {
-    0%, 100% { box-shadow: 0 0 8px var(--accent-glow); }
-    50%      { box-shadow: 0 0 20px var(--accent-glow), 0 0 40px rgba(124, 92, 252, 0.15); }
 }
 
 /* ---- 流光效果 ---- */
@@ -47,7 +42,7 @@
 /* ---- 脉冲点 ---- */
 @keyframes pulseDot {
     0%, 100% { opacity: 1; transform: scale(1); }
-    50%      { opacity: 0.5; transform: scale(0.8); }
+    50%      { opacity: 0.6; transform: scale(0.85); }
 }
 
 /* ---- 光标闪烁 ---- */
@@ -56,24 +51,16 @@
     51%, 100% { opacity: 0; }
 }
 
-/* ---- 霓虹边框旋转 ---- */
-@keyframes borderGlow {
-    0%   { border-color: var(--accent); }
-    33%  { border-color: var(--neon-cyan); }
-    66%  { border-color: var(--accent-bright); }
-    100% { border-color: var(--accent); }
-}
-
 /* ---- 波纹扩散 ---- */
 @keyframes ripple {
-    0%   { transform: scale(0); opacity: 0.5; }
+    0%   { transform: scale(0.5); opacity: 0.4; }
     100% { transform: scale(4); opacity: 0; }
 }
 
 /* ---- 打字指示器弹跳 ---- */
 @keyframes typingBounce {
     0%, 60%, 100% { transform: translateY(0); }
-    30%           { transform: translateY(-6px); }
+    30%           { transform: translateY(-4px); }
 }
 
 /* ---- 加载进度条 ---- */
@@ -85,22 +72,24 @@
 
 /* ---- 注意力徽章呼吸 ---- */
 @keyframes badgeBreath {
-    0%, 100% { box-shadow: 0 0 0 0 rgba(255, 56, 96, 0.5); }
-    50%      { box-shadow: 0 0 0 6px rgba(255, 56, 96, 0); }
-}
-
-/* ---- 霓虹扫描线 ---- */
-@keyframes neonScan {
-    0%   { top: -2px; }
-    100% { top: 100%; }
+    0%, 100% { box-shadow: 0 0 0 0 rgba(209, 52, 56, 0.4); }
+    50%      { box-shadow: 0 0 0 5px rgba(209, 52, 56, 0); }
 }
 
 /* ---- 工具类 ---- */
-.animate-fade-in       { animation: fadeIn var(--duration) var(--ease) both; }
-.animate-slide-up      { animation: slideUp var(--duration) var(--ease) both; }
-.animate-slide-down    { animation: slideDown var(--duration) var(--ease) both; }
-.animate-scale-in      { animation: scaleIn var(--duration) var(--ease-bounce) both; }
-.animate-glow          { animation: glowPulse 2s ease-in-out infinite; }
+.animate-fade-in       { animation: fadeIn var(--duration) var(--ease-out) both; }
+.animate-slide-up      { animation: slideUp var(--duration) var(--ease-out) both; }
+.animate-slide-down    { animation: slideDown var(--duration) var(--ease-out) both; }
+.animate-scale-in      { animation: scaleIn var(--duration) var(--ease-out) both; }
 .animate-spin          { animation: spin 1s linear infinite; }
 .animate-pulse-dot     { animation: pulseDot 1.5s ease-in-out infinite; }
 .animate-badge         { animation: badgeBreath 2s ease-in-out infinite; }
+
+/* ---- 无障碍: 减弱动画(非完全关闭) ---- */
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
+}

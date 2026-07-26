@@ -37,7 +37,7 @@
 .project-icon {
     width: 16px;
     height: 16px;
-    color: var(--neon-cyan);
+    color: var(--accent-bright);
     flex-shrink: 0;
 }
 .project-name {
@@ -71,10 +71,21 @@
     gap: 8px;
     padding: 7px 14px 7px 36px;
     cursor: pointer;
-    transition: all var(--duration-fast) var(--ease);
+    transition: background var(--duration-fast) var(--ease),
+                border-left-color var(--duration-fast) var(--ease);
     position: relative;
     border-left: 2px solid transparent;
+    animation: slideUp var(--duration-enter) var(--ease-out) both;
 }
+.session-item:nth-child(1) { animation-delay: 0ms; }
+.session-item:nth-child(2) { animation-delay: 30ms; }
+.session-item:nth-child(3) { animation-delay: 60ms; }
+.session-item:nth-child(4) { animation-delay: 90ms; }
+.session-item:nth-child(5) { animation-delay: 120ms; }
+.session-item:nth-child(6) { animation-delay: 150ms; }
+.session-item:nth-child(7) { animation-delay: 180ms; }
+.session-item:nth-child(8) { animation-delay: 210ms; }
+.session-item:nth-child(n+9) { animation-delay: 240ms; }
 .session-item:hover {
     background: var(--bg-3);
 }
@@ -122,10 +133,11 @@
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background: var(--neon-green);
+    background: var(--green);
     flex-shrink: 0;
     animation: pulseDot 1.5s ease-in-out infinite;
-    box-shadow: 0 0 6px var(--neon-green);
+    box-shadow: 0 0 4px var(--green);
+    will-change: opacity, transform;
 }
 
 /* ---- 注意力徽章 ---- */
@@ -133,7 +145,7 @@
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: var(--neon-pink);
+    background: var(--orange);
     flex-shrink: 0;
     animation: badgeBreath 2s ease-in-out infinite;
 }
@@ -156,13 +168,13 @@
     height: 100%;
     border-radius: var(--r-full);
     transition: width var(--duration) var(--ease), background var(--duration) var(--ease);
-    background: var(--neon-green);
+    background: var(--green);
 }
 .context-bar-fill.warn {
-    background: var(--neon-orange);
+    background: var(--orange);
 }
 .context-bar-fill.critical {
-    background: var(--neon-pink);
+    background: var(--red);
 }
 .context-pct {
     font-size: 10px;
@@ -194,7 +206,7 @@
 }
 @keyframes attention-pulse {
     0%, 100% { background: transparent; }
-    50% { background: var(--neon-orange-dim, rgba(255, 170, 0, 0.15)); border-left-color: var(--neon-orange); }
+    50% { background: var(--orange-dim); border-left-color: var(--orange); }
 }
 
 /* ---- 搜索无结果 ---- */

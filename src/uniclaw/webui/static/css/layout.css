@@ -66,6 +66,19 @@
     position: relative;
     background: var(--bg-0);
 }
+/* 背景图片层(通过 CSS 变量控制) */
+#main-area::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image: var(--bg-image);
+    background-size: var(--bg-image-size);
+    background-position: var(--bg-image-position);
+    background-repeat: var(--bg-image-repeat);
+    opacity: var(--bg-image-opacity);
+    pointer-events: none;
+    z-index: 0;
+}
 
 /* ---- 拖拽手柄 ---- */
 .drag-handle {

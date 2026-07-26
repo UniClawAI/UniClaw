@@ -38,7 +38,8 @@
     cursor: pointer;
     padding: 2px 8px;
     border-radius: var(--r-xs);
-    transition: all var(--duration-fast) var(--ease);
+    transition: background var(--duration-fast) var(--ease),
+                color var(--duration-fast) var(--ease);
 }
 .status-item.clickable:hover {
     background: var(--bg-3);
@@ -55,23 +56,25 @@
     font-weight: 500;
     font-size: 10px;
     cursor: pointer;
-    transition: all var(--duration-fast) var(--ease);
+    transition: background var(--duration-fast) var(--ease),
+                color var(--duration-fast) var(--ease),
+                filter var(--duration-fast) var(--ease);
 }
 .perm-mode.auto {
-    background: var(--neon-green-dim);
-    color: var(--neon-green);
+    background: var(--green-dim);
+    color: var(--green);
 }
 .perm-mode.manual {
-    background: var(--neon-orange-dim);
-    color: var(--neon-orange);
+    background: var(--orange-dim);
+    color: var(--orange);
 }
 .perm-mode.accept-all {
     background: var(--accent-dim);
     color: var(--accent-bright);
 }
 .perm-mode.plan {
-    background: var(--neon-cyan-dim);
-    color: var(--neon-cyan);
+    background: var(--accent-dim);
+    color: var(--accent-bright);
 }
 .perm-mode:hover {
     filter: brightness(1.2);
@@ -85,11 +88,12 @@
     background: var(--bg-inset);
     color: var(--text-3);
     cursor: pointer;
-    transition: all var(--duration-fast, 0.15s) var(--ease, ease);
+    transition: background var(--duration-fast) var(--ease),
+                color var(--duration-fast) var(--ease);
 }
 .status-cu.active {
-    background: var(--neon-purple-dim, rgba(168, 85, 247, 0.15));
-    color: var(--neon-purple, #a855f7);
+    background: var(--accent-dim);
+    color: var(--accent-bright);
 }
 .status-cu:hover {
     filter: brightness(1.2);
@@ -103,15 +107,16 @@
     background: var(--bg-inset);
     color: var(--text-3);
     cursor: pointer;
-    transition: all var(--duration-fast, 0.15s) var(--ease, ease);
+    transition: background var(--duration-fast) var(--ease),
+                color var(--duration-fast) var(--ease);
 }
 .status-explain.active {
-    background: var(--neon-yellow-dim, rgba(234, 179, 8, 0.15));
-    color: var(--neon-yellow, #eab308);
+    background: var(--yellow-dim);
+    color: var(--yellow);
 }
 .status-explain.partial {
-    background: var(--neon-orange-dim, rgba(249, 115, 22, 0.15));
-    color: var(--neon-orange, #f97316);
+    background: var(--orange-dim);
+    color: var(--orange);
 }
 .status-explain:hover {
     filter: brightness(1.2);
@@ -119,7 +124,8 @@
 
 /* 语音模式状态 */
 .status-voice {
-    transition: all var(--duration-fast, 0.15s) var(--ease, ease);
+    transition: background var(--duration-fast) var(--ease),
+                color var(--duration-fast) var(--ease);
 }
 
 /* 上下文使用率 */
@@ -141,10 +147,10 @@
     height: 100%;
     border-radius: var(--r-full);
     transition: width var(--duration) var(--ease);
-    background: var(--neon-green);
+    background: var(--green);
 }
-.context-mini-fill.warn { background: var(--neon-orange); }
-.context-mini-fill.critical { background: var(--neon-pink); }
+.context-mini-fill.warn { background: var(--orange); }
+.context-mini-fill.critical { background: var(--red); }
 
 .context-pct-text {
     font-family: var(--font-mono);
@@ -165,11 +171,11 @@
     flex-shrink: 0;
 }
 .connection-dot.connected {
-    background: var(--neon-green);
-    box-shadow: 0 0 4px var(--neon-green);
+    background: var(--green);
+    box-shadow: 0 0 3px var(--green);
 }
 .connection-dot.disconnected {
-    background: var(--neon-pink);
+    background: var(--red);
     animation: pulseDot 1s ease-in-out infinite;
 }
 
@@ -184,7 +190,7 @@
 .project-label svg {
     width: 12px;
     height: 12px;
-    color: var(--neon-cyan);
+    color: var(--accent-bright);
 }
 
 /* 会话名 */
@@ -226,10 +232,10 @@
 }
 .perm-explanation {
     padding: 10px 12px;
-    background: var(--neon-orange-dim);
-    border: 1px solid rgba(255, 159, 67, 0.2);
+    background: var(--orange-dim);
+    border: 1px solid rgba(247, 99, 12, 0.2);
     border-radius: var(--r-md);
-    color: var(--neon-orange);
+    color: var(--orange);
     font-size: var(--text-sm);
     margin: 8px 0;
 }
@@ -240,7 +246,7 @@
     user-select: none;
 }
 .perm-countdown.urgent {
-    color: var(--neon-pink);
+    color: var(--red);
     animation: pulseDot 1s ease-in-out infinite;
 }
 .perm-cancel-btn {
@@ -256,18 +262,58 @@
     justify-content: center;
     cursor: pointer;
     padding: 0;
-    transition: color 0.15s, border-color 0.15s;
+    transition: color var(--duration-fast) var(--ease),
+                border-color var(--duration-fast) var(--ease);
     line-height: 1;
 }
 .perm-cancel-btn:hover {
-    color: var(--neon-orange);
-    border-color: var(--neon-orange);
+    color: var(--orange);
+    border-color: var(--orange);
+}
+
+/* ---- Edit 工具 diff 视图 ---- */
+.perm-diff-toggle {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 8px;
+}
+.perm-diff-toggle button {
+    padding: 3px 10px;
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    border-radius: var(--r-xs);
+    color: var(--text-2);
+    font-size: var(--text-xs);
+    cursor: pointer;
+    transition: background var(--duration-fast) var(--ease),
+                color var(--duration-fast) var(--ease),
+                border-color var(--duration-fast) var(--ease);
+}
+.perm-diff-toggle button:hover {
+    background: var(--bg-4);
+    color: var(--text-0);
+}
+.perm-diff-toggle button.active {
+    background: var(--accent-dim);
+    color: var(--accent-bright);
+    border-color: var(--accent);
+}
+.perm-diff-content {
+    max-height: 300px;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    background: var(--bg-inset);
+}
+.perm-diff-content .diff-container {
+    font-size: var(--text-xs);
+    line-height: 1.5;
 }
 
 /* ---- 输入弹窗样式覆盖 ---- */
 #input-dialog-modal .modal-content {
     max-width: 720px;
-    transition: width 0.15s ease;
+    transition: width var(--duration-fast) var(--ease);
 }
 .input-dialog-prompt {
     background: var(--bg-inset);
@@ -280,7 +326,7 @@
     white-space: pre-wrap;
     word-break: break-all;
     overflow-y: auto;
-    transition: height 0.15s ease;
+    transition: height var(--duration-fast) var(--ease);
 }
 
 /* ---- 新建项目弹窗 ---- */
@@ -316,7 +362,7 @@
 .dir-item svg {
     width: 14px;
     height: 14px;
-    color: var(--neon-yellow);
+    color: var(--yellow);
 }
 
 /* ---- 响应式: 平板+手机 (≤1024px) ---- */

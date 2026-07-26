@@ -54,7 +54,8 @@ const WS = {
                     && SessionPanel.activeSessionId
                     && msg.session_id !== SessionPanel.activeSessionId
                     && !['session_attention', 'session_attention_clear', 'status',
-                         'session_deleted', 'session_switched', 'session_created'].includes(msg.event)) {
+                         'session_deleted', 'session_switched', 'session_created',
+                         'config_changed'].includes(msg.event)) {
                     if (!SessionPanel.attentionSessions.has(msg.session_id)) {
                         SessionPanel.attentionSessions.add(msg.session_id);
                         SessionPanel._render();

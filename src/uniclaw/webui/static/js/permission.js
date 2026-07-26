@@ -48,7 +48,26 @@ const Permission = {
     _showRequest(msg) {
         this.currentRequest = msg;
         document.getElementById('perm-tool').textContent = msg.tool_name || '';
-        document.getElementById('perm-args').textContent = JSON.stringify(msg.args || {}, null, 2);
+
+        // Edit 工具:显示 diff 视图而非原始 JSON
+        const argsEl = document.getElementById('perm-args');
+        const diffWrap = document.getElementById('perm-diff-wrap');
+        const modal = document.querySelector('#permission-modal .modal-content');
+        if (msg.tool_name === 'Edit' && msg.args && msg.args.old_string !== undefined) {
+            argsEl.style.display = 'none';
+            diffWrap.style.display = 'block';
+            document.getElementById('perm-file-path').textContent = msg.args.file_path || '';
+            this._permDiffMode = 'unified';
+            this._renderPermDiff(msg.args.old_string, msg.args.new_string || '');
+            this._bindDiffToggle(msg.args.old_string, msg.args.new_string || '');
+            if (modal) modal.style.maxWidth = '680px';
+        } else {
+            argsEl.style.display = '';
+            diffWrap.style.display = 'none';
+            argsEl.textContent = JSON.stringify(msg.args || {}, null, 2);
+            if (modal) modal.style.maxWidth = '';
+        }
+
         const expl = document.getElementById('perm-explanation');
         if (msg.explanation) { expl.style.display = 'block'; document.getElementById('perm-explanation-text').textContent = msg.explanation; }
         else expl.style.display = 'none';
@@ -82,7 +101,10 @@ const Permission = {
             if (countdownEl) countdownEl.style.display = '';
             if (cancelBtn) cancelBtn.style.display = '';
         }
-        document.getElementById('permission-modal').classList.remove('hidden');
+        const permModal = document.getElementById('permission-modal');
+        permModal.classList.remove('hidden');
+        permModal.classList.add('entering');
+        requestAnimationFrame(() => permModal.classList.remove('entering'));
         if (!msg.countdown_cancelled) {
             this._startCountdown(msg.created_at, msg.timeout);
         }
@@ -158,6 +180,29 @@ const Permission = {
     },
 
     _fmtTime(s) { return `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`; },
+
+    _renderPermDiff(oldText, newText) {
+        const el = document.getElementById('perm-diff-content');
+        if (el) el.innerHTML = Utils.renderDiff(oldText, newText, this._permDiffMode || 'unified');
+    },
+
+    _bindDiffToggle(oldText, newText) {
+        const btnUnified = document.getElementById('perm-diff-unified');
+        const btnSplit = document.getElementById('perm-diff-split');
+        if (!btnUnified || !btnSplit) return;
+        btnUnified.onclick = () => {
+            this._permDiffMode = 'unified';
+            btnUnified.classList.add('active');
+            btnSplit.classList.remove('active');
+            this._renderPermDiff(oldText, newText);
+        };
+        btnSplit.onclick = () => {
+            this._permDiffMode = 'split';
+            btnSplit.classList.add('active');
+            btnUnified.classList.remove('active');
+            this._renderPermDiff(oldText, newText);
+        };
+    },
 
     _cycleMode() {
         const modes = ['auto', 'manual', 'accept-all', 'plan'];

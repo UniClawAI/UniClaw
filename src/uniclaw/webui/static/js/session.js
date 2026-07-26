@@ -306,7 +306,11 @@ const SessionPanel = {
         if (el) {
             let ind = el.querySelector('.running-indicator');
             if (msg.status === 'running') {
-                if (!ind) { ind = document.createElement('span'); ind.className = 'running-indicator'; el.appendChild(ind); }
+                if (!ind) {
+                    ind = document.createElement('span'); ind.className = 'running-indicator';
+                    const menuBtn = el.querySelector('.btn-icon.compact');
+                    menuBtn ? el.insertBefore(ind, menuBtn) : el.appendChild(ind);
+                }
             } else { if (ind) ind.remove(); }
         }
     },
@@ -469,7 +473,7 @@ const SessionPanel = {
         const sessionTime = proj.sessions.length > 0 ? (proj.sessions[0].end_time || proj.sessions[0].start_time || '-') : '-';
         const tipData = JSON.stringify({ dir: rootDir, created: proj.created_at || '-', sessions: proj.sessions.length, latest: sessionTime }).replace(/"/g, '&quot;');
         let h = `<div class="project-group ${isExp ? 'expanded' : ''}" data-dir="${Utils.escapeHtml(rootDir)}">`;
-        h += `<div class="project-header" data-tip="${tipData}" onclick="SessionPanel.toggleProject('${this._esc(rootDir)}')" onmouseenter="SessionPanel._showTip(this, event)" onmousemove="SessionPanel._moveTip(event)" onmouseleave="SessionPanel._hideTip()" ontouchstart="SessionPanel._showTip(this, event)" ondragover="SessionPanel._onDragOver(event)" ondrop="SessionPanel._onDrop(event, '${this._esc(rootDir)}')">`;
+        h += `<div class="project-header" data-tip="${tipData}" onclick="SessionPanel.toggleProject('${this._esc(rootDir)}')" onmouseenter="SessionPanel._showTip(this, event)" onmousemove="SessionPanel._moveTip(event)" onmouseleave="SessionPanel._hideTip()" ontouchstart="SessionPanel._showTip(this, event)" ondragover="SessionPanel._onDragOver(event)" ondragleave="SessionPanel._onDragLeave(event)" ondrop="SessionPanel._onDrop(event, '${this._esc(rootDir)}')">`;
         h += `<span class="project-chevron">${icon('chevronRight')}</span>`;
         h += `<span class="project-icon">${icon('folder')}</span>`;
         h += `<span class="project-name">${Utils.escapeHtml(shortName)}</span>`;
@@ -532,6 +536,7 @@ const SessionPanel = {
 
     _onDragStart(e, sid) { e.dataTransfer.setData('text/plain', sid); e.dataTransfer.effectAllowed = 'move'; },
     _onDragOver(e) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; e.currentTarget.classList.add('drag-over'); },
+    _onDragLeave(e) { e.currentTarget.classList.remove('drag-over'); },
     async _onDrop(e, targetDir) {
         e.preventDefault(); e.currentTarget.classList.remove('drag-over');
         const sid = e.dataTransfer.getData('text/plain');
@@ -558,7 +563,11 @@ const SessionPanel = {
         MultiInputDialog.closeIfSessionMismatch(sessionId);
         WS.send({ type: 'set_active', session_id: sessionId });
         this._updateStatusBar(rootDir, sessionId);
+        // blur 过渡效果
+        const chatEl = document.querySelector('.chat-messages');
+        if (chatEl) chatEl.classList.add('transitioning');
         try { await Chat.loadHistory(sessionId); } catch (e) { console.error('[SessionPanel] 加载历史失败:', e); }
+        if (chatEl) chatEl.classList.remove('transitioning');
         const si = document.getElementById('search-input');
         if (si && si.value.trim()) this._onSearch(si.value);
         else this._render();
