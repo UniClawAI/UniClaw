@@ -75,4 +75,17 @@ async def _await_with_error_catch(coro, name, fun, args, kwargs):
     except Exception as e:
         task = _extract_task(args, kwargs)
         _log_error(name, fun, task, e)
+        # 通知前端(WebUI/console/wechat)
+        try:
+            from uniclaw.console.ui import err
+            config = kwargs.get("config")
+            if not config:
+                for arg in args:
+                    if hasattr(arg, "current_agent"):
+                        config = arg
+                        break
+            err_msg = str(e) if str(e) else type(e).__name__
+            await err(f"{fun.__name__} 失败: {err_msg}", config=config)
+        except Exception:
+            pass
         raise

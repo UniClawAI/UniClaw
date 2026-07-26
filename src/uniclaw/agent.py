@@ -1148,9 +1148,13 @@ class MultiAgent:
 
         # 自动创建 Git 检查点(使用用户消息的文本部分作为描述)
         await self.send_event_to_user(CheckpointStartEvent(), config)
-        await create_checkpoint(
-            task.session.root_dir, message=extract_text(user_message)
-        )
+        try:
+            await create_checkpoint(
+                task.session.root_dir, message=extract_text(user_message)
+            )
+        except Exception as e:
+            from uniclaw.console.ui import err
+            await err(f"创建检查点失败(已跳过): {e}", config=config)
         await self.send_event_to_user(CheckpointEndEvent(), config)
         if system_message is None:
             system_message = await build_system_prompt(config)
