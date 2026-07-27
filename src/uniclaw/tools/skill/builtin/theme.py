@@ -296,13 +296,13 @@ UniClaw 使用基于 CSS 变量的主题系统。每个主题是一个文件夹,
 
 
 def register():
-    """注册 theme 技能"""
+    """注册 uniclaw-theme 技能"""
     register_builtin(
         SkillDef(
-            name="theme",
+            name="uniclaw-theme",
             description="创建、修改或模仿定制 UniClaw WebUI 主题。"
             "当用户要求换肤、创建主题、修改配色、模仿网站风格时使用。",
-            triggers=["/theme", "create theme", "new theme", "主题", "换肤", "配色"],
+            triggers=["/uniclaw-theme", "/theme", "create theme", "new theme", "主题", "换肤", "配色"],
             tools=["Read", "Write", "Edit", "Glob", "Bash"],
             prompt=_THEME_PROMPT,
             file_path=__file__,
