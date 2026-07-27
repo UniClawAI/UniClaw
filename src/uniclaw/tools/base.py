@@ -93,6 +93,46 @@ def _python_type_to_schema(tp: Any) -> dict:
     return {"type": "string"}
 
 
+def _parse_arg_descriptions(func: Callable) -> dict[str, str]:
+    """从 docstring 的 Args: 部分解析每个参数的描述。"""
+    doc = inspect.getdoc(func) or ""
+    if "Args:" not in doc:
+        return {}
+
+    descriptions: dict[str, str] = {}
+    in_args = False
+    current_name: str | None = None
+    current_lines: list[str] = []
+
+    for line in doc.split("\n"):
+        stripped = line.strip()
+        if stripped.startswith("Args:"):
+            in_args = True
+            continue
+        if in_args:
+            # 遇到 Returns: 或其他顶级段落,结束解析
+            if stripped.startswith("Returns:") or stripped.startswith("Raises:") or stripped.startswith("Example"):
+                if current_name:
+                    descriptions[current_name] = "\n".join(current_lines).strip()
+                break
+            # 新参数行: "name (type): desc" 或 "name: desc"
+            if stripped and not stripped[0].isspace() and ":" in stripped:
+                if current_name:
+                    descriptions[current_name] = "\n".join(current_lines).strip()
+                # 提取参数名(冒号之前的部分,去掉类型标注)
+                header, _, rest = stripped.partition(":")
+                param_name = header.split("(")[0].strip()
+                current_name = param_name
+                current_lines = [rest.strip()] if rest.strip() else []
+            elif current_name and stripped:
+                # 多行描述的续行
+                current_lines.append(stripped)
+
+    if current_name:
+        descriptions[current_name] = "\n".join(current_lines).strip()
+    return descriptions
+
+
 def _build_parameters(func: Callable) -> dict:
     """从函数签名生成 OpenAI function calling 的 parameters schema。"""
     sig = inspect.signature(func)
@@ -101,6 +141,7 @@ def _build_parameters(func: Callable) -> dict:
     except Exception:
         hints = {}
 
+    arg_descs = _parse_arg_descriptions(func)
     properties = {}
     required = []
 
@@ -111,6 +152,10 @@ def _build_parameters(func: Callable) -> dict:
 
         tp = hints.get(name, param.annotation)
         schema = _python_type_to_schema(tp)
+
+        # 注入参数描述
+        if name in arg_descs:
+            schema["description"] = arg_descs[name]
 
         # 处理 list 类型的 items(从注解中提取)
         if param.default is not inspect.Parameter.empty:
@@ -128,22 +173,43 @@ def _build_parameters(func: Callable) -> dict:
 
 
 def _extract_description(func: Callable) -> str:
-    """从 docstring 提取工具描述(跳过 Args/Returns 之前的内容)。"""
+    """从 docstring 提取工具描述和返回值说明。"""
     doc = inspect.getdoc(func) or ""
     if not doc:
         return func.__name__
 
-    # 提取 Args/Returns 之前的所有内容
-    lines = []
+    desc_lines: list[str] = []
+    returns_lines: list[str] = []
+    section = "desc"  # desc -> args -> returns
+
+    _SECTION_HEADERS = ("Args:", "Returns:", "Raises:", "Example:", "Examples:", "Note:", "Warning:")
+
     for line in doc.split("\n"):
         stripped = line.strip()
-        # 遇到 Args: 或 Returns: 停止
-        if stripped.startswith("Args:") or stripped.startswith("Returns:"):
-            break
-        if stripped:
-            lines.append(stripped)
+        # 检测顶级段落标题(不以空格开头,且是已知段落名)
+        if stripped and not line[0].isspace() and any(stripped.startswith(h) for h in _SECTION_HEADERS):
+            if stripped.startswith("Args:"):
+                section = "args"
+            elif stripped.startswith("Returns:"):
+                section = "returns"
+            else:
+                # Raises/Example/Note 等结束 returns
+                if section == "returns":
+                    break
+            continue
 
-    return " ".join(lines) if lines else func.__name__
+        if section == "desc" and stripped:
+            desc_lines.append(stripped)
+        elif section == "returns" and stripped:
+            returns_lines.append(stripped)
+
+    if desc_lines:
+        description = "\n".join(desc_lines)
+        if returns_lines:
+            description += "\nReturns:\n" + "\n".join(returns_lines)
+    else:
+        description = doc
+    return description
 
 
 @dataclass

@@ -182,12 +182,15 @@ def hook_add(
     添加单条 hook。在特定事件触发时自动执行 shell 命令。
     使用前请先调用 hook_docs 查看完整文档(事件列表、参数传递、注意事项)。
 
-    event: 触发事件,详见 hook_docs。
-    commands: 要执行的 shell 命令,多个命令用换行分隔(如 "echo step1\\necho step2")。
-    name: 可选的人类可读名称(如 "block-rm"),便于后续按名删除。
-    matcher: 可选的工具名匹配器,支持通配符(*,?)和多模式(|或,分隔)。如 "Bash","Read|Write"。不指定则匹配所有。
-    scope: 'project'(项目级)或 'user'(用户级)。
+    Args:
+        event: 触发事件,详见 hook_docs。
+        commands: 要执行的 shell 命令,多个命令用换行分隔(如 "echo step1\\necho step2")。
+        name: 可选的人类可读名称(如 "block-rm"),便于后续按名删除。
+        matcher: 可选的工具名匹配器,支持通配符(*,?)和多模式(|或,分隔)。如 "Bash","Read|Write"。不指定则匹配所有。
+        scope: 'project'(项目级)或 'user'(用户级)。
 
+    Returns:
+        str: 操作结果消息。
     """
     if not config or not config.current_agent:
         raise ValueError("hook_add 需要 config 中的 current_agent 来获取 root_dir")
@@ -218,8 +221,11 @@ def hook_remove(id_or_name: str, config: AppConfig = None) -> str:
     根据 id 或 name 删除,自动搜索项目级和用户级配置。
     使用前请先调用 hook_docs 查看完整文档。
 
-    id_or_name: hook 的 id(如 "a3f8c2")或 name(如 "block-rm")。
+    Args:
+        id_or_name: hook 的 id(如 "a3f8c2")或 name(如 "block-rm")。
 
+    Returns:
+        str: 操作结果消息。
     """
     if not config or not config.current_agent:
         raise ValueError("hook_remove 需要 config 中的 current_agent 来获取 root_dir")

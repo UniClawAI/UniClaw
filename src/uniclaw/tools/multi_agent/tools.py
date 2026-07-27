@@ -161,6 +161,7 @@ def subagent_check_result(task_id: str, full: bool = False) -> str:
 
     Args:
         task_id (str): 要查询的任务唯一标识符。
+        full (bool): 是否返回完整的历史消息。默认为 False,仅返回最新结果。
 
     Returns:
         str: 格式化的任务信息字符串,包含以下内容:
