@@ -107,6 +107,7 @@ const Settings = {
         document.getElementById('settings-exa-key').value = d.EXA_API_KEY || '';
         document.getElementById('settings-max-depth').value = d.max_agent_depth ?? 2;
         document.getElementById('settings-perm-timeout').value = d.permission_timeout ?? 300;
+        document.getElementById('settings-perm-mode').value = d.permission_mode || 'auto';
         document.getElementById('settings-trusted-ips').value = (d.trusted_ips || []).join(', ');
     },
 
@@ -619,6 +620,7 @@ const Settings = {
             EXA_API_KEY: document.getElementById('settings-exa-key').value || this._data.EXA_API_KEY || '',
             max_agent_depth: parseInt(document.getElementById('settings-max-depth').value) || 3,
             permission_timeout: parseInt(document.getElementById('settings-perm-timeout').value) || 300,
+            permission_mode: document.getElementById('settings-perm-mode').value || 'auto',
             trusted_ips: document.getElementById('settings-trusted-ips').value
                 .split(/[,,\s]+/)
                 .map(s => s.trim())
@@ -653,6 +655,13 @@ const Settings = {
             // 会话设置保存后刷新状态栏(模型名等)
             if (body.session_id) {
                 SessionPanel._updateStatusBar(SessionPanel.activeProjectDir, body.session_id);
+            }
+            // 更新状态栏权限模式显示
+            const permEl = document.getElementById('status-permission');
+            if (permEl) {
+                const modeLabels = { 'auto': 'Auto', 'manual': 'Manual', 'accept-all': 'Accept All', 'plan': 'Plan' };
+                permEl.textContent = modeLabels[body.permission_mode] || 'Auto';
+                permEl.className = `perm-mode ${body.permission_mode}`;
             }
         } catch (e) {
             Utils.showError('网络错误: ' + e.message);

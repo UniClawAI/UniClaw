@@ -279,6 +279,7 @@ class SettingsUpdate(BaseModel):
     EXA_API_KEY: str = ""
     max_agent_depth: int = 2
     permission_timeout: int = 300
+    permission_mode: str = "auto"
     trusted_ips: list[str] = Field(default_factory=list)  # 可信 IP 列表,跳过登录认证
     providers: dict[str, ProviderConfig] = Field(default_factory=dict)
 
@@ -308,4 +309,12 @@ class SettingsUpdate(BaseModel):
     def validate_timeout(cls, v: int) -> int:
         if v < 1 or v > 3600:
             raise ValueError("permission_timeout 必须在 1-3600 之间")
+        return v
+
+    @field_validator("permission_mode")
+    @classmethod
+    def validate_permission_mode(cls, v: str) -> str:
+        valid_modes = ["auto", "manual", "accept-all", "plan"]
+        if v not in valid_modes:
+            raise ValueError(f'无效的权限模式,可选: {", ".join(valid_modes)}')
         return v

@@ -503,6 +503,7 @@ async def get_settings():
         "EXA_API_KEY": _mask_key(data.get("EXA_API_KEY", "")),
         "max_agent_depth": data.get("max_agent_depth", 2),
         "permission_timeout": data.get("permission_timeout", 300),
+        "permission_mode": data.get("permission_mode", "auto"),
         "trusted_ips": data.get("trusted_ips", []) or [],
         "providers": masked_providers,
     }
@@ -584,6 +585,7 @@ async def update_settings(body: SettingsUpdate):
         "EXA_API_KEY": exa_key,
         "max_agent_depth": body.max_agent_depth,
         "permission_timeout": body.permission_timeout,
+        "permission_mode": body.permission_mode,
         "trusted_ips": body.trusted_ips,
         "providers": providers,
     }
@@ -666,6 +668,8 @@ async def _update_session_settings(body: SettingsUpdate) -> dict:
     config.proxy_url = body.proxy_url
     config.max_agent_depth = body.max_agent_depth
     config.permission_timeout = body.permission_timeout
+    from uniclaw.config import Permissions
+    config.permission_mode = Permissions(body.permission_mode)
 
     return {"ok": True, "session_id": session_id}
 

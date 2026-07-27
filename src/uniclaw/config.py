@@ -82,9 +82,9 @@ class AppConfig:
     max_agent_depth: int = 2
     permission_timeout: int = 300
     trusted_ips: list[str] = field(default_factory=list)  # 可信 IP 列表,跳过登录认证
+    permission_mode: str = Permissions.AUTO  # 权限模式(auto/manual/accept-all/plan)
 
     # === 运行时状态 (不持久化) ===
-    permission_mode: str = Permissions.AUTO
     verbose: bool = False
     depth: int = 0
     workspace: list[str] = field(default_factory=list)
@@ -416,6 +416,7 @@ def _create_config_from_data(data: dict[str, Any]) -> AppConfig:
         EXA_API_KEY=data.get("EXA_API_KEY", ""),
         max_agent_depth=data.get("max_agent_depth", 2),
         permission_timeout=data.get("permission_timeout", 300),
+        permission_mode=data.get("permission_mode", Permissions.AUTO),
     )
 
 
@@ -463,6 +464,7 @@ def _load_settings_json() -> dict[str, Any]:
         "top_p": None,
         "max_agent_depth": 2,
         "permission_timeout": 300,
+        "permission_mode": Permissions.AUTO,
     }
     for k, v in defaults.items():
         if k not in data:
@@ -573,6 +575,7 @@ def load_config(
         EXA_API_KEY=data.get("EXA_API_KEY", ""),
         max_agent_depth=data.get("max_agent_depth", 2),
         permission_timeout=data.get("permission_timeout", 300),
+        permission_mode=data.get("permission_mode", Permissions.AUTO),
     )
 
 
@@ -616,6 +619,7 @@ def save_config(config: AppConfig) -> None:
         "EXA_API_KEY": config.EXA_API_KEY,
         "max_agent_depth": config.max_agent_depth,
         "permission_timeout": config.permission_timeout,
+        "permission_mode": config.permission_mode,
     }
 
     # 序列化 providers
