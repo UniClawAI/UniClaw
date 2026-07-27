@@ -632,9 +632,10 @@ class ExtendedToolManager:
 def search_tools(query: str, config=None) -> str:
     """搜索可用的扩展工具。当你需要使用非常用工具时,先搜索再使用。
     搜索结果会自动加载到可用工具集中,下一轮即可调用。支持中英文关键词。
+    优先使用工具名搜索(如 "screenshot"、"mouse_click")比用功能描述搜索更精准。
 
     Args:
-        query: 搜索关键词,描述你需要的工具功能或直接传入工具名(如 "截图"、"screenshot"、"定时任务"、"mouse_click")
+        query: 搜索关键词,优先传入工具名,其次用功能描述(如 "screenshot"、"截图"、"定时任务")
     """
     registry = ToolRegistry.get_instance()
     results = registry.search(query)
@@ -719,19 +720,21 @@ async def get_registry_system_prompt(config=None) -> str:
     allowed = None
     if config and config.is_sub:
         allowed = config.current_agent.allowed_tools_set
-    categories: dict[str, list[str]] = {}
+    categories: dict[str, list[tuple[str, str]]] = {}
     for name, entry in registry.get_all_entries().items():
         if name not in registry.get_core_names():
             if allowed is not None and name not in allowed:
                 continue
-            # 格式: 工具名(简短描述)
             short_desc = entry.tool.description.split("。")[0].split(".")[0]
-            categories.setdefault(entry.category, []).append(f"{name}({short_desc})")
+            categories.setdefault(entry.category, []).append((name, short_desc))
     if not categories:
         return ""
     cat_lines = []
     for cat, tools in categories.items():
-        cat_lines.append(f"  - {cat}: {', '.join(tools[:5])}")
+        # 前5个显示 工具名(简短描述), 后续只显示工具名
+        parts = [f"{name}({desc})" for name, desc in tools[:5]]
+        parts.extend(name for name, _ in tools[5:])
+        cat_lines.append(f"  - {cat}: {', '.join(parts)}")
     return (
         "# 扩展工具\n"
         f"你有 {search_tools.name} 工具可用于发现以下扩展工具(按需搜索加载):\n"
