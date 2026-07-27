@@ -965,7 +965,8 @@ const Input = {
     async _showCommandCompletion(text) {
         try {
             if (!this._commandsCache) {
-                const r = await fetch('/api/commands');
+                const rootDir = SessionPanel.activeProjectDir || '';
+                const r = await fetch(`/api/commands?root_dir=${encodeURIComponent(rootDir)}`);
                 const d = await r.json();
                 this._commandsCache = d.commands || [];
                 this._subcommandsCache = d.subcommands || {};
@@ -988,7 +989,7 @@ const Input = {
             const matches = this._commandsCache.filter(c => c.name.startsWith(cmdName.toLowerCase())).slice(0, 10);
             if (!matches.length) { this._hideCompletion(); return; }
             this._renderCompletion(matches.map(c => ({
-                label: `/${c.name}`, desc: c.description, fill: () => { document.getElementById('chat-input').value = `/${c.name}`; }, onSelect: () => {
+                label: `/${c.name}`, desc: c.is_skill ? `技能: ${c.description}` : c.description, fill: () => { document.getElementById('chat-input').value = `/${c.name}`; }, onSelect: () => {
                     const inp = document.getElementById('chat-input');
                     const val = `/${c.name} `;
                     inp.value = val;

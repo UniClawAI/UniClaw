@@ -87,6 +87,27 @@ _PERMISSION_CYCLE = [
 
 
 class _CommandCompleter(Completer):
+    def __init__(self, get_task=None):
+        self._get_task = get_task
+        self._skills_cache: list = []
+        self._skills_cache_time: float = 0
+
+    def _load_skills(self):
+        """加载 skills,带 5 秒缓存避免频繁磁盘 IO。"""
+        import time
+        now = time.time()
+        if now - self._skills_cache_time < 5:
+            return self._skills_cache
+        task = self._get_task() if self._get_task else None
+        root_dir = task.session.root_dir if task else None
+        try:
+            from uniclaw.tools.skill.loader import load_skills
+            self._skills_cache = load_skills(root_dir)
+        except Exception:
+            self._skills_cache = []
+        self._skills_cache_time = now
+        return self._skills_cache
+
     def get_completions(self, document, _complete_event):
         text = document.text_before_cursor
         if not text.startswith("/"):
@@ -99,9 +120,21 @@ class _CommandCompleter(Completer):
 
         # 如果没有输入空格,补全命令名
         if " " not in text[1:]:
+            # 补全内置命令
             for c in _COMMANDS_LIST:
                 if c.startswith(cmd):
                     yield Completion(f"/{c}", start_position=-len(text))
+            # 补全 skill 触发器
+            for skill in self._load_skills():
+                for trigger in skill.triggers:
+                    trigger_name = trigger.lstrip("/")
+                    if trigger_name.startswith(cmd) and trigger_name != cmd:
+                        desc = skill.description or skill.name
+                        yield Completion(
+                            f"/{trigger_name}",
+                            start_position=-len(text),
+                            display_meta=desc,
+                        )
         else:
             # 如果输入了空格,补全子命令
             if cmd in COMMAND_SUBCOMMANDS:
@@ -177,7 +210,7 @@ class _UniClawCompleter(Completer):
     """UniClaw 综合补全器"""
 
     def __init__(self, get_task):
-        self._command_completer = _CommandCompleter()
+        self._command_completer = _CommandCompleter(get_task)
         self._file_completer = _FileCompleter(get_task)
 
     def get_completions(self, document, complete_event):

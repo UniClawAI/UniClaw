@@ -1139,7 +1139,7 @@ async def list_hook_events():
 
 
 @router.get("/commands")
-async def list_commands():
+async def list_commands(root_dir: str = ""):
     """列出可用命令。"""
     from uniclaw.commands import COMMANDS, COMMAND_SUBCOMMANDS
 
@@ -1159,6 +1159,25 @@ async def list_commands():
                 if primary in subcommands and primary_handler is handler:
                     subcommands[name] = subcommands[primary]
                     break
+
+    # 加载 skill 触发器
+    from uniclaw.tools.skill.loader import load_skills
+
+    try:
+        skills = load_skills(Path(root_dir) if root_dir else None)
+        for skill in skills:
+            for trigger in skill.triggers:
+                trigger_name = trigger.lstrip("/")
+                commands.append(
+                    {
+                        "name": trigger_name,
+                        "description": skill.description or skill.name,
+                        "is_skill": True,
+                    }
+                )
+    except Exception:
+        pass  # skill 加载失败不影响命令列表
+
     return {"commands": commands, "subcommands": subcommands}
 
 
