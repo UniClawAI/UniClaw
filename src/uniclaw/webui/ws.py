@@ -949,11 +949,11 @@ def _build_content_with_files(content: str, files: list[dict], config) -> Any:
                 file_path.parent.mkdir(parents=True, exist_ok=True)
                 file_bytes = base64.b64decode(data)
                 file_path.write_bytes(file_bytes)
-                blocks.append(MultimodalBlock(type="text", text=f"[附件: {name}]"))
+                blocks.append(MultimodalBlock(type="text", text=f"[附件: {file_path}]"))
             except Exception as e:
                 get_logger("webui", Path.cwd()).error(f"保存附件失败: {e}")
                 blocks.append(
-                    MultimodalBlock(type="text", text=f"[附件: {name} 保存失败: {e}]")
+                    MultimodalBlock(type="text", text=f"[附件: {config.root_dir / name} 保存失败: {e}]")
                 )
     # 转换为字典列表,确保可JSON序列化
     return [block.to_dict() for block in blocks]
