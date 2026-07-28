@@ -8,6 +8,7 @@ const Permission = {
     _pendingBySession: {},  // session_id → [msg, ...] 缓存未匹配的权限请求
 
     init() {
+        FloatingWindow.init('permission-modal');
         WS.on('permission_request', msg => this._onRequest(msg));
         WS.on('session_attention', msg => {
             if (msg.session_id !== SessionPanel.activeSessionId) {
@@ -101,10 +102,7 @@ const Permission = {
             if (countdownEl) countdownEl.style.display = '';
             if (cancelBtn) cancelBtn.style.display = '';
         }
-        const permModal = document.getElementById('permission-modal');
-        permModal.classList.remove('hidden');
-        permModal.classList.add('entering');
-        requestAnimationFrame(() => permModal.classList.remove('entering'));
+        FloatingWindow.show('permission-modal');
         if (!msg.countdown_cancelled) {
             this._startCountdown(msg.created_at, msg.timeout);
         }
@@ -113,7 +111,7 @@ const Permission = {
     closeIfSessionMismatch(targetSid) {
         if (this.currentRequest && this.currentRequest.session_id !== targetSid) {
             this._stopCountdown();
-            document.getElementById('permission-modal').classList.add('hidden');
+            FloatingWindow.hide('permission-modal');
             this.currentRequest = null;
         }
     },
@@ -130,7 +128,7 @@ const Permission = {
             reason: approved ? '' : document.getElementById('perm-reason').value,
             always: document.getElementById('perm-always').checked && approved,
         });
-        document.getElementById('permission-modal').classList.add('hidden');
+        FloatingWindow.hide('permission-modal');
         this.currentRequest = null;
         // 检查同一会话是否有下一个缓存的权限请求
         const pending = this._pendingBySession[req.session_id];

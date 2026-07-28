@@ -7,6 +7,7 @@ const InputDialog = {
     _countdownCancelled: false,
 
     init() {
+        FloatingWindow.init('input-dialog-modal');
         WS.on('input_request', msg => this._onRequest(msg));
         document.getElementById('input-dialog-confirm').onclick = () => this._respond();
         document.getElementById('input-cancel-countdown').onclick = () => this._cancelCountdown();
@@ -40,7 +41,7 @@ const InputDialog = {
             if (countdownEl) countdownEl.style.display = '';
             if (cancelBtn) cancelBtn.style.display = '';
         }
-        document.getElementById('input-dialog-modal').classList.remove('hidden');
+        FloatingWindow.show('input-dialog-modal');
         this._resizeDialog();
         setTimeout(() => input.focus(), 0);
         if (!msg.countdown_cancelled) {
@@ -51,7 +52,7 @@ const InputDialog = {
     closeIfSessionMismatch(targetSid) {
         if (this.currentRequest && this.currentRequest.session_id !== targetSid) {
             this._stopCountdown();
-            document.getElementById('input-dialog-modal').classList.add('hidden');
+            FloatingWindow.hide('input-dialog-modal');
             this.currentRequest = null;
         }
     },
@@ -61,7 +62,7 @@ const InputDialog = {
         this._stopCountdown();
         if (value === undefined) value = document.getElementById('input-dialog-text').value;
         WS.send({ type: 'input_response', session_id: this.currentRequest.session_id, id: this.currentRequest.id, value });
-        document.getElementById('input-dialog-modal').classList.add('hidden');
+        FloatingWindow.hide('input-dialog-modal');
         this.currentRequest = null;
     },
 

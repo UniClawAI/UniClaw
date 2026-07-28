@@ -258,6 +258,43 @@ textarea.input {
     gap: 8px;
 }
 
+/* ============================================================
+   Floating Modal (non-modal windows)
+   ============================================================ */
+.modal-overlay.floating-modal {
+    background: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    display: block;
+    position: static;
+    inset: auto;
+    pointer-events: none;
+}
+.modal-overlay.floating-modal > * {
+    pointer-events: auto;
+}
+.modal-overlay.floating-modal.hidden {
+    display: none;
+}
+.modal-overlay.floating-modal .modal-content {
+    position: fixed;
+    resize: both;
+    overflow: auto;
+    min-width: 320px;
+    min-height: 200px;
+    max-width: none;
+    width: fit-content;
+}
+/* 拖拽手柄 */
+.modal-overlay.floating-modal .modal-title {
+    cursor: move;
+    user-select: none;
+    -webkit-user-select: none;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 16px;
+}
+
 .modal-body {
     margin-bottom: 20px;
 }

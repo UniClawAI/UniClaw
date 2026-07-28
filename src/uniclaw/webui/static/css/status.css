@@ -208,7 +208,7 @@
 }
 
 /* ---- 权限弹窗样式覆盖 ---- */
-#permission-modal .modal-content {
+#permission-modal:not(.floating-modal) .modal-content {
     max-width: 480px;
 }
 .perm-tool-name {

@@ -12,6 +12,7 @@ const MultiInputDialog = {
     _otherActive: false,
 
     init() {
+        FloatingWindow.init('multi-input-modal');
         WS.on('multi_input_request', msg => this._onRequest(msg));
         document.getElementById('multi-input-submit').onclick = () => this._submit();
         document.getElementById('multi-input-cancel-countdown').onclick = () => this._cancelCountdown();
@@ -48,7 +49,7 @@ const MultiInputDialog = {
             if (countdownEl) countdownEl.style.display = '';
             if (cancelBtn) cancelBtn.style.display = '';
         }
-        document.getElementById('multi-input-modal').classList.remove('hidden');
+        FloatingWindow.show('multi-input-modal');
         if (!msg.countdown_cancelled) {
             this._startCountdown(msg.created_at, msg.timeout);
         }
@@ -57,7 +58,7 @@ const MultiInputDialog = {
     closeIfSessionMismatch(targetSid) {
         if (this.currentRequest && this.currentRequest.session_id !== targetSid) {
             this._stopCountdown();
-            document.getElementById('multi-input-modal').classList.add('hidden');
+            FloatingWindow.hide('multi-input-modal');
             this.currentRequest = null;
         }
     },
@@ -247,7 +248,7 @@ const MultiInputDialog = {
             id: this.currentRequest.id,
             value,
         });
-        document.getElementById('multi-input-modal').classList.add('hidden');
+        FloatingWindow.hide('multi-input-modal');
         this.currentRequest = null;
     },
 

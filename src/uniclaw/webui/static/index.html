@@ -182,7 +182,7 @@
         </footer>
 
         <!-- 权限弹窗 -->
-        <div id="permission-modal" class="modal-overlay hidden">
+        <div id="permission-modal" class="modal-overlay floating-modal hidden">
             <div class="modal-content">
                 <div class="modal-title">
                     <svg viewBox="0 0 24 24" fill="none" stroke="var(--neon-orange)" stroke-width="2" width="20" height="20"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
@@ -218,7 +218,7 @@
         </div>
 
         <!-- 通用输入弹窗 -->
-        <div id="input-dialog-modal" class="modal-overlay hidden">
+        <div id="input-dialog-modal" class="modal-overlay floating-modal hidden">
             <div class="modal-content">
                 <div class="modal-title" id="input-dialog-title">输入</div>
                 <pre id="input-dialog-prompt" class="input-dialog-prompt"></pre>
@@ -232,7 +232,7 @@
         </div>
 
         <!-- 多问题 Tab 输入弹窗 -->
-        <div id="multi-input-modal" class="modal-overlay hidden">
+        <div id="multi-input-modal" class="modal-overlay floating-modal hidden">
             <div class="modal-content multi-input-content">
                 <div class="modal-title" id="multi-input-title">请选择</div>
                 <div class="multi-input-tabs-wrap">
@@ -518,6 +518,7 @@
     <script src="/static/js/chat.js"></script>
     <script src="/static/js/input.js"></script>
     <script src="/static/js/sidebar.js"></script>
+    <script src="/static/js/floating-window.js"></script>
     <script src="/static/js/permission.js"></script>
     <script src="/static/js/input-dialog.js"></script>
     <script src="/static/js/multi-input-dialog.js"></script>
