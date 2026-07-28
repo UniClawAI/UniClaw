@@ -1,5 +1,6 @@
 from __future__ import annotations
 import base64
+import logging
 import numpy as np
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -8,6 +9,8 @@ import json
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 import uuid
+
+logger = logging.getLogger("session")
 from uniclaw.utils.message import MessageRole
 from uniclaw.utils.tokens import get_encoder, count_tokens
 from uniclaw.provider.types import Usage
@@ -39,7 +42,8 @@ def _estimate_visual_tokens(block: dict) -> int:
         w, h = img.size
         tiles = ((w + 511) // 512) * ((h + 511) // 512)
         return 85 + tiles * 170
-    except Exception:
+    except Exception as e:
+        logger.debug("估算视觉 token 失败,使用默认值: %s", e)
         return 500
 
 
@@ -53,7 +57,8 @@ def _estimate_audio_tokens(block: dict) -> int:
         audio_bytes = len(data) * 3 / 4
         duration_seconds = audio_bytes / 24000
         return max(50, int(duration_seconds * 10))
-    except Exception:
+    except Exception as e:
+        logger.debug("估算音频 token 失败,使用默认值: %s", e)
         return 500
 
 
@@ -549,7 +554,9 @@ class Session:
     history: list[UserMessage | AIMessage | ToolCallMessage] = field(
         default_factory=list
     )
-    _compact_count: int = field(default=0, repr=False)  # _messages 开头的压缩摘要消息数 (0 或 2)
+    _compact_count: int = field(
+        default=0, repr=False
+    )  # _messages 开头的压缩摘要消息数 (0 或 2)
     dedup_cache: set = field(default_factory=set, repr=False)  # 只读工具结果去重缓存
     from uniclaw.tools.fs import Glob, Read
     from uniclaw.tools.search import platform_search
@@ -818,8 +825,7 @@ class Session:
                     import logging
 
                     logging.getLogger("session").warning(
-                        "畸形 tool_call arguments,已替换为空 JSON: "
-                        "tool=%s, args=%s",
+                        "畸形 tool_call arguments,已替换为空 JSON: " "tool=%s, args=%s",
                         fn.get("name"),
                         raw[:200],
                     )
@@ -882,7 +888,8 @@ class Session:
                 temperature=0.3,
             )
             title = resp.content.strip()
-        except Exception:
+        except Exception as e:
+            logger.debug("LLM 生成标题失败,使用回退方案: %s", e)
             title = self._fallback_title()
 
         return title

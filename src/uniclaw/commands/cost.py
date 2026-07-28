@@ -33,7 +33,9 @@ async def cmd_cost(_args: str, config: AppConfig) -> bool:
     if by_model:
         total_cost = 0.0
         lines.append(f"\n按模型计费:\n")
-        lines.append(f"  {'模型':<28} {'输入':>10} {'输出':>10} {'调用':>6} {'费用':>10}")
+        lines.append(
+            f"  {'模型':<28} {'输入':>10} {'输出':>10} {'调用':>6} {'费用':>10}"
+        )
         lines.append(f"  {'─'*28} {'─'*10} {'─'*10} {'─'*6} {'─'*10}")
         for model_name, m in sorted(by_model.items()):
             m_in = m.get(UsageField.INPUT_TOKENS, 0)
@@ -41,14 +43,18 @@ async def cmd_cost(_args: str, config: AppConfig) -> bool:
             m_calls = m.get(UsageField.API_CALLS, 0)
             m_cost = m.get("cost", 0.0)
             total_cost += m_cost
-            display_name = model_name if len(model_name) <= 27 else model_name[:24] + "..."
+            display_name = (
+                model_name if len(model_name) <= 27 else model_name[:24] + "..."
+            )
             lines.append(
                 f"  {display_name:<28} {m_in:>10,} {m_out:>10,} "
                 f"{m_calls:>6} ${m_cost:>9.4f}"
             )
         lines.append(f"  {'─'*28} {'─'*10} {'─'*10} {'─'*6} {'─'*10}")
-        lines.append(f"  {'合计':<28} {in_tokens:>10,} {out_tokens:>10,} "
-             f"{api_calls:>6} ${total_cost:>9.4f}")
+        lines.append(
+            f"  {'合计':<28} {in_tokens:>10,} {out_tokens:>10,} "
+            f"{api_calls:>6} ${total_cost:>9.4f}"
+        )
     else:
         # 兼容旧数据(无 by_model)
         lines.append(f"  (旧数据无费用记录,升级后的新调用将自动计费)")
@@ -56,7 +62,9 @@ async def cmd_cost(_args: str, config: AppConfig) -> bool:
     # 每日统计
     if daily:
         lines.append(f"\n最近 7 天:\n")
-        lines.append(f"  {'日期':<12} {'输入':>10} {'输出':>10} {'合计':>10} {'调用':>6} {'费用':>10}")
+        lines.append(
+            f"  {'日期':<12} {'输入':>10} {'输出':>10} {'合计':>10} {'调用':>6} {'费用':>10}"
+        )
         lines.append(f"  {'─'*12} {'─'*10} {'─'*10} {'─'*10} {'─'*6} {'─'*10}")
         for date in sorted(daily.keys(), reverse=True)[:7]:
             day = daily[date]

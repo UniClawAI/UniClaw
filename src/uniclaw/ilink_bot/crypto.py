@@ -27,7 +27,9 @@ def decode_aes_key(value: str | bytes) -> bytes:
     decoded = base64.b64decode(value)
     if len(decoded) == 16:
         return decoded
-    if len(decoded) == 32 and HEX_16_BYTES.match(decoded.decode("ascii", errors="ignore")):
+    if len(decoded) == 32 and HEX_16_BYTES.match(
+        decoded.decode("ascii", errors="ignore")
+    ):
         return bytes.fromhex(decoded.decode("ascii"))
     raise ValueError("AES key must decode to exactly 16 bytes")
 

@@ -65,7 +65,6 @@ _bridge_tasks: dict[str, asyncio.Task] = {}
 _bridge_tasks_lock = asyncio.Lock()
 
 
-
 @dataclass
 class PendingRequest:
     """会话级待处理请求,跨 WebSocket 连接存活。"""
@@ -349,7 +348,10 @@ async def bridge_events(session_id: str, config: AppConfig):
 
                         tool_name = tc_name(event.tool_call)
                         add_permission_rule("tool", tool_name, Path(config.root_dir))
-                    except Exception:
+                    except Exception as e:
+                        get_logger("webui", Path.cwd()).warning(
+                            f"持久化权限规则失败: {e}"
+                        )
                         pass
             else:
                 event.content = response["reason"] if response["reason"] else False
@@ -438,7 +440,8 @@ async def bridge_events(session_id: str, config: AppConfig):
                 try:
                     session = config.current_agent.session
                     msg["msg_idx"] = len(session._messages) - 1
-                except Exception:
+                except Exception as e:
+                    get_logger("webui", Path.cwd()).debug(f"获取消息索引失败: {e}")
                     pass
                 await _broadcast(msg)
 
@@ -537,7 +540,10 @@ async def bridge_events(session_id: str, config: AppConfig):
             if event.source == "chat":
                 try:
                     shell_msg_idx = len(config.current_agent.session._messages)
-                except Exception:
+                except Exception as e:
+                    get_logger("webui", Path.cwd()).debug(
+                        f"获取 shell 消息索引失败: {e}"
+                    )
                     pass
             await _broadcast(
                 {
@@ -578,11 +584,11 @@ async def _safe_send(ws: WebSocket, data: dict):
     except (ConnectionResetError, OSError, WebSocketDisconnect):
         async with _connected_ws_lock:
             _connected_ws.discard(ws)
-    except Exception:
+    except Exception as e:
         async with _connected_ws_lock:
             _connected_ws.discard(ws)
         get_logger("webui", Path.cwd()).debug(
-            f"WebSocket 发送失败(连接可能已断开): {traceback.format_exc()}"
+            f"WebSocket 发送失败(连接可能已断开): {e}"
         )
 
 
@@ -953,7 +959,10 @@ def _build_content_with_files(content: str, files: list[dict], config) -> Any:
             except Exception as e:
                 get_logger("webui", Path.cwd()).error(f"保存附件失败: {e}")
                 blocks.append(
-                    MultimodalBlock(type="text", text=f"[附件: {config.root_dir / name} 保存失败: {e}]")
+                    MultimodalBlock(
+                        type="text",
+                        text=f"[附件: {config.root_dir / name} 保存失败: {e}]",
+                    )
                 )
     # 转换为字典列表,确保可JSON序列化
     return [block.to_dict() for block in blocks]
@@ -1166,7 +1175,11 @@ async def _handle_asr_stream_audio(
         extra_delay = (1 - len(buffer) / 3200) * 0.25 if len(buffer) < 3200 else 0
 
         # 离上次识别越近延迟越大,最大0.25s + buffer延迟
-        interval_delay = (ASR_INTERVAL - time_since_last) * 0.25 if time_since_last < ASR_INTERVAL else 0
+        interval_delay = (
+            (ASR_INTERVAL - time_since_last) * 0.25
+            if time_since_last < ASR_INTERVAL
+            else 0
+        )
         delay = interval_delay + extra_delay
         session_state["timer"] = asyncio.create_task(
             _schedule_asr(ws, session_id, config, delay=delay)
@@ -1203,7 +1216,8 @@ async def _filter_filler_words(text: str, config: AppConfig) -> dict:
                 "meaningful": bool(result.get("meaningful", False)),
             }
         return {"text": text, "meaningful": True}
-    except Exception:
+    except Exception as e:
+        get_logger("webui", Path.cwd()).warning(f"语音识别后处理 LLM 调用失败: {e}")
         # LLM 调用失败,返回原文(视为有意义)
         return {"text": text, "meaningful": True}
 

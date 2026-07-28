@@ -101,8 +101,8 @@ async def _send_wechat_voice(_chunk: StreamChunk, config) -> None:
     except Exception as e:
         try:
             bot.reply_text(f"[TTS] {e}")
-        except Exception:
-            pass
+        except Exception as e2:
+            get_logger("tts").debug("TTS 微信回复失败: %s", e2)
 
 
 def _get_on_chunk(

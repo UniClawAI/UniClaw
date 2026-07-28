@@ -207,7 +207,9 @@ class TestPlatformSearchGitHub:
                 return_value=MagicMock(get=mock_get)
             )
             mock_client.return_value.__aexit__ = AsyncMock()
-            await _search(query="test", platform="github", config=mock_config_with_proxy)
+            await _search(
+                query="test", platform="github", config=mock_config_with_proxy
+            )
 
             # 验证 token 被传递
             call_kwargs = mock_get.call_args
@@ -275,7 +277,9 @@ class TestPlatformSearchStackOverflow:
                 return_value=MagicMock(get=AsyncMock(return_value=mock_response))
             )
             mock_client.return_value.__aexit__ = AsyncMock()
-            result = await _search(query="test", platform="stackoverflow", config=mock_config)
+            result = await _search(
+                query="test", platform="stackoverflow", config=mock_config
+            )
 
         assert "Stack Overflow" in result
         assert "How to test?" in result
@@ -309,7 +313,9 @@ class TestPlatformSearchHackerNews:
                 return_value=MagicMock(get=AsyncMock(return_value=mock_response))
             )
             mock_client.return_value.__aexit__ = AsyncMock()
-            result = await _search(query="test", platform="hackernews", config=mock_config)
+            result = await _search(
+                query="test", platform="hackernews", config=mock_config
+            )
 
         assert "Hacker News" in result
         assert "Show HN: Test Project" in result
@@ -345,7 +351,9 @@ class TestPlatformSearchBilibili:
                 return_value=MagicMock(get=AsyncMock(return_value=mock_response))
             )
             mock_client.return_value.__aexit__ = AsyncMock()
-            result = await _search(query="test", platform="bilibili", config=mock_config)
+            result = await _search(
+                query="test", platform="bilibili", config=mock_config
+            )
 
         assert "B站" in result
         assert "测试视频" in result
@@ -370,7 +378,9 @@ class TestMultiPlatformSearch:
                 return_value=MagicMock(get=AsyncMock(return_value=mock_response))
             )
             mock_client.return_value.__aexit__ = AsyncMock()
-            result = await _search(query="test", platform="github,arxiv", config=mock_config)
+            result = await _search(
+                query="test", platform="github,arxiv", config=mock_config
+            )
 
         # 多平台应有分隔符
         assert "GITHUB" in result
@@ -381,7 +391,12 @@ class TestMultiPlatformSearch:
         """测试 platform=all 搜索全部平台"""
         mock_response = MagicMock()
         mock_response.status_code = 200
-        mock_response.json.return_value = {"items": [], "hits": [], "data": {"result": []}, "code": 0}
+        mock_response.json.return_value = {
+            "items": [],
+            "hits": [],
+            "data": {"result": []},
+            "code": 0,
+        }
         mock_response.text = "<html></html>"
         mock_response.raise_for_status = MagicMock()
 
@@ -418,7 +433,9 @@ class TestErrorHandling:
                 side_effect=httpx.ConnectError("Connection refused")
             )
             mock_client.return_value.__aexit__ = AsyncMock()
-            result = await _search(query="test", platform="github", timeout=3, config=mock_config)
+            result = await _search(
+                query="test", platform="github", timeout=3, config=mock_config
+            )
 
         assert "连接超时" in result
         assert "proxy_url" in result
@@ -431,7 +448,9 @@ class TestErrorHandling:
                 side_effect=asyncio.TimeoutError()
             )
             mock_client.return_value.__aexit__ = AsyncMock()
-            result = await _search(query="test", platform="github", timeout=1, config=mock_config)
+            result = await _search(
+                query="test", platform="github", timeout=1, config=mock_config
+            )
 
         assert "超时" in result
         assert "proxy_url" in result
@@ -450,9 +469,7 @@ class TestErrorHandling:
 
         with patch("uniclaw.tools.search.httpx.AsyncClient") as mock_client:
             mock_client.return_value.__aenter__ = AsyncMock(
-                return_value=MagicMock(
-                    get=AsyncMock(return_value=mock_response)
-                )
+                return_value=MagicMock(get=AsyncMock(return_value=mock_response))
             )
             mock_client.return_value.__aexit__ = AsyncMock()
             result = await _search(query="test", platform="github", config=mock_config)
@@ -481,9 +498,13 @@ class TestCache:
             mock_client.return_value.__aexit__ = AsyncMock()
 
             # 第一次调用
-            result1 = await _search(query="cache_test", platform="github", config=mock_config)
+            result1 = await _search(
+                query="cache_test", platform="github", config=mock_config
+            )
             # 第二次调用应命中缓存
-            result2 = await _search(query="cache_test", platform="github", config=mock_config)
+            result2 = await _search(
+                query="cache_test", platform="github", config=mock_config
+            )
 
         assert result1 == result2
         assert len(_search_cache) > 0
@@ -530,7 +551,12 @@ class TestPlatformRouting:
         """每个平台都可以被调用(不会抛出未处理异常)"""
         mock_response = MagicMock()
         mock_response.status_code = 200
-        mock_response.json.return_value = {"items": [], "hits": [], "data": {"result": []}, "code": 0}
+        mock_response.json.return_value = {
+            "items": [],
+            "hits": [],
+            "data": {"result": []},
+            "code": 0,
+        }
         mock_response.text = "<html></html>"
         mock_response.raise_for_status = MagicMock()
 
@@ -541,6 +567,8 @@ class TestPlatformRouting:
                 )
                 mock_client.return_value.__aexit__ = AsyncMock()
                 # 不应抛出异常
-                result = await _search(query="test", platform=platform_name, config=mock_config)
+                result = await _search(
+                    query="test", platform=platform_name, config=mock_config
+                )
                 assert isinstance(result, str), f"{platform_name} 未返回字符串"
                 assert len(result) > 0, f"{platform_name} 返回空字符串"

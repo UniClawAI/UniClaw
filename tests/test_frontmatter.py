@@ -1,6 +1,7 @@
 """
 frontmatter 模块的单元测试
 """
+
 import pytest
 from uniclaw.utils.frontmatter import parse_frontmatter, write_frontmatter
 
@@ -42,7 +43,7 @@ class TestParseFrontmatter:
         """测试简单的键值对"""
         content = "---\ntitle: Hello World\n---\nBody text"
         metadata, body = parse_frontmatter(content)
-        
+
         assert metadata == {"title": "Hello World"}
         assert body == "Body text"
 
@@ -55,7 +56,7 @@ author: John Doe
 ---
 Content here"""
         metadata, body = parse_frontmatter(content)
-        
+
         assert metadata["title"] == "My Post"
         # PyYAML 会将日期解析为 datetime.date 对象
         assert str(metadata["date"]) == "2024-01-01"
@@ -70,7 +71,7 @@ price: 19.99
 ---
 Body"""
         metadata, body = parse_frontmatter(content)
-        
+
         assert metadata["count"] == 42
         assert isinstance(metadata["count"], int)
         assert metadata["price"] == 19.99
@@ -84,7 +85,7 @@ draft: false
 ---
 Body"""
         metadata, body = parse_frontmatter(content)
-        
+
         assert metadata["published"] is True
         assert metadata["draft"] is False
 
@@ -96,7 +97,7 @@ tilde: ~
 ---
 Body"""
         metadata, body = parse_frontmatter(content)
-        
+
         assert metadata["empty"] is None
         assert metadata["tilde"] is None
 
@@ -112,7 +113,7 @@ tags:
 ---
 Body"""
         metadata, body = parse_frontmatter(content)
-        
+
         assert metadata["tags"] == ["python", "tutorial", "beginner"]
         assert isinstance(metadata["tags"], list)
 
@@ -127,7 +128,7 @@ author: Jane
 ---
 Article content"""
         metadata, body = parse_frontmatter(content)
-        
+
         assert metadata["title"] == "My Article"
         assert metadata["tags"] == ["python", "programming"]
         assert metadata["author"] == "Jane"
@@ -140,7 +141,7 @@ items:
 ---
 Body"""
         metadata, body = parse_frontmatter(content)
-        
+
         # PyYAML 将空值解析为 None，这是 YAML 标准行为
         assert metadata["items"] is None
 
@@ -154,7 +155,7 @@ greeting: 'Hi there'
 ---
 Body"""
         metadata, body = parse_frontmatter(content)
-        
+
         assert metadata["message"] == "Hello, World!"
         assert metadata["greeting"] == "Hi there"
 
@@ -166,7 +167,7 @@ description: A:B:C
 ---
 Body"""
         metadata, body = parse_frontmatter(content)
-        
+
         assert metadata["url"] == "https://example.com/path?query=value"
         assert metadata["description"] == "A:B:C"
 
@@ -181,7 +182,7 @@ Line 1
 Line 2
 Line 3"""
         metadata, body = parse_frontmatter(content)
-        
+
         assert metadata["title"] == "Test"
         assert body == "Line 1\nLine 2\nLine 3"
 
@@ -192,7 +193,7 @@ title: Only Frontmatter
 ---
 """
         metadata, body = parse_frontmatter(content)
-        
+
         assert metadata["title"] == "Only Frontmatter"
         assert body == ""
 
@@ -215,7 +216,7 @@ summary: null
 ---
 This is the article body."""
         metadata, body = parse_frontmatter(content)
-        
+
         assert metadata["title"] == "Complete Guide"
         # PyYAML 会将日期解析为 datetime.date 对象
         assert str(metadata["date"]) == "2024-01-15"
@@ -236,7 +237,7 @@ disabled: no
 ---
 Body"""
         metadata, body = parse_frontmatter(content)
-        
+
         assert metadata["enabled"] is True
         assert metadata["disabled"] is False
 
@@ -267,20 +268,16 @@ class TestWriteFrontmatter:
         """测试简单的键值对"""
         metadata = {"title": "Hello World"}
         result = write_frontmatter(metadata)
-        
+
         assert result.startswith("---\n")
         assert "title: Hello World" in result
         assert result.endswith("---\n")
 
     def test_multiple_key_values(self):
         """测试多个键值对"""
-        metadata = {
-            "title": "My Post",
-            "author": "John Doe",
-            "date": "2024-01-01"
-        }
+        metadata = {"title": "My Post", "author": "John Doe", "date": "2024-01-01"}
         result = write_frontmatter(metadata)
-        
+
         assert "title: My Post" in result
         assert "author: John Doe" in result
         # PyYAML 会对包含连字符的字符串添加单引号，这是合法的 YAML 格式
@@ -292,7 +289,7 @@ class TestWriteFrontmatter:
         metadata = {"title": "Test"}
         body = "This is the content."
         result = write_frontmatter(metadata, body)
-        
+
         assert result == "---\ntitle: Test\n---\nThis is the content."
 
     # ==================== 数据类型测试 ====================
@@ -301,21 +298,21 @@ class TestWriteFrontmatter:
         """测试整数类型"""
         metadata = {"count": 42}
         result = write_frontmatter(metadata)
-        
+
         assert "count: 42" in result
 
     def test_float_value(self):
         """测试浮点数类型"""
         metadata = {"price": 19.99}
         result = write_frontmatter(metadata)
-        
+
         assert "price: 19.99" in result
 
     def test_boolean_values(self):
         """测试布尔值"""
         metadata = {"published": True, "draft": False}
         result = write_frontmatter(metadata)
-        
+
         assert "published: true" in result
         assert "draft: false" in result
 
@@ -323,21 +320,21 @@ class TestWriteFrontmatter:
         """测试None值"""
         metadata = {"empty": None}
         result = write_frontmatter(metadata)
-        
+
         assert "empty: null" in result
 
     def test_list_value(self):
         """测试列表类型"""
         metadata = {"tags": ["python", "tutorial"]}
         result = write_frontmatter(metadata)
-        
+
         assert "tags:" in result
 
     def test_empty_list(self):
         """测试空列表"""
         metadata = {"items": []}
         result = write_frontmatter(metadata)
-        
+
         assert "items: []" in result
 
     # ==================== 特殊字符测试 ====================
@@ -346,7 +343,7 @@ class TestWriteFrontmatter:
         """测试包含特殊字符的字符串"""
         metadata = {"url": "https://example.com"}
         result = write_frontmatter(metadata)
-        
+
         # PyYAML 会自动处理 URL，可能不加引号（如果不需要）
         assert "url:" in result
         assert "https://example.com" in result
@@ -361,10 +358,10 @@ class TestWriteFrontmatter:
             "rating": 4.5,
             "tags": ["guide", "advanced"],
             "author": "John Doe",
-            "summary": None
+            "summary": None,
         }
         result = write_frontmatter(metadata)
-        
+
         assert "title: Complete Guide" in result
         # PyYAML 可能会添加引号，但内容应该存在
         assert "2024-01-15" in result
@@ -387,13 +384,13 @@ title: Hello World
 author: John
 ---
 Body content"""
-        
+
         metadata, body = parse_frontmatter(original)
         reconstructed = write_frontmatter(metadata, body)
-        
+
         # 再次解析应该得到相同结果
         metadata2, body2 = parse_frontmatter(reconstructed)
-        
+
         assert metadata == metadata2
         assert body == body2
 
@@ -409,12 +406,12 @@ tags:
   - testing
 ---
 Document body here."""
-        
+
         metadata, body = parse_frontmatter(original)
         reconstructed = write_frontmatter(metadata, body)
-        
+
         metadata2, body2 = parse_frontmatter(reconstructed)
-        
+
         assert metadata == metadata2
         assert body == body2
 

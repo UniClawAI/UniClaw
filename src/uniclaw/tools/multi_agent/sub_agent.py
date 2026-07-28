@@ -69,7 +69,14 @@ def get_builtin_agent_definitions() -> Dict[str, AgentDefinition]:
                 "- 引用具体的文件路径和行号\n"
                 "- 保持简洁和专注\n"
             ),
-            tools=[Read.name, Glob.name, Grep.name, webFetch.name, webSearch.name, platform_search.name],
+            tools=[
+                Read.name,
+                Glob.name,
+                Grep.name,
+                webFetch.name,
+                webSearch.name,
+                platform_search.name,
+            ],
             source="built-in",
         ),
         "tester": AgentDefinition(
@@ -100,7 +107,20 @@ def get_builtin_agent_definitions() -> Dict[str, AgentDefinition]:
                 "- 遇到重要的URL或文件路径时,明确标注并返回给主agent,由主agent自行决定是否深入查看\n"
                 "- 使用中文输出\n"
             ),
-            tools=[Read.name, ReadPDF.name, ReadMedia.name, Glob.name, Grep.name, Bash.name, webFetch.name, webSearch.name, platform_search.name, skill_suggest.name, skill_read.name, skill_run_command.name],
+            tools=[
+                Read.name,
+                ReadPDF.name,
+                ReadMedia.name,
+                Glob.name,
+                Grep.name,
+                Bash.name,
+                webFetch.name,
+                webSearch.name,
+                platform_search.name,
+                skill_suggest.name,
+                skill_read.name,
+                skill_run_command.name,
+            ],
             source="built-in",
         ),
         "project-init": AgentDefinition(

@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 def get_or_create_certs(domain: str = "") -> tuple[str, str]:
@@ -47,7 +50,9 @@ def get_or_create_certs(domain: str = "") -> tuple[str, str]:
     return str(keyfile), str(certfile)
 
 
-def _find_existing_certs(cert_dir: Path, domain: str) -> tuple[Path | None, Path | None]:
+def _find_existing_certs(
+    cert_dir: Path, domain: str
+) -> tuple[Path | None, Path | None]:
     """查找已有的证书文件,支持多种命名格式。
 
     查找顺序:
@@ -100,8 +105,10 @@ def _is_cert_expired(certfile: Path) -> bool:
         cert_data = certfile.read_bytes()
         cert = x509.load_pem_x509_certificate(cert_data, default_backend())
         from datetime import datetime
+
         return cert.not_valid_after_utc < datetime.now(cert.not_valid_after_utc.tzinfo)
-    except Exception:
+    except Exception as e:
+        logger.debug("检查证书过期状态失败: %s", e)
         return True
 
 
@@ -129,9 +136,11 @@ def _generate_self_signed_cert(keyfile: Path, certfile: Path, domain: str = "") 
 
         # 构建证书主题
         common_name = domain if domain else "UniClaw"
-        subject = issuer = x509.Name([
-            x509.NameAttribute(NameOID.COMMON_NAME, common_name),
-        ])
+        subject = issuer = x509.Name(
+            [
+                x509.NameAttribute(NameOID.COMMON_NAME, common_name),
+            ]
+        )
 
         # 构建 SAN 列表
         san_list = [
@@ -148,8 +157,8 @@ def _generate_self_signed_cert(keyfile: Path, certfile: Path, domain: str = "") 
         if local_ip:
             try:
                 san_list.append(x509.IPAddress(ipaddress.IPv4Address(local_ip)))
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("添加局域网 IP 到证书 SAN 失败: %s", e)
 
         # 构建证书
         now = datetime.now(timezone.utc)
@@ -220,19 +229,31 @@ CN = {common_name}
 subjectAltName = {san}
 """
 
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.cnf', delete=False) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".cnf", delete=False) as f:
         f.write(config_content)
         config_file = f.name
 
     try:
-        subprocess.run([
-            "openssl", "req", "-x509", "-newkey", "rsa:2048",
-            "-keyout", str(keyfile),
-            "-out", str(certfile),
-            "-days", "365",
-            "-nodes",
-            "-config", config_file,
-        ], check=True, capture_output=True)
+        subprocess.run(
+            [
+                "openssl",
+                "req",
+                "-x509",
+                "-newkey",
+                "rsa:2048",
+                "-keyout",
+                str(keyfile),
+                "-out",
+                str(certfile),
+                "-days",
+                "365",
+                "-nodes",
+                "-config",
+                config_file,
+            ],
+            check=True,
+            capture_output=True,
+        )
     finally:
         os.unlink(config_file)
 
@@ -241,8 +262,10 @@ def _get_local_ip() -> str:
     """获取本机局域网 IP 地址。"""
     try:
         import socket
+
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
             s.connect(("8.8.8.8", 80))
             return s.getsockname()[0]
-    except Exception:
+    except Exception as e:
+        logger.debug("获取本机局域网 IP 失败: %s", e)
         return ""

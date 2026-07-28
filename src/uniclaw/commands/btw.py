@@ -22,11 +22,16 @@ async def cmd_btw(args: str, config: AppConfig) -> bool:
 
     from uniclaw.provider import achat
     from uniclaw.tools.session.session import Session
+
     # 构建带上下文的消息
     context = task.session.build_context_summary(max_messages=10, max_chars=2000)
-    system_content = "你是一个有帮助的助手。请简洁明了地回答,如果问题涉及代码给出关键示例即可。"
+    system_content = (
+        "你是一个有帮助的助手。请简洁明了地回答,如果问题涉及代码给出关键示例即可。"
+    )
     if context:
-        system_content += f"\n\n以下是用户当前对话的最近上下文,供你参考:\n---\n{context}\n---"
+        system_content += (
+            f"\n\n以下是用户当前对话的最近上下文,供你参考:\n---\n{context}\n---"
+        )
 
     _session = Session()
     _session.add_user_message(content=question)
@@ -61,10 +66,7 @@ async def cmd_btw(args: str, config: AppConfig) -> bool:
         else:
             # 非 TUI 模式直接打印
             await info(
-                f"\n💡 侧问题: {question}\n"
-                "─" * 40 + "\n"
-                f"{answer}\n"
-                "─" * 40,
+                f"\n💡 侧问题: {question}\n" "─" * 40 + "\n" f"{answer}\n" "─" * 40,
                 config,
             )
 

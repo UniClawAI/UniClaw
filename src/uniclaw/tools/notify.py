@@ -1,24 +1,31 @@
 import asyncio
+import logging
 import sys
 from uniclaw.tools.base import tool
 from uniclaw.utils.constants import TOOL_ERROR
+
+logger = logging.getLogger(__name__)
 
 
 async def _notify_windows(title: str, message: str) -> bool:
     """Windows Toast 通知"""
     # 用 PowerShell 自带的 AppId,避免自定义 AppId 注册问题
-    app_id = r"{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe"
+    app_id = (
+        r"{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe"
+    )
 
     # XML 中不能有 $ 等特殊字符,用单引号拼接避免 PowerShell 变量展开
     title_esc = title.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    message_esc = message.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    message_esc = (
+        message.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    )
 
     script = (
         "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null\n"
         "[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] | Out-Null\n"
         "$xml = New-Object Windows.Data.Xml.Dom.XmlDocument\n"
         "$xml.LoadXml("
-        f"'<toast scenario=\"reminder\" duration=\"long\"><visual><binding template=\"ToastGeneric\"><text>{title_esc}</text><text>{message_esc}</text></binding></visual><audio src=\"ms-winsoundevent:Notification.Default\"/></toast>'"
+        f'\'<toast scenario="reminder" duration="long"><visual><binding template="ToastGeneric"><text>{title_esc}</text><text>{message_esc}</text></binding></visual><audio src="ms-winsoundevent:Notification.Default"/></toast>\''
         ")\n"
         f"$appId = '{app_id}'\n"
         "$toast = [Windows.UI.Notifications.ToastNotification]::new($xml)\n"
@@ -27,7 +34,9 @@ async def _notify_windows(title: str, message: str) -> bool:
     )
     try:
         proc = await asyncio.create_subprocess_exec(
-            "powershell", "-Command", script,
+            "powershell",
+            "-Command",
+            script,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -45,14 +54,16 @@ async def _notify_macos(title: str, message: str) -> bool:
     """macOS 通知"""
     try:
         proc = await asyncio.create_subprocess_exec(
-            "osascript", "-e",
+            "osascript",
+            "-e",
             f'display notification "{message}" with title "{title}"',
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
         )
         await asyncio.wait_for(proc.wait(), timeout=10)
         return True
-    except Exception:
+    except Exception as e:
+        logger.debug("macOS 通知发送失败: %s", e)
         return False
 
 
@@ -60,13 +71,18 @@ async def _notify_linux(title: str, message: str) -> bool:
     """Linux 通知 (notify-send)"""
     try:
         proc = await asyncio.create_subprocess_exec(
-            "notify-send", "-u", "critical", title, message,
+            "notify-send",
+            "-u",
+            "critical",
+            title,
+            message,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
         )
         await asyncio.wait_for(proc.wait(), timeout=10)
         return True
-    except Exception:
+    except Exception as e:
+        logger.debug("Linux 通知发送失败: %s", e)
         return False
 
 

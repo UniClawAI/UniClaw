@@ -127,7 +127,11 @@ async def ask_advisor(
     for m in model:
         full = _match_model(m, config.large_model_name)
         if not full:
-            available = ", ".join(_strip_provider(x) for x in config.large_model_name) if config.large_model_name else "无"
+            available = (
+                ", ".join(_strip_provider(x) for x in config.large_model_name)
+                if config.large_model_name
+                else "无"
+            )
             return f"{TOOL_ERROR}: 模型 '{m}' 不在顾问列表中。可用: {available}"
         resolved.append(full)
 

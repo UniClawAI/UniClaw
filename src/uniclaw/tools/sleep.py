@@ -73,7 +73,9 @@ async def wait(seconds: float, config: AppConfig = None) -> str:
         while time.monotonic() < deadline:
             if cancel_event and cancel_event.is_set():
                 elapsed = seconds - (deadline - time.monotonic())
-                return f"{SYSTEM_PREFIX}(wait) 等待被取消(已等待 {max(0, elapsed):.1f} 秒)"
+                return (
+                    f"{SYSTEM_PREFIX}(wait) 等待被取消(已等待 {max(0, elapsed):.1f} 秒)"
+                )
             await asyncio.sleep(min(0.5, deadline - time.monotonic()))
     except asyncio.CancelledError:
         return f"{SYSTEM_PREFIX}(wait) 等待被取消"

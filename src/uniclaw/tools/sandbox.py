@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 import shutil
 import time
@@ -10,6 +11,8 @@ from uniclaw.utils.constants import TOOL_ERROR
 
 from .shell import smart_decode, STDERR_MARKER
 
+logger = logging.getLogger(__name__)
+
 
 class SandboxLanguage(StrEnum):
     """沙箱支持的编程语言。"""
@@ -20,6 +23,7 @@ class SandboxLanguage(StrEnum):
     js = "js"
     shell = "shell"
     bash = "bash"
+
 
 LANG_CONFIG = {
     "python": {
@@ -160,7 +164,8 @@ async def RunCode(
             proc.kill()
             await proc.wait()
             return f"{TOOL_ERROR}: 执行超时({timeout} 秒),容器已终止"
-        except Exception:
+        except Exception as e:
+            logger.warning("沙箱执行异常: %s", e)
             proc.kill()
             await proc.wait()
             raise
@@ -199,7 +204,9 @@ async def get_tools(config=None) -> list:
     _docker_err = await _check_docker()
     if _docker_err:
 
-        await warn(f"[sandbox] Docker 不可用: {_docker_err},RunCode 工具已禁用。", config)
+        await warn(
+            f"[sandbox] Docker 不可用: {_docker_err},RunCode 工具已禁用。", config
+        )
         result = []
     else:
         result = [RunCode]

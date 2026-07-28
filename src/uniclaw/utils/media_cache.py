@@ -41,7 +41,12 @@ def save_description(content_hash: str, description: str, model: str, source: st
     try:
         cache_file.write_text(
             json.dumps(
-                {"description": description, "model": model, "source": source, "timestamp": time.time()},
+                {
+                    "description": description,
+                    "model": model,
+                    "source": source,
+                    "timestamp": time.time(),
+                },
                 ensure_ascii=False,
             ),
             encoding="utf-8",

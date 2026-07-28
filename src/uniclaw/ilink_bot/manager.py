@@ -25,6 +25,7 @@ class BotManager:
             return
         self._initialized = True
         from uniclaw.wechat import get_wechat_dir
+
         self.data_dir = get_wechat_dir()
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.config_path = self.data_dir / "bots.json"
@@ -116,13 +117,15 @@ class BotManager:
             for name in self._active:
                 if name not in tasks or tasks[name].done():
                     bot = self._active[name]
-                    tasks[name] = asyncio.create_task(self._poll(name, bot, interval), name=name)
+                    tasks[name] = asyncio.create_task(
+                        self._poll(name, bot, interval), name=name
+                    )
             # 清理已移除 bot 的 task
             for name in list(tasks):
                 if name not in self._active:
                     tasks[name].cancel()
                     del tasks[name]
-            await asyncio.sleep(.1)
+            await asyncio.sleep(0.1)
 
         for t in tasks.values():
             t.cancel()
@@ -157,7 +160,9 @@ class BotManager:
             asyncio.create_task(self._run_handler(handler, bot, msg))
         await bot._dispatch(msg)
 
-    async def _run_handler(self, handler, bot: IlinkBotClient, msg: IncomingMessage) -> None:
+    async def _run_handler(
+        self, handler, bot: IlinkBotClient, msg: IncomingMessage
+    ) -> None:
         try:
             await handler(bot, msg)
         except Exception as e:

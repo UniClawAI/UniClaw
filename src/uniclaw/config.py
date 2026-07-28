@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -16,6 +17,8 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from uniclaw.provider.types import Protocol
 from uniclaw.spinner import BaseSpinner
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from uniclaw.agent import AgentStatus, AgentTask
@@ -96,7 +99,9 @@ class AppConfig:
     ) = field(default=None, repr=False)
     voice_mode: bool = False  # 语音模式:AI 回复自动 TTS 播放(运行时状态,不持久化)
     computer_use_enabled: bool = False  # Computer Use 模式(运行时状态,不持久化)
-    explain_mode: bool | set[str] = False  # 工具解释模式(运行时状态,不持久化): False=关|True=全部|set=指定工具
+    explain_mode: bool | set[str] = (
+        False  # 工具解释模式(运行时状态,不持久化): False=关|True=全部|set=指定工具
+    )
 
     @property
     def is_sub(self) -> bool:
@@ -312,8 +317,8 @@ async def run_setup_wizard() -> AppConfig:
         try:
             models = await fetch_anthropic_models(base_url, api_key)
             print(f"可用模型: {len(models)} 个")
-        except Exception:
-            pass  # 部分兼容接口不支持 /v1/models,跳过
+        except Exception as e:
+            logger.debug("获取 Anthropic 模型列表失败,跳过: %s", e)
 
         if not models:
             print("该接口不支持自动获取模型列表,请手动输入模型名称。")

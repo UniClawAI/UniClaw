@@ -42,6 +42,7 @@ class MultiQuestionTextControl(FormattedTextControl):
             def _h(mouse_event):
                 if mouse_event.event_type == MouseEventType.MOUSE_UP:
                     dm._select_option(idx)
+
             return _h
 
         # ── 竖排 Tab ──
@@ -105,7 +106,9 @@ class MultiQuestionTextControl(FormattedTextControl):
                 else:
                     fragments.append(("fg:ansiyellow", "  ◉ 已选: 其他 (请填写)\n"))
             elif sel < len(options):
-                fragments.append(("fg:ansigreen", f"  ◉ 已选: {sel + 1}. {options[sel]}\n"))
+                fragments.append(
+                    ("fg:ansigreen", f"  ◉ 已选: {sel + 1}. {options[sel]}\n")
+                )
 
         fragments.append(("", "\n"))
         fragments.append(("dim", "  Tab 切换 | 数字键选择 | Enter 提交\n"))
@@ -121,6 +124,7 @@ def _click_tab(dm, tab_idx):
             dm.current_tab = tab_idx
             dm.other_active = False
             dm._invalidate()
+
     return _h
 
 
@@ -365,10 +369,16 @@ class DialogManager:
                 content=Frame(
                     HSplit(
                         [
-                            ConditionalContainer(content=dialog_text_win, filter=_is_single),
-                            ConditionalContainer(content=multi_text_win, filter=_is_multi),
+                            ConditionalContainer(
+                                content=dialog_text_win, filter=_is_single
+                            ),
+                            ConditionalContainer(
+                                content=multi_text_win, filter=_is_multi
+                            ),
                             Window(height=1, char="─", style="class:separator"),
-                            ConditionalContainer(content=dialog_input_win, filter=_is_single),
+                            ConditionalContainer(
+                                content=dialog_input_win, filter=_is_single
+                            ),
                             ConditionalContainer(content=hint_win, filter=_is_multi),
                         ]
                     ),
@@ -384,7 +394,14 @@ class DialogManager:
 
     # ── 对话框输入(单问题) ────────────────────────────────────
 
-    async def tui_input(self, prompt: str, title: str, config: AppConfig, buffer: Buffer, main_input_win: Window) -> str:
+    async def tui_input(
+        self,
+        prompt: str,
+        title: str,
+        config: AppConfig,
+        buffer: Buffer,
+        main_input_win: Window,
+    ) -> str:
         """显示多行提示并等待用户输入。异步版本,不阻塞事件循环。"""
         self.multi_mode = False
         tui = self._tui
@@ -411,7 +428,9 @@ class DialogManager:
             self.active = True
             tui._focus_window(self.input_win)
 
-        await tui._loop.run_in_executor(None, lambda: tui._run_on_ui_thread(_open_dialog, wait=True))
+        await tui._loop.run_in_executor(
+            None, lambda: tui._run_on_ui_thread(_open_dialog, wait=True)
+        )
         timeout = config.permission_timeout
 
         # 倒计时线程
@@ -477,12 +496,21 @@ class DialogManager:
                 self.buffer.reset()
             tui._focus_window(main_input_win)
 
-        await tui._loop.run_in_executor(None, lambda: tui._run_on_ui_thread(_close_dialog, wait=True))
+        await tui._loop.run_in_executor(
+            None, lambda: tui._run_on_ui_thread(_close_dialog, wait=True)
+        )
         return result
 
     # ── 对话框输入(多问题 Tab) ────────────────────────────────
 
-    async def tui_multi_input(self, questions: list[dict], title: str, config: AppConfig, buffer: Buffer, main_input_win: Window) -> str:
+    async def tui_multi_input(
+        self,
+        questions: list[dict],
+        title: str,
+        config: AppConfig,
+        buffer: Buffer,
+        main_input_win: Window,
+    ) -> str:
         """多问题 Tab 对话框,支持鼠标点击选择和"其他"编辑框。"""
         tui = self._tui
         if not tui.app:
@@ -508,7 +536,9 @@ class DialogManager:
             # 多问题模式不 focus 到输入框
             tui.app.invalidate()
 
-        await tui._loop.run_in_executor(None, lambda: tui._run_on_ui_thread(_open_dialog, wait=True))
+        await tui._loop.run_in_executor(
+            None, lambda: tui._run_on_ui_thread(_open_dialog, wait=True)
+        )
         timeout = config.permission_timeout
 
         # 倒计时
@@ -555,7 +585,9 @@ class DialogManager:
                 self.buffer.reset()
             tui._focus_window(main_input_win)
 
-        await tui._loop.run_in_executor(None, lambda: tui._run_on_ui_thread(_close_dialog, wait=True))
+        await tui._loop.run_in_executor(
+            None, lambda: tui._run_on_ui_thread(_close_dialog, wait=True)
+        )
         return result
 
     # ── 快捷键 ────────────────────────────────────────────────
@@ -566,8 +598,12 @@ class DialogManager:
 
         # 多问题模式的快捷键
         _is_multi = Condition(lambda: self.active and self.multi_mode)
-        _is_other_active = Condition(lambda: self.active and self.multi_mode and self.other_active)
-        _is_multi_not_other = Condition(lambda: self.active and self.multi_mode and not self.other_active)
+        _is_other_active = Condition(
+            lambda: self.active and self.multi_mode and self.other_active
+        )
+        _is_multi_not_other = Condition(
+            lambda: self.active and self.multi_mode and not self.other_active
+        )
 
         @bindings.add("tab", filter=_is_multi_not_other, eager=True)
         def _tab_next(event):
@@ -609,7 +645,9 @@ class DialogManager:
                 self.other_active = False
                 self._invalidate()
             elif data and data.isprintable():
-                self.other_texts[self.current_tab] = self.other_texts.get(self.current_tab, "") + data
+                self.other_texts[self.current_tab] = (
+                    self.other_texts.get(self.current_tab, "") + data
+                )
                 self._invalidate()
 
         # Enter 提交(非"其他"编辑模式时,所有题都有选择则提交)
@@ -623,7 +661,11 @@ class DialogManager:
         # 单问题模式原有快捷键
         _is_single = Condition(lambda: self.active and not self.multi_mode)
 
-        @bindings.add("up", filter=Condition(lambda: not input_buffer.complete_state) & _is_single, eager=True)
+        @bindings.add(
+            "up",
+            filter=Condition(lambda: not input_buffer.complete_state) & _is_single,
+            eager=True,
+        )
         def _dialog_scroll_up(event):
             all_lines = OutputRenderer.wrap_fragment_lines(
                 OutputRenderer.split_fragments_lines(self.prompt_fragments_list),
@@ -635,7 +677,11 @@ class DialogManager:
             self.scroll_offset = min(self.scroll_offset + 1, max_offset)
             event.app.invalidate()
 
-        @bindings.add("down", filter=Condition(lambda: not input_buffer.complete_state) & _is_single, eager=True)
+        @bindings.add(
+            "down",
+            filter=Condition(lambda: not input_buffer.complete_state) & _is_single,
+            eager=True,
+        )
         def _dialog_scroll_down(event):
             self.scroll_offset = max(0, self.scroll_offset - 1)
             event.app.invalidate()

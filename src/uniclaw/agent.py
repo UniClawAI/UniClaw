@@ -27,7 +27,12 @@ if TYPE_CHECKING:
     from uniclaw.tools.todolist import TodoList
     from uniclaw.tools.todolist.goal import GoalManager
 from uniclaw.tools.fs import Edit, Write
-from uniclaw.tools.base import tc_name as _tc_name, tc_args as _tc_args, Tool, extract_explains
+from uniclaw.tools.base import (
+    tc_name as _tc_name,
+    tc_args as _tc_args,
+    Tool,
+    extract_explains,
+)
 
 # 死循环检测:连续相同工具调用次数阈值
 LOOP_DETECTION_THRESHOLD = 5
@@ -402,7 +407,10 @@ class AgentTask:
         while not self.user_queue.empty():
             try:
                 messages.append(self.user_queue.get_nowait())
-            except Exception:
+            except Exception as e:
+                get_logger("agent", config.root_dir).debug(
+                    "从用户队列获取消息失败: %s", e
+                )
                 break
         if not messages:
             return ""
@@ -485,11 +493,12 @@ class MultiAgent:
             if not queue:
                 try:
                     from uniclaw.console.run import TUIApp
+
                     tui = TUIApp.get_instance()
                     if tui and tui.config:
                         queue = tui.config.current_agent.event_queue
-                except Exception:
-                    pass
+                except Exception as e:
+                    get_logger("agent", config.root_dir).debug("获取TUI实例失败: %s", e)
         if queue:
             await queue.put((task, event))
 
@@ -524,8 +533,10 @@ class MultiAgent:
                 await asyncio.wait_for(asyncio.shield(task.future), timeout=timeout)
             except asyncio.TimeoutError:
                 pass
-            except Exception:
-                pass
+            except Exception as e:
+                get_logger("agent", self.session.root_dir).debug(
+                    "等待任务完成异常: %s", e
+                )
             # 任务已完成
             if task.status in (
                 AgentStatus.COMPLETED,
@@ -600,6 +611,7 @@ class MultiAgent:
             allowed_tools = await get_tools(config)
         else:
             from uniclaw.tools.registry import ToolRegistry
+
             allowed_tools = ToolRegistry.get_instance().resolve_tools(allowed_tools)
         # 子代理展示可搜索的扩展工具
         from uniclaw.tools.registry import get_registry_system_prompt
@@ -611,7 +623,7 @@ class MultiAgent:
         if system_prompt:
             base_system_prompt += f"\n\n{system_prompt}"
         system_prompt = base_system_prompt
-        
+
         if isolation:
             if root_dir is None:
                 task.status = AgentStatus.FAILED
@@ -941,18 +953,30 @@ class MultiAgent:
             if permitted is True:
                 tc_id = tool_call.get("id", "")
                 await self.send_event_to_user(
-                    ToolStartEvent(tc_name, dict(tc_args), tool_call_id=tc_id, explain=explain or ""),
+                    ToolStartEvent(
+                        tc_name,
+                        dict(tc_args),
+                        tool_call_id=tc_id,
+                        explain=explain or "",
+                    ),
                     config,
                 )
                 try:
+
                     async def _stream_cb(content: str, _tc_id=tc_id, _tc_name=tc_name):
                         await self.send_event_to_user(
-                            ToolStreamEvent(name=_tc_name, content=content, tool_call_id=_tc_id),
+                            ToolStreamEvent(
+                                name=_tc_name, content=content, tool_call_id=_tc_id
+                            ),
                             config,
                         )
-                    tool_resp_content = await tool(**tc_args, config=config, stream_callback=_stream_cb)
+
+                    tool_resp_content = await tool(
+                        **tc_args, config=config, stream_callback=_stream_cb
+                    )
                     # 标记扩展工具已使用(LRU:移到最前,防止被淘汰),核心工具不参与能量管理
                     from uniclaw.tools.registry import CORE_TOOL_NAMES
+
                     if tc_name not in CORE_TOOL_NAMES:
                         task.extended_mgr.touch(tc_name)
                     if isinstance(tool_resp_content, str):
@@ -1018,7 +1042,12 @@ class MultiAgent:
 
         # 并行执行所有工具
         results = await asyncio.gather(
-            *[self._execute_single_tool(tc, name2tool, config, tool_explains.get(tc.get("id", ""), "")) for tc in tool_calls]
+            *[
+                self._execute_single_tool(
+                    tc, name2tool, config, tool_explains.get(tc.get("id", ""), "")
+                )
+                for tc in tool_calls
+            ]
         )
 
         # 按顺序处理结果: add_message + cancel 检查
@@ -1044,9 +1073,7 @@ class MultiAgent:
                 # 将多模态内容作为 user 消息,让 LLM 能看到图片/音频/视频
                 task.session.add_message(MessageRole.USER, tool_resp_content)
                 # 广播给前端,让流式输出期间也能显示图片
-                await self.send_event_to_user(
-                    UserEvent(tool_resp_content), config
-                )
+                await self.send_event_to_user(UserEvent(tool_resp_content), config)
             else:
                 # TOOL 消息 content 必须是 str,非 str 内容需转换
                 final_content = (
@@ -1154,6 +1181,7 @@ class MultiAgent:
             )
         except Exception as e:
             from uniclaw.console.ui import err
+
             await err(f"创建检查点失败(已跳过): {e}", config=config)
         await self.send_event_to_user(CheckpointEndEvent(), config)
         if system_message is None:
@@ -1227,7 +1255,9 @@ class MultiAgent:
                     await compact_task
                 compact_task = None
 
-                tool_calls, tool_explains = await self._process_response(resp, task, config)
+                tool_calls, tool_explains = await self._process_response(
+                    resp, task, config
+                )
                 if not tool_calls:
                     content = await task.drain_user_queue(self, config)
                     if content:
@@ -1272,7 +1302,9 @@ class MultiAgent:
                     task.status = AgentStatus.CANCELLED
                     await self.send_event_to_user(InterruptedEvent(), config)
                     break
-                if await self._execute_tool_calls(tool_calls, name2tool, config, tools, tool_explains):
+                if await self._execute_tool_calls(
+                    tool_calls, name2tool, config, tools, tool_explains
+                ):
                     break
                 content = await task.drain_user_queue(self, config)
 

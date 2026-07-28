@@ -1,9 +1,12 @@
 import asyncio
 import base64
+import logging
 import mimetypes
 import shutil
 import subprocess
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 from uniclaw.utils.constants import SYSTEM_PREFIX, TOOL_ERROR
 from uniclaw.tools.base import tool
@@ -119,8 +122,8 @@ def _get_media_info(p: Path) -> dict:
                 info["声道数"] = str(media_stream["channels"])
             if media_stream.get("codec_name"):
                 info["编码"] = media_stream["codec_name"]
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("ffprobe 提取媒体信息失败: %s", e)
     return info
 
 

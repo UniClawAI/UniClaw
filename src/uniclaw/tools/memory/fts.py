@@ -5,12 +5,15 @@ SQLite FTS5 全文检索索引。
 memory_fts_idx 是 FTS5 虚表,通过触发器自动同步。
 """
 
+import logging
 import os
 import re
 import sqlite3
 import time
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from uniclaw.utils import frontmatter
 
@@ -99,7 +102,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
 
 
 def _fingerprint(path: Path) -> str:
-    """"<file_size>-<mtime_ms>",轻量变更检测。"""
+    """ "<file_size>-<mtime_ms>",轻量变更检测。"""
     stat = path.stat()
     return f"{stat.st_size}-{int(stat.st_mtime * 1000)}"
 
@@ -177,7 +180,14 @@ def reconcile(memory_dirs: list[Path]) -> dict:
                            body=excluded.body,
                            fingerprint=excluded.fingerprint,
                            last_indexed_at=excluded.last_indexed_at""",
-                    (path_str, _scope_of(fp, memory_dir), _type_of(fp), body, fp_str, now),
+                    (
+                        path_str,
+                        _scope_of(fp, memory_dir),
+                        _type_of(fp),
+                        body,
+                        fp_str,
+                        now,
+                    ),
                 )
                 stats["indexed"] += 1
 
@@ -196,7 +206,8 @@ def _read_body(fp: Path) -> str:
         name = metadata.get("name", "")
         desc = metadata.get("description", "")
         return f"{name} {desc} {content}"
-    except Exception:
+    except Exception as e:
+        logger.debug("解析 frontmatter 失败,使用原始文本: %s", e)
         return fp.read_text(encoding="utf-8")
 
 
@@ -215,8 +226,8 @@ def _scope_of(fp: Path, memory_dir: Optional[Path] = None) -> str:
                 try:
                     if parent.resolve() == Path.home().resolve():
                         return "user"
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("解析路径失败: %s", e)
                 return "project"
         return "user"
 
@@ -228,8 +239,8 @@ def _scope_of(fp: Path, memory_dir: Optional[Path] = None) -> str:
             try:
                 if parent.resolve() == Path.home().resolve():
                     return "user"
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("解析路径失败: %s", e)
             return "project"
     return "user"
 
@@ -240,7 +251,8 @@ def _type_of(fp: Path) -> str:
         text = fp.read_text(encoding="utf-8")
         metadata, _ = frontmatter.parse_frontmatter(text)
         return metadata.get("type", "user")
-    except Exception:
+    except Exception as e:
+        logger.debug("从 frontmatter 提取 type 失败: %s", e)
         return "user"
 
 
@@ -336,13 +348,15 @@ def fts_search(
 
             for row in rows:
                 # FTS5 bm25: lower = better(内部为负数),取反使 higher = better
-                all_results.append({
-                    "path": row[0],
-                    "scope": row[1],
-                    "type": row[2],
-                    "snippet": row[3],
-                    "score": -row[4],
-                })
+                all_results.append(
+                    {
+                        "path": row[0],
+                        "scope": row[1],
+                        "type": row[2],
+                        "snippet": row[3],
+                        "score": -row[4],
+                    }
+                )
         finally:
             conn.close()
 
@@ -356,7 +370,9 @@ def fts_search(
     top_score = all_results[0]["score"]
     if top_score > 0:
         cutoff = top_score * SCORE_FLOOR_RATIO
-        filtered = [r for r in all_results if r["score"] >= cutoff or r is all_results[0]]
+        filtered = [
+            r for r in all_results if r["score"] >= cutoff or r is all_results[0]
+        ]
     else:
         filtered = all_results
 

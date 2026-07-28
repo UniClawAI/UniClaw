@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import os
 import threading
 import uuid
@@ -21,6 +22,8 @@ from .crypto import (
 from .exceptions import ApiError, AuthError, MediaError, NoContextError
 from .models import IncomingMessage, MessageItemType
 from .storage import JsonStateStore
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_BASE_URL = "https://ilinkai.weixin.qq.com"
 DEFAULT_CDN_BASE_URL = "https://novac2c.cdn.weixin.qq.com/c2c"
@@ -460,8 +463,8 @@ class IlinkBotClient:
                     result = on_status(name, status)
                     if inspect.isawaitable(result):
                         await result
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("on_status 回调执行失败: %s", e)
             if name in {"confirmed", "confirm", "success", "ok"} or _pick(
                 status, "bot_token", "token"
             ):

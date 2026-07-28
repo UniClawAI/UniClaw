@@ -19,9 +19,11 @@ if TYPE_CHECKING:
 
 class GoalStatus(StrEnum):
     """目标评估状态。"""
-    ACHIEVED = "achieved"           # 目标达成
-    WAITING = "waiting"             # 等待后台任务 (sleep_timer)
-    NOT_ACHIEVED = "not_achieved"   # 目标未达成
+
+    ACHIEVED = "achieved"  # 目标达成
+    WAITING = "waiting"  # 等待后台任务 (sleep_timer)
+    NOT_ACHIEVED = "not_achieved"  # 目标未达成
+
 
 # 默认最大重入次数
 DEFAULT_MAX_REENTRY = 3
@@ -124,7 +126,7 @@ async def evaluate_goal(
         result = await achat(
             system_prompt=(
                 "你是一个严格的目标评估员。"
-                "严格以 JSON 格式回复: {\"status\": \"achieved/waiting/not_achieved\", \"reason\": str}。"
+                '严格以 JSON 格式回复: {"status": "achieved/waiting/not_achieved", "reason": str}。'
                 "status 只能是 achieved、waiting、not_achieved 之一。"
                 "不要输出 JSON 以外的任何内容。"
             ),

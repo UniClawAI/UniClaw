@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 import re
 import signal
@@ -6,6 +7,8 @@ import subprocess
 import uuid
 from datetime import datetime
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 from uniclaw.utils.constants import TOOL_ERROR
 from uniclaw.utils.format import sanitize_progress_line
@@ -60,6 +63,7 @@ class MonitorManager:
                     )
                 proc_list = "\n".join(info_lines)
                 from .tools import monitor_stop
+
                 return (
                     f"{TOOL_ERROR}: 已达到最大并发数({self._max_concurrent})\n"
                     f"当前进程列表:\n{proc_list}\n"
@@ -150,7 +154,8 @@ class MonitorManager:
 
         except asyncio.CancelledError:
             pass
-        except Exception:
+        except Exception as e:
+            logger.warning("读取进程输出失败: %s", e)
             if monitor.status == MonitorStatus.RUNNING:
                 monitor.status = MonitorStatus.ERROR
 
@@ -168,8 +173,8 @@ class MonitorManager:
             desc = f" [{monitor.description}]" if monitor.description else ""
             msg = f"监控{desc}匹配到: {line[:100]}"
             await push_notification(message=msg, title="UniClaw 监控")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("发送桌面通知失败: %s", e)
 
         # 2. 通知模型(使用 wake_agent 统一唤醒逻辑)
         if monitor.notify_model and monitor._config:
@@ -190,8 +195,8 @@ class MonitorManager:
                     f"请根据匹配结果继续处理。"
                 )
                 await wake_agent(message, monitor._config)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("唤醒模型失败: %s", e)
 
     async def stop_monitor(self, monitor_id: str) -> str:
         """停止进程(杀掉整棵进程树)"""
@@ -234,12 +239,12 @@ class MonitorManager:
             else:
                 # Unix: 发 SIGKILL 给进程组
                 os.killpg(os.getpgid(process.pid), signal.SIGKILL)
-        except Exception:
-            # 兜底: 直接 kill 主进程
+        except Exception as e:
+            logger.warning("终止进程树失败,尝试直接 kill: %s", e)
             try:
                 process.kill()
-            except Exception:
-                pass
+            except Exception as e2:
+                logger.warning("直接 kill 进程失败: %s", e2)
 
     async def list_monitors(self) -> str:
         """列出所有进程"""

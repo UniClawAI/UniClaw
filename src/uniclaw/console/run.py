@@ -95,6 +95,7 @@ class _CommandCompleter(Completer):
     def _load_skills(self):
         """加载 skills,带 5 秒缓存避免频繁磁盘 IO。"""
         import time
+
         now = time.time()
         if now - self._skills_cache_time < 5:
             return self._skills_cache
@@ -102,8 +103,10 @@ class _CommandCompleter(Completer):
         root_dir = task.session.root_dir if task else None
         try:
             from uniclaw.tools.skill.loader import load_skills
+
             self._skills_cache = load_skills(root_dir)
-        except Exception:
+        except Exception as e:
+            get_logger("run", root_dir).debug("Failed to load skills: %s", e)
             self._skills_cache = []
         self._skills_cache_time = now
         return self._skills_cache
@@ -246,7 +249,10 @@ def _build_user_message(text: str):
                     }
                 )
                 has_media = True
-            except Exception:
+            except Exception as e:
+                get_logger("console.run", Path.cwd()).warning(
+                    "Failed to encode image %s: %s", part, e
+                )
                 content_blocks.append({"type": "text", "text": part})
         elif p.exists() and p.suffix.lower() in AUDIO_EXTENSIONS:
             try:
@@ -260,7 +266,10 @@ def _build_user_message(text: str):
                     }
                 )
                 has_media = True
-            except Exception:
+            except Exception as e:
+                get_logger("console.run", Path.cwd()).warning(
+                    "Failed to encode audio %s: %s", part, e
+                )
                 content_blocks.append({"type": "text", "text": part})
         elif p.exists() and p.suffix.lower() in VIDEO_EXTENSIONS:
             try:
@@ -276,7 +285,10 @@ def _build_user_message(text: str):
                     }
                 )
                 has_media = True
-            except Exception:
+            except Exception as e:
+                get_logger("console.run", Path.cwd()).warning(
+                    "Failed to encode video %s: %s", part, e
+                )
                 content_blocks.append({"type": "text", "text": part})
         else:
             content_blocks.append({"type": "text", "text": part})
@@ -454,10 +466,10 @@ class TUIApp:
             return
         try:
             self.app.layout.focus(window)
-        except Exception:
+        except Exception as e:
             if self.current_task:
                 get_logger("run", self.current_task.session.root_dir).debug(
-                    "Failed to focus prompt_toolkit window", exc_info=True
+                    "Failed to focus prompt_toolkit window: %s", e, exc_info=True
                 )
         self.app.invalidate()
 
@@ -534,7 +546,10 @@ class TUIApp:
                             if isinstance(args_str, str)
                             else args_str
                         )
-                    except Exception:
+                    except Exception as e:
+                        get_logger("run", self.config.root_dir).debug(
+                            "Failed to parse tool args JSON for %s: %s", name, e
+                        )
                         args = {}
                     args_display = format_args_for_display(args)
                     if args_display:

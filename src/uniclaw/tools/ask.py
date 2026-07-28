@@ -2,7 +2,9 @@ from uniclaw.tools.base import tool
 
 
 @tool
-async def AskUserQuestion(questions: list[dict], title: str = "请选择", config=None) -> str:
+async def AskUserQuestion(
+    questions: list[dict], title: str = "请选择", config=None
+) -> str:
     """
     向用户(人类)提问以确认需求细节。当你需要了解用户的偏好、意图或需求时使用此工具。
     这是你唯一合法的主动与用户沟通的方式。

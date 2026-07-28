@@ -28,7 +28,7 @@ def parse_frontmatter(content: str) -> Tuple[Dict[str, Any], str]:
         Tuple[Dict[str, Any], str]: 返回一个元组,包含:
             - 第一个元素:解析后的 frontmatter 字典(如果没有 frontmatter 则为空字典)
             - 第二个元素:去除 frontmatter 后的正文内容
-    
+
     Examples:
         >>> content = "---\\ntitle: Hello\\n---\\nBody text"
         >>> metadata, body = parse_frontmatter(content)
@@ -92,8 +92,9 @@ def _fix_yaml(yaml_content: str) -> str:
             value = match.group(2)
             # 检查值中是否包含未加引号的冒号
             # 排除已加引号的情况
-            is_quoted = (value.startswith('"') and value.endswith('"')) or \
-                        (value.startswith("'") and value.endswith("'"))
+            is_quoted = (value.startswith('"') and value.endswith('"')) or (
+                value.startswith("'") and value.endswith("'")
+            )
             if not is_quoted and re.search(r":\s", value):
                 # 值中包含冒号+空格,需要加引号
                 # 转义值中的双引号
@@ -145,7 +146,7 @@ def write_frontmatter(metadata: Dict[str, Any], body: str = "") -> str:
         metadata,
         allow_unicode=True,  # 允许 Unicode 字符
         default_flow_style=False,  # 使用块样式而非流样式
-        sort_keys=False  # 保持键的顺序
+        sort_keys=False,  # 保持键的顺序
     ).rstrip()  # 移除末尾的换行符
 
     # 组合完整的 frontmatter 格式

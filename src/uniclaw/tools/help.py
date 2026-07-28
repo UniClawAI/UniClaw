@@ -29,7 +29,9 @@ async def list_slash_commands() -> str:
         doc = handler.__doc__ or ""
         brief = doc.strip().split("\n")[0] if doc else "无描述"
         alias_list = aliases.get(name, [])
-        alias_str = f"  (别名: {', '.join('/' + a for a in alias_list)})" if alias_list else ""
+        alias_str = (
+            f"  (别名: {', '.join('/' + a for a in alias_list)})" if alias_list else ""
+        )
         lines.append(f"/{name}{alias_str} — {brief}")
 
         # 显示子命令(如果有)
@@ -37,7 +39,9 @@ async def list_slash_commands() -> str:
         if subcmds:
             lines.append(f"  子命令: {', '.join(subcmds)}")
 
-    lines.append(f"\n共 {len(primary_commands)} 个命令(含 {sum(len(v) for v in aliases.values())} 个别名)。")
+    lines.append(
+        f"\n共 {len(primary_commands)} 个命令(含 {sum(len(v) for v in aliases.values())} 个别名)。"
+    )
     lines.append(f"使用 {get_command_help.name} 传入命令名可查看详细用法。")
     return "\n".join(lines)
 
@@ -60,7 +64,9 @@ async def get_command_help(command_name: str) -> str:
         candidates = [cmd for cmd in COMMANDS if name in cmd]
         if candidates:
             return f"未找到命令 '{name}',你是否想输入: {', '.join('/' + c for c in candidates[:5])}"
-        return f"未找到命令 '{name}'。使用 {list_slash_commands.name} 查看所有可用命令。"
+        return (
+            f"未找到命令 '{name}'。使用 {list_slash_commands.name} 查看所有可用命令。"
+        )
 
     doc = handler.__doc__ or "该命令没有帮助文档。"
 

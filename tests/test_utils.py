@@ -1,6 +1,7 @@
 """
 truncation 模块的单元测试
 """
+
 import pytest
 from uniclaw.utils.truncation import truncate_text, truncate_text_by_lines
 

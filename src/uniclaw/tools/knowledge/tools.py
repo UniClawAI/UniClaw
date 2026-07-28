@@ -13,7 +13,9 @@ from .graph import KnowledgeGraph
 
 def _get_graph(config: AppConfig, scope: Scope = Scope.PROJECT) -> KnowledgeGraph:
     """从 config 获取知识图谱实例。scope: "user" 用户级 / "project" 项目级(默认)。"""
-    resolved = config.root_dir if scope == Scope.PROJECT and config.root_dir else Scope.USER
+    resolved = (
+        config.root_dir if scope == Scope.PROJECT and config.root_dir else Scope.USER
+    )
     return KnowledgeGraph(get_app_dir(resolved) / "knowledge.db")
 
 
@@ -257,8 +259,12 @@ def kg_merge_entities(
             return f"错误: {result['error']}"
 
         lines = [f"实体合并完成: '{result['source']}' → '{result['target']}'"]
-        lines.append(f"  转移关系: {result['transferred_relations']} 条 (跳过重复: {result['skipped_relations']})")
-        lines.append(f"  转移别名: {result['transferred_aliases']} 个 (跳过冲突: {result['skipped_aliases']})")
+        lines.append(
+            f"  转移关系: {result['transferred_relations']} 条 (跳过重复: {result['skipped_relations']})"
+        )
+        lines.append(
+            f"  转移别名: {result['transferred_aliases']} 个 (跳过冲突: {result['skipped_aliases']})"
+        )
         if result["merged_properties"]:
             lines.append("  属性已合并")
         if result["inherited_description"]:

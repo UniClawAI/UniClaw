@@ -35,7 +35,9 @@ async def _run_command(
     return await Bash(command, timeout=timeout, config=sub_config)
 
 
-async def run_skill(skill_name: str, command: str, config: AppConfig | None = None) -> str:
+async def run_skill(
+    skill_name: str, command: str, config: AppConfig | None = None
+) -> str:
     root_dir = config.root_dir
     skill = find_skill(root_dir, skill_name)
 

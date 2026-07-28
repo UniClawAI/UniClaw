@@ -66,10 +66,19 @@ from .notify import get_tools as notify_get_tools, get_all_tools as notify_get_a
 from .search import get_tools as search_get_tools, get_all_tools as search_get_all_tools
 from .help import get_tools as help_get_tools, get_all_tools as help_get_all_tools
 from .tts.tools import get_tools as tts_get_tools, get_all_tools as tts_get_all_tools
-from .send_file import get_tools as send_file_get_tools, get_all_tools as send_file_get_all_tools
+from .send_file import (
+    get_tools as send_file_get_tools,
+    get_all_tools as send_file_get_all_tools,
+)
 from .wechat import get_tools as wechat_get_tools, get_all_tools as wechat_get_all_tools
-from .knowledge import get_tools as knowledge_get_tools, get_all_tools as knowledge_get_all_tools
-from .advisor import get_tools as advisor_get_tools, get_all_tools as advisor_get_all_tools
+from .knowledge import (
+    get_tools as knowledge_get_tools,
+    get_all_tools as knowledge_get_all_tools,
+)
+from .advisor import (
+    get_tools as advisor_get_tools,
+    get_all_tools as advisor_get_all_tools,
+)
 from .mcp import MCPManager
 from .registry import get_tools as registry_get_tools, init_registry
 

@@ -6,7 +6,6 @@
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
 
-
 # ── Mock Fixtures ────────────────────────────────────────────
 
 
@@ -70,6 +69,7 @@ def mock_playwright():
 def web_browser():
     """创建 WebBrowser 实例"""
     from uniclaw.tools.web_browse.browser import WebBrowser
+
     return WebBrowser()
 
 
@@ -82,8 +82,12 @@ def running_browser(web_browser, mock_playwright, mock_context, mock_page):
     mock_browser.new_context = AsyncMock(return_value=mock_context)
     mock_context.new_page = AsyncMock(return_value=mock_page)
 
-    with patch("uniclaw.tools.web_browse.browser._get_async_playwright", return_value=lambda: mock_playwright):
+    with patch(
+        "uniclaw.tools.web_browse.browser._get_async_playwright",
+        return_value=lambda: mock_playwright,
+    ):
         import asyncio
+
         asyncio.get_event_loop().run_until_complete(web_browser.start(headless=True))
 
     return web_browser
@@ -96,14 +100,19 @@ class TestWebBrowserBasic:
     """测试 WebBrowser 基础功能"""
 
     @pytest.mark.asyncio
-    async def test_start_creates_browser(self, web_browser, mock_playwright, mock_context, mock_page):
+    async def test_start_creates_browser(
+        self, web_browser, mock_playwright, mock_context, mock_page
+    ):
         """测试启动浏览器"""
         mock_browser = AsyncMock()
         mock_playwright.chromium.launch = AsyncMock(return_value=mock_browser)
         mock_browser.new_context = AsyncMock(return_value=mock_context)
         mock_context.new_page = AsyncMock(return_value=mock_page)
 
-        with patch("uniclaw.tools.web_browse.browser._get_async_playwright", return_value=lambda: mock_playwright):
+        with patch(
+            "uniclaw.tools.web_browse.browser._get_async_playwright",
+            return_value=lambda: mock_playwright,
+        ):
             result = await web_browser.start(headless=True)
 
         assert "无头模式" in result
@@ -111,14 +120,19 @@ class TestWebBrowserBasic:
         assert web_browser.headless is True
 
     @pytest.mark.asyncio
-    async def test_start_headed(self, web_browser, mock_playwright, mock_context, mock_page):
+    async def test_start_headed(
+        self, web_browser, mock_playwright, mock_context, mock_page
+    ):
         """测试启动有头浏览器"""
         mock_browser = AsyncMock()
         mock_playwright.chromium.launch = AsyncMock(return_value=mock_browser)
         mock_browser.new_context = AsyncMock(return_value=mock_context)
         mock_context.new_page = AsyncMock(return_value=mock_page)
 
-        with patch("uniclaw.tools.web_browse.browser._get_async_playwright", return_value=lambda: mock_playwright):
+        with patch(
+            "uniclaw.tools.web_browse.browser._get_async_playwright",
+            return_value=lambda: mock_playwright,
+        ):
             result = await web_browser.start(headless=False)
 
         assert "有头模式" in result
@@ -580,7 +594,9 @@ class TestModeSwitch:
     """测试无头/有头模式切换"""
 
     @pytest.mark.asyncio
-    async def test_switch_to_headed(self, web_browser, mock_playwright, mock_context, mock_page):
+    async def test_switch_to_headed(
+        self, web_browser, mock_playwright, mock_context, mock_page
+    ):
         """测试切换到有头模式"""
         mock_browser = AsyncMock()
         web_browser._playwright = mock_playwright
@@ -597,13 +613,18 @@ class TestModeSwitch:
         mock_context.storage_state = AsyncMock(return_value={"cookies": []})
         mock_context.add_cookies = AsyncMock()
 
-        with patch("uniclaw.tools.web_browse.browser._get_async_playwright", return_value=lambda: mock_playwright):
+        with patch(
+            "uniclaw.tools.web_browse.browser._get_async_playwright",
+            return_value=lambda: mock_playwright,
+        ):
             result = await web_browser.switch_mode(headless=False)
 
         assert "有头模式" in result
 
     @pytest.mark.asyncio
-    async def test_switch_to_headless(self, web_browser, mock_playwright, mock_context, mock_page):
+    async def test_switch_to_headless(
+        self, web_browser, mock_playwright, mock_context, mock_page
+    ):
         """测试切换到无头模式"""
         mock_browser = AsyncMock()
         web_browser._playwright = mock_playwright
@@ -620,7 +641,10 @@ class TestModeSwitch:
         mock_context.storage_state = AsyncMock(return_value={"cookies": []})
         mock_context.add_cookies = AsyncMock()
 
-        with patch("uniclaw.tools.web_browse.browser._get_async_playwright", return_value=lambda: mock_playwright):
+        with patch(
+            "uniclaw.tools.web_browse.browser._get_async_playwright",
+            return_value=lambda: mock_playwright,
+        ):
             result = await web_browser.switch_mode(headless=True)
 
         assert "无头模式" in result

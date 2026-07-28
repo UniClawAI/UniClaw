@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 # 模型到 tiktoken 编码器的映射
 MODEL_ENCODINGS: dict[str, str] = {
@@ -38,7 +41,8 @@ def get_encoder(model: str = None):
     if encoding_name not in _encoder_cache:
         try:
             _encoder_cache[encoding_name] = tiktoken.get_encoding(encoding_name)
-        except Exception:
+        except Exception as e:
+            logger.debug("加载 tiktoken 编码器 %s 失败: %s", encoding_name, e)
             return None
     return _encoder_cache[encoding_name]
 
@@ -50,7 +54,8 @@ def count_tokens(text: str, model: str = None) -> int:
         return int(len(text) / 2.8)
     try:
         return len(encoder.encode(text))
-    except Exception:
+    except Exception as e:
+        logger.debug("token 编码失败,按字符近似: %s", e)
         return int(len(text) / 2.8)
 
 
@@ -78,6 +83,7 @@ def slice_by_tokens(text: str, max_tokens: int, from_end: bool = False) -> str:
             return text
         sliced = tokens[-max_tokens:] if from_end else tokens[:max_tokens]
         return encoder.decode(sliced)
-    except Exception:
+    except Exception as e:
+        logger.debug("token 精确截取失败,按字符近似: %s", e)
         approx_chars = int(max_tokens * 2.8)
         return text[-approx_chars:] if from_end else text[:approx_chars]

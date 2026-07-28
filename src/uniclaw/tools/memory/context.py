@@ -70,7 +70,9 @@ MEMORY_SYSTEM_PROMPT = """\
 """
 
 
-async def ai_select_memories(query: str, memories: list, max_results: int, config: AppConfig):
+async def ai_select_memories(
+    query: str, memories: list, max_results: int, config: AppConfig
+):
     text_lines = []
     for i, memory in enumerate(memories):
         text_line = f"{i}:[{memory.type}] {memory.name} {memory.description}"
@@ -86,6 +88,7 @@ async def ai_select_memories(query: str, memories: list, max_results: int, confi
     )
     from uniclaw.provider.fallback import achat
     from uniclaw.tools.session.session import Session
+
     _session = Session()
     _session.add_user_message(content=f"查询:{query}\n\n记忆:\n{text}")
 

@@ -4,11 +4,14 @@ import asyncio
 import contextlib
 import io
 import json
+import logging
 import threading
 import uuid
 from dataclasses import dataclass, asdict
 from datetime import datetime
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 from croniter import croniter
 
@@ -326,6 +329,7 @@ class Scheduler:
         if not session_id:
             return None
         from uniclaw.console.run import TUIApp
+
         tui = TUIApp.get_instance()
         # WebUI 模式:使用 get_or_load_session
         is_webui = tui is None
@@ -334,8 +338,8 @@ class Scheduler:
                 from uniclaw.webui.ws import get_or_load_session
 
                 return await get_or_load_session(session_id)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("WebUI 加载会话失败: %s", e)
 
         else:
             try:
@@ -343,8 +347,8 @@ class Scheduler:
                     tui_session_id = tui.config.current_agent.session.id
                     if tui_session_id == session_id:
                         return tui.config
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("TUI 获取会话失败: %s", e)
 
         # 从磁盘加载 session
         from uniclaw.tools.session.session_manager import SessionManager

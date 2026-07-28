@@ -4,9 +4,12 @@
 
 from __future__ import annotations
 from datetime import datetime
+import logging
 import os
 import re
 from typing import Optional, Literal
+
+logger = logging.getLogger(__name__)
 from uniclaw.context import Scope, get_app_dir, APP_NAME
 from pathlib import Path
 from uniclaw.utils import frontmatter
@@ -182,8 +185,8 @@ class Memory:
                     from .fts import index_memory
 
                     index_memory(self)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("FTS 索引同步失败: %s", e)
                 return {
                     "status": "replaced",
                     "message": f"记忆 '{self.name}' 已强制替换。",
@@ -205,8 +208,8 @@ class Memory:
             from .fts import index_memory
 
             index_memory(self)
-        except Exception:
-            pass  # FTS 索引失败不影响保存
+        except Exception as e:
+            logger.debug("FTS 索引同步失败,不影响保存: %s", e)
 
         return {
             "status": "created",

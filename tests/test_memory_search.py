@@ -77,8 +77,14 @@ def test_bm25_partial_match(monkeypatch, tmp_path):
     _seed_memories(tmp_path, mock_config)
 
     # "Python 风格" 不是任何记忆的精确子串,但 BM25 应该能匹配到 "python-style"
-    with patch("uniclaw.tools.memory.tools.ai_select_memories", new_callable=AsyncMock, return_value=[]):
-        result = asyncio.run(memory_search.func(query="Python 风格", max_results=5, config=mock_config))
+    with patch(
+        "uniclaw.tools.memory.tools.ai_select_memories",
+        new_callable=AsyncMock,
+        return_value=[],
+    ):
+        result = asyncio.run(
+            memory_search.func(query="Python 风格", max_results=5, config=mock_config)
+        )
 
     assert "python-style" in result
 
@@ -93,8 +99,14 @@ def test_bm25_chinese_query(monkeypatch, tmp_path):
     _seed_memories(tmp_path, mock_config)
 
     # "数据库" 应该匹配到 "数据库连接"
-    with patch("uniclaw.tools.memory.tools.ai_select_memories", new_callable=AsyncMock, return_value=[]):
-        result = asyncio.run(memory_search.func(query="数据库连接", max_results=5, config=mock_config))
+    with patch(
+        "uniclaw.tools.memory.tools.ai_select_memories",
+        new_callable=AsyncMock,
+        return_value=[],
+    ):
+        result = asyncio.run(
+            memory_search.func(query="数据库连接", max_results=5, config=mock_config)
+        )
 
     assert "数据库连接" in result
 
@@ -108,8 +120,14 @@ def test_bm25_no_match(monkeypatch, tmp_path):
     mock_config = _make_config(tmp_path)
     _seed_memories(tmp_path, mock_config)
 
-    with patch("uniclaw.tools.memory.tools.ai_select_memories", new_callable=AsyncMock, return_value=[]):
-        result = asyncio.run(memory_search.func(query="量子计算", max_results=5, config=mock_config))
+    with patch(
+        "uniclaw.tools.memory.tools.ai_select_memories",
+        new_callable=AsyncMock,
+        return_value=[],
+    ):
+        result = asyncio.run(
+            memory_search.func(query="量子计算", max_results=5, config=mock_config)
+        )
 
     assert "未找到" in result
 
@@ -140,8 +158,14 @@ def test_bm25_ranking_prefers_high_confidence(monkeypatch, tmp_path):
         config=mock_config,
     )
 
-    with patch("uniclaw.tools.memory.tools.ai_select_memories", new_callable=AsyncMock, return_value=[]):
-        result = asyncio.run(memory_search.func(query="代码风格", max_results=5, config=mock_config))
+    with patch(
+        "uniclaw.tools.memory.tools.ai_select_memories",
+        new_callable=AsyncMock,
+        return_value=[],
+    ):
+        result = asyncio.run(
+            memory_search.func(query="代码风格", max_results=5, config=mock_config)
+        )
 
     # 高置信度应该排在前面
     high_pos = result.find("test-high-conf")
@@ -161,6 +185,8 @@ def test_bm25_ai_fallback(monkeypatch, tmp_path):
     # BM25 找不到"量子计算",AI 应该被调用
     mock_ai = AsyncMock(return_value=[])
     with patch("uniclaw.tools.memory.tools.ai_select_memories", mock_ai):
-        asyncio.run(memory_search.func(query="量子计算", max_results=5, config=mock_config))
+        asyncio.run(
+            memory_search.func(query="量子计算", max_results=5, config=mock_config)
+        )
 
     mock_ai.assert_called_once()

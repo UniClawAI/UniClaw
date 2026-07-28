@@ -3,6 +3,7 @@
 from __future__ import annotations
 import json
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -16,6 +17,8 @@ from uniclaw.webui.api import router as api_router
 from uniclaw.webui.ws import websocket_endpoint
 from uniclaw.webui import auth
 from uniclaw.webui.crypto import decrypt_data, is_encrypted
+
+logger = logging.getLogger(__name__)
 
 # 静态文件目录
 STATIC_DIR = Path(__file__).parent / "static"
@@ -42,7 +45,8 @@ def _is_trusted_ip(ip: str) -> bool:
         data = json.loads(path.read_text(encoding="utf-8"))
         trusted = data.get("trusted_ips", []) or []
         return ip in trusted
-    except Exception:
+    except Exception as e:
+        logger.debug("检查可信 IP 失败: %s", e)
         return False
 
 
@@ -148,10 +152,10 @@ async def decrypt_static_middleware(request: Request, call_next):
 
     # 计算文件系统路径
     if path.startswith("/static/"):
-        rel = path[len("/static/"):]
+        rel = path[len("/static/") :]
         base_dir = STATIC_DIR
     else:
-        rel = path[len("/assets/"):]
+        rel = path[len("/assets/") :]
         base_dir = ASSETS_DIR
 
     file_path = base_dir / rel
@@ -172,8 +176,8 @@ async def decrypt_static_middleware(request: Request, call_next):
         ext = file_path.suffix.lower()
         ct = _EXT_CONTENT_TYPE.get(ext, "application/octet-stream")
         return Response(content=data, media_type=ct)
-    except Exception:
-        # 解密失败(密钥错误/文件损坏) → 返回 403
+    except Exception as e:
+        logger.warning("静态文件解密失败: %s", e)
         return Response(content=b"Forbidden", status_code=403)
 
 
@@ -237,7 +241,10 @@ async def auth_login(req: _AuthRequest, request: Request):
     if wait is not None:
         return JSONResponse(
             status_code=429,
-            content={"detail": f"登录失败次数过多,请等待 {wait} 秒后重试", "retry_after": wait},
+            content={
+                "detail": f"登录失败次数过多,请等待 {wait} 秒后重试",
+                "retry_after": wait,
+            },
         )
 
     if not auth.user_exists():
@@ -289,9 +296,15 @@ async def auth_me(request: Request):
     if _is_trusted_ip(client_ip):
         user = auth.get_user()
         if user:
-            return {"username": user.username, "created_at": user.created_at, "trusted_ip": True}
+            return {
+                "username": user.username,
+                "created_at": user.created_at,
+                "trusted_ip": True,
+            }
         # 可信 IP 且无用户,返回特殊状态让前端跳转注册
-        return JSONResponse(status_code=404, content={"detail": "无用户", "trusted_ip": True})
+        return JSONResponse(
+            status_code=404, content={"detail": "无用户", "trusted_ip": True}
+        )
 
     return JSONResponse(status_code=401, content={"detail": "未登录或 token 已过期"})
 

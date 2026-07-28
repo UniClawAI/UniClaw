@@ -35,11 +35,27 @@ def get_hooks_system_prompt() -> str:
 _HOOK_EVENTS = [
     (HookEvent.SESSION_START, "会话启动时触发(仅主代理)", "user_message, depth"),
     (HookEvent.SESSION_END, "会话结束时触发(仅主代理)", "status, depth"),
-    (HookEvent.PRE_TOOL_USE, "工具调用前触发(**非零退出码会阻止工具调用**)", "tool_name, tool_call, args"),
+    (
+        HookEvent.PRE_TOOL_USE,
+        "工具调用前触发(**非零退出码会阻止工具调用**)",
+        "tool_name, tool_call, args",
+    ),
     (HookEvent.POST_TOOL_USE, "工具调用后触发", "tool_name, tool_call, args, result"),
-    (HookEvent.PRE_ASSISTANT, "助手回复前触发(流式响应完成后)", "content, tool_calls, in_tokens, out_tokens, model_name"),
-    (HookEvent.PERMISSION_REQUEST, "权限请求时触发(**非零退出码会拒绝权限**)", "tool_name, tool_call, args, description, explanation"),
-    (HookEvent.PERMISSION_RESPONSE, "权限响应后触发", "tool_name, tool_call, args, permitted, response"),
+    (
+        HookEvent.PRE_ASSISTANT,
+        "助手回复前触发(流式响应完成后)",
+        "content, tool_calls, in_tokens, out_tokens, model_name",
+    ),
+    (
+        HookEvent.PERMISSION_REQUEST,
+        "权限请求时触发(**非零退出码会拒绝权限**)",
+        "tool_name, tool_call, args, description, explanation",
+    ),
+    (
+        HookEvent.PERMISSION_RESPONSE,
+        "权限响应后触发",
+        "tool_name, tool_call, args, permitted, response",
+    ),
 ]
 
 
@@ -57,7 +73,9 @@ def hook_docs() -> str:
             "需在命令前加 `chcp 65001 >nul` 切换代码页,保存文件时用 UTF-8 无 BOM 编码。"
         )
     event_list = "\n".join(f"- `{name}`: {desc}" for name, desc, _ in _HOOK_EVENTS)
-    stdin_fields = "\n".join(f"- `{name}`: {fields}" for name, _, fields in _HOOK_EVENTS)
+    stdin_fields = "\n".join(
+        f"- `{name}`: {fields}" for name, _, fields in _HOOK_EVENTS
+    )
     return (
         "# Hook 完整文档\n"
         "\n"

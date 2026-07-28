@@ -11,7 +11,6 @@ from uniclaw.tools.fs import (
     generate_unified_diff,
 )
 
-
 # ── _read_preserving_newlines ─────────────────────────────
 
 

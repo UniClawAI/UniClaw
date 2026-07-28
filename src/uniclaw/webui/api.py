@@ -311,9 +311,13 @@ async def get_config(session_id: str):
             "image_available": bool(config.image_model),
             "computer_use_enabled": config.computer_use_enabled,
             "explain_mode": (
-                True if config.explain_mode is True
-                else sorted(config.explain_mode) if isinstance(config.explain_mode, set)
-                else False
+                True
+                if config.explain_mode is True
+                else (
+                    sorted(config.explain_mode)
+                    if isinstance(config.explain_mode, set)
+                    else False
+                )
             ),
         }
         # todolist 信息
@@ -410,7 +414,9 @@ async def optimize_user_prompt(body: UserPromptOptimize):
         # 构建用户消息
         user_message = body.prompt
         if context_summary:
-            user_message = f"会话上下文:\n{context_summary}\n\n用户提示词:\n{body.prompt}"
+            user_message = (
+                f"会话上下文:\n{context_summary}\n\n用户提示词:\n{body.prompt}"
+            )
 
         from uniclaw.tools.session.session import Session, SessionType
         from uniclaw.provider.fallback import achat
@@ -554,7 +560,12 @@ async def update_settings(body: SettingsUpdate):
 
     # 验证模型名的 provider 前缀
     provider_names = set(providers.keys())
-    for field_name in ("model_name", "mini_model_name", "multimodal_model_name", "large_model_name"):
+    for field_name in (
+        "model_name",
+        "mini_model_name",
+        "multimodal_model_name",
+        "large_model_name",
+    ):
         models = getattr(body, field_name)
         for m in models:
             if "/" not in m:
@@ -638,7 +649,12 @@ async def _update_session_settings(body: SettingsUpdate) -> dict:
 
     # 验证模型名的 provider 前缀(使用更新后的 providers)
     provider_names = set(config.providers.keys())
-    for field_name in ("model_name", "mini_model_name", "multimodal_model_name", "large_model_name"):
+    for field_name in (
+        "model_name",
+        "mini_model_name",
+        "multimodal_model_name",
+        "large_model_name",
+    ):
         models = getattr(body, field_name)
         for m in models:
             if "/" not in m:
@@ -669,6 +685,7 @@ async def _update_session_settings(body: SettingsUpdate) -> dict:
     config.max_agent_depth = body.max_agent_depth
     config.permission_timeout = body.permission_timeout
     from uniclaw.config import Permissions
+
     config.permission_mode = Permissions(body.permission_mode)
 
     return {"ok": True, "session_id": session_id}
@@ -719,7 +736,10 @@ async def list_models(body: dict):
                 ids = await fetch_openai_models(base_url, api_key, proxy)
             ids.sort()
             return [{"id": mid, "provider": name} for mid in ids]
-        except Exception:
+        except Exception as e:
+            get_logger("webui", Path.cwd()).warning(
+                f"获取 provider {name} 模型列表失败: {e}"
+            )
             return []
 
     tasks = [_fetch(name, p) for name, p in providers.items()]
@@ -1175,8 +1195,10 @@ async def list_commands(root_dir: str = ""):
                         "is_skill": True,
                     }
                 )
-    except Exception:
-        pass  # skill 加载失败不影响命令列表
+    except Exception as e:
+        get_logger("webui", Path.cwd()).warning(
+            f"加载技能失败: {e}"
+        )  # skill 加载失败不影响命令列表
 
     return {"commands": commands, "subcommands": subcommands}
 

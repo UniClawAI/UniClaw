@@ -5,15 +5,14 @@
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING
 
 from uniclaw.provider import router
+from uniclaw.utils.logger import get_logger
+from uniclaw.console.ui import warn
 
 if TYPE_CHECKING:
     from uniclaw.tools.session.session import AIMessage
-
-logger = logging.getLogger(__name__)
 
 
 def chat(
@@ -55,7 +54,9 @@ def chat(
                 config=config,
             )
         except Exception as e:
-            logger.warning("模型 %s 调用失败: %s, 回退下一个模型", model, e)
+            get_logger(
+                "provider.fallback", config.root_dir if config else None
+            ).warning("模型 %s 调用失败: %s, 回退下一个模型", model, e)
             last_error = e
 
     raise last_error or RuntimeError("所有模型调用失败")
@@ -100,7 +101,7 @@ async def achat(
                 config=config,
             )
         except Exception as e:
-            logger.warning("模型 %s 调用失败: %s, 回退下一个模型", model, e)
+            await warn(f"模型 {model} 调用失败: {e}, 回退下一个模型", config)
             last_error = e
 
     raise last_error or RuntimeError("所有模型调用失败")

@@ -2,6 +2,7 @@
 
 提供统一的参数格式化、文本显示等工具函数。
 """
+
 import json
 import re
 from uniclaw.utils.message import MessageRole, extract_text
@@ -37,8 +38,8 @@ def parse_json_from_llm(text: str) -> dict | None:
     # 2. 尝试从 markdown 代码块中提取 JSON
     # 匹配 ```json ... ``` 或 ``` ... ```
     patterns = [
-        r'```json\s*\n?(.*?)\n?\s*```',  # ```json ... ```
-        r'```\s*\n?(.*?)\n?\s*```',       # ``` ... ```
+        r"```json\s*\n?(.*?)\n?\s*```",  # ```json ... ```
+        r"```\s*\n?(.*?)\n?\s*```",  # ``` ... ```
     ]
 
     for pattern in patterns:
@@ -53,7 +54,7 @@ def parse_json_from_llm(text: str) -> dict | None:
                 continue
 
     # 3. 尝试提取第一个 { } 包围的 JSON
-    brace_match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', text, re.DOTALL)
+    brace_match = re.search(r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}", text, re.DOTALL)
     if brace_match:
         try:
             result = json.loads(brace_match.group())
@@ -90,7 +91,9 @@ def sanitize_progress_line(line: str) -> str:
     return "\n".join(cleaned)
 
 
-def format_args_for_display(args: dict, max_length: int = 100, separator: str = ", ") -> str:
+def format_args_for_display(
+    args: dict, max_length: int = 100, separator: str = ", "
+) -> str:
     """格式化参数字典为显示字符串,处理多行和超长情况。
 
     Args:
@@ -134,4 +137,3 @@ def format_args_for_display(args: dict, max_length: int = 100, separator: str = 
         formatted_args.append(f"{k}={v_str}")
 
     return separator.join(formatted_args)
-

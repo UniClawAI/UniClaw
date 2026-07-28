@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 class StreamPlayer:
@@ -35,7 +38,8 @@ class StreamPlayer:
                     self._start = False
                     break
                 self._buffer = np.concatenate([self._buffer, chunk])
-            except Exception:
+            except Exception as e:
+                logger.debug("音频队列获取失败: %s", e)
                 break
 
         # 填充输出

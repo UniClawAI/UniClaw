@@ -120,7 +120,10 @@ def get_claude_md(session) -> str:
             f"建议内容:代码风格、架构规范、工作流程、技术栈、禁止事项。"
         )
         return f"{description}\n\n{safe_content}"
-    except Exception:
+    except Exception as e:
+        from uniclaw.utils.logger import get_logger
+
+        get_logger("context", session.root_dir).debug("读取 CLAUDE.md 失败: %s", e)
         return ""
 
 
@@ -145,18 +148,18 @@ def get_platform_hints() -> str:
                 "- 简单 Windows 命令(dir、del、copy) → 直接写命令\n"
                 "\n"
                 "注意:\n"
-                '- bash 中路径用 `/`,Windows 路径如 `C:\\Users` 写作 `/c/Users`\n'
-                '- bash 中 `nul` 不是设备名,要用 `/dev/null` 代替(如 `command > /dev/null 2>&1`)\n'
+                "- bash 中路径用 `/`,Windows 路径如 `C:\\Users` 写作 `/c/Users`\n"
+                "- bash 中 `nul` 不是设备名,要用 `/dev/null` 代替(如 `command > /dev/null 2>&1`)\n"
                 "- 文件操作工具(Read/Write/Edit/Glob 等)使用 Windows 路径格式(如 `C:\\Users\\name`)\n"
             )
         return (
             "\n## Windows Shell 提示\n"
             "你在 Windows 上,有以下 shell 可用:\n"
-            "- **PowerShell**: 在命令前加 `powershell -c` 使用(如 `powershell -c \"Get-Process\"`)\n"
+            '- **PowerShell**: 在命令前加 `powershell -c` 使用(如 `powershell -c "Get-Process"`)\n'
             "- **cmd.exe**: 直接写命令即可(默认),支持 dir、type、copy 等 Windows 命令\n"
             "\n"
             "选择建议:\n"
-            "- 需要高级功能(管道、对象操作、注册表、WMI) → 使用 `powershell -c \"...\"`\n"
+            '- 需要高级功能(管道、对象操作、注册表、WMI) → 使用 `powershell -c "..."`\n'
             "- 简单 Windows 命令(dir、del、copy) → 直接写命令\n"
             "\n"
             "- 使用 `type file.txt` 而不是 `cat file.txt`\n"

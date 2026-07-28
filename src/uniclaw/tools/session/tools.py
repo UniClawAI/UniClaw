@@ -9,7 +9,7 @@ from __future__ import annotations
 from uniclaw.tools.base import tool
 from uniclaw.utils.constants import TOOL_ERROR
 from uniclaw.tools.session.session_manager import SessionManager
-from uniclaw.console.ui import ok, err
+from uniclaw.console.ui import ok, err, warn
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -154,9 +154,10 @@ async def session_delete(
         if config and config.is_webui:
             try:
                 from uniclaw.webui.ws import notify_session_deleted
+
                 await notify_session_deleted(session_id, config.root_dir)
-            except Exception:
-                pass
+            except Exception as e:
+                await warn(f"通知前端会话删除失败: {e}", config)
         return f"✅ 成功删除会话 '{title}'\n会话ID: {session_id}"
     else:
         await err(f"✗ 删除会话失败: {title}", config)

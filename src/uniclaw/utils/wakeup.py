@@ -69,8 +69,8 @@ async def wake_agent(message: str, config: AppConfig) -> bool:
 
         return True
 
-    except Exception:
-        logger.exception("[wake_agent] 唤醒 agent 失败")
+    except Exception as e:
+        logger.exception("[wake_agent] 唤醒 agent 失败: %s", e)
         return False
 
 
@@ -108,8 +108,8 @@ def _is_active_tui_session(config: AppConfig) -> bool:
             return (
                 tui.config.current_agent.session.id == config.current_agent.session.id
             )
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("[wake_agent] 检查活跃 TUI 会话失败: %s", e)
     return False
 
 
@@ -153,8 +153,8 @@ async def _drain_and_log(task) -> None:
             await info(f"{task.name} 完成: {result}")
     except asyncio.CancelledError:
         pass
-    except Exception:
-        logger.debug("[wake_agent] drain_and_log 错误", exc_info=True)
+    except Exception as e:
+        logger.debug("[wake_agent] drain_and_log 错误: %s", e, exc_info=True)
 
 
 async def _ensure_webui_bridge(config: AppConfig) -> None:
@@ -169,5 +169,5 @@ async def _ensure_webui_bridge(config: AppConfig) -> None:
         await _start_bridge(session.id, config)
     except ImportError:
         pass
-    except Exception:
-        logger.debug("[wake_agent] 启动 WebUI 桥接失败", exc_info=True)
+    except Exception as e:
+        logger.debug("[wake_agent] 启动 WebUI 桥接失败: %s", e, exc_info=True)

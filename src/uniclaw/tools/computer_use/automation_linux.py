@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import subprocess
 from typing import Optional
 
 from uniclaw.tools.base import tool
 from uniclaw.utils.constants import TOOL_ERROR
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_DEPTH = 5
 MAX_ELEMENTS = 200
@@ -18,7 +21,8 @@ def _run(cmd: str) -> str:
     try:
         r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=10)
         return r.stdout.strip()
-    except Exception:
+    except Exception as e:
+        logger.debug("执行命令失败 '%s': %s", cmd, e)
         return ""
 
 

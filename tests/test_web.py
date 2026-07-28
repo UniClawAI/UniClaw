@@ -3,6 +3,7 @@ web.py 模块的单元测试
 
 测试网页获取和搜索功能
 """
+
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
 from uniclaw.tools.web import _get_proxy

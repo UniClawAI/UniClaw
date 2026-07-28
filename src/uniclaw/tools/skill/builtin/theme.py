@@ -3,7 +3,9 @@
 from pathlib import Path
 from uniclaw.tools.skill.loader import SkillDef, register_builtin
 
-_THEMES_DIR = Path(__file__).resolve().parent.parent.parent.parent / "webui" / "static" / "themes"
+_THEMES_DIR = (
+    Path(__file__).resolve().parent.parent.parent.parent / "webui" / "static" / "themes"
+)
 _THEMES_DIR_STR = str(_THEMES_DIR).replace("\\", "/")
 
 _THEME_PROMPT = f"""## UniClaw 主题定制指南
@@ -302,7 +304,15 @@ def register():
             name="uniclaw-theme",
             description="创建、修改或模仿定制 UniClaw WebUI 主题。"
             "当用户要求换肤、创建主题、修改配色、模仿网站风格时使用。",
-            triggers=["/uniclaw-theme", "/theme", "create theme", "new theme", "主题", "换肤", "配色"],
+            triggers=[
+                "/uniclaw-theme",
+                "/theme",
+                "create theme",
+                "new theme",
+                "主题",
+                "换肤",
+                "配色",
+            ],
             tools=["Read", "Write", "Edit", "Glob", "Bash"],
             prompt=_THEME_PROMPT,
             file_path=__file__,

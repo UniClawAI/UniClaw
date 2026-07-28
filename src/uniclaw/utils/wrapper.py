@@ -4,6 +4,8 @@ import time
 import traceback
 from pathlib import Path
 
+from uniclaw.utils.logger import get_logger
+
 
 def _extract_task(args, kwargs):
     """从 args/kwargs 中提取 task 对象。"""
@@ -78,6 +80,7 @@ async def _await_with_error_catch(coro, name, fun, args, kwargs):
         # 通知前端(WebUI/console/wechat)
         try:
             from uniclaw.console.ui import err
+
             config = kwargs.get("config")
             if not config:
                 for arg in args:
@@ -86,6 +89,8 @@ async def _await_with_error_catch(coro, name, fun, args, kwargs):
                         break
             err_msg = str(e) if str(e) else type(e).__name__
             await err(f"{fun.__name__} 失败: {err_msg}", config=config)
-        except Exception:
-            pass
+        except Exception as e:
+            get_logger(
+                "wrapper", task.session.root_dir if task else Path.cwd()
+            ).warning("前端错误通知发送失败: %s", e)
         raise

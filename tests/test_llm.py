@@ -1,6 +1,7 @@
 """
 LLM 调用层的单元测试
 """
+
 import pytest
 from unittest.mock import patch, MagicMock
 from uniclaw.provider import (
@@ -27,11 +28,15 @@ from uniclaw.provider.openai_provider import _extract_media_url
 from uniclaw.config import ProviderProfile
 
 
-def _make_config(api_key="test-key", base_url="https://api.openai.com/v1/", protocol="openai"):
+def _make_config(
+    api_key="test-key", base_url="https://api.openai.com/v1/", protocol="openai"
+):
     """创建带 provider 的测试配置。"""
     config = MagicMock()
     config.providers = {
-        "test": ProviderProfile(name="test", protocol=protocol, api_key=api_key, base_url=base_url)
+        "test": ProviderProfile(
+            name="test", protocol=protocol, api_key=api_key, base_url=base_url
+        )
     }
     config.model_name = ["test/gpt-4"]
     config.mini_model_name = []
@@ -92,7 +97,6 @@ class TestBuildExtraBody:
         }
 
 
-
 # ── 多轮对话带工具测试 ────────────────────────────────────────
 
 
@@ -115,7 +119,9 @@ class TestStreamWithTools:
         tool_call_chunk.choices[0].delta.tool_calls[0].id = "call_123"
         tool_call_chunk.choices[0].delta.tool_calls[0].function = MagicMock()
         tool_call_chunk.choices[0].delta.tool_calls[0].function.name = "get_weather"
-        tool_call_chunk.choices[0].delta.tool_calls[0].function.arguments = '{"city": "Beijing"}'
+        tool_call_chunk.choices[0].delta.tool_calls[
+            0
+        ].function.arguments = '{"city": "Beijing"}'
 
         usage_chunk = MagicMock()
         usage_chunk.choices = []
@@ -127,23 +133,29 @@ class TestStreamWithTools:
         with patch("uniclaw.provider.openai_provider.OpenAI") as mock_openai:
             mock_client = MagicMock()
             mock_openai.return_value = mock_client
-            mock_client.chat.completions.create.return_value = self._make_mock_stream([
-                tool_call_chunk,
-                usage_chunk,
-            ])
+            mock_client.chat.completions.create.return_value = self._make_mock_stream(
+                [
+                    tool_call_chunk,
+                    usage_chunk,
+                ]
+            )
 
             _s = Session(root_dir=Path.cwd())
             _s.add_user_message(content="北京天气怎么样？")
-            tools = [MagicMock(name="get_weather", description="获取天气", parameters={})]
+            tools = [
+                MagicMock(name="get_weather", description="获取天气", parameters={})
+            ]
             config = _make_config()
 
-            chunks = list(stream(
-                "",
-                _s,
-                tools=tools,
-                model_name="test/gpt-4",
-                config=config,
-            ))
+            chunks = list(
+                stream(
+                    "",
+                    _s,
+                    tools=tools,
+                    model_name="test/gpt-4",
+                    config=config,
+                )
+            )
 
             # 验证返回了 tool_calls
             assert len(chunks) > 0
@@ -169,23 +181,27 @@ class TestStreamWithTools:
         with patch("uniclaw.provider.openai_provider.OpenAI") as mock_openai:
             mock_client = MagicMock()
             mock_openai.return_value = mock_client
-            mock_client.chat.completions.create.return_value = self._make_mock_stream([
-                content_chunk,
-                usage_chunk,
-            ])
+            mock_client.chat.completions.create.return_value = self._make_mock_stream(
+                [
+                    content_chunk,
+                    usage_chunk,
+                ]
+            )
 
             _s = Session(root_dir=Path.cwd())
             _s.add_user_message(content="你好")
             config = _make_config()
 
-            list(stream(
-                "",
-                _s,
-                model_name="test/gpt-4",
-                config=config,
-                enable_thinking=True,
-                thinking=True,
-            ))
+            list(
+                stream(
+                    "",
+                    _s,
+                    model_name="test/gpt-4",
+                    config=config,
+                    enable_thinking=True,
+                    thinking=True,
+                )
+            )
 
             # 验证 kwargs 中包含 extra_body
             call_kwargs = mock_client.chat.completions.create.call_args[1]
@@ -210,21 +226,27 @@ class TestStreamWithTools:
         with patch("uniclaw.provider.openai_provider.OpenAI") as mock_openai:
             mock_client = MagicMock()
             mock_openai.return_value = mock_client
-            mock_client.chat.completions.create.return_value = self._make_mock_stream([
-                content_chunk,
-                usage_chunk,
-            ])
+            mock_client.chat.completions.create.return_value = self._make_mock_stream(
+                [
+                    content_chunk,
+                    usage_chunk,
+                ]
+            )
 
             _s = Session(root_dir=Path.cwd())
             _s.add_user_message(content="你好")
-            config = _make_config(base_url="https://generativelanguage.googleapis.com/v1beta/openai/")
+            config = _make_config(
+                base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
+            )
 
-            list(stream(
-                "",
-                _s,
-                model_name="test/gemini-pro",
-                config=config,
-            ))
+            list(
+                stream(
+                    "",
+                    _s,
+                    model_name="test/gemini-pro",
+                    config=config,
+                )
+            )
 
             # 验证 kwargs 中不包含 extra_body
             call_kwargs = mock_client.chat.completions.create.call_args[1]
@@ -242,7 +264,9 @@ class TestChatWithTools:
         mock_response.choices[0].message.tool_calls = [MagicMock()]
         mock_response.choices[0].message.tool_calls[0].id = "call_456"
         mock_response.choices[0].message.tool_calls[0].function.name = "search"
-        mock_response.choices[0].message.tool_calls[0].function.arguments = '{"query": "test"}'
+        mock_response.choices[0].message.tool_calls[
+            0
+        ].function.arguments = '{"query": "test"}'
         mock_response.choices[0].message.reasoning_content = None
         mock_response.choices[0].message.reasoning = None
         mock_response.usage = MagicMock()
@@ -320,7 +344,9 @@ class TestAchatWithTools:
         mock_response.choices[0].message.tool_calls = [MagicMock()]
         mock_response.choices[0].message.tool_calls[0].id = "call_789"
         mock_response.choices[0].message.tool_calls[0].function.name = "calculate"
-        mock_response.choices[0].message.tool_calls[0].function.arguments = '{"expr": "1+1"}'
+        mock_response.choices[0].message.tool_calls[
+            0
+        ].function.arguments = '{"expr": "1+1"}'
         mock_response.choices[0].message.reasoning_content = None
         mock_response.choices[0].message.reasoning = None
         mock_response.usage = MagicMock()
@@ -335,6 +361,7 @@ class TestAchatWithTools:
             # 模拟异步上下文管理器
             async def mock_create(**kwargs):
                 return mock_response
+
             mock_client.chat.completions.create = mock_create
 
             _s = Session(root_dir=Path.cwd())
@@ -453,19 +480,31 @@ class TestCompareUrls:
 
     def test_same_urls(self):
         """测试相同 URL"""
-        assert compare_urls("https://api.openai.com/v1/", "https://api.openai.com/v1/") is True
+        assert (
+            compare_urls("https://api.openai.com/v1/", "https://api.openai.com/v1/")
+            is True
+        )
 
     def test_trailing_slash(self):
         """测试尾部斜杠差异"""
-        assert compare_urls("https://api.openai.com/v1", "https://api.openai.com/v1/") is True
+        assert (
+            compare_urls("https://api.openai.com/v1", "https://api.openai.com/v1/")
+            is True
+        )
 
     def test_case_insensitive_netloc(self):
         """测试域名大小写不敏感"""
-        assert compare_urls("https://API.OPENAI.COM/v1/", "https://api.openai.com/v1/") is True
+        assert (
+            compare_urls("https://API.OPENAI.COM/v1/", "https://api.openai.com/v1/")
+            is True
+        )
 
     def test_different_urls(self):
         """测试不同 URL"""
-        assert compare_urls("https://api.openai.com/v1/", "https://api.anthropic.com/v1/") is False
+        assert (
+            compare_urls("https://api.openai.com/v1/", "https://api.anthropic.com/v1/")
+            is False
+        )
 
 
 class TestCreateHttpClient:
@@ -498,7 +537,9 @@ class TestCreateAsyncHttpClient:
 
     def test_with_proxy(self):
         """测试带代理创建客户端"""
-        result = create_async_http_client("https://api.openai.com/v1/", "http://proxy:8080")
+        result = create_async_http_client(
+            "https://api.openai.com/v1/", "http://proxy:8080"
+        )
         assert result is not None
 
     def test_no_proxy(self):
@@ -513,11 +554,19 @@ class TestResolveParams:
     def test_from_config(self):
         """测试从 config 获取参数(通过 provider profile)"""
         from uniclaw.config import ProviderProfile
+
         config = MagicMock()
         config.model_name = ["mimo/gpt-4"]
         config.multimodal_model_name = ["mimo/gpt-4o"]
         config.proxy_url = "http://proxy:8080"
-        config.providers = {"mimo": ProviderProfile(name="mimo", protocol="openai", api_key="test-key", base_url="https://api.openai.com/v1/")}
+        config.providers = {
+            "mimo": ProviderProfile(
+                name="mimo",
+                protocol="openai",
+                api_key="test-key",
+                base_url="https://api.openai.com/v1/",
+            )
+        }
 
         result = resolve_params(config)
         assert result["model_name"] == "gpt-4"
@@ -669,7 +718,10 @@ class TestExtractMediaUrl:
 
     def test_image_url(self):
         """测试图片 URL"""
-        block = {"type": "image_url", "image_url": {"url": "https://example.com/img.png"}}
+        block = {
+            "type": "image_url",
+            "image_url": {"url": "https://example.com/img.png"},
+        }
         url, media_type = _extract_media_url(block)
         assert url == "https://example.com/img.png"
         assert media_type == "image"
@@ -683,7 +735,10 @@ class TestExtractMediaUrl:
 
     def test_video_url(self):
         """测试视频 URL"""
-        block = {"type": "video_url", "video_url": {"url": "https://example.com/video.mp4"}}
+        block = {
+            "type": "video_url",
+            "video_url": {"url": "https://example.com/video.mp4"},
+        }
         url, media_type = _extract_media_url(block)
         assert url == "https://example.com/video.mp4"
         assert media_type == "video"
@@ -718,8 +773,6 @@ class TestSafeParseArgs:
     def test_non_dict_json(self):
         """测试非字典 JSON"""
         assert safe_parse_args("[1, 2, 3]") == {}
-
-
 
 
 if __name__ == "__main__":

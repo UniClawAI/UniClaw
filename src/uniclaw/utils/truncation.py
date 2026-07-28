@@ -41,7 +41,9 @@ def truncate_text(text: str, max_tokens: int = 10000, keep_ratio: float = 0.8) -
     return result
 
 
-def truncate_text_by_lines(text: str, max_tokens: int = 10000, keep_ratio: float = 0.8) -> str:
+def truncate_text_by_lines(
+    text: str, max_tokens: int = 10000, keep_ratio: float = 0.8
+) -> str:
     """
     对过长的文本内容按 token 数进行截断操作
 
@@ -95,7 +97,9 @@ def truncate_text_by_lines(text: str, max_tokens: int = 10000, keep_ratio: float
     truncated_tokens = total_tokens - count_tokens(front_text) - count_tokens(back_text)
 
     # 构建截断提示信息
-    truncation_info = f"\n...[截断了{truncated_lines}行,{truncated_tokens}个tokens]...\n"
+    truncation_info = (
+        f"\n...[截断了{truncated_lines}行,{truncated_tokens}个tokens]...\n"
+    )
 
     # 组合最终结果
     result = front_text.rstrip() + truncation_info + back_text

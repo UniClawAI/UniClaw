@@ -53,5 +53,7 @@ async def cmd_permissions(args: str, config: AppConfig) -> bool:
             await err(f"未找到规则: [{rule_type}] {pattern}", config)
         return True
 
-    await warn("用法: /permissions [list] 或 /permissions remove <type> <pattern>", config)
+    await warn(
+        "用法: /permissions [list] 或 /permissions remove <type> <pattern>", config
+    )
     return True

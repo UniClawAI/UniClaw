@@ -3,6 +3,7 @@ format.py 模块的单元测试
 
 测试格式化工具函数
 """
+
 import pytest
 from uniclaw.utils.format import format_args_for_display, parse_json_from_llm
 
@@ -147,20 +148,20 @@ class TestParseJsonFromLlm:
 
     def test_markdown_json_block(self):
         """测试 markdown json 代码块"""
-        text = '''这是分析结果：
+        text = """这是分析结果：
 ```json
 {"is_safe": false, "explanation": "dangerous"}
 ```
-请小心处理。'''
+请小心处理。"""
         result = parse_json_from_llm(text)
         assert result == {"is_safe": False, "explanation": "dangerous"}
 
     def test_markdown_plain_block(self):
         """测试普通 markdown 代码块"""
-        text = '''结果如下：
+        text = """结果如下：
 ```
 {"is_safe": true}
-```'''
+```"""
         result = parse_json_from_llm(text)
         assert result == {"is_safe": True}
 
@@ -189,11 +190,11 @@ class TestParseJsonFromLlm:
 
     def test_json_with_newlines(self):
         """测试带换行的 JSON"""
-        text = '''
+        text = """
 {
   "is_safe": true,
   "explanation": "ok"
 }
-'''
+"""
         result = parse_json_from_llm(text)
         assert result == {"is_safe": True, "explanation": "ok"}

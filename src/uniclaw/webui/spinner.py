@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import threading
 import time
 import uuid
 from typing import Any, Callable, Awaitable
 
 from uniclaw.spinner import BaseSpinner
+
+logger = logging.getLogger(__name__)
 
 
 class WebSpinner(BaseSpinner):
@@ -49,11 +52,17 @@ class WebSpinner(BaseSpinner):
                 if wid == wait_id:
                     if t != text:
                         self._stack[i] = (text, time.time(), wait_id)
-                        self._schedule_send(self._make_event("spinner_update", text=text, wait_id=wait_id))
+                        self._schedule_send(
+                            self._make_event(
+                                "spinner_update", text=text, wait_id=wait_id
+                            )
+                        )
                     return wait_id
             # 新增
             self._stack.append((text, time.time(), wait_id))
-            self._schedule_send(self._make_event("spinner_start", text=text, wait_id=wait_id))
+            self._schedule_send(
+                self._make_event("spinner_start", text=text, wait_id=wait_id)
+            )
         return wait_id
 
     def stop(self, wait_id: str) -> None:
@@ -87,5 +96,5 @@ class WebSpinner(BaseSpinner):
         if self._send_callback and self._loop and self._loop.is_running():
             try:
                 asyncio.run_coroutine_threadsafe(self._send_callback(msg), self._loop)
-            except Exception:
-                pass  # WebSocket 可能已断开,忽略
+            except Exception as e:
+                logger.debug("WebSocket spinner 消息发送失败: %s", e)

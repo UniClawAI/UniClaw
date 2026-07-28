@@ -128,7 +128,9 @@ def subagent_send_message(task_id: str, message: str) -> str:
     task = mgr.id2AgentTask.get(task_id)
     if task is None:
         return f"{TOOL_ERROR}: 无法找到智能体 '{task_id}'。请检查名称是否正确。"
-    return f"{TOOL_ERROR}: 智能体 '{task_id}' 未运行(状态: {task.status})。无法发送消息。"
+    return (
+        f"{TOOL_ERROR}: 智能体 '{task_id}' 未运行(状态: {task.status})。无法发送消息。"
+    )
 
 
 @tool

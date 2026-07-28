@@ -1,7 +1,6 @@
 from __future__ import annotations
 import asyncio
 import json
-import logging
 import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -14,8 +13,6 @@ from uniclaw.utils.constants import TOOL_ERROR
 
 if TYPE_CHECKING:
     from uniclaw.config import AppConfig
-
-logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager

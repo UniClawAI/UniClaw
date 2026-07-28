@@ -5,6 +5,7 @@ from pathlib import Path
 
 from uniclaw.tools.base import tool
 from uniclaw.config import AppConfig
+from uniclaw.console.ui import warn
 from uniclaw.tools.memory.context import ai_select_memories, memory_freshness_text
 from .memory import Memory, Scope
 
@@ -92,7 +93,9 @@ def memory_save(
         记忆 '用户偏好' 已保存。
     """
     # user scope 不需要 root_dir；project scope 需要 root_dir(无 root_dir 时 fallback 到用户级)
-    memory_scope: Scope | Path = config.root_dir if scope == Scope.PROJECT and config.root_dir else Scope.USER
+    memory_scope: Scope | Path = (
+        config.root_dir if scope == Scope.PROJECT and config.root_dir else Scope.USER
+    )
     memory = Memory(
         name=name,
         description=description,
@@ -144,7 +147,7 @@ def memory_save(
 
 
 @tool
-def memory_delete(name: str, scope: Scope, config: AppConfig = None) -> str:
+async def memory_delete(name: str, scope: Scope, config: AppConfig = None) -> str:
     """
     按名称删除持久化记忆条目。
 
@@ -169,7 +172,9 @@ def memory_delete(name: str, scope: Scope, config: AppConfig = None) -> str:
         记忆已删除: '用户偏好' (作用域: user)
     """
     # user scope 不需要 root_dir；project scope 需要从 config 获取 root_dir(无 root_dir 时 fallback 到用户级)
-    memory_scope: Scope | Path = config.root_dir if scope == Scope.PROJECT and config.root_dir else Scope.USER
+    memory_scope: Scope | Path = (
+        config.root_dir if scope == Scope.PROJECT and config.root_dir else Scope.USER
+    )
     # 获取记忆文件路径并删除对应的记忆文件
     memory_path = Memory.get_memory_path(memory_scope, name)
     memory_path.unlink()
@@ -180,9 +185,10 @@ def memory_delete(name: str, scope: Scope, config: AppConfig = None) -> str:
     # 同步 FTS5 索引
     try:
         from .fts import remove_memory
+
         remove_memory(memory_path)
-    except Exception:
-        pass
+    except Exception as e:
+        await warn(f"FTS 索引删除失败: {e}", config)
 
     return f"记忆已删除: '{name}' (作用域: {scope})"
 
@@ -212,16 +218,23 @@ def memory_list(scope: Scope, config: AppConfig = None):
     # config 由框架注入,请勿手动传入
     root_dir = config.root_dir
     if scope == Scope.PROJECT:
-        memories = Memory.load_all_memories(scope=root_dir) if root_dir else Memory.load_all_memories(scope=Scope.USER)
+        memories = (
+            Memory.load_all_memories(scope=root_dir)
+            if root_dir
+            else Memory.load_all_memories(scope=Scope.USER)
+        )
     elif scope == Scope.ALL:
-        memories = Memory.load_all_memories(scope=root_dir) + Memory.load_all_memories(scope=Scope.USER) if root_dir else Memory.load_all_memories(scope=Scope.USER)
+        memories = (
+            Memory.load_all_memories(scope=root_dir)
+            + Memory.load_all_memories(scope=Scope.USER)
+            if root_dir
+            else Memory.load_all_memories(scope=Scope.USER)
+        )
     else:
         memories = Memory.load_all_memories(scope=Scope.USER)
     # 处理无记忆的情况,返回友好的提示信息
     if not memories:
-        return (
-            "未存储任何记忆。" if scope == Scope.ALL else f"未存储{scope}记忆。"
-        )
+        return "未存储任何记忆。" if scope == Scope.ALL else f"未存储{scope}记忆。"
 
     # 构建记忆列表的格式化输出
     lines = [f"共 {len(memories)} 条记忆:"]
@@ -282,6 +295,7 @@ async def memory_search(query: str, max_results: int, config: AppConfig = None) 
 
     # Phase 1: FTS5 BM25 搜索
     from .fts import fts_search
+
     fts_hits = fts_search(query, memory_dirs, max_results=max_results)
 
     # 将 FTS 结果映射回 Memory 对象
@@ -295,26 +309,30 @@ async def memory_search(query: str, max_results: int, config: AppConfig = None) 
                 continue
             mtime_s = Path(memory.filename).stat().st_mtime
             bm25_norm = hit["score"] / max_score if max_score > 0 else 0.0
-            keyword_results.append({
-                "name": memory.name,
-                "description": memory.description,
-                "type": memory.type,
-                "scope": memory.scope_name,
-                "content": memory.content,
-                "filename": memory.filename,
-                "mtime_s": mtime_s,
-                "freshness_text": memory_freshness_text(mtime_s),
-                "confidence": memory.confidence,
-                "source": memory.source,
-                "memory": memory,
-                "bm25_score": bm25_norm,
-                "snippet": hit.get("snippet", ""),
-            })
+            keyword_results.append(
+                {
+                    "name": memory.name,
+                    "description": memory.description,
+                    "type": memory.type,
+                    "scope": memory.scope_name,
+                    "content": memory.content,
+                    "filename": memory.filename,
+                    "mtime_s": mtime_s,
+                    "freshness_text": memory_freshness_text(mtime_s),
+                    "confidence": memory.confidence,
+                    "source": memory.source,
+                    "memory": memory,
+                    "bm25_score": bm25_norm,
+                    "snippet": hit.get("snippet", ""),
+                }
+            )
 
     # Phase 2: AI 语义搜索(FTS5 结果不足时补充)
     ai_results = []
     if len(keyword_results) < max_results:
-        ai_results = await ai_select_memories(query, memories, max_results, config=config)
+        ai_results = await ai_select_memories(
+            query, memories, max_results, config=config
+        )
 
     # 合并两种搜索结果,按文件名去重
     seen = set()

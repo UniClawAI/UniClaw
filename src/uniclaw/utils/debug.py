@@ -17,18 +17,20 @@ from functools import wraps
 
 # 日志文件路径:写入用户级 .UniClaw/logs/ 目录
 from uniclaw.context import get_app_dir
+
 _LOG_DIR = get_app_dir(Path.cwd()) / "logs"
 _LOG_FILE = _LOG_DIR / "slow_await.log"
 
 # ── 全局状态 ────────────────────────────────────────────────────────────────
 
-_HEARTBEAT_INTERVAL = 0.1       # 心跳间隔(秒)
-_DEFAULT_THRESHOLD = 1.0        # 默认警告阈值(秒)
+_HEARTBEAT_INTERVAL = 0.1  # 心跳间隔(秒)
+_DEFAULT_THRESHOLD = 1.0  # 默认警告阈值(秒)
 
 
 @dataclass
 class _HeartbeatEntry:
     """单个事件循环的心跳监控项。"""
+
     name: str
     thread_id: int
     threshold: float
@@ -36,7 +38,7 @@ class _HeartbeatEntry:
     task: asyncio.Task | None = None
 
 
-_entries: dict[int, _HeartbeatEntry] = {}   # {loop_id: entry}
+_entries: dict[int, _HeartbeatEntry] = {}  # {loop_id: entry}
 _entries_lock = threading.Lock()
 _watchdog_thread: threading.Thread | None = None
 _watchdog_running = False
@@ -51,6 +53,7 @@ def _write_log(msg: str):
 
 
 # ── Watchdog 线程 ───────────────────────────────────────────────────────────
+
 
 def _watchdog():
     """watchdog 线程:统一扫描所有注册的心跳项,超时则写入堆栈日志。"""
@@ -103,6 +106,7 @@ def _ensure_watchdog():
 
 # ── 异步心跳 ────────────────────────────────────────────────────────────────
 
+
 async def _heartbeat(loop_id: int):
     """异步心跳:每 0.1 秒重置对应事件循环的时间戳。entry 被移除后自动退出。"""
     while True:
@@ -145,6 +149,7 @@ def _unregister(loop_id: int):
 
 # ── 公开接口 ────────────────────────────────────────────────────────────────
 
+
 def heartbeat(threshold: float = _DEFAULT_THRESHOLD, name: str | None = None):
     """装饰器:为被装饰的异步函数启用心跳阻塞检测。
 
@@ -155,6 +160,7 @@ def heartbeat(threshold: float = _DEFAULT_THRESHOLD, name: str | None = None):
         async def my_coro():
             ...
     """
+
     def decorator(func):
         @wraps(func)
         async def wrapper(*args, **kwargs):
@@ -163,5 +169,7 @@ def heartbeat(threshold: float = _DEFAULT_THRESHOLD, name: str | None = None):
                 return await func(*args, **kwargs)
             finally:
                 _unregister(loop_id)
+
         return wrapper
+
     return decorator

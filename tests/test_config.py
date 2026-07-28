@@ -405,9 +405,7 @@ class TestLoadConfig:
             mock_load.return_value = test_data
 
             mock_spinner = MagicMock()
-            config = load_config(
-                Path("/test/root"), mock_spinner, session=mock_session
-            )
+            config = load_config(Path("/test/root"), mock_spinner, session=mock_session)
 
             assert config.providers["default"].api_key == "test-key"
             assert config.model_name == ["gpt-4"]

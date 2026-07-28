@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import inspect
 import json
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, get_type_hints
+
+logger = logging.getLogger(__name__)
 
 
 # 类型映射: Python type → JSON Schema type
@@ -45,11 +48,13 @@ def _resolve_str_annotation(tp: str, func_globals: dict = None) -> Any:
         return type(None)
     try:
         import builtins
+
         ns = {"__builtins__": builtins, **_BUILTIN_TYPE_NAMES}
         if func_globals:
             ns.update(func_globals)
         return eval(tp, ns)
-    except Exception:
+    except Exception as e:
+        logger.debug("解析类型注解 '%s' 失败,回退为 str: %s", tp, e)
         return str
 
 
@@ -120,13 +125,22 @@ def _parse_arg_descriptions(func: Callable) -> dict[str, str]:
             continue
         if in_args:
             # 遇到 Returns: 或其他顶级段落,结束解析
-            if stripped.startswith("Returns:") or stripped.startswith("Raises:") or stripped.startswith("Example"):
+            if (
+                stripped.startswith("Returns:")
+                or stripped.startswith("Raises:")
+                or stripped.startswith("Example")
+            ):
                 if current_name:
                     descriptions[current_name] = "\n".join(current_lines).strip()
                 break
             # 新参数行: "name (type): desc" 或 "name: desc"
             # 列表项("- "开头)视为续行,不作为新参数
-            if stripped and not stripped[0].isspace() and ":" in stripped and not stripped.startswith("- "):
+            if (
+                stripped
+                and not stripped[0].isspace()
+                and ":" in stripped
+                and not stripped.startswith("- ")
+            ):
                 if current_name:
                     descriptions[current_name] = "\n".join(current_lines).strip()
                 # 提取参数名(冒号之前的部分,去掉类型标注)
@@ -149,7 +163,8 @@ def _build_parameters(func: Callable) -> dict:
     func_globals = getattr(func, "__globals__", {})
     try:
         hints = get_type_hints(func, globalns=func_globals)
-    except Exception:
+    except Exception as e:
+        logger.debug("get_type_hints 失败,使用空 hints: %s", e)
         hints = {}
 
     arg_descs = _parse_arg_descriptions(func)
@@ -206,12 +221,24 @@ def _extract_description(func: Callable) -> str:
     returns_lines: list[str] = []
     section = "desc"  # desc -> args -> returns
 
-    _SECTION_HEADERS = ("Args:", "Returns:", "Raises:", "Example:", "Examples:", "Note:", "Warning:")
+    _SECTION_HEADERS = (
+        "Args:",
+        "Returns:",
+        "Raises:",
+        "Example:",
+        "Examples:",
+        "Note:",
+        "Warning:",
+    )
 
     for line in doc.split("\n"):
         stripped = line.strip()
         # 检测顶级段落标题(不以空格开头,且是已知段落名)
-        if stripped and not line[0].isspace() and any(stripped.startswith(h) for h in _SECTION_HEADERS):
+        if (
+            stripped
+            and not line[0].isspace()
+            and any(stripped.startswith(h) for h in _SECTION_HEADERS)
+        ):
             if stripped.startswith("Args:"):
                 section = "args"
             elif stripped.startswith("Returns:"):
@@ -265,7 +292,9 @@ class Tool:
 
     def to_openai_schema(self, explain: bool = False) -> dict:
         """转换为 OpenAI function calling 格式。"""
-        parameters = self._maybe_inject_explain(self.parameters) if explain else self.parameters
+        parameters = (
+            self._maybe_inject_explain(self.parameters) if explain else self.parameters
+        )
         return {
             "type": "function",
             "function": {
@@ -277,14 +306,21 @@ class Tool:
 
     def to_anthropic_schema(self, explain: bool = False) -> dict:
         """转换为 Anthropic tool 格式。"""
-        parameters = self._maybe_inject_explain(self.parameters) if explain else self.parameters
+        parameters = (
+            self._maybe_inject_explain(self.parameters) if explain else self.parameters
+        )
         return {
             "name": self.name,
             "description": self.description,
             "input_schema": parameters,
         }
 
-    async def __call__(self, *args, stream_callback: Callable[[str], Awaitable[None]] | None = None, **kwargs):
+    async def __call__(
+        self,
+        *args,
+        stream_callback: Callable[[str], Awaitable[None]] | None = None,
+        **kwargs,
+    ):
         """调用工具,自动处理:
         - 过滤 _explain 参数
         - 异步/同步自动适配
@@ -311,6 +347,7 @@ class Tool:
         # 异步工具:支持流式回调
         if stream_callback:
             from uniclaw.tools.stream import set_stream_callback, reset_stream_callback
+
             token = set_stream_callback(stream_callback)
             try:
                 return await self.func(**kwargs)
@@ -337,7 +374,9 @@ def tool(func: Callable = None, *, name: str = None) -> Tool:
         tool_name = name or f.__name__
         description = _extract_description(f)
         parameters = _build_parameters(f)
-        return Tool(name=tool_name, description=description, func=f, parameters=parameters)
+        return Tool(
+            name=tool_name, description=description, func=f, parameters=parameters
+        )
 
     if func is not None:
         return decorator(func)
@@ -345,6 +384,7 @@ def tool(func: Callable = None, *, name: str = None) -> Tool:
 
 
 # ── explain 模式辅助函数 ────────────────────────────────────────────────
+
 
 def extract_explains(tool_calls: list[dict]) -> tuple[list[dict], dict[str, str]]:
     """从 tool_calls 中提取 _explain 参数并移除,返回 (清理后的 tool_calls, {id: explain})。"""
@@ -354,7 +394,11 @@ def extract_explains(tool_calls: list[dict]) -> tuple[list[dict], dict[str, str]
         if not fn:
             continue
         raw = fn.get("arguments", "{}")
-        args = json.loads(raw) if isinstance(raw, str) else (raw if isinstance(raw, dict) else {})
+        args = (
+            json.loads(raw)
+            if isinstance(raw, str)
+            else (raw if isinstance(raw, dict) else {})
+        )
         explain_text = args.pop("_explain", None)
         if explain_text:
             tool_explains[tc.get("id", "")] = explain_text
@@ -362,7 +406,9 @@ def extract_explains(tool_calls: list[dict]) -> tuple[list[dict], dict[str, str]
     return tool_calls, tool_explains
 
 
-def should_explain(tool_name: str, explain_mode: bool | set, is_sub: bool = False) -> bool:
+def should_explain(
+    tool_name: str, explain_mode: bool | set, is_sub: bool = False
+) -> bool:
     """判断指定工具是否需要注入 _explain 参数。sub-agent 不受影响。"""
     if is_sub:
         return False
@@ -374,6 +420,7 @@ def should_explain(tool_name: str, explain_mode: bool | set, is_sub: bool = Fals
 
 
 # ── tool_call 解析辅助函数 ──────────────────────────────────────────────
+
 
 def tc_name(tc: dict) -> str:
     """从 tool_call 提取工具名(兼容 OpenAI 和旧格式)。"""

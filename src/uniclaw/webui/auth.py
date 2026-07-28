@@ -111,8 +111,7 @@ def _get_conn() -> sqlite3.Connection:
     """获取数据库连接(自动建表)。"""
     _DB_DIR.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(_DB_PATH))
-    conn.execute(
-        """
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS user (
             id INTEGER PRIMARY KEY CHECK (id = 1),
             username TEXT NOT NULL,
@@ -120,8 +119,7 @@ def _get_conn() -> sqlite3.Connection:
             salt TEXT NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
-        """
-    )
+        """)
     conn.commit()
     return conn
 
@@ -150,7 +148,9 @@ def create_user(username: str, password: str) -> User:
         )
         conn.commit()
         logger.info(f"WebUI 账号已创建: {username}")
-        return User(id=1, username=username, created_at=time.strftime("%Y-%m-%d %H:%M:%S"))
+        return User(
+            id=1, username=username, created_at=time.strftime("%Y-%m-%d %H:%M:%S")
+        )
     finally:
         conn.close()
 

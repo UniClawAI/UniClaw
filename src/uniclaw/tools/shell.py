@@ -1,12 +1,16 @@
 import asyncio
 import fnmatch
+import logging
 import os
 import re
 import sys
 import time
 from enum import StrEnum
 from pathlib import Path
+
 from uniclaw.tools.base import tool
+
+logger = logging.getLogger(__name__)
 from uniclaw.tools.stream import tool_stream
 from uniclaw.utils.constants import TOOL_ERROR
 from uniclaw.utils.format import sanitize_progress_line
@@ -22,6 +26,7 @@ class GrepOutputMode(StrEnum):
     content = "content"
     files_with_matches = "files_with_matches"
     count = "count"
+
 
 # 匹配 bash 中误用 Windows nul 设备名的重定向: >nul, 2>nul, >>nul, <nul 等
 # 在 bash 中 nul 只是普通文件名,需要替换为 /dev/null
@@ -96,8 +101,8 @@ def _find_git_bash() -> str | None:
         )
         if result.returncode == 0:
             return result.stdout.strip().splitlines()[0]
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("检测 bash 可用性失败: %s", e)
 
     return None
 
@@ -319,7 +324,8 @@ async def _has_rg() -> bool:
         )
         await asyncio.wait_for(proc.communicate(), timeout=5)
         return proc.returncode == 0
-    except Exception:
+    except Exception as e:
+        logger.warning("检测 rg 可用性失败: %s", e)
         return False
 
 
@@ -336,7 +342,8 @@ async def _has_native_grep() -> bool:
         )
         await asyncio.wait_for(proc.communicate(), timeout=5)
         return proc.returncode == 0
-    except Exception:
+    except Exception as e:
+        logger.warning("检测 grep 可用性失败: %s", e)
         return False
 
 

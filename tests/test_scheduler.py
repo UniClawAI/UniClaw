@@ -1,6 +1,7 @@
 """
 定时任务调度器的单元测试
 """
+
 import json
 import pytest
 from unittest.mock import patch
@@ -17,7 +18,10 @@ def tmp_config(tmp_path):
     fake_dir.mkdir(parents=True)
     config_file = fake_dir / "scheduler.json"
     with patch.object(Scheduler, "_instance", None):
-        with patch("uniclaw.tools.scheduler.scheduler.get_app_dir", return_value=fake_dir.parent):
+        with patch(
+            "uniclaw.tools.scheduler.scheduler.get_app_dir",
+            return_value=fake_dir.parent,
+        ):
             yield config_file
 
 

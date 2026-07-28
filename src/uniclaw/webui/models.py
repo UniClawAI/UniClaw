@@ -262,7 +262,9 @@ class ProviderConfig(BaseModel):
 class SettingsUpdate(BaseModel):
     """settings.json 更新。session_id 非空时更新会话级配置,否则更新全局配置。"""
 
-    session_id: str = ""  # 非空时更新对应会话的配置(内存),为空时更新全局 settings.json(磁盘)
+    session_id: str = (
+        ""  # 非空时更新对应会话的配置(内存),为空时更新全局 settings.json(磁盘)
+    )
     model_name: list[str] = Field(default_factory=list)
     mini_model_name: list[str] = Field(default_factory=list)
     multimodal_model_name: list[str] = Field(default_factory=list)

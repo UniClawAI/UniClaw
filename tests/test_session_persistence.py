@@ -9,11 +9,19 @@ from uniclaw.tools.session.session import Session
 def _make_config(tmp_path, task: AgentTask) -> AppConfig:
     """创建测试用的 AppConfig。"""
     from uniclaw.config import ProviderProfile
+
     return AppConfig(
         current_agent=task,
         model_name=["test-model"],
         mini_model_name=["test-model"],
-        providers={"test": ProviderProfile(name="test", protocol="openai", api_key="test", base_url="https://api.test.com/v1")},
+        providers={
+            "test": ProviderProfile(
+                name="test",
+                protocol="openai",
+                api_key="test",
+                base_url="https://api.test.com/v1",
+            )
+        },
         permission_mode="auto",
         verbose=False,
     )
@@ -30,7 +38,9 @@ def _patch_session_dir(tmp_path, monkeypatch):
     """将 SessionManager 的存储目录重定向到测试临时目录。"""
     session_dir = tmp_path / "sessions"
     session_dir.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setattr(SessionManager, "_default_dir", staticmethod(lambda: session_dir))
+    monkeypatch.setattr(
+        SessionManager, "_default_dir", staticmethod(lambda: session_dir)
+    )
 
 
 @pytest.mark.asyncio

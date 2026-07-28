@@ -35,6 +35,7 @@ from uniclaw.ilink_bot import IlinkBotClient, IncomingMessage
 from uniclaw.ilink_bot.media import download_media, detect_ext
 from uniclaw.context import build_system_prompt
 from uniclaw.console.ui import C, clr, info, ok, warn, err
+from uniclaw.utils.logger import get_logger
 
 # 每个用户独立的配置(含 session 和 agent)
 _user_configs: dict[str, AppConfig] = {}
@@ -54,9 +55,12 @@ def _get_user_config(user_id: str) -> AppConfig:
             session = user_id
         else:
             from uniclaw.tools.session.session import SessionType
+
             session.session_type = SessionType.WECHAT
 
-        config = load_config(session=session, run_mode=RunMode.WEBUI, session_type=SessionType.WECHAT)
+        config = load_config(
+            session=session, run_mode=RunMode.WEBUI, session_type=SessionType.WECHAT
+        )
         config.current_agent.name = f"wechat-{user_id}"
         config.current_agent.event_queue = asyncio.Queue()
         _user_configs[user_id] = config
@@ -186,12 +190,15 @@ async def _collect_response(
                 if client:
                     try:
                         client.reply_text(f"🔧 {label}")
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        get_logger("wechat", config.root_dir).debug(
+                            "发送工具调用通知失败: %s", e
+                        )
             elif isinstance(event, ToolEvent):
                 print(
                     clr(
-                        f"  [工具] {_format_tool_call(current_name, current_args)}", C.GREEN
+                        f"  [工具] {_format_tool_call(current_name, current_args)}",
+                        C.GREEN,
                     )
                 )
                 print(clr(f"    {event.content}", C.DIM))
@@ -199,7 +206,9 @@ async def _collect_response(
                 # 显示用户输入消息(微信模式下通常不需要显示,但保留用于调试)
                 pass
             elif isinstance(event, PermissionRequestEvent):
-                agent_label = f" [子代理: {event.agent_name}]" if event.agent_name else ""
+                agent_label = (
+                    f" [子代理: {event.agent_name}]" if event.agent_name else ""
+                )
                 prompt = f"🔧{agent_label} {event.description}"
                 if event.explanation:
                     prompt += f"\n{event.explanation}"
@@ -284,11 +293,15 @@ def make_handler():
                 # 启动 agent
                 try:
                     bot.send_typing()
-                except Exception:
-                    pass
+                except Exception as e:
+                    get_logger("wechat", config.root_dir).debug(
+                        "发送打字状态失败: %s", e
+                    )
                 try:
                     system_prompt = await build_system_prompt(config)
-                    multi_agent.start_agent(result, config=config, system_prompt=system_prompt)
+                    multi_agent.start_agent(
+                        result, config=config, system_prompt=system_prompt
+                    )
                     reply = await _collect_response(config, client=bot)
                     if reply:
                         bot.reply_text(reply)
@@ -327,8 +340,8 @@ def make_handler():
 
         try:
             bot.send_typing()
-        except Exception:
-            pass
+        except Exception as e:
+            get_logger("wechat", config.root_dir).debug("发送打字状态失败: %s", e)
 
         try:
             system_prompt = await build_system_prompt(config)
@@ -351,13 +364,13 @@ def make_handler():
             await err(f"[微信] 处理消息失败: {e}", config)
             try:
                 bot.reply_text(f"处理出错: {e}")
-            except Exception:
-                pass
+            except Exception as e2:
+                get_logger("wechat", config.root_dir).debug("发送错误回复失败: %s", e2)
         finally:
             try:
                 bot.stop_typing()
-            except Exception:
-                pass
+            except Exception as e:
+                get_logger("wechat", config.root_dir).debug("停止打字状态失败: %s", e)
 
     return handler
 
@@ -372,7 +385,8 @@ async def wechat_input(prompt: str, title: str = "输入", config=None) -> str:
     # 发送问题
     try:
         bot.reply_text(f"💬 {title}\n{prompt}")
-    except Exception:
+    except Exception as e:
+        await warn(f"发送输入提示失败: {e}", config)
         return ""
 
     # 等待用户回复

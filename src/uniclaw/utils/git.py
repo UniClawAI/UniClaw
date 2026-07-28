@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 from pathlib import Path
 import subprocess
@@ -7,8 +8,12 @@ import time
 from typing import Optional
 import uuid
 
+logger = logging.getLogger(__name__)
 
-async def _run_git(*args: str, cwd: str | None = None, check: bool = False) -> subprocess.CompletedProcess:
+
+async def _run_git(
+    *args: str, cwd: str | None = None, check: bool = False
+) -> subprocess.CompletedProcess:
     """异步执行 git 命令,返回 CompletedProcess 风格的结果。"""
     proc = await asyncio.create_subprocess_exec(
         *args,
@@ -30,9 +35,12 @@ async def _run_git(*args: str, cwd: str | None = None, check: bool = False) -> s
 async def get_git_root(root_dir: Path) -> Optional[str]:
     """返回 root_dir 的 git 根目录,如果不在 git 仓库中则返回 None。"""
     try:
-        r = await _run_git("git", "rev-parse", "--show-toplevel", cwd=str(root_dir), check=True)
+        r = await _run_git(
+            "git", "rev-parse", "--show-toplevel", cwd=str(root_dir), check=True
+        )
         return r.stdout.strip()
-    except Exception:
+    except Exception as e:
+        logger.debug("获取 git 根目录失败: %s", e)
         return None
 
 
@@ -73,9 +81,12 @@ async def has_git_commit(root_dir: Path = None) -> bool:
     if not await is_git_repo(root_dir):
         return False
     try:
-        result = await _run_git("git", "rev-parse", "HEAD", cwd=str(root_dir) if root_dir else None)
+        result = await _run_git(
+            "git", "rev-parse", "HEAD", cwd=str(root_dir) if root_dir else None
+        )
         return result.returncode == 0
-    except Exception:
+    except Exception as e:
+        logger.debug("检查 git commit 失败: %s", e)
         return False
 
 
@@ -92,8 +103,14 @@ async def create_worktree(base_dir: Path) -> tuple:
     wt_path = tempfile.mkdtemp(prefix="nano-agent-wt-")
     os.rmdir(wt_path)
     await _run_git(
-        "git", "worktree", "add", "-b", branch, wt_path,
-        cwd=str(base_dir), check=True,
+        "git",
+        "worktree",
+        "add",
+        "-b",
+        branch,
+        wt_path,
+        cwd=str(base_dir),
+        check=True,
     )
     return wt_path, branch
 
@@ -101,13 +118,15 @@ async def create_worktree(base_dir: Path) -> tuple:
 async def remove_worktree(wt_path: Path, branch: str, base_dir: Path) -> None:
     """移除 git worktree 并删除其分支(尽力而为)。"""
     try:
-        await _run_git("git", "worktree", "remove", "--force", str(wt_path), cwd=str(base_dir))
-    except Exception:
-        pass
+        await _run_git(
+            "git", "worktree", "remove", "--force", str(wt_path), cwd=str(base_dir)
+        )
+    except Exception as e:
+        logger.debug("移除 git worktree 失败: %s", e)
     try:
         await _run_git("git", "branch", "-D", branch, cwd=str(base_dir))
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("删除 git 分支失败: %s", e)
 
 
 # ── Git Stash 检查点 ──────────────────────────────────────────────────────────
@@ -138,7 +157,12 @@ async def git_create_checkpoint(root_dir: Path, message: str = "") -> bool:
         msg = f"checkpoint-{time.strftime('%Y%m%d-%H%M%S')}"
     # 第一步:stash push 保存当前状态
     result = await _run_git(
-        "git", "stash", "push", "--include-untracked", "-m", msg,
+        "git",
+        "stash",
+        "push",
+        "--include-untracked",
+        "-m",
+        msg,
         cwd=str(git_root),
     )
     if result.returncode != 0:
@@ -148,7 +172,9 @@ async def git_create_checkpoint(root_dir: Path, message: str = "") -> bool:
     return True
 
 
-async def _git_restore_helper(root_dir: Path, index: int, use_pop: bool) -> tuple[bool, str]:
+async def _git_restore_helper(
+    root_dir: Path, index: int, use_pop: bool
+) -> tuple[bool, str]:
     """git stash 恢复的内部实现,供 git_pop_checkpoint 和 git_apply_checkpoint 调用。
 
     处理流程:
@@ -180,7 +206,10 @@ async def _git_restore_helper(root_dir: Path, index: int, use_pop: bool) -> tupl
 
     # 先尝试 stash pop/apply
     result = await _run_git(
-        "git", "stash", cmd, f"stash@{{{index}}}",
+        "git",
+        "stash",
+        cmd,
+        f"stash@{{{index}}}",
         cwd=str(git_root),
     )
     if result.returncode == 0:
@@ -188,14 +217,21 @@ async def _git_restore_helper(root_dir: Path, index: int, use_pop: bool) -> tupl
 
     stderr = (result.stderr or "").strip()
     # 冲突时,使用 git checkout + git clean 强制恢复
-    if "would be overwritten" in stderr or "already exists" in stderr or "conflict" in stderr.lower():
+    if (
+        "would be overwritten" in stderr
+        or "already exists" in stderr
+        or "conflict" in stderr.lower()
+    ):
         # 1. 丢弃当前工作区修改
         await _run_git("git", "checkout", "HEAD", "--", ".", cwd=str(git_root))
         # 2. 删除未跟踪的文件
         await _run_git("git", "clean", "-fd", cwd=str(git_root))
         # 3. 从 stash 恢复
         result = await _run_git(
-            "git", "stash", cmd, f"stash@{{{index}}}",
+            "git",
+            "stash",
+            cmd,
+            f"stash@{{{index}}}",
             cwd=str(git_root),
         )
         if result.returncode == 0:
@@ -236,7 +272,10 @@ async def git_delete_checkpoint(root_dir: Path, index: int = 0) -> tuple[bool, s
     stash_name = stash_lines[index]
     # 删除
     result = await _run_git(
-        "git", "stash", "drop", f"stash@{{{index}}}",
+        "git",
+        "stash",
+        "drop",
+        f"stash@{{{index}}}",
         cwd=str(git_root),
     )
     if result.returncode == 0:
@@ -250,7 +289,11 @@ async def _get_stash_untracked_tree(git_root: Path, stash_ref: str) -> str | Non
     if result.returncode != 0:
         return None
     tree_result = await _run_git(
-        "git", "cat-file", "-p", result.stdout.strip(), cwd=str(git_root),
+        "git",
+        "cat-file",
+        "-p",
+        result.stdout.strip(),
+        cwd=str(git_root),
     )
     if tree_result.returncode != 0:
         return None
@@ -261,7 +304,9 @@ async def _get_stash_untracked_tree(git_root: Path, stash_ref: str) -> str | Non
     return None
 
 
-async def _diff_stash_untracked_between(git_root: Path, index_a: int, index_b: int) -> str:
+async def _diff_stash_untracked_between(
+    git_root: Path, index_a: int, index_b: int
+) -> str:
     """比较两个 stash 之间未跟踪文件的差异。"""
     tree_a = await _get_stash_untracked_tree(git_root, f"stash@{{{index_a}}}")
     tree_b = await _get_stash_untracked_tree(git_root, f"stash@{{{index_b}}}")
@@ -305,7 +350,9 @@ async def git_diff_checkpoint(root_dir: Path, index: int = 0) -> str:
         return "不在 git 仓库中"
     # 已跟踪文件的 diff
     result = await _run_git(
-        "git", "diff", f"stash@{{{index}}}",
+        "git",
+        "diff",
+        f"stash@{{{index}}}",
         cwd=str(git_root),
     )
     tracked = (result.stdout or "").strip()
@@ -347,7 +394,10 @@ async def git_diff_between(root_dir: Path, index_a: int, index_b: int) -> str:
         return "不在 git 仓库中"
     # 已跟踪文件的 diff
     result = await _run_git(
-        "git", "diff", f"stash@{{{index_a}}}", f"stash@{{{index_b}}}",
+        "git",
+        "diff",
+        f"stash@{{{index_a}}}",
+        f"stash@{{{index_b}}}",
         cwd=str(git_root),
     )
     tracked = (result.stdout or "").strip()

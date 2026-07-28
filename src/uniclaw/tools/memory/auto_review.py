@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -10,8 +9,6 @@ from uniclaw.tools.memory.memory import Memory
 
 if TYPE_CHECKING:
     from uniclaw.config import AppConfig
-
-logger = logging.getLogger(__name__)
 
 REVIEW_INTERVAL_MESSAGES = 10
 

@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Optional
 
 import uiautomation as auto
+
+logger = logging.getLogger(__name__)
 from uniclaw.tools.base import tool
 
 from uniclaw.utils.constants import TOOL_ERROR
@@ -100,20 +103,20 @@ def _get_states(control) -> list[str]:
     try:
         if control.HasKeyboardFocus:
             states.append("focused")
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("获取 HasKeyboardFocus 属性失败: %s", e)
     # 检测控件是否处于禁用状态
     try:
         if not control.IsEnabled:
             states.append("disabled")
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("获取 IsEnabled 属性失败: %s", e)
     # 检测控件是否在屏幕可见区域之外
     try:
         if control.IsOffscreen:
             states.append("offscreen")
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("获取 IsOffscreen 属性失败: %s", e)
     return states
 
 
@@ -162,15 +165,18 @@ def get_interactive_elements(
 
             try:
                 name = control.Name or ""
-            except Exception:
+            except Exception as e:
+                logger.debug("获取控件 Name 属性失败: %s", e)
                 name = ""
             try:
                 aid = control.AutomationId or ""
-            except Exception:
+            except Exception as e:
+                logger.debug("获取控件 AutomationId 属性失败: %s", e)
                 aid = ""
             try:
                 type_name = _get_type_name(control.ControlType)
-            except Exception:
+            except Exception as e:
+                logger.debug("获取控件 ControlType 属性失败: %s", e)
                 type_name = "Unknown"
 
             rect = None
@@ -178,8 +184,8 @@ def get_interactive_elements(
                 r = control.BoundingRectangle
                 if r and r.width() > 0 and r.height() > 0:
                     rect = (r.left, r.top, r.width(), r.height())
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("获取控件 BoundingRectangle 属性失败: %s", e)
 
             # 跳过完全空的控件(无名称、无ID、无位置)
             if not rect and not name and not aid:
@@ -195,7 +201,8 @@ def get_interactive_elements(
                 ):
                     win_ctrl = win_ctrl.GetParentControl()
                 window_name = win_ctrl.Name if win_ctrl else ""
-            except Exception:
+            except Exception as e:
+                logger.debug("获取控件所属窗口名失败: %s", e)
                 window_name = ""
 
             elements.append(
@@ -259,8 +266,8 @@ def _get_native_handle(ctrl) -> int:
                     last_hwnd = int(parent.NativeWindowHandle)
                 ctrl = parent
                 parent = ctrl.GetParentControl()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("遍历父控件获取原生句柄失败: %s", e)
         return last_hwnd
     except Exception as e:
         print(e)
@@ -343,8 +350,8 @@ async def _check_occluded(ctrl) -> Optional[str]:
         try:
             _activate_window(ctrl_hwnd)
             await asyncio.sleep(0.3)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("激活所属窗口失败: %s", e)
 
         # 重新检测
         hwnd_at_point = user32.WindowFromPoint(packed_point)
@@ -358,7 +365,8 @@ async def _check_occluded(ctrl) -> Optional[str]:
             return f"{TOOL_ERROR}: 元素 {_element_label(ctrl)} 被窗口{blocker_info}遮挡,请先关闭或最小化该窗口"
 
         return f"{TOOL_ERROR}: 元素 {_element_label(ctrl)} 被遮挡且无法识别遮挡窗口"
-    except Exception:
+    except Exception as e:
+        logger.debug("遮挡检测失败: %s", e)
         return None  # 检测失败时不阻塞操作
 
 
@@ -379,16 +387,16 @@ async def _ensure_visible(ctrl) -> Optional[str]:
                 await asyncio.sleep(0.3)
             if ctrl.IsOffscreen:
                 return f"{TOOL_ERROR}: 元素 {_element_label(ctrl)} 不在屏幕上(最小化或滚动出视野)"
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("离屏检查失败: %s", e)
 
     # 2. 边界矩形检查
     try:
         r = ctrl.BoundingRectangle
         if not r or r.width() <= 0 or r.height() <= 0:
             return None  # 无法获取位置,跳过后续检查
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("获取边界矩形失败: %s", e)
 
     # 3. 遮挡检查
     occluded = await _check_occluded(ctrl)
@@ -475,7 +483,8 @@ async def interact(
 
         try:
             ctrl = auto.FindControl(root, _match, maxDepth=20)
-        except Exception:
+        except Exception as e:
+            logger.debug("查找控件失败: %s", e)
             ctrl = None
 
     # UIA 未找到,降级到坐标
@@ -498,7 +507,8 @@ async def interact(
                 pattern = ctrl.GetPattern(auto.PatternId.InvokePattern)
                 pattern.Invoke()
                 return f"已调用元素: {_element_label(ctrl)}"
-            except Exception:
+            except Exception as e:
+                logger.debug("InvokePattern 不可用,降级为点击: %s", e)
                 ctrl.Click()
                 return f"已点击元素(Invoke 不支持): {_element_label(ctrl)}"
         elif action == "focus":
@@ -514,8 +524,8 @@ async def interact(
                 vp = ctrl.GetPattern(auto.PatternId.ValuePattern)
                 vp.SetValue(type_text)
                 return f"已通过 ValuePattern 输入文本到: {_element_label(ctrl)}"
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("ValuePattern 不可用,降级为 SendKeys: %s", e)
             # 降级到 SendKeys
             ctrl.SendKeys(type_text)
             return f"已通过 SendKeys 输入文本到: {_element_label(ctrl)}"
@@ -531,15 +541,18 @@ def _element_label(ctrl) -> str:
     """生成元素的简短标签。"""
     try:
         name = ctrl.Name or ""
-    except Exception:
+    except Exception as e:
+        logger.debug("获取控件 Name 属性失败: %s", e)
         name = ""
     try:
         aid = ctrl.AutomationId or ""
-    except Exception:
+    except Exception as e:
+        logger.debug("获取控件 AutomationId 属性失败: %s", e)
         aid = ""
     try:
         type_name = _get_type_name(ctrl.ControlType)
-    except Exception:
+    except Exception as e:
+        logger.debug("获取控件 ControlType 属性失败: %s", e)
         type_name = "Unknown"
 
     parts = [type_name]
@@ -555,43 +568,43 @@ def _format_element_detail(ctrl) -> str:
     lines = []
     try:
         lines.append(f"类型: {_get_type_name(ctrl.ControlType)}")
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("获取控件 ControlType 属性失败: %s", e)
     try:
         lines.append(f'名称: "{ctrl.Name}"')
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("获取控件 Name 属性失败: %s", e)
     try:
         aid = ctrl.AutomationId
         if aid:
             lines.append(f"AutomationId: {aid}")
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("获取控件 AutomationId 属性失败: %s", e)
     try:
         cn = ctrl.ClassName
         if cn:
             lines.append(f"ClassName: {cn}")
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("获取控件 ClassName 属性失败: %s", e)
     try:
         r = ctrl.BoundingRectangle
         if r:
             lines.append(f"位置: ({r.left}, {r.top})")
             lines.append(f"大小: {r.width()}x{r.height()}")
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("获取控件 BoundingRectangle 属性失败: %s", e)
     try:
         lines.append(f"启用: {ctrl.IsEnabled}")
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("获取控件 IsEnabled 属性失败: %s", e)
     try:
         lines.append(f"可见: {not ctrl.IsOffscreen}")
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("获取控件 IsOffscreen 属性失败: %s", e)
     try:
         lines.append(f"焦点: {ctrl.HasKeyboardFocus}")
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("获取控件 HasKeyboardFocus 属性失败: %s", e)
 
     # 列出支持的模式
     patterns = []
@@ -607,8 +620,8 @@ def _format_element_detail(ctrl) -> str:
         try:
             if ctrl.GetPattern(pid):
                 patterns.append(pname)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("获取 %s 模式失败: %s", pname, e)
     if patterns:
         lines.append(f"支持的模式: {', '.join(patterns)}")
 
@@ -616,8 +629,8 @@ def _format_element_detail(ctrl) -> str:
     try:
         children = ctrl.GetChildren()
         lines.append(f"子元素数: {len(children)}")
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("获取子元素列表失败: %s", e)
 
     return "\n".join(lines)
 

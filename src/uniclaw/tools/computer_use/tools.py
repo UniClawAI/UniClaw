@@ -3,7 +3,10 @@
 import asyncio
 import base64
 import io
+import logging
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 import mss
 from uniclaw.tools.base import tool
@@ -13,10 +16,12 @@ from PIL import Image, ImageDraw
 # pyautogui 延迟导入:避免无 X11 显示器时模块加载崩溃
 _pyautogui = None
 
+
 def _get_pyautogui():
     global _pyautogui
     if _pyautogui is None:
         import pyautogui
+
         pyautogui.PAUSE = 0.1
         pyautogui.FAILSAFE = True
         _pyautogui = pyautogui
@@ -70,6 +75,8 @@ def get_cu_system_prompt(config) -> str:
 
 # ── 紧急停止热键 ───────────────────────────────────────────────────
 _hotkey_listener = None
+
+
 def _emergency_stop():
     """紧急停止:仅取消启用了 Computer Write 工具的 agent 任务。"""
     try:
@@ -80,8 +87,8 @@ def _emergency_stop():
         for task in ma.list_tasks():
             if task.allowed_tools_set & cu_write_names:
                 task.cancel_event.set()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("紧急停止执行失败: %s", e)
 
 
 def register_emergency_hotkey() -> bool:
@@ -111,7 +118,8 @@ def register_emergency_hotkey() -> bool:
         listener.start()
         _hotkey_listener = listener
         return True
-    except Exception:
+    except Exception as e:
+        logger.debug("注册紧急停止热键失败: %s", e)
         return False
 
 
@@ -121,9 +129,10 @@ def unregister_emergency_hotkey():
     if _hotkey_listener is not None:
         try:
             _hotkey_listener.stop()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("注销紧急停止热键失败: %s", e)
         _hotkey_listener = None
+
 
 # ── screenshot 同步实现 ────────────────────────────────────────────
 
@@ -319,7 +328,9 @@ def cu_mouse_drag(
         操作结果消息。
     """
     _get_pyautogui().moveTo(start_x, start_y)
-    _get_pyautogui().drag(end_x - start_x, end_y - start_y, duration=duration, button=button)
+    _get_pyautogui().drag(
+        end_x - start_x, end_y - start_y, duration=duration, button=button
+    )
     return f"已从 ({start_x}, {start_y}) 拖拽到 ({end_x}, {end_y})"
 
 
@@ -450,7 +461,6 @@ def cu_locate_on_screen(image_path: str, confidence: float = 0.8) -> str:
 
 # ── desktop UI 工具(从平台后端导入)─────────────────────────────────
 from .automation import cu_get_elements, cu_find_element, cu_interact
-
 
 # 只读工具(安全,始终可用)
 READONLY_TOOLS = [

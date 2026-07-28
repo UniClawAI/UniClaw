@@ -1,6 +1,9 @@
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 from uniclaw.utils.frontmatter import parse_frontmatter
 
 
@@ -86,7 +89,8 @@ def _parse_skill_file(path: Path, source: str = "user") -> Optional[SkillDef]:
     """
     try:
         text = path.read_text(encoding="utf-8")
-    except Exception:
+    except Exception as e:
+        logger.debug("读取技能文件失败 %s: %s", path, e)
         return None
     metadata, prompt = parse_frontmatter(text)
 

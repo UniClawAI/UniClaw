@@ -1,5 +1,9 @@
 from uniclaw.config import AppConfig
-from uniclaw.utils.media_cache import compute_hash, get_cached_description, save_description
+from uniclaw.utils.media_cache import (
+    compute_hash,
+    get_cached_description,
+    save_description,
+)
 
 _MEDIA_PROMPTS = {
     "image": "请详细描述这张图片的内容,包括主要对象、场景、颜色、文字等信息。描述应该简洁但完整,让没有看到图片的人能够理解图片内容。",
@@ -23,7 +27,9 @@ def _build_content_block(media_url: str, media_type: str) -> dict:
     return {"type": "text", "text": f"[{media_type}]"}
 
 
-async def describe_media(media_url: str, media_type: str, model_name: str, config: AppConfig) -> str:
+async def describe_media(
+    media_url: str, media_type: str, model_name: str, config: AppConfig
+) -> str:
     content_hash = compute_hash(media_url)
     cached = get_cached_description(content_hash)
     if cached:

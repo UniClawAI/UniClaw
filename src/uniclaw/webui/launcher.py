@@ -11,8 +11,12 @@ from uniclaw.utils.logger import get_logger
 import ipaddress
 import socket
 
+logger = get_logger("webui", Path.cwd())
 
-async def launch(host: str = "127.0.0.1", port: int = 8080, ssl: bool = False, domain: str = ""):
+
+async def launch(
+    host: str = "127.0.0.1", port: int = 8080, ssl: bool = False, domain: str = ""
+):
     """启动 WebUI 模式。
 
     不在启动时创建 config — root_dir 由前端第一条消息指定。
@@ -85,7 +89,7 @@ async def launch(host: str = "127.0.0.1", port: int = 8080, ssl: bool = False, d
         ssl_keyfile=ssl_keyfile,
         ssl_certfile=ssl_certfile,
         ws_ping_interval=30,  # 每 30 秒发送 ping,及时检测死连接
-        ws_ping_timeout=10,   # 10 秒无 pong 响应则关闭连接
+        ws_ping_timeout=10,  # 10 秒无 pong 响应则关闭连接
     )
     server = uvicorn.Server(config)
     await server.serve()
@@ -94,6 +98,7 @@ async def launch(host: str = "127.0.0.1", port: int = 8080, ssl: bool = False, d
 def _ensure_ssl_certs(domain: str = "") -> tuple[str, str]:
     """确保 SSL 证书存在,不存在则自动生成自签名证书。"""
     from uniclaw.utils.ssl_cert import get_or_create_certs
+
     return get_or_create_certs(domain)
 
 
@@ -117,12 +122,14 @@ def _get_local_ip(is_ipv6: bool = False) -> str:
             with socket.socket(socket.AF_INET6, socket.SOCK_DGRAM) as s:
                 s.connect(("2001:4860:4860::8888", 80))
                 return s.getsockname()[0].split("%")[0]  # 去掉 scope ID
-        except Exception:
+        except Exception as e:
+            logger.debug("获取本机 IPv6 地址失败: %s", e)
             return ""
     else:
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
                 s.connect(("8.8.8.8", 80))
                 return s.getsockname()[0]
-        except Exception:
+        except Exception as e:
+            logger.debug("获取本机 IPv4 地址失败: %s", e)
             return ""

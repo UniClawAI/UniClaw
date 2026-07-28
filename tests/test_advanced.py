@@ -8,6 +8,7 @@
 4. 异步测试
 5. Mock 边界测试
 """
+
 import pytest
 import asyncio
 from unittest.mock import patch, MagicMock, AsyncMock
@@ -18,7 +19,6 @@ from uniclaw.tools.session.session import StreamChunk
 from uniclaw.provider.common import safe_parse_args
 from uniclaw.utils.format import format_args_for_display
 from uniclaw.config import Permissions, AppConfig
-
 
 # ═══════════════════════════════════════════════════════════════
 # 1. 属性测试 (Property-based Testing)
@@ -92,14 +92,17 @@ class TestPropertyBased:
 class TestParameterized:
     """参数化测试：覆盖多种输入场景"""
 
-    @pytest.mark.parametrize("input,expected", [
-        ("", ""),
-        ("hello", "hello"),
-        ("a" * 100, "a" * 100),
-        ("a" * 101, "a" * 100 + "...(省略1字符)"),
-        ("line1\nline2", "line1...(省略6字符)"),
-        (None, ""),
-    ])
+    @pytest.mark.parametrize(
+        "input,expected",
+        [
+            ("", ""),
+            ("hello", "hello"),
+            ("a" * 100, "a" * 100),
+            ("a" * 101, "a" * 100 + "...(省略1字符)"),
+            ("line1\nline2", "line1...(省略6字符)"),
+            (None, ""),
+        ],
+    )
     def test_format_args_edge_cases(self, input, expected):
         """测试 format_args 的边界情况"""
         if input is None:
@@ -108,34 +111,43 @@ class TestParameterized:
             result = format_args_for_display({"key": input}, max_length=100)
         assert expected in result or result == expected
 
-    @pytest.mark.parametrize("perm,expected", [
-        (Permissions.AUTO, "auto"),
-        (Permissions.MANUAL, "manual"),
-        (Permissions.ACCEPT_ALL, "accept-all"),
-        (Permissions.PLAN, "plan"),
-    ])
+    @pytest.mark.parametrize(
+        "perm,expected",
+        [
+            (Permissions.AUTO, "auto"),
+            (Permissions.MANUAL, "manual"),
+            (Permissions.ACCEPT_ALL, "accept-all"),
+            (Permissions.PLAN, "plan"),
+        ],
+    )
     def test_permissions_values(self, perm, expected):
         """测试所有权限模式"""
         assert perm == expected
 
-    @pytest.mark.parametrize("url1,url2,expected", [
-        ("https://api.openai.com/v1/", "https://api.openai.com/v1/", True),
-        ("https://api.openai.com/v1", "https://api.openai.com/v1/", True),
-        ("https://API.OPENAI.COM/v1/", "https://api.openai.com/v1/", True),
-        ("https://api.openai.com/v1/", "https://api.anthropic.com/v1/", False),
-    ])
+    @pytest.mark.parametrize(
+        "url1,url2,expected",
+        [
+            ("https://api.openai.com/v1/", "https://api.openai.com/v1/", True),
+            ("https://api.openai.com/v1", "https://api.openai.com/v1/", True),
+            ("https://API.OPENAI.COM/v1/", "https://api.openai.com/v1/", True),
+            ("https://api.openai.com/v1/", "https://api.anthropic.com/v1/", False),
+        ],
+    )
     def test_compare_urls(self, url1, url2, expected):
         """测试 URL 比较"""
         assert compare_urls(url1, url2) == expected
 
-    @pytest.mark.parametrize("json_str,expected", [
-        ("", {}),
-        ("null", {}),
-        ("[]", {}),
-        ('{"key": "value"}', {"key": "value"}),
-        ("invalid json", {}),
-        ('{"a": 1, "b": 2}', {"a": 1, "b": 2}),
-    ])
+    @pytest.mark.parametrize(
+        "json_str,expected",
+        [
+            ("", {}),
+            ("null", {}),
+            ("[]", {}),
+            ('{"key": "value"}', {"key": "value"}),
+            ("invalid json", {}),
+            ('{"a": 1, "b": 2}', {"a": 1, "b": 2}),
+        ],
+    )
     def testsafe_parse_args(self, json_str, expected):
         """测试参数解析"""
         assert safe_parse_args(json_str) == expected
@@ -150,8 +162,16 @@ class TestParameterized:
 def sample_config():
     """创建测试用配置"""
     from uniclaw.config import ProviderProfile
+
     return AppConfig(
-        providers={"default": ProviderProfile(name="default", protocol="openai", api_key="test-key-123", base_url="https://api.openai.com/v1")},
+        providers={
+            "default": ProviderProfile(
+                name="default",
+                protocol="openai",
+                api_key="test-key-123",
+                base_url="https://api.openai.com/v1",
+            )
+        },
         model_name=["gpt-4"],
         temperature=0.7,
     )
@@ -217,6 +237,7 @@ class TestAsync:
     @pytest.mark.asyncio
     async def test_async_function(self):
         """测试异步函数"""
+
         async def async_add(a, b):
             await asyncio.sleep(0.01)
             return a + b
@@ -234,6 +255,7 @@ class TestAsync:
     @pytest.mark.asyncio
     async def test_async_exception(self):
         """测试异步异常"""
+
         async def failing_func():
             raise ValueError("test error")
 
@@ -243,6 +265,7 @@ class TestAsync:
     @pytest.mark.asyncio
     async def test_async_timeout(self):
         """测试异步超时"""
+
         async def slow_func():
             await asyncio.sleep(10)
             return "done"
@@ -253,6 +276,7 @@ class TestAsync:
     @pytest.mark.asyncio
     async def test_async_gather(self):
         """测试并发执行"""
+
         async def fetch(id):
             await asyncio.sleep(0.01)
             return f"result-{id}"
@@ -282,6 +306,7 @@ class TestMockBoundaries:
             )
 
             from openai import OpenAI
+
             client = OpenAI(api_key="test")
             response = client.chat.completions.create()
 
@@ -314,6 +339,7 @@ class TestMockBoundaries:
     def test_patch_dict(self):
         """测试 patch.dict"""
         import os
+
         with patch.dict(os.environ, {"TEST_KEY": "test_value"}):
             assert os.environ.get("TEST_KEY") == "test_value"
         assert os.environ.get("TEST_KEY") is None
@@ -331,6 +357,7 @@ class TestOrganization:
     def test_slow_operation(self):
         """标记为慢测试"""
         import time
+
         time.sleep(0.1)
         assert True
 
@@ -340,8 +367,7 @@ class TestOrganization:
         pass
 
     @pytest.mark.skipif(
-        not hasattr(pytest, "importorskip"),
-        reason="需要 pytest 特定版本"
+        not hasattr(pytest, "importorskip"), reason="需要 pytest 特定版本"
     )
     def test_conditional_skip(self):
         """条件跳过"""

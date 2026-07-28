@@ -65,8 +65,9 @@ async def cmd_resume(args: str, config: AppConfig) -> bool:
             answer = await get_input(
                 f"确定要删除会话 {session_id}?(y/n):", title="删除对话", config=config
             )
-        except Exception:
-            answer = ""
+        except Exception as e:
+            await err(f"获取删除确认输入失败: {e}", config)
+            return True
         if answer.strip().lower() != "y":
             await warn("已取消删除", config)
             return True
@@ -76,9 +77,10 @@ async def cmd_resume(args: str, config: AppConfig) -> bool:
             if config.is_webui:
                 try:
                     from uniclaw.webui.ws import notify_session_deleted
+
                     await notify_session_deleted(session_id, config.root_dir)
-                except Exception:
-                    pass
+                except Exception as e:
+                    await err(f"通知前端会话删除失败: {e}", config)
         else:
             await err(f"删除失败或未找到会话: {session_id}", config)
         return True
@@ -135,14 +137,11 @@ async def cmd_resume(args: str, config: AppConfig) -> bool:
         from uniclaw.console.ui import get_input
 
         choice = await get_input(prompt_text, title="恢复会话", config=config)
-    except Exception:
-        choice = ""
-
-    choice = choice.strip()
+    except Exception as e:
+        await err(f"获取会话选择输入失败: {e}", config)
+        return True
     if not choice:
         return True
-
-    # 按序号选择
     if choice.isdigit():
         idx = int(choice) - 1
         if 0 <= idx < len(items):
@@ -177,10 +176,9 @@ async def _restore_session(session: Session, task: AgentTask, config: AppConfig 
             from uniclaw.webui.ws import notify_session_switched
 
             await notify_session_switched(session.id, old_session_id)
-        except Exception:
-            pass
+        except Exception as e:
+            await err(f"通知前端会话切换失败: {e}", config)
     else:
-        # Console 模式:直接替换 session 并回放历史
         task.session = session
         try:
             from uniclaw.console.run import TUIApp
@@ -190,8 +188,8 @@ async def _restore_session(session: Session, task: AgentTask, config: AppConfig 
                 tui.clear()
                 messages = task.session.to_history_messages()
                 tui.replay_messages(messages)
-        except Exception:
-            pass
+        except Exception as e:
+            await err(f"回放历史消息失败: {e}", config)
 
 
 async def _handle_fork(args: str, task: AgentTask, config: AppConfig):
@@ -250,7 +248,9 @@ async def _handle_fork(args: str, task: AgentTask, config: AppConfig):
     # 执行分叉
     forked = await SessionManager.fork_session(session_id, message_idx, config)
     if not forked:
-        await err(f"分叉失败: 无效的消息序号 {message_idx}(共 {len(session)} 条消息)", config)
+        await err(
+            f"分叉失败: 无效的消息序号 {message_idx}(共 {len(session)} 条消息)", config
+        )
         return
 
     await _restore_session(forked, task, config)
@@ -275,10 +275,9 @@ async def _pick_fork_point(session: Session, config: AppConfig) -> int | None:
         from uniclaw.console.ui import get_input
 
         choice = await get_input("\n".join(lines), title="选择分叉点", config=config)
-    except Exception:
-        choice = ""
-
-    choice = choice.strip()
+    except Exception as e:
+        await err(f"获取分叉点选择输入失败: {e}", config)
+        return None
     if not choice:
         return None
     if not choice.isdigit():

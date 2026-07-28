@@ -41,7 +41,11 @@ async def _search_github(
     query: str, limit: int, sort: str, search_type: str, config: AppConfig | None
 ) -> str:
     """GitHub 搜索。"""
-    st = search_type if search_type in ("repositories", "code", "issues", "users") else "repositories"
+    st = (
+        search_type
+        if search_type in ("repositories", "code", "issues", "users")
+        else "repositories"
+    )
     s = sort if sort in ("stars", "forks", "updated", "best-match") else "stars"
     url = f"https://api.github.com/search/{st}"
     headers = {"Accept": "application/vnd.github.v3+json"}
@@ -50,7 +54,9 @@ async def _search_github(
         headers["Authorization"] = f"token {token}"
     proxy = _get_proxy(config)
     async with httpx.AsyncClient(timeout=15, proxy=proxy) as client:
-        r = await client.get(url, params={"q": query, "sort": s, "per_page": limit}, headers=headers)
+        r = await client.get(
+            url, params={"q": query, "sort": s, "per_page": limit}, headers=headers
+        )
     r.raise_for_status()
     data = r.json()
     items = data.get("items", [])
@@ -94,11 +100,23 @@ async def _search_arxiv(
     query: str, limit: int, sort: str, config: AppConfig | None
 ) -> str:
     """arXiv 搜索。"""
-    s = sort if sort in ("relevance", "lastUpdatedDate", "submittedDate") else "relevance"
+    s = (
+        sort
+        if sort in ("relevance", "lastUpdatedDate", "submittedDate")
+        else "relevance"
+    )
     url = "https://export.arxiv.org/api/query"
     proxy = _get_proxy(config)
     async with httpx.AsyncClient(timeout=15, proxy=proxy) as client:
-        r = await client.get(url, params={"search_query": f"all:{query}", "max_results": limit, "sortBy": s, "sortOrder": "descending"})
+        r = await client.get(
+            url,
+            params={
+                "search_query": f"all:{query}",
+                "max_results": limit,
+                "sortBy": s,
+                "sortOrder": "descending",
+            },
+        )
     r.raise_for_status()
     root = ET.fromstring(r.text)
     ns = {"atom": "http://www.w3.org/2005/Atom"}
@@ -108,7 +126,9 @@ async def _search_arxiv(
     lines = [f"**arXiv 搜索结果** ({len(entries)} 篇):\n"]
     for entry in entries:
         title = entry.find("atom:title", ns).text.strip().replace("\n", " ")
-        authors = [a.find("atom:name", ns).text for a in entry.findall("atom:author", ns)]
+        authors = [
+            a.find("atom:name", ns).text for a in entry.findall("atom:author", ns)
+        ]
         summary = entry.find("atom:summary", ns).text.strip().replace("\n", " ")[:200]
         link = entry.find("atom:id", ns).text.strip()
         published = entry.find("atom:published", ns).text[:10]
@@ -128,7 +148,16 @@ async def _search_stackoverflow(
     url = "https://api.stackexchange.com/2.3/search"
     proxy = _get_proxy(config)
     async with httpx.AsyncClient(timeout=15, proxy=proxy) as client:
-        r = await client.get(url, params={"order": "desc", "sort": s, "intitle": query, "site": "stackoverflow", "pagesize": limit})
+        r = await client.get(
+            url,
+            params={
+                "order": "desc",
+                "sort": s,
+                "intitle": query,
+                "site": "stackoverflow",
+                "pagesize": limit,
+            },
+        )
     r.raise_for_status()
     data = r.json()
     items = data.get("items", [])
@@ -184,14 +213,20 @@ async def _search_bilibili(
     query: str, limit: int, search_type: str, config: AppConfig | None
 ) -> str:
     """B站搜索 (API)。"""
-    st = search_type if search_type in ("video", "bangumi", "pgc", "live", "article") else "video"
+    st = (
+        search_type
+        if search_type in ("video", "bangumi", "pgc", "live", "article")
+        else "video"
+    )
     url = "https://api.bilibili.com/x/web-interface/search/type"
     proxy = _get_proxy(config)
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
         "Referer": "https://search.bilibili.com",
     }
-    async with httpx.AsyncClient(timeout=15, proxy=proxy, follow_redirects=True) as client:
+    async with httpx.AsyncClient(
+        timeout=15, proxy=proxy, follow_redirects=True
+    ) as client:
         # 先访问搜索页获取必要的 cookie (buvid3 等)
         await client.get("https://search.bilibili.com", headers=headers)
         r = await client.get(
@@ -287,7 +322,9 @@ async def platform_search(
         return f"{TOOL_ERROR}: 未知平台 '{platform}'。支持的平台: {', '.join(_PLATFORM_SEARCHERS.keys())}, all"
 
     # 检查缓存
-    ck = _cache_key(query, ",".join(platforms), limit=limit, sort=sort, search_type=search_type)
+    ck = _cache_key(
+        query, ",".join(platforms), limit=limit, sort=sort, search_type=search_type
+    )
     cached = _search_cache.get(ck)
     if cached is not None:
         return cached

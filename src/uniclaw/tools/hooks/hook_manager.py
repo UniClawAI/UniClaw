@@ -153,10 +153,11 @@ def load_all_hooks_configs(root_dir: Path | None) -> list[tuple[str, dict[str, A
             cfg = load_hooks_config(root)
             label = "project" if isinstance(root, Path) else root.value
             configs.append((label, cfg))
-        except Exception:
+        except Exception as e:
             get_logger("hooks", root_dir).debug(
-                "加载%s级hooks配置失败或不存在",
+                "加载%s级hooks配置失败或不存在: %s",
                 "project" if isinstance(root, Path) else root.value,
+                e,
             )
     return configs
 
@@ -382,7 +383,12 @@ async def run_hooks(
             continue
         try:
             scope_results = await _run_entries(
-                event, entries, hook_input, input_text, str(root_dir) if root_dir else None, scope
+                event,
+                entries,
+                hook_input,
+                input_text,
+                str(root_dir) if root_dir else None,
+                scope,
             )
             results.extend(scope_results)
         except HookError:

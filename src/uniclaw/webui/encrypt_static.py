@@ -25,6 +25,7 @@ from uniclaw.webui.crypto import (
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
+
 # 静态文件目录(默认 dist 构建输出)
 # 向上查找 pyproject.toml 定位项目根目录
 def _find_project_root() -> Path:

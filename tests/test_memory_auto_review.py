@@ -49,9 +49,7 @@ def test_auto_review_skips_before_ten_messages(monkeypatch):
 
     # 4 组 user+assistant = 8 条消息，低于 10 条阈值
     task = _task_with_user_messages(4)
-    saved = asyncio.run(
-        auto_review.review_and_save_if_due(_make_config(task))
-    )
+    saved = asyncio.run(auto_review.review_and_save_if_due(_make_config(task)))
 
     assert saved == []
     assert calls == []
@@ -62,8 +60,7 @@ def test_auto_review_saves_new_memory(monkeypatch):
     saved_args = []
 
     async def fake_achat(*args, **kwargs):
-        return _Response(
-            """{
+        return _Response("""{
                 "memories": [{
                     "name": "feedback-memory-save-tool",
                     "type": "feedback",
@@ -71,8 +68,7 @@ def test_auto_review_saves_new_memory(monkeypatch):
                     "content": "Use the existing memory_save tool instead of writing a fixed path.",
                     "confidence": 1
                 }]
-            }"""
-        )
+            }""")
 
     def fake_save_memory(self, force=False):
         saved_args.append({"name": self.name, "scope": self.scope, "type": self.type})
@@ -99,8 +95,7 @@ def test_auto_review_deduplicates_identical_memory(monkeypatch):
     task = _task_with_user_messages(10)
 
     async def fake_achat(*args, **kwargs):
-        return _Response(
-            """{
+        return _Response("""{
                 "memories": [{
                     "name": "existing-memory",
                     "type": "feedback",
@@ -108,8 +103,7 @@ def test_auto_review_deduplicates_identical_memory(monkeypatch):
                     "content": "This memory already exists with identical content.",
                     "confidence": 1
                 }]
-            }"""
-        )
+            }""")
 
     def fake_save_memory(self, force=False):
         return {"status": "identical", "message": "already exists"}

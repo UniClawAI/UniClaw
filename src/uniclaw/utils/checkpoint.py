@@ -108,7 +108,8 @@ def _scan_files_sync(root_dir: Path) -> list[str]:
         # 用 gitignore 规则剪枝目录,避免进入不需要遍历的目录
         rel_root = os.path.relpath(root, root_dir)
         dirs[:] = [
-            d for d in dirs
+            d
+            for d in dirs
             if not gitignore_spec.match_file(
                 d if rel_root == "." else f"{rel_root}/{d}"
             )
@@ -528,7 +529,7 @@ def _file_diff_between(root_dir: Path, index_a: int, index_b: int) -> str:
 # ── 统一接口 ──────────────────────────────────────────────────────────────────
 
 
-async def create_checkpoint(root_dir: Path|None, message: str = "") -> bool:
+async def create_checkpoint(root_dir: Path | None, message: str = "") -> bool:
     """创建检查点(根据配置选择模式)。"""
     # 文件模式:检查是否有变化,无差异则跳过创建
     if root_dir is None:

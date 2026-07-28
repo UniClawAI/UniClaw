@@ -4,8 +4,8 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
-
 from uniclaw.config import AppConfig
+from uniclaw.console.ui import warn
 from uniclaw.tools.mcp.tools import mcp_list_servers
 from uniclaw.tools.shell import Bash
 from uniclaw.utils.message import MessageRole
@@ -228,14 +228,36 @@ def is_safe_tool(name: str) -> bool:
     from uniclaw.tools.notify import push_notification
     from uniclaw.tools.registry import search_tools
     from uniclaw.tools.knowledge.tools import (
-        kg_add_entity, kg_add_relation, kg_add_alias, kg_update_entity,
-        kg_delete_entity, kg_delete_relation, kg_get_entity, kg_search,
-        kg_neighbors, kg_path, kg_stats, kg_export, kg_list, kg_extract, kg_clear,
+        kg_add_entity,
+        kg_add_relation,
+        kg_add_alias,
+        kg_update_entity,
+        kg_delete_entity,
+        kg_delete_relation,
+        kg_get_entity,
+        kg_search,
+        kg_neighbors,
+        kg_path,
+        kg_stats,
+        kg_export,
+        kg_list,
+        kg_extract,
+        kg_clear,
         kg_merge_entities,
     )
     from uniclaw.tools.send_file import send_file
-    from uniclaw.tools.wechat import wechat_list_contacts, wechat_send_text, wechat_send_image, wechat_send_file
-    from uniclaw.tools.computer_use import cu_screenshot, cu_locate_on_screen, cu_get_elements, cu_find_element
+    from uniclaw.tools.wechat import (
+        wechat_list_contacts,
+        wechat_send_text,
+        wechat_send_image,
+        wechat_send_file,
+    )
+    from uniclaw.tools.computer_use import (
+        cu_screenshot,
+        cu_locate_on_screen,
+        cu_get_elements,
+        cu_find_element,
+    )
     from uniclaw.tools.advisor import advisor_list, ask_advisor
     from uniclaw.tools.security.tools import read_llm_safe_prompt
     from uniclaw.tools.web_browse.tools import (
@@ -600,7 +622,8 @@ explanation 要求:
         if not isinstance(explanation, str):
             explanation = str(explanation)
         return (bool(is_safe), explanation)
-    except Exception:
+    except Exception as e:
+        await warn(f"LLM 安全检查失败: {e}", config)
         return (False, "")
     finally:
         config.spinner.stop(wait_id=wait_id)

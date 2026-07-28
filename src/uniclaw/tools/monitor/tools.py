@@ -37,9 +37,16 @@ async def monitor_start(
     root_dir = config.root_dir
 
     from .manager import MonitorManager
+
     manager = MonitorManager.get_instance()
     return await manager.start_monitor(
-        command.strip(), watch_pattern.strip(), name, timeout, notify_on_match, root_dir, config=config
+        command.strip(),
+        watch_pattern.strip(),
+        name,
+        timeout,
+        notify_on_match,
+        root_dir,
+        config=config,
     )
 
 
@@ -55,6 +62,7 @@ async def monitor_stop(monitor_id: str) -> str:
         str: 操作结果
     """
     from .manager import MonitorManager
+
     manager = MonitorManager.get_instance()
     return await manager.stop_monitor(monitor_id)
 
@@ -68,6 +76,7 @@ async def monitor_list() -> str:
         str: 进程列表
     """
     from .manager import MonitorManager
+
     manager = MonitorManager.get_instance()
     return await manager.list_monitors()
 
@@ -85,6 +94,7 @@ async def monitor_output(monitor_id: str, lines: int = 50) -> str:
         str: 进程输出内容
     """
     from .manager import MonitorManager
+
     manager = MonitorManager.get_instance()
     return await manager.get_output(monitor_id, lines)
 
@@ -102,6 +112,7 @@ async def monitor_input(monitor_id: str, input_text: str) -> str:
         str: 操作结果消息
     """
     from .manager import MonitorManager
+
     manager = MonitorManager.get_instance()
     return await manager.send_input(monitor_id, input_text)
 
@@ -118,6 +129,7 @@ async def monitor_get_matched(monitor_id: str) -> str:
         str: 匹配到的内容
     """
     from .manager import MonitorManager
+
     manager = MonitorManager.get_instance()
     return await manager.get_matched(monitor_id)
 
@@ -136,13 +148,22 @@ async def monitor_update_pattern(monitor_id: str, new_pattern: str) -> str:
         str: 操作结果
     """
     from .manager import MonitorManager
+
     manager = MonitorManager.get_instance()
     return await manager.update_pattern(monitor_id, new_pattern.strip())
 
 
 def get_tools() -> list:
     """获取监控工具列表"""
-    return [monitor_start, monitor_stop, monitor_list, monitor_output, monitor_input, monitor_get_matched, monitor_update_pattern]
+    return [
+        monitor_start,
+        monitor_stop,
+        monitor_list,
+        monitor_output,
+        monitor_input,
+        monitor_get_matched,
+        monitor_update_pattern,
+    ]
 
 
 def get_all_tools() -> list:

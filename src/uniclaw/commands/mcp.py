@@ -1,4 +1,5 @@
 import json
+
 from uniclaw.config import AppConfig
 from uniclaw.console.ui import info, ok, warn, err
 
@@ -371,14 +372,15 @@ async def _mcp_edit(
         if not result:
             raise Exception("添加失败")
         return True
-    except Exception:
+    except Exception as e:
+        await err(f"MCP 服务器编辑失败,尝试恢复旧配置: {e}", config)
         # 恢复旧配置(跳过验证)
         try:
             manager.add_server(name, old_connection, old_enabled, skip_validation=True)
             manager.refresh()
             await warn("已恢复原配置", config)
-        except Exception:
-            await err("恢复原配置失败", config)
+        except Exception as e:
+            await err(f"恢复原配置失败: {e}", config)
         return True
 
 

@@ -38,7 +38,7 @@ const FloatingWindow = {
         const content = el.querySelector('.modal-content');
         if (!content) return;
 
-        // 强制刷新布局，确保能获取到正确的尺寸
+        // 强制刷新布局,确保能获取到正确的尺寸
         content.offsetHeight;
 
         const rect = content.getBoundingClientRect();

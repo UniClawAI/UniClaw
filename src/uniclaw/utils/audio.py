@@ -52,7 +52,15 @@ async def _convert_to_mp3(src: Path) -> Path:
     os.close(fd)
     tmp = Path(tmp_path)
     proc = await asyncio.create_subprocess_exec(
-        "ffmpeg", "-y", "-i", str(src), "-codec:a", "libmp3lame", "-qscale:a", "2", str(tmp),
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(src),
+        "-codec:a",
+        "libmp3lame",
+        "-qscale:a",
+        "2",
+        str(tmp),
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.DEVNULL,
     )
@@ -133,9 +141,7 @@ async def asr(
     messages = [
         {
             "role": "user",
-            "content": [
-                {"type": "input_audio", "input_audio": {"data": data_uri}}
-            ],
+            "content": [{"type": "input_audio", "input_audio": {"data": data_uri}}],
         }
     ]
     if asr_options is None:

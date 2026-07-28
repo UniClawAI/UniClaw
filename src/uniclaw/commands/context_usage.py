@@ -1,4 +1,5 @@
 import json
+import logging
 from dataclasses import dataclass
 from typing import Any
 
@@ -8,6 +9,8 @@ from uniclaw.utils.tokens import count_tokens
 from uniclaw.config import AppConfig
 from uniclaw.console.ui import info, warn
 from uniclaw.context import build_system_prompt
+
+logger = logging.getLogger(__name__)
 
 # 自动压缩预留空间比例,与 compaction.AUTOCOMPACT_THRESHOLD 对应
 AUTOCOMPACT_RATIO = 1 - AUTOCOMPACT_THRESHOLD
@@ -70,7 +73,8 @@ def _pct(tokens: int, limit: int) -> float:
 def _serialize_tool(tool: Any) -> str:
     try:
         payload = tool.to_openai_schema()
-    except Exception:
+    except Exception as e:
+        logger.debug("工具 schema 序列化失败,使用 fallback: %s", e)
         payload = {
             "name": getattr(tool, "name", tool.__class__.__name__),
             "description": getattr(tool, "description", ""),

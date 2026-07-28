@@ -2,7 +2,10 @@
 
 从对话消息中提取和构建上下文摘要等通用功能。
 """
+
 from enum import StrEnum
+
+
 class MessageRole(StrEnum):
     """消息角色枚举"""
 
@@ -12,7 +15,9 @@ class MessageRole(StrEnum):
     TOOL = "tool"
 
 
-def extract_text(message: str | list[dict[str, str | dict[str, str]]], separator: str = " ") -> str:
+def extract_text(
+    message: str | list[dict[str, str | dict[str, str]]], separator: str = " "
+) -> str:
     """提取消息的文本内容,兼容多模态消息。
 
     Args:

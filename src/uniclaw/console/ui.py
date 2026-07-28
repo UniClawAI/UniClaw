@@ -9,6 +9,7 @@ import time
 from typing import TYPE_CHECKING
 
 from uniclaw.spinner import BaseSpinner
+from uniclaw.utils.logger import get_logger
 
 if TYPE_CHECKING:
     from uniclaw.config import AppConfig
@@ -145,8 +146,8 @@ def _wechat_reply(msg: str, config: AppConfig | None, level: str = "info") -> bo
     prefix = _WECHAT_PREFIX.get(level, "ℹ️")
     try:
         bot.reply_text(f"{prefix} {msg}")
-    except Exception:
-        pass
+    except Exception as e:
+        get_logger("console.ui", config.root_dir).debug("微信消息回复失败: %s", e)
     return True
 
 
@@ -176,7 +177,7 @@ def clear():
         sys.stdout.flush()
 
 
-async def ok(msg: str, config: AppConfig= None):
+async def ok(msg: str, config: AppConfig = None):
     cb = _get_callback(config)
     if cb:
         if inspect.iscoroutinefunction(cb):
@@ -193,7 +194,7 @@ async def ok(msg: str, config: AppConfig= None):
         print(clr(msg, C.GREEN))
 
 
-async def warn(msg: str, config: AppConfig= None):
+async def warn(msg: str, config: AppConfig = None):
     cb = _get_callback(config)
     if cb:
         if inspect.iscoroutinefunction(cb):
@@ -210,7 +211,7 @@ async def warn(msg: str, config: AppConfig= None):
         print(clr(f"Warning: {msg}", C.YELLOW))
 
 
-async def err(msg: str, config: AppConfig= None):
+async def err(msg: str, config: AppConfig = None):
     cb = _get_callback(config)
     if cb:
         if inspect.iscoroutinefunction(cb):
@@ -425,7 +426,9 @@ async def get_input(prompt: str, title: str = "输入", config: AppConfig = None
         return ""
 
 
-async def get_multi_input(questions: list[dict], title: str = "请选择", config: AppConfig = None) -> str:
+async def get_multi_input(
+    questions: list[dict], title: str = "请选择", config: AppConfig = None
+) -> str:
     """多问题 Tab 输入函数,自动选择 TUI / WebUI / stdin。
 
     Args:

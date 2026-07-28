@@ -30,7 +30,9 @@ async def cmd_overseer(args: str, config: AppConfig) -> bool:
             await warn("监工模式已在运行中", config)
         else:
             manager.start()
-            await ok("监工模式已启动: TodoList 完成需审核验收,未完成任务会被督促", config)
+            await ok(
+                "监工模式已启动: TodoList 完成需审核验收,未完成任务会被督促", config
+            )
         return True
 
     if arg == "stop":

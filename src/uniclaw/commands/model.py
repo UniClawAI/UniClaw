@@ -3,7 +3,9 @@ from uniclaw.config import AppConfig, ProviderProfile, save_config
 from uniclaw.console.ui import info, ok, warn, err
 
 
-def fetch_openai_models_sync(base_url: str, api_key: str, proxy_url: str = "") -> list[str]:
+def fetch_openai_models_sync(
+    base_url: str, api_key: str, proxy_url: str = ""
+) -> list[str]:
     """同步版本: 通过 base_url 和 api_key 获取可用模型列表
 
     Args:
@@ -28,7 +30,9 @@ def fetch_openai_models_sync(base_url: str, api_key: str, proxy_url: str = "") -
     return [m["id"] for m in data.get("data", [])]
 
 
-async def fetch_openai_models(base_url: str, api_key: str, proxy_url: str = "") -> list[str]:
+async def fetch_openai_models(
+    base_url: str, api_key: str, proxy_url: str = ""
+) -> list[str]:
     """异步版本: 通过 base_url 和 api_key 获取可用模型列表
 
     Args:
@@ -54,7 +58,9 @@ async def fetch_openai_models(base_url: str, api_key: str, proxy_url: str = "") 
     return [m["id"] for m in data.get("data", [])]
 
 
-def fetch_anthropic_models_sync(base_url: str, api_key: str, proxy_url: str = "") -> list[str]:
+def fetch_anthropic_models_sync(
+    base_url: str, api_key: str, proxy_url: str = ""
+) -> list[str]:
     """同步版本: 获取 Anthropic 可用模型列表。"""
     url = f"{base_url.rstrip('/')}/v1/models"
     headers = {
@@ -70,7 +76,9 @@ def fetch_anthropic_models_sync(base_url: str, api_key: str, proxy_url: str = ""
     return [m["id"] for m in data.get("data", [])]
 
 
-async def fetch_anthropic_models(base_url: str, api_key: str, proxy_url: str = "") -> list[str]:
+async def fetch_anthropic_models(
+    base_url: str, api_key: str, proxy_url: str = ""
+) -> list[str]:
     """异步版本: 获取 Anthropic 可用模型列表。"""
     url = f"{base_url.rstrip('/')}/v1/models"
     headers = {
@@ -90,9 +98,13 @@ async def fetch_anthropic_models(base_url: str, api_key: str, proxy_url: str = "
 async def _fetch_provider_models(profile: ProviderProfile) -> list[str]:
     """获取指定 provider 的模型列表。"""
     if profile.protocol == "anthropic":
-        return await fetch_anthropic_models(profile.base_url, profile.api_key, profile.proxy_url)
+        return await fetch_anthropic_models(
+            profile.base_url, profile.api_key, profile.proxy_url
+        )
     else:
-        return await fetch_openai_models(profile.base_url, profile.api_key, profile.proxy_url)
+        return await fetch_openai_models(
+            profile.base_url, profile.api_key, profile.proxy_url
+        )
 
 
 def _move_to_first(lst: list[str], item: str) -> list[str]:
@@ -107,10 +119,11 @@ async def _apply_model(model_ref: str, config: AppConfig) -> None:
         """通知 WebUI 配置已变更。"""
         try:
             from uniclaw.webui.ws import _notify_config_changed
+
             session_id = config.current_agent.session.id
             await _notify_config_changed(session_id)
-        except Exception:
-            pass
+        except Exception as e:
+            await warn(f"通知 WebUI 配置变更失败: {e}", config)
 
     if config.is_wechat:
         config.model_name = _move_to_first(config.model_name, model_ref)
@@ -147,7 +160,9 @@ async def _apply_model(model_ref: str, config: AppConfig) -> None:
         await ok(f"✓ 已设为 mini 模型: {model_ref}", config)
         await _notify_webui()
     elif choice == "3":
-        config.multimodal_model_name = _move_to_first(config.multimodal_model_name, model_ref)
+        config.multimodal_model_name = _move_to_first(
+            config.multimodal_model_name, model_ref
+        )
         save_config(config)
         await ok(f"✓ 已设为多模态模型: {model_ref}", config)
         await _notify_webui()
@@ -162,7 +177,11 @@ async def _apply_model(model_ref: str, config: AppConfig) -> None:
         if voice.strip():
             config.audio = {"voice": voice.strip()}
         save_config(config)
-        await ok(f"✓ 已设为 TTS 模型: {model_ref}" + (f", 语音: {voice.strip()}" if voice.strip() else ""), config)
+        await ok(
+            f"✓ 已设为 TTS 模型: {model_ref}"
+            + (f", 语音: {voice.strip()}" if voice.strip() else ""),
+            config,
+        )
         await _notify_webui()
     elif choice == "6":
         config.asr_model = model_ref
@@ -224,7 +243,8 @@ async def cmd_model(args: str, config: AppConfig) -> bool:
             models = await _fetch_provider_models(profile)
             models.sort()
             return [f"{name}/{m}" for m in models]
-        except Exception:
+        except Exception as e:
+            await warn(f"获取 provider 模型列表失败({name}): {e}", config)
             return []
 
     tasks = [_fetch(name, p) for name, p in search_providers.items()]
@@ -232,7 +252,9 @@ async def cmd_model(args: str, config: AppConfig) -> bool:
     all_models = [m for group in results for m in group]
 
     if not all_models:
-        await warn("未找到可用模型,请使用 /model <provider>/<模型名称> 直接指定", config)
+        await warn(
+            "未找到可用模型,请使用 /model <provider>/<模型名称> 直接指定", config
+        )
         return True
 
     # 关键词搜索
@@ -264,11 +286,16 @@ async def cmd_model(args: str, config: AppConfig) -> bool:
     current_asr = config.asr_model
     current_image = config.image_model
 
-    title = provider_name if provider_name and provider_name in search_providers else "所有"
+    title = (
+        provider_name if provider_name and provider_name in search_providers else "所有"
+    )
     prompt_list = [f"\n{title} 可用模型:"]
     if current_tts:
         voice = config.audio.get("voice", "") if config.audio else ""
-        prompt_list.append(f"  当前 TTS: {current_tts}" + (f" (语音: {voice})" if voice and len(voice) < 20 else ""))
+        prompt_list.append(
+            f"  当前 TTS: {current_tts}"
+            + (f" (语音: {voice})" if voice and len(voice) < 20 else "")
+        )
     if current_asr:
         prompt_list.append(f"  当前 ASR: {current_asr}")
     if current_image:

@@ -135,7 +135,16 @@ class KnowledgeGraph:
         try:
             c = self.conn.execute(
                 "INSERT INTO entities (name, type, description, properties, source, confidence, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (name, entity_type, description, props_json, source, confidence, now, now),
+                (
+                    name,
+                    entity_type,
+                    description,
+                    props_json,
+                    source,
+                    confidence,
+                    now,
+                    now,
+                ),
             )
             self.conn.commit()
             entity_id = c.lastrowid
@@ -149,7 +158,10 @@ class KnowledgeGraph:
             row = self.conn.execute(
                 "SELECT id FROM entities WHERE name=? AND type=?", (name, entity_type)
             ).fetchone()
-            return {"id": row["id"], "duplicate_warning": f"实体 '{name}' (type={entity_type}) 已存在。"}
+            return {
+                "id": row["id"],
+                "duplicate_warning": f"实体 '{name}' (type={entity_type}) 已存在。",
+            }
 
     def add_relation(
         self,
@@ -168,9 +180,13 @@ class KnowledgeGraph:
         tgt = self._resolve_entity(target_name, target_type)
 
         if not src:
-            return {"error": f"源实体 '{source_name}' 不存在。请先使用 kg_add_entity 创建。"}
+            return {
+                "error": f"源实体 '{source_name}' 不存在。请先使用 kg_add_entity 创建。"
+            }
         if not tgt:
-            return {"error": f"目标实体 '{target_name}' 不存在。请先使用 kg_add_entity 创建。"}
+            return {
+                "error": f"目标实体 '{target_name}' 不存在。请先使用 kg_add_entity 创建。"
+            }
 
         now = _now()
         props_json = json.dumps(properties, ensure_ascii=False) if properties else None
@@ -178,12 +194,28 @@ class KnowledgeGraph:
         try:
             c = self.conn.execute(
                 "INSERT INTO relations (source_id, target_id, relation, properties, weight, source, confidence, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (src["id"], tgt["id"], relation, props_json, weight, source, confidence, now),
+                (
+                    src["id"],
+                    tgt["id"],
+                    relation,
+                    props_json,
+                    weight,
+                    source,
+                    confidence,
+                    now,
+                ),
             )
             self.conn.commit()
-            return {"id": c.lastrowid, "source": src["name"], "target": tgt["name"], "relation": relation}
+            return {
+                "id": c.lastrowid,
+                "source": src["name"],
+                "target": tgt["name"],
+                "relation": relation,
+            }
         except sqlite3.IntegrityError:
-            return {"error": f"关系已存在: {source_name} --[{relation}]--> {target_name}"}
+            return {
+                "error": f"关系已存在: {source_name} --[{relation}]--> {target_name}"
+            }
 
     def add_alias(self, name: str, entity_type: str, alias: str) -> dict:
         """为实体添加别名。"""
@@ -243,7 +275,9 @@ class KnowledgeGraph:
         self.conn.commit()
         return {"ok": True, "deleted": entity["name"]}
 
-    def delete_relation(self, source_name: str, target_name: str, relation: str) -> dict:
+    def delete_relation(
+        self, source_name: str, target_name: str, relation: str
+    ) -> dict:
         """删除关系。"""
         src = self._resolve_entity(source_name)
         tgt = self._resolve_entity(target_name)
@@ -256,10 +290,18 @@ class KnowledgeGraph:
         )
         self.conn.commit()
         if c.rowcount == 0:
-            return {"error": f"关系不存在: {source_name} --[{relation}]--> {target_name}"}
+            return {
+                "error": f"关系不存在: {source_name} --[{relation}]--> {target_name}"
+            }
         return {"ok": True, "deleted": f"{source_name} --[{relation}]--> {target_name}"}
 
-    def merge_entities(self, source_name: str, target_name: str, source_type: str = "", target_type: str = "") -> dict:
+    def merge_entities(
+        self,
+        source_name: str,
+        target_name: str,
+        source_type: str = "",
+        target_type: str = "",
+    ) -> dict:
         """合并两个实体:将 source 的关系、别名、属性转移到 target,然后删除 source。
 
         处理规则:
@@ -291,7 +333,9 @@ class KnowledgeGraph:
             "SELECT * FROM relations WHERE source_id=?", (src["id"],)
         ).fetchall():
             old = dict(row)
-            new_target_id = old["target_id"] if old["target_id"] != src["id"] else tgt["id"]
+            new_target_id = (
+                old["target_id"] if old["target_id"] != src["id"] else tgt["id"]
+            )
             # 自环检查:合并后 target → target
             if new_target_id == tgt["id"]:
                 skipped_rels += 1
@@ -299,7 +343,16 @@ class KnowledgeGraph:
             try:
                 self.conn.execute(
                     "INSERT INTO relations (source_id, target_id, relation, properties, weight, source, confidence, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    (tgt["id"], new_target_id, old["relation"], old["properties"], old["weight"], old["source"], old["confidence"], now),
+                    (
+                        tgt["id"],
+                        new_target_id,
+                        old["relation"],
+                        old["properties"],
+                        old["weight"],
+                        old["source"],
+                        old["confidence"],
+                        now,
+                    ),
                 )
                 transferred_rels += 1
             except sqlite3.IntegrityError:
@@ -310,7 +363,9 @@ class KnowledgeGraph:
             "SELECT * FROM relations WHERE target_id=?", (src["id"],)
         ).fetchall():
             old = dict(row)
-            new_source_id = old["source_id"] if old["source_id"] != src["id"] else tgt["id"]
+            new_source_id = (
+                old["source_id"] if old["source_id"] != src["id"] else tgt["id"]
+            )
             # 自环检查
             if new_source_id == tgt["id"]:
                 skipped_rels += 1
@@ -318,7 +373,16 @@ class KnowledgeGraph:
             try:
                 self.conn.execute(
                     "INSERT INTO relations (source_id, target_id, relation, properties, weight, source, confidence, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    (new_source_id, tgt["id"], old["relation"], old["properties"], old["weight"], old["source"], old["confidence"], now),
+                    (
+                        new_source_id,
+                        tgt["id"],
+                        old["relation"],
+                        old["properties"],
+                        old["weight"],
+                        old["source"],
+                        old["confidence"],
+                        now,
+                    ),
                 )
                 transferred_rels += 1
             except sqlite3.IntegrityError:
@@ -413,7 +477,9 @@ class KnowledgeGraph:
         result["relations"] = relations
         return result
 
-    def search_entities(self, keyword: str, entity_type: str = "", limit: int = 20) -> list[dict]:
+    def search_entities(
+        self, keyword: str, entity_type: str = "", limit: int = 20
+    ) -> list[dict]:
         """FTS5 模糊搜索实体。"""
         if entity_type:
             rows = self.conn.execute(
@@ -446,7 +512,9 @@ class KnowledgeGraph:
             results.append(d)
         return results
 
-    def get_neighbors(self, name: str, depth: int = 1, entity_type: str = "", relation_type: str = "") -> list[dict]:
+    def get_neighbors(
+        self, name: str, depth: int = 1, entity_type: str = "", relation_type: str = ""
+    ) -> list[dict]:
         """获取实体的邻居(支持多跳遍历)。"""
         entity = self._resolve_entity(name, entity_type)
         if not entity:
@@ -499,7 +567,9 @@ class KnowledgeGraph:
 
         return results
 
-    def find_path(self, source_name: str, target_name: str, max_depth: int = 5) -> list[list[dict]]:
+    def find_path(
+        self, source_name: str, target_name: str, max_depth: int = 5
+    ) -> list[list[dict]]:
         """BFS 查找两个实体之间的所有路径(最大深度内)。"""
         src = self._resolve_entity(source_name)
         tgt = self._resolve_entity(target_name)
@@ -520,7 +590,9 @@ class KnowledgeGraph:
                 # 转换为实体路径
                 entity_path = []
                 for i, eid in enumerate(path):
-                    row = self.conn.execute("SELECT * FROM entities WHERE id=?", (eid,)).fetchone()
+                    row = self.conn.execute(
+                        "SELECT * FROM entities WHERE id=?", (eid,)
+                    ).fetchone()
                     d = dict(row) if row else {"id": eid, "name": "?"}
                     if d.get("properties"):
                         d["properties"] = json.loads(d["properties"])
@@ -616,15 +688,23 @@ class KnowledgeGraph:
     def get_stats(self) -> dict:
         """获取图谱统计信息。"""
         entity_count = self.conn.execute("SELECT COUNT(*) FROM entities").fetchone()[0]
-        relation_count = self.conn.execute("SELECT COUNT(*) FROM relations").fetchone()[0]
-        alias_count = self.conn.execute("SELECT COUNT(*) FROM entity_aliases").fetchone()[0]
+        relation_count = self.conn.execute("SELECT COUNT(*) FROM relations").fetchone()[
+            0
+        ]
+        alias_count = self.conn.execute(
+            "SELECT COUNT(*) FROM entity_aliases"
+        ).fetchone()[0]
 
         type_dist = {}
-        for row in self.conn.execute("SELECT type, COUNT(*) as cnt FROM entities GROUP BY type ORDER BY cnt DESC").fetchall():
+        for row in self.conn.execute(
+            "SELECT type, COUNT(*) as cnt FROM entities GROUP BY type ORDER BY cnt DESC"
+        ).fetchall():
             type_dist[row["type"]] = row["cnt"]
 
         relation_dist = {}
-        for row in self.conn.execute("SELECT relation, COUNT(*) as cnt FROM relations GROUP BY relation ORDER BY cnt DESC").fetchall():
+        for row in self.conn.execute(
+            "SELECT relation, COUNT(*) as cnt FROM relations GROUP BY relation ORDER BY cnt DESC"
+        ).fetchall():
             relation_dist[row["relation"]] = row["cnt"]
 
         return {
@@ -646,8 +726,12 @@ class KnowledgeGraph:
             if d.get("properties"):
                 d["properties"] = json.loads(d["properties"])
             # 添加实体名称
-            src = self.conn.execute("SELECT name FROM entities WHERE id=?", (d["source_id"],)).fetchone()
-            tgt = self.conn.execute("SELECT name FROM entities WHERE id=?", (d["target_id"],)).fetchone()
+            src = self.conn.execute(
+                "SELECT name FROM entities WHERE id=?", (d["source_id"],)
+            ).fetchone()
+            tgt = self.conn.execute(
+                "SELECT name FROM entities WHERE id=?", (d["target_id"],)
+            ).fetchone()
             d["source_name"] = src["name"] if src else "?"
             d["target_name"] = tgt["name"] if tgt else "?"
             relations.append(d)
@@ -658,7 +742,9 @@ class KnowledgeGraph:
         """导出图谱为 Markdown。"""
         stats = self.get_stats()
         lines = [f"# 知识图谱", ""]
-        lines.append(f"实体: {stats['entities']} | 关系: {stats['relations']} | 别名: {stats['aliases']}")
+        lines.append(
+            f"实体: {stats['entities']} | 关系: {stats['relations']} | 别名: {stats['aliases']}"
+        )
         lines.append("")
 
         # 实体列表
@@ -673,19 +759,19 @@ class KnowledgeGraph:
 
         # 关系列表
         lines.append("## 关系")
-        for row in self.conn.execute(
-            """SELECT s.name as src, r.relation, t.name as tgt
+        for row in self.conn.execute("""SELECT s.name as src, r.relation, t.name as tgt
                FROM relations r
                JOIN entities s ON r.source_id=s.id
-               JOIN entities t ON r.target_id=t.id"""
-        ).fetchall():
+               JOIN entities t ON r.target_id=t.id""").fetchall():
             lines.append(f"- {row['src']} --[{row['relation']}]--> {row['tgt']}")
 
         return "\n".join(lines)
 
     # ── 可视化 ────────────────────────────────────────────────
 
-    def visualize(self, output_path: Path, highlight_entities: list[str] | None = None) -> Path:
+    def visualize(
+        self, output_path: Path, highlight_entities: list[str] | None = None
+    ) -> Path:
         """生成交互式 HTML 知识图谱可视化(ECharts 力导向图)。"""
         import json as _json
         import hashlib
@@ -703,16 +789,38 @@ class KnowledgeGraph:
             "technology": "#FC8452",
         }
         type_icons = {
-            "person": "👤", "place": "📍", "concept": "💡", "event": "📌",
-            "tool": "🔧", "organization": "🏢", "document": "📄", "technology": "⚙️",
+            "person": "👤",
+            "place": "📍",
+            "concept": "💡",
+            "event": "📌",
+            "tool": "🔧",
+            "organization": "🏢",
+            "document": "📄",
+            "technology": "⚙️",
         }
 
         # 颜色池: 为未预定义的类型动态分配颜色
         _color_pool = [
-            "#5470C6", "#91CC75", "#FAC858", "#EE6666", "#73C0DE",
-            "#3BA272", "#9A60B4", "#FC8452", "#6E79D5", "#C6A35E",
-            "#5AB8DB", "#D4896B", "#8B7EC8", "#59C4A0", "#E88DB5",
-            "#A0A0E0", "#D4A037", "#6EB5E0", "#C47D9B", "#7DD3B0",
+            "#5470C6",
+            "#91CC75",
+            "#FAC858",
+            "#EE6666",
+            "#73C0DE",
+            "#3BA272",
+            "#9A60B4",
+            "#FC8452",
+            "#6E79D5",
+            "#C6A35E",
+            "#5AB8DB",
+            "#D4896B",
+            "#8B7EC8",
+            "#59C4A0",
+            "#E88DB5",
+            "#A0A0E0",
+            "#D4A037",
+            "#6EB5E0",
+            "#C47D9B",
+            "#7DD3B0",
         ]
 
         def _auto_color(type_name: str) -> str:
@@ -740,6 +848,7 @@ class KnowledgeGraph:
 
         # 检测同名实体,为重复名称生成带类型后缀的唯一 ID
         from collections import Counter
+
         name_counts = Counter(e["name"] for e in entities)
         # name → {type → id} 映射,用于关系引用时查找
         name_type_id: dict[str, dict[str, str]] = defaultdict(dict)
@@ -748,14 +857,22 @@ class KnowledgeGraph:
             icon = type_icons.get(e["type"], "●")
             count = rel_count.get(e["name"], 0)
             size = 10 + (count / max_rel) * 25 if max_rel > 0 else 12  # 10~35
-            tooltip_parts = [f"{icon} {e['name']}", f"类型: {e['type']}", f"关系数: {count}"]
+            tooltip_parts = [
+                f"{icon} {e['name']}",
+                f"类型: {e['type']}",
+                f"关系数: {count}",
+            ]
             if e.get("description"):
                 tooltip_parts.append(f"描述: {e['description']}")
             if e.get("aliases"):
                 tooltip_parts.append(f"别名: {', '.join(e['aliases'])}")
 
             # 同名实体用 "name (type)" 作为唯一 ID
-            node_id = f"{e['name']} ({e['type']})" if name_counts[e["name"]] > 1 else e["name"]
+            node_id = (
+                f"{e['name']} ({e['type']})"
+                if name_counts[e["name"]] > 1
+                else e["name"]
+            )
             name_type_id[e["name"]][e["type"]] = node_id
 
             node = {
@@ -769,7 +886,11 @@ class KnowledgeGraph:
                 "type": e["type"],
             }
             if e["name"] in highlight_set:
-                node["itemStyle"] = {"borderWidth": 3, "shadowBlur": 10, "shadowColor": type_colors.get(e["type"]) or _auto_color(e["type"])}
+                node["itemStyle"] = {
+                    "borderWidth": 3,
+                    "shadowBlur": 10,
+                    "shadowColor": type_colors.get(e["type"]) or _auto_color(e["type"]),
+                }
             nodes.append(node)
 
         # 构建边(同一对节点的多条关系用不同曲率,数量越多间距越大)
@@ -785,10 +906,14 @@ class KnowledgeGraph:
             pair = tuple(sorted([src_id, tgt_id]))
             # 记录边方向是否与排序对一致(用于曲率符号修正)
             reversed_dir = (src_id, tgt_id) != pair
-            edge_groups[pair].append({
-                "source": src_id, "target": tgt_id,
-                "relation": row["relation"], "reversed": reversed_dir,
-            })
+            edge_groups[pair].append(
+                {
+                    "source": src_id,
+                    "target": tgt_id,
+                    "relation": row["relation"],
+                    "reversed": reversed_dir,
+                }
+            )
 
         links = []
         for _pair, edges in edge_groups.items():
@@ -803,20 +928,31 @@ class KnowledgeGraph:
                 if edge["reversed"]:
                     curveness = -curveness
                 src, tgt, rel = edge["source"], edge["target"], edge["relation"]
-                links.append({
-                    "source": src,
-                    "target": tgt,
-                    "name": rel,
-                    "label": {"show": True, "formatter": rel, "fontSize": 13, "color": "#222", "position": "middle"},
-                    "lineStyle": {"curveness": curveness, "opacity": 0.7},
-                    "tooltip": f"{src} → {tgt}: {rel}",
-                })
+                links.append(
+                    {
+                        "source": src,
+                        "target": tgt,
+                        "name": rel,
+                        "label": {
+                            "show": True,
+                            "formatter": rel,
+                            "fontSize": 13,
+                            "color": "#222",
+                            "position": "middle",
+                        },
+                        "lineStyle": {"curveness": curveness, "opacity": 0.7},
+                        "tooltip": f"{src} → {tgt}: {rel}",
+                    }
+                )
 
         # 图例数据(带颜色,和节点颜色一致)
-        categories = [{
-            "name": t,
-            "itemStyle": {"color": type_colors.get(t) or _auto_color(t)},
-        } for t in sorted(type_set)]
+        categories = [
+            {
+                "name": t,
+                "itemStyle": {"color": type_colors.get(t) or _auto_color(t)},
+            }
+            for t in sorted(type_set)
+        ]
 
         # 生成 HTML
         nodes_json = _json.dumps(nodes, ensure_ascii=False, indent=2)
@@ -831,7 +967,7 @@ class KnowledgeGraph:
             legend_items.append(
                 f'<span class="legend-item" data-type="{t}" style="cursor:pointer;display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:4px;transition:background .15s;">'
                 f'<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:{color};"></span>'
-                f'{icon} {t}</span>'
+                f"{icon} {t}</span>"
             )
         legend_html = " ".join(legend_items)
 

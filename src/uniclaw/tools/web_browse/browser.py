@@ -8,10 +8,13 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import logging
 from fnmatch import fnmatch
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
+
+logger = logging.getLogger(__name__)
 
 from uniclaw.utils.constants import SYSTEM_PREFIX, TOOL_ERROR
 
@@ -25,6 +28,7 @@ def _get_async_playwright():
     if _async_playwright is None:
         try:
             from playwright.async_api import async_playwright
+
             _async_playwright = async_playwright
         except ImportError as e:
             err_str = str(e).lower()
@@ -233,7 +237,8 @@ class WebBrowser:
                 url = page.url
                 active = " (活动)" if page_id == self._active_page_id else ""
                 lines.append(f"  [{page_id}] {title} - {url}{active}")
-            except Exception:
+            except Exception as e:
+                logger.debug("获取页面信息失败: %s", e)
                 lines.append(f"  [{page_id}] (无法获取信息)")
 
         return "\n".join(lines)
@@ -400,9 +405,16 @@ class WebBrowser:
         try:
             # 构建选择器列表
             base_selectors = [
-                'a[href]', 'button', 'input', 'select', 'textarea',
-                '[role="button"]', '[role="link"]', '[role="tab"]',
-                '[onclick]', '[tabindex]'
+                "a[href]",
+                "button",
+                "input",
+                "select",
+                "textarea",
+                '[role="button"]',
+                '[role="link"]',
+                '[role="tab"]',
+                "[onclick]",
+                "[tabindex]",
             ]
             if include_cursor_interactive:
                 base_selectors.append('[style*="cursor: pointer"]')
@@ -411,7 +423,8 @@ class WebBrowser:
             # 范围元素的 CSS 选择器(用于 JS 中 querySelector)
             scope_selector = scope if scope else None
 
-            elements = await page.evaluate("""
+            elements = await page.evaluate(
+                """
                 (args) => {
                     const selectors = args.selectors;
                     const scopeSelector = args.scope;
@@ -495,11 +508,13 @@ class WebBrowser:
                     }
                     return result;
                 }
-            """, {
-                "selectors": base_selectors,
-                "scope": scope_selector,
-                "depth": depth,
-            })
+            """,
+                {
+                    "selectors": base_selectors,
+                    "scope": scope_selector,
+                    "depth": depth,
+                },
+            )
 
             if not elements:
                 return "页面上没有找到可交互元素"
@@ -507,7 +522,8 @@ class WebBrowser:
             # compact 模式: 仅保留有文本/id/role 的元素
             if compact:
                 elements = [
-                    el for el in elements
+                    el
+                    for el in elements
                     if el.get("text") or el.get("id") or el.get("role")
                 ]
                 if not elements:
@@ -897,15 +913,13 @@ class WebBrowser:
         except Exception as e:
             return f"{TOOL_ERROR}: {e}"
 
-    async def get_count(
-        self, selector: str, page_id: Optional[int] = None
-    ) -> str:
+    async def get_count(self, selector: str, page_id: Optional[int] = None) -> str:
         """统计匹配选择器的元素数量。"""
         page = self._get_page(page_id)
         try:
             locator = self._to_locator(page, selector)
             count = await locator.count()
-            return f"匹配 \"{selector}\" 的元素数量: {count}"
+            return f'匹配 "{selector}" 的元素数量: {count}'
         except Exception as e:
             return f"{TOOL_ERROR}: {e}"
 
@@ -926,13 +940,12 @@ class WebBrowser:
         except Exception as e:
             return f"{TOOL_ERROR}: {e}"
 
-    async def get_styles(
-        self, selector: str, page_id: Optional[int] = None
-    ) -> str:
+    async def get_styles(self, selector: str, page_id: Optional[int] = None) -> str:
         """获取元素的计算样式。"""
         page = self._get_page(page_id)
         try:
-            styles = await page.evaluate("""
+            styles = await page.evaluate(
+                """
                 (selector) => {
                     const el = document.querySelector(selector);
                     if (!el) return null;
@@ -949,7 +962,9 @@ class WebBrowser:
                     }
                     return result;
                 }
-            """, selector)
+            """,
+                selector,
+            )
             if styles is None:
                 return f"{TOOL_ERROR}: 元素 {selector} 不存在"
             lines = [f"元素 {selector} 的计算样式:"]
@@ -998,12 +1013,12 @@ class WebBrowser:
             try:
                 body_text = await page.inner_text("body")
                 if text in body_text:
-                    return f"页面已出现文本: \"{text}\""
-            except Exception:
-                pass
+                    return f'页面已出现文本: "{text}"'
+            except Exception as e:
+                logger.debug("轮询等待文本时获取 body 失败: %s", e)
             await asyncio.sleep(poll_interval)
             elapsed += poll_interval
-        raise TimeoutError(f"等待文本 \"{text}\" 超时 ({timeout}ms)")
+        raise TimeoutError(f'等待文本 "{text}" 超时 ({timeout}ms)')
 
     async def _wait_for_url(
         self, page, pattern: str, timeout: int, poll_interval: float
@@ -1016,11 +1031,11 @@ class WebBrowser:
                 return f"URL 已匹配: {page.url}"
             await asyncio.sleep(poll_interval)
             elapsed += poll_interval
-        raise TimeoutError(f"等待 URL 匹配 \"{pattern}\" 超时 ({timeout}ms), 当前: {page.url}")
+        raise TimeoutError(
+            f'等待 URL 匹配 "{pattern}" 超时 ({timeout}ms), 当前: {page.url}'
+        )
 
-    async def _wait_for_load_state(
-        self, page, load_state: str, timeout: int
-    ) -> str:
+    async def _wait_for_load_state(self, page, load_state: str, timeout: int) -> str:
         """等待页面加载状态。支持 load/domcontentloaded/networkidle/network。"""
         # "network" 映射到 Playwright 的 networkidle
         resolved = "networkidle" if load_state == "network" else load_state
@@ -1043,8 +1058,8 @@ class WebBrowser:
                 result = await page.evaluate(expression)
                 if result:
                     return f"JS 条件已满足: {expression} = {result}"
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("轮询 JS 条件执行失败: %s", e)
             await asyncio.sleep(poll_interval)
             elapsed += poll_interval
-        raise TimeoutError(f"等待 JS 条件 \"{expression}\" 超时 ({timeout}ms)")
+        raise TimeoutError(f'等待 JS 条件 "{expression}" 超时 ({timeout}ms)')

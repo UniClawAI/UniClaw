@@ -30,6 +30,7 @@ def get_pressure_level(current_tokens: int, model: str | None) -> int:
             return level
     return -1
 
+
 MODEL_CONTEXT_LIMITS = {
     # OpenAI GPT 系列
     "gpt-3.5-turbo": 16385,

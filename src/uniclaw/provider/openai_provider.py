@@ -148,7 +148,17 @@ def stream(
     if asr_options:
         extra_body["asr_options"] = asr_options
     from uniclaw.tools.base import should_explain
-    openai_tools = [t.to_openai_schema(explain=should_explain(t.name, config.explain_mode, config.is_sub)) for t in tools] if tools else None
+
+    openai_tools = (
+        [
+            t.to_openai_schema(
+                explain=should_explain(t.name, config.explain_mode, config.is_sub)
+            )
+            for t in tools
+        ]
+        if tools
+        else None
+    )
 
     # 清理消息中的孤立代理码点,避免 OpenAI SDK JSON 序列化失败
     messages = _sanitize_surrogates(messages)
@@ -295,7 +305,17 @@ async def astream(
     if asr_options:
         extra_body["asr_options"] = asr_options
     from uniclaw.tools.base import should_explain
-    openai_tools = [t.to_openai_schema(explain=should_explain(t.name, config.explain_mode, config.is_sub)) for t in tools] if tools else None
+
+    openai_tools = (
+        [
+            t.to_openai_schema(
+                explain=should_explain(t.name, config.explain_mode, config.is_sub)
+            )
+            for t in tools
+        ]
+        if tools
+        else None
+    )
 
     # 清理消息中的孤立代理码点,避免 OpenAI SDK JSON 序列化失败
     messages = _sanitize_surrogates(messages)

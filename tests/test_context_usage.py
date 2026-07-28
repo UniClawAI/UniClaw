@@ -1,5 +1,9 @@
 from uniclaw.commands import COMMANDS
-from uniclaw.commands.context_usage import ContextItem, ContextReport, format_context_report
+from uniclaw.commands.context_usage import (
+    ContextItem,
+    ContextReport,
+    format_context_report,
+)
 
 
 def test_context_command_registered():

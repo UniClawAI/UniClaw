@@ -1,5 +1,9 @@
+import logging
 import shutil
+
 from prompt_toolkit.filters import Condition
+
+logger = logging.getLogger("run")
 from prompt_toolkit.application import get_app
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout.containers import ConditionalContainer, HSplit, Window
@@ -32,10 +36,8 @@ class SessionPanel:
             if self.selected_index >= len(self.items):
                 self.selected_index = max(0, len(self.items) - 1)
             self.clamp_scroll()
-        except Exception:
-            import logging
-
-            logging.getLogger("run").debug("刷新会话列表失败", exc_info=True)
+        except Exception as e:
+            logger.debug("刷新会话列表失败: %s", e, exc_info=True)
 
     def load_selected(self):
         tui = self._tui
@@ -169,7 +171,8 @@ class SessionPanel:
         def _session_frame_height():
             try:
                 return get_app().output.get_size().rows
-            except Exception:
+            except Exception as e:
+                logger.debug("获取终端尺寸失败: %s", e)
                 return 24
 
         frame = ConditionalContainer(

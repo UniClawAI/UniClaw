@@ -3,10 +3,10 @@
 
 测试命名规范：test_<unit>_<scenario>_<expected_outcome>
 """
+
 import pytest
 from unittest.mock import Mock, patch, AsyncMock
 from dataclasses import dataclass
-
 
 # ═══════════════════════════════════════════════════════════════
 # 被测试的代码
@@ -16,6 +16,7 @@ from dataclasses import dataclass
 @dataclass
 class User:
     """用户模型"""
+
     id: int
     name: str
     email: str
@@ -152,9 +153,7 @@ class TestUserService:
         assert result.email == "bob@example.com"
         mock_repository.create.assert_called_once()
 
-    def test_create_user_with_empty_name_raises_value_error(
-        self, user_service
-    ):
+    def test_create_user_with_empty_name_raises_value_error(self, user_service):
         """测试：空名称创建用户抛出 ValueError"""
         # Arrange & Act & Assert
         with pytest.raises(ValueError, match="Name and email are required"):
@@ -277,9 +276,7 @@ class TestParameterized:
             with pytest.raises(ValueError):
                 user_service.create_user(name, email)
         else:
-            mock_repository.create.return_value = User(
-                id=1, name=name, email=email
-            )
+            mock_repository.create.return_value = User(id=1, name=name, email=email)
             result = user_service.create_user(name, email)
             assert result.name == name
 
@@ -370,6 +367,7 @@ class TestMarkers:
     def test_slow_operation(self):
         """标记为慢测试"""
         import time
+
         time.sleep(0.1)
         assert True
 

@@ -25,9 +25,17 @@ class JsonStateStore:
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps(self.data, ensure_ascii=False, indent=2), encoding="utf-8")
+        self.path.write_text(
+            json.dumps(self.data, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
 
-    def save_session(self, *, bot_token: str, base_url: str | None = None, login_response: dict[str, Any] | None = None) -> None:
+    def save_session(
+        self,
+        *,
+        bot_token: str,
+        base_url: str | None = None,
+        login_response: dict[str, Any] | None = None,
+    ) -> None:
         self.bot_token = bot_token
         if base_url:
             self.base_url = base_url
@@ -37,7 +45,9 @@ class JsonStateStore:
             "source": "qr_login",
             "login_response": login_response,
         }
-        raw_user = (login_response or {}).get("user_info") or (login_response or {}).get("userInfo")
+        raw_user = (login_response or {}).get("user_info") or (
+            login_response or {}
+        ).get("userInfo")
         if isinstance(raw_user, dict):
             self.data["login_info"]["user_info"] = raw_user
         self.save()

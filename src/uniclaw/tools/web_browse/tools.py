@@ -112,7 +112,9 @@ async def browser_navigate(url: str, page_id: Optional[int] = None) -> str:
 
 
 @tool
-async def browser_click(selector: str, timeout: int = 5000, page_id: Optional[int] = None) -> str:
+async def browser_click(
+    selector: str, timeout: int = 5000, page_id: Optional[int] = None
+) -> str:
     """点击页面元素。
 
     Args:
@@ -127,7 +129,13 @@ async def browser_click(selector: str, timeout: int = 5000, page_id: Optional[in
 
 
 @tool
-async def browser_type(selector: str, text: str, clear: bool = True, timeout: int = 5000, page_id: Optional[int] = None) -> str:
+async def browser_type(
+    selector: str,
+    text: str,
+    clear: bool = True,
+    timeout: int = 5000,
+    page_id: Optional[int] = None,
+) -> str:
     """在指定元素中输入文本。
 
     Args:
@@ -144,7 +152,12 @@ async def browser_type(selector: str, text: str, clear: bool = True, timeout: in
 
 
 @tool
-async def browser_screenshot(selector: Optional[str] = None, full_page: bool = False, save_path: Optional[str] = None, page_id: Optional[int] = None) -> list:
+async def browser_screenshot(
+    selector: Optional[str] = None,
+    full_page: bool = False,
+    save_path: Optional[str] = None,
+    page_id: Optional[int] = None,
+) -> list:
     """截取页面或指定元素的截图(仅用于查看页面效果,不要用于定位元素)。
 
     ⚠️ 如需点击、输入等操作,必须使用 browser_get_elements 获取精确选择器,不要通过截图猜测坐标。
@@ -163,7 +176,9 @@ async def browser_screenshot(selector: Optional[str] = None, full_page: bool = F
 
 
 @tool
-async def browser_get_text(selector: Optional[str] = None, page_id: Optional[int] = None) -> str:
+async def browser_get_text(
+    selector: Optional[str] = None, page_id: Optional[int] = None
+) -> str:
     """获取页面或指定元素的文本内容。
 
     Args:
@@ -177,7 +192,9 @@ async def browser_get_text(selector: Optional[str] = None, page_id: Optional[int
 
 
 @tool
-async def browser_get_html(selector: Optional[str] = None, page_id: Optional[int] = None) -> str:
+async def browser_get_html(
+    selector: Optional[str] = None, page_id: Optional[int] = None
+) -> str:
     """获取页面或指定元素的 HTML 内容。
 
     Args:
@@ -191,7 +208,9 @@ async def browser_get_html(selector: Optional[str] = None, page_id: Optional[int
 
 
 @tool
-async def browser_get_attribute(selector: str, attribute: str, page_id: Optional[int] = None) -> str:
+async def browser_get_attribute(
+    selector: str, attribute: str, page_id: Optional[int] = None
+) -> str:
     """获取指定元素的属性值。
 
     Args:
@@ -307,7 +326,9 @@ async def browser_evaluate(
 
 
 @tool
-async def browser_scroll(direction: str = "down", amount: int = 500, page_id: Optional[int] = None) -> str:
+async def browser_scroll(
+    direction: str = "down", amount: int = 500, page_id: Optional[int] = None
+) -> str:
     """滚动页面。
 
     Args:
@@ -417,7 +438,9 @@ async def browser_press_key(key: str, page_id: Optional[int] = None) -> str:
 
 
 @tool
-async def browser_select_option(selector: str, value: str, page_id: Optional[int] = None) -> str:
+async def browser_select_option(
+    selector: str, value: str, page_id: Optional[int] = None
+) -> str:
     """选择下拉框选项。
 
     Args:
@@ -432,7 +455,9 @@ async def browser_select_option(selector: str, value: str, page_id: Optional[int
 
 
 @tool
-async def browser_check(selector: str, checked: bool = True, page_id: Optional[int] = None) -> str:
+async def browser_check(
+    selector: str, checked: bool = True, page_id: Optional[int] = None
+) -> str:
     """勾选或取消勾选复选框。
 
     Args:
@@ -476,7 +501,9 @@ async def browser_drag(source: str, target: str, page_id: Optional[int] = None) 
 
 
 @tool
-async def browser_dblclick(selector: str, timeout: int = 5000, page_id: Optional[int] = None) -> str:
+async def browser_dblclick(
+    selector: str, timeout: int = 5000, page_id: Optional[int] = None
+) -> str:
     """双击页面元素。
 
     Args:
@@ -576,7 +603,9 @@ async def browser_insert_text(text: str, page_id: Optional[int] = None) -> str:
 
 
 @tool
-async def browser_get_value(selector: Optional[str] = None, page_id: Optional[int] = None) -> str:
+async def browser_get_value(
+    selector: Optional[str] = None, page_id: Optional[int] = None
+) -> str:
     """获取表单元素的当前值(input/textarea/select)。不提供 selector 则获取当前聚焦元素的值。
 
     Args:

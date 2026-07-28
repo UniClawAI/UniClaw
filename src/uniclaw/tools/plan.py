@@ -12,6 +12,7 @@ from uniclaw.tools.send_file import send_file
 
 class ExitPermission(StrEnum):
     """退出计划模式时可选的权限模式。"""
+
     AUTO = "auto"
     ACCEPT_ALL = "accept-all"
 
@@ -74,7 +75,9 @@ def enter_plan_mode(config: AppConfig = None) -> str:
 
 
 @tool
-def exit_plan_mode(permission_mode: ExitPermission = ExitPermission.AUTO, config: AppConfig = None) -> str:
+def exit_plan_mode(
+    permission_mode: ExitPermission = ExitPermission.AUTO, config: AppConfig = None
+) -> str:
     """
     退出计划模式,恢复到指定的权限模式。
     调用前必须已完成完整审核流程:打开计划书供用户审阅 → 使用 AskUserQuestion 工具获得用户明确同意。

@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Optional
 
 from uniclaw.tools.base import tool
 from uniclaw.utils.constants import TOOL_ERROR
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_DEPTH = 5
 MAX_ELEMENTS = 200
@@ -21,6 +24,7 @@ def _get_ax():
     if _ax is None:
         try:
             import ApplicationServices as _app
+
             _ax = _app
         except ImportError:
             raise ImportError(
@@ -79,10 +83,20 @@ def _is_interactive_role(role: str | None) -> bool:
     if not role:
         return False
     interactive = {
-        "AXButton", "AXTextField", "AXTextArea", "AXComboBox",
-        "AXCheckBox", "AXRadioButton", "AXMenuItem", "AXMenuBarItem",
-        "AXSlider", "AXLink", "AXTab", "AXDisclosureTriangle",
-        "AXPopUpButton", "AXIncrementor",
+        "AXButton",
+        "AXTextField",
+        "AXTextArea",
+        "AXComboBox",
+        "AXCheckBox",
+        "AXRadioButton",
+        "AXMenuItem",
+        "AXMenuBarItem",
+        "AXSlider",
+        "AXLink",
+        "AXTab",
+        "AXDisclosureTriangle",
+        "AXPopUpButton",
+        "AXIncrementor",
     }
     return role in interactive
 
@@ -94,13 +108,14 @@ def _get_bounds(element) -> tuple[int, int, int, int] | None:
     if pos and size:
         try:
             import Quartz
+
             px, py = Quartz.CGPointMake(0, 0), Quartz.CGSizeMake(0, 0)
             ok1, px = Quartz.AXValueGetValue(pos, Quartz.kAXValueCGPointType, None)
             ok2, sz = Quartz.AXValueGetValue(size, Quartz.kAXValueCGSizeType, None)
             if ok1 and ok2:
                 return (int(px.x), int(py.y), int(sz.width), int(sz.height))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("获取 macOS 控件位置/大小失败: %s", e)
     return None
 
 
@@ -255,7 +270,8 @@ async def interact(
                 _find_recursive(app, name, 0, 10, results)
                 if results:
                     el = results[0]
-        except Exception:
+        except Exception as e:
+            logger.debug("macOS 查找 UI 元素失败: %s", e)
             el = None
 
     # 降级到坐标
@@ -291,6 +307,7 @@ async def interact(
 async def _fallback(x: int, y: int, action: str, type_text: Optional[str]) -> str:
     """坐标降级。"""
     import pyautogui
+
     if action in ("click", "invoke", "focus"):
         pyautogui.click(x, y)
         return f"已降级到坐标点击: ({x}, {y})"

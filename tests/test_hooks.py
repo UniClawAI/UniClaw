@@ -62,7 +62,9 @@ async def test_pre_tool_hook_nonzero_blocks(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     add_hook(
         event="PreToolUse",
-        commands=[f'"{sys.executable}" -c "import sys; sys.stderr.write(\'blocked\'); sys.exit(2)"'],
+        commands=[
+            f'"{sys.executable}" -c "import sys; sys.stderr.write(\'blocked\'); sys.exit(2)"'
+        ],
         matcher="Bash",
         root=tmp_path,
     )
@@ -86,7 +88,9 @@ def test_hook_add_and_read(tmp_path, monkeypatch):
         root_dir=tmp_path,
     )
 
-    result = hook_add.func(event="SessionStart", commands="echo hi", name="test-hook", config=mock_config)
+    result = hook_add.func(
+        event="SessionStart", commands="echo hi", name="test-hook", config=mock_config
+    )
     assert "已添加 hook" in result
 
     read_output = hook_read.func(config=mock_config)

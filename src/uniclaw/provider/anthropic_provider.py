@@ -143,7 +143,17 @@ def stream(
     client = _build_anthropic_client(base_url, api_key, p["proxy_url"])
     anthropic_messages = messages
     from uniclaw.tools.base import should_explain
-    anthropic_tools = [t.to_anthropic_schema(explain=should_explain(t.name, config.explain_mode, config.is_sub)) for t in tools] if tools else None
+
+    anthropic_tools = (
+        [
+            t.to_anthropic_schema(
+                explain=should_explain(t.name, config.explain_mode, config.is_sub)
+            )
+            for t in tools
+        ]
+        if tools
+        else None
+    )
 
     resolved_max_tokens = p["max_tokens"]
     kwargs = dict(
@@ -295,7 +305,17 @@ async def astream(
     client = _build_async_anthropic_client(base_url, api_key, p["proxy_url"])
     anthropic_messages = messages
     from uniclaw.tools.base import should_explain
-    anthropic_tools = [t.to_anthropic_schema(explain=should_explain(t.name, config.explain_mode, config.is_sub)) for t in tools] if tools else None
+
+    anthropic_tools = (
+        [
+            t.to_anthropic_schema(
+                explain=should_explain(t.name, config.explain_mode, config.is_sub)
+            )
+            for t in tools
+        ]
+        if tools
+        else None
+    )
 
     resolved_max_tokens = p["max_tokens"]
     kwargs = dict(

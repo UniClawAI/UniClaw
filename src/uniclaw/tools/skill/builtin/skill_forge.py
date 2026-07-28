@@ -293,7 +293,16 @@ def register():
             "只操作由本技能创建的 Skill,不修改内置或安装的 Skill。"
             "当用户要求创建 skill、生成 skill、优化 skill、改进 skill、技能锻造时使用。",
             triggers=["/skill-forge", "/forge-skill", "skill-forge", "技能锻造"],
-            tools=["Bash", "Read", "Write", "Glob", "memory_list", "memory_search", "session_list", "session_detail"],
+            tools=[
+                "Bash",
+                "Read",
+                "Write",
+                "Glob",
+                "memory_list",
+                "memory_search",
+                "session_list",
+                "session_detail",
+            ],
             prompt=_SKILL_FORGE_PROMPT,
             file_path=__file__,
             source="builtin",

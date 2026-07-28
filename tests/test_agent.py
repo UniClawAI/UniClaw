@@ -3,6 +3,7 @@ agent.py 模块的单元测试
 
 测试事件类、权限检查、消息队列等核心功能
 """
+
 import pytest
 import asyncio
 from unittest.mock import MagicMock, patch, AsyncMock
@@ -80,7 +81,7 @@ class TestEventClasses:
             tool_calls=[{"name": "test"}],
             in_tokens=10,
             out_tokens=20,
-            model_name="gpt-4"
+            model_name="gpt-4",
         )
         assert event.content == "response"
         assert event.tool_calls == [{"name": "test"}]
@@ -118,7 +119,7 @@ class TestEventClasses:
             name="Read",
             content="file content",
             tool_call_id="call_123",
-            args={"file_path": "test.py"}
+            args={"file_path": "test.py"},
         )
         assert event.name == "Read"
         assert event.content == "file content"
@@ -154,7 +155,7 @@ class TestPermissionRequestEvent:
         event = PermissionRequestEvent(
             description="运行命令",
             tool_call={"name": "Bash", "args": {"command": "ls"}},
-            explanation="需要执行命令"
+            explanation="需要执行命令",
         )
         assert event.description == "运行命令"
         assert event.tool_call == {"name": "Bash", "args": {"command": "ls"}}
@@ -239,8 +240,8 @@ class TestPermissionDesc:
                 "file_path": "/tmp/test.py",
                 "old_string": "old",
                 "new_string": "new",
-                "replace_all": False
-            }
+                "replace_all": False,
+            },
         }
         desc = _permission_desc(tc)
         assert "✏️" in desc
@@ -259,22 +260,14 @@ class TestEditPermissionDiff:
 
     def test_simple_diff(self):
         """测试简单差异"""
-        diff = _edit_permission_diff(
-            "test.py",
-            "old content",
-            "new content"
-        )
+        diff = _edit_permission_diff("test.py", "old content", "new content")
         assert "拟修改 diff:" in diff
         assert "-old content" in diff
         assert "+new content" in diff
 
     def test_no_diff(self):
         """测试无差异"""
-        diff = _edit_permission_diff(
-            "test.py",
-            "same content",
-            "same content"
-        )
+        diff = _edit_permission_diff("test.py", "same content", "same content")
         assert "拟修改内容无差异" in diff
 
     def test_multiline_diff(self):

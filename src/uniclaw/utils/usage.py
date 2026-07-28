@@ -1,4 +1,5 @@
 """用量统计模块 — 跟踪 token 消耗和 API 调用次数,持久化到磁盘"""
+
 import asyncio
 import json
 import logging
@@ -77,7 +78,9 @@ async def _get_model_price(model: str) -> dict:
     return {"input": 0, "output": 0}
 
 
-def _estimate_cost_from_price(input_tokens: int, output_tokens: int, price: dict) -> float:
+def _estimate_cost_from_price(
+    input_tokens: int, output_tokens: int, price: dict
+) -> float:
     """用价格字典计算费用(美元)。"""
     return (input_tokens * price["input"]) + (output_tokens * price["output"])
 
@@ -94,7 +97,12 @@ TOTAL = "total"
 DAILY = "daily"
 
 # 统计字段列表(用于生成空记录)
-_STAT_FIELDS = [UsageField.INPUT_TOKENS, UsageField.OUTPUT_TOKENS, UsageField.API_CALLS, UsageField.TOOL_CALLS]
+_STAT_FIELDS = [
+    UsageField.INPUT_TOKENS,
+    UsageField.OUTPUT_TOKENS,
+    UsageField.API_CALLS,
+    UsageField.TOOL_CALLS,
+]
 
 
 _lock = threading.Lock()
@@ -124,7 +132,9 @@ def _new_record() -> dict:
     return {f.value: 0 for f in _STAT_FIELDS}
 
 
-async def record_usage(input_tokens: int = 0, output_tokens: int = 0, tool_calls: int = 0, model: str = ""):
+async def record_usage(
+    input_tokens: int = 0, output_tokens: int = 0, tool_calls: int = 0, model: str = ""
+):
     """记录一次 API 调用的用量和费用"""
     if input_tokens == 0 and output_tokens == 0 and tool_calls == 0:
         return
@@ -178,8 +188,12 @@ def format_stats(data: dict | None = None) -> str:
     daily = data.get(DAILY, {})
 
     lines = ["用量统计:"]
-    lines.append(f"  总计: {total[UsageField.INPUT_TOKENS]:,} 输入 + {total[UsageField.OUTPUT_TOKENS]:,} 输出 tokens")
-    lines.append(f"  总计: {total[UsageField.API_CALLS]:,} 次 API 调用, {total[UsageField.TOOL_CALLS]:,} 次工具调用")
+    lines.append(
+        f"  总计: {total[UsageField.INPUT_TOKENS]:,} 输入 + {total[UsageField.OUTPUT_TOKENS]:,} 输出 tokens"
+    )
+    lines.append(
+        f"  总计: {total[UsageField.API_CALLS]:,} 次 API 调用, {total[UsageField.TOOL_CALLS]:,} 次工具调用"
+    )
     total_tokens = total[UsageField.INPUT_TOKENS] + total[UsageField.OUTPUT_TOKENS]
     lines.append(f"  总 tokens: {total_tokens:,}")
 

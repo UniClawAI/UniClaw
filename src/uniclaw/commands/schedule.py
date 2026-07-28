@@ -182,7 +182,9 @@ async def _schedule_remove(scheduler, task_id: str, config: AppConfig) -> bool:
     return True
 
 
-async def _schedule_toggle(scheduler, task_id: str, enabled: bool, config: AppConfig) -> bool:
+async def _schedule_toggle(
+    scheduler, task_id: str, enabled: bool, config: AppConfig
+) -> bool:
     """启用或禁用指定的定时任务
 
     Args:
