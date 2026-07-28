@@ -16,6 +16,7 @@ _TYPE_MAP = {
     bool: "boolean",
     list: "array",
     dict: "object",
+    type(None): "null",
 }
 
 # 运行时注入的参数,不写入 schema
@@ -33,7 +34,7 @@ _BUILTIN_TYPE_NAMES: dict[str, type] = {
 }
 
 
-def _resolve_str_annotation(tp: str) -> Any:
+def _resolve_str_annotation(tp: str, func_globals: dict = None) -> Any:
     """将字符串形式的类型注解解析为实际类型。"""
     tp = tp.strip()
     # 简单类型直接查表
@@ -44,7 +45,10 @@ def _resolve_str_annotation(tp: str) -> Any:
         return type(None)
     try:
         import builtins
-        return eval(tp, {"__builtins__": builtins}, _BUILTIN_TYPE_NAMES)
+        ns = {"__builtins__": builtins, **_BUILTIN_TYPE_NAMES}
+        if func_globals:
+            ns.update(func_globals)
+        return eval(tp, ns)
     except Exception:
         return str
 
@@ -81,14 +85,19 @@ def _python_type_to_schema(tp: Any) -> dict:
 
     # 处理 Optional[X] / X | None / Union[X, Y]
     if hasattr(tp, "__args__"):
-        args = [a for a in tp.__args__ if a is not type(None)]
-        if len(args) == 1:
-            return _python_type_to_schema(args[0])
-        return {"type": "string"}
+        schemas = [_python_type_to_schema(a) for a in tp.__args__]
+        types = [s["type"] for s in schemas]
+        # 如果只有一种类型,直接返回完整 schema(保留 enum/items 等)
+        if len(schemas) == 1:
+            return schemas[0]
+        # 多种类型合并 type 数组(保留第一个非 null schema 的额外字段)
+        base = next((s for s in schemas if s["type"] != "null"), schemas[0])
+        base["type"] = types
+        return base
 
     # Enum → string
     if hasattr(tp, "__members__"):
-        return {"type": "string", "enum": list(tp.__members__.keys())}
+        return {"type": "string", "enum": [m.value for m in tp]}
 
     return {"type": "string"}
 
@@ -116,7 +125,8 @@ def _parse_arg_descriptions(func: Callable) -> dict[str, str]:
                     descriptions[current_name] = "\n".join(current_lines).strip()
                 break
             # 新参数行: "name (type): desc" 或 "name: desc"
-            if stripped and not stripped[0].isspace() and ":" in stripped:
+            # 列表项("- "开头)视为续行,不作为新参数
+            if stripped and not stripped[0].isspace() and ":" in stripped and not stripped.startswith("- "):
                 if current_name:
                     descriptions[current_name] = "\n".join(current_lines).strip()
                 # 提取参数名(冒号之前的部分,去掉类型标注)
@@ -136,8 +146,9 @@ def _parse_arg_descriptions(func: Callable) -> dict[str, str]:
 def _build_parameters(func: Callable) -> dict:
     """从函数签名生成 OpenAI function calling 的 parameters schema。"""
     sig = inspect.signature(func)
+    func_globals = getattr(func, "__globals__", {})
     try:
-        hints = get_type_hints(func)
+        hints = get_type_hints(func, globalns=func_globals)
     except Exception:
         hints = {}
 
@@ -150,7 +161,14 @@ def _build_parameters(func: Callable) -> dict:
         if name in _INJECTED_PARAMS:
             continue
 
-        tp = hints.get(name, param.annotation)
+        tp = hints.get(name)
+        if tp is None:
+            # get_type_hints 失败时,手动解析注解字符串
+            ann = param.annotation
+            if isinstance(ann, str):
+                tp = _resolve_str_annotation(ann, func_globals)
+            else:
+                tp = ann
         schema = _python_type_to_schema(tp)
 
         # 注入参数描述
@@ -159,7 +177,13 @@ def _build_parameters(func: Callable) -> dict:
 
         # 处理 list 类型的 items(从注解中提取)
         if param.default is not inspect.Parameter.empty:
-            schema["default"] = param.default
+            # 默认值为 None 时,自动标记为 nullable
+            if param.default is None:
+                tp = schema.get("type")
+                if isinstance(tp, str) and tp != "null":
+                    schema["type"] = [tp, "null"]
+                elif isinstance(tp, list) and "null" not in tp:
+                    tp.append("null")
         else:
             required.append(name)
 

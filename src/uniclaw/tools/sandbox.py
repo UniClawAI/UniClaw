@@ -3,11 +3,23 @@ import os
 import shutil
 import time
 import tempfile
+from enum import StrEnum
 from pathlib import Path
 from uniclaw.tools.base import tool
 from uniclaw.utils.constants import TOOL_ERROR
 
 from .shell import smart_decode, STDERR_MARKER
+
+
+class SandboxLanguage(StrEnum):
+    """沙箱支持的编程语言。"""
+
+    python = "python"
+    py = "py"
+    javascript = "javascript"
+    js = "js"
+    shell = "shell"
+    bash = "bash"
 
 LANG_CONFIG = {
     "python": {
@@ -79,7 +91,7 @@ async def _pull_image(image: str) -> str | None:
 
 @tool
 async def RunCode(
-    language: str, code: str, timeout: int = 30, network: bool = False
+    language: SandboxLanguage, code: str, timeout: int = 30, network: bool = False
 ) -> str:
     """
     在 Docker 沙箱中安全运行代码片段并返回输出。
@@ -103,7 +115,7 @@ async def RunCode(
     """
     lang = language.lower().strip()
     if lang not in LANG_CONFIG:
-        return f"{TOOL_ERROR}: 不支持的语言 '{language}',支持: {', '.join(LANG_CONFIG.keys())}"
+        return f"{TOOL_ERROR}: 不支持的语言 '{language}',支持: {', '.join(SandboxLanguage)}"
 
     if not code.strip():
         return f"{TOOL_ERROR}: 代码不能为空"

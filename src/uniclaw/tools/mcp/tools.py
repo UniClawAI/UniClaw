@@ -7,6 +7,8 @@ MCP 服务器管理工具
 from __future__ import annotations
 
 import json
+from enum import StrEnum
+
 from uniclaw.tools.base import tool
 from uniclaw.utils.constants import TOOL_ERROR
 from . import MCPManager
@@ -17,10 +19,19 @@ if TYPE_CHECKING:
     from uniclaw.config import AppConfig
 
 
+class MCPTransport(StrEnum):
+    """MCP 服务器传输类型。"""
+
+    stdio = "stdio"
+    sse = "sse"
+    streamable_http = "streamable_http"
+    websocket = "websocket"
+
+
 @tool
 async def mcp_add_server(
     name: str,
-    transport: str = "stdio",
+    transport: MCPTransport = MCPTransport.stdio,
     command: str | None = None,
     command_args: list[str] | None = None,
     url: str | None = None,
@@ -75,7 +86,7 @@ async def mcp_add_server(
     # 构建连接配置
     connection = {"transport": transport}
 
-    if transport == "stdio":
+    if transport == MCPTransport.stdio:
         if not command:
             return f"{TOOL_ERROR}: stdio 类型必须提供 command 参数"
         connection["command"] = command
@@ -86,7 +97,7 @@ async def mcp_add_server(
         if cwd:
             connection["cwd"] = cwd
 
-    elif transport in ("sse", "streamable_http"):
+    elif transport in (MCPTransport.sse, MCPTransport.streamable_http):
         if not url:
             return f"{TOOL_ERROR}: sse/streamable_http 类型必须提供 url 参数"
         connection["url"] = url
@@ -95,7 +106,7 @@ async def mcp_add_server(
         if timeout is not None:
             connection["timeout"] = timeout
 
-    elif transport == "websocket":
+    elif transport == MCPTransport.websocket:
         if not url:
             return f"{TOOL_ERROR}: websocket 类型必须提供 url 参数"
         connection["url"] = url
@@ -190,7 +201,7 @@ async def mcp_list_servers(config=None) -> str:
         status = "✓ 启用" if enabled else "✗ 禁用"
 
         detail = ""
-        if transport == "stdio":
+        if transport == MCPTransport.stdio:
             cmd = s.get("command", "")
             cmd_args = " ".join(s.get("args", []))
             detail = f"{cmd} {cmd_args}".strip()

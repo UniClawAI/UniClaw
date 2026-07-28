@@ -4,6 +4,7 @@ import os
 import re
 import sys
 import time
+from enum import StrEnum
 from pathlib import Path
 from uniclaw.tools.base import tool
 from uniclaw.tools.stream import tool_stream
@@ -13,6 +14,14 @@ from uniclaw.config import AppConfig
 
 # 标准错误输出标记前缀,用于标识错误信息
 STDERR_MARKER = "[stderr]"
+
+
+class GrepOutputMode(StrEnum):
+    """Grep 工具的输出模式。"""
+
+    content = "content"
+    files_with_matches = "files_with_matches"
+    count = "count"
 
 # 匹配 bash 中误用 Windows nul 设备名的重定向: >nul, 2>nul, >>nul, <nul 等
 # 在 bash 中 nul 只是普通文件名,需要替换为 /dev/null
@@ -335,7 +344,7 @@ def _python_grep(
     pattern: str,
     path: str,
     glob: str = None,
-    output_mode: str = "content",
+    output_mode: GrepOutputMode = GrepOutputMode.content,
     case_insensitive: bool = False,
     context: int = 0,
 ) -> str:
@@ -370,20 +379,20 @@ def _python_grep(
         if not lines:
             continue
 
-        if output_mode == "files_with_matches":
+        if output_mode == GrepOutputMode.files_with_matches:
             for line in lines:
                 if regex.search(line):
                     results.append(str(filepath))
                     matched_files += 1
                     break
 
-        elif output_mode == "count":
+        elif output_mode == GrepOutputMode.count:
             count = sum(1 for line in lines if regex.search(line))
             if count:
                 results.append(f"{filepath}:{count}")
                 matched_files += 1
 
-        elif output_mode == "content":
+        elif output_mode == GrepOutputMode.content:
             match_indices = set()
             for i, line in enumerate(lines):
                 if regex.search(line):
@@ -421,7 +430,7 @@ async def Grep(
     pattern: str,
     path: str,
     glob: str = None,
-    output_mode: str = "content",
+    output_mode: GrepOutputMode = GrepOutputMode.content,
     case_insensitive: bool = False,
     context: int = 0,
 ) -> str:
@@ -461,11 +470,11 @@ async def Grep(
 
     if case_insensitive:
         cmd.append("-i")
-    if output_mode == "files_with_matches":
+    if output_mode == GrepOutputMode.files_with_matches:
         cmd.append("-l")
-    elif output_mode == "count":
+    elif output_mode == GrepOutputMode.count:
         cmd.append("-c")
-    elif output_mode == "content":
+    elif output_mode == GrepOutputMode.content:
         cmd.append("-n")
         if context:
             cmd += ["-C", str(context)]

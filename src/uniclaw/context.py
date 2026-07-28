@@ -309,6 +309,7 @@ async def build_system_prompt(config: AppConfig):
 
 class Scope(StrEnum):
     USER = "user"
+    PROJECT = "project"
     ALL = "all"
 
 

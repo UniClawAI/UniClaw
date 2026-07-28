@@ -1,12 +1,29 @@
 import math
 import time
+from enum import StrEnum
 from pathlib import Path
 
 from uniclaw.tools.base import tool
-from typing import Literal
 from uniclaw.config import AppConfig
 from uniclaw.tools.memory.context import ai_select_memories, memory_freshness_text
 from .memory import Memory, Scope
+
+
+class MemoryType(StrEnum):
+    """记忆类型。"""
+
+    user = "user"
+    feedback = "feedback"
+    project = "project"
+    reference = "reference"
+
+
+class MemorySource(StrEnum):
+    """记忆来源。"""
+
+    user = "user"
+    model = "model"
+    tool = "tool"
 
 
 @tool
@@ -14,9 +31,9 @@ def memory_save(
     name: str,
     description: str,
     content: str,
-    scope: Literal["user", "project"],
-    type: Literal["user", "feedback", "project", "reference"] = "user",
-    source: Literal["user", "model", "tool"] = "user",
+    scope: Scope,
+    type: MemoryType = MemoryType.user,
+    source: MemorySource = MemorySource.user,
     confidence: float = 1,
     force: bool = False,
     config: AppConfig = None,
@@ -75,7 +92,7 @@ def memory_save(
         记忆 '用户偏好' 已保存。
     """
     # user scope 不需要 root_dir；project scope 需要 root_dir(无 root_dir 时 fallback 到用户级)
-    memory_scope: Scope | Path = config.root_dir if scope == "project" and config.root_dir else Scope.USER
+    memory_scope: Scope | Path = config.root_dir if scope == Scope.PROJECT and config.root_dir else Scope.USER
     memory = Memory(
         name=name,
         description=description,
@@ -127,7 +144,7 @@ def memory_save(
 
 
 @tool
-def memory_delete(name: str, scope: str, config: AppConfig = None) -> str:
+def memory_delete(name: str, scope: Scope, config: AppConfig = None) -> str:
     """
     按名称删除持久化记忆条目。
 
@@ -152,7 +169,7 @@ def memory_delete(name: str, scope: str, config: AppConfig = None) -> str:
         记忆已删除: '用户偏好' (作用域: user)
     """
     # user scope 不需要 root_dir；project scope 需要从 config 获取 root_dir(无 root_dir 时 fallback 到用户级)
-    memory_scope: Scope | Path = config.root_dir if scope == "project" and config.root_dir else Scope.USER
+    memory_scope: Scope | Path = config.root_dir if scope == Scope.PROJECT and config.root_dir else Scope.USER
     # 获取记忆文件路径并删除对应的记忆文件
     memory_path = Memory.get_memory_path(memory_scope, name)
     memory_path.unlink()
@@ -171,7 +188,7 @@ def memory_delete(name: str, scope: str, config: AppConfig = None) -> str:
 
 
 @tool
-def memory_list(scope: str, config: AppConfig = None):
+def memory_list(scope: Scope, config: AppConfig = None):
     """
     列出指定作用域下的所有记忆。
 
@@ -194,16 +211,16 @@ def memory_list(scope: str, config: AppConfig = None):
     # 根据scope参数确定要查询的作用域范围
     # config 由框架注入,请勿手动传入
     root_dir = config.root_dir
-    if scope == "project":
+    if scope == Scope.PROJECT:
         memories = Memory.load_all_memories(scope=root_dir) if root_dir else Memory.load_all_memories(scope=Scope.USER)
-    elif scope == "all":
+    elif scope == Scope.ALL:
         memories = Memory.load_all_memories(scope=root_dir) + Memory.load_all_memories(scope=Scope.USER) if root_dir else Memory.load_all_memories(scope=Scope.USER)
     else:
         memories = Memory.load_all_memories(scope=Scope.USER)
     # 处理无记忆的情况,返回友好的提示信息
     if not memories:
         return (
-            "未存储任何记忆。" if scope == "all" else f"未存储{scope}记忆。"
+            "未存储任何记忆。" if scope == Scope.ALL else f"未存储{scope}记忆。"
         )
 
     # 构建记忆列表的格式化输出

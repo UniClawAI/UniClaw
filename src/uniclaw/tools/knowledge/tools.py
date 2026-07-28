@@ -11,9 +11,9 @@ from uniclaw.tools.base import tool
 from .graph import KnowledgeGraph
 
 
-def _get_graph(config: AppConfig, scope: str = "project") -> KnowledgeGraph:
+def _get_graph(config: AppConfig, scope: Scope = Scope.PROJECT) -> KnowledgeGraph:
     """从 config 获取知识图谱实例。scope: "user" 用户级 / "project" 项目级(默认)。"""
-    resolved = config.root_dir if scope == "project" and config.root_dir else Scope.USER
+    resolved = config.root_dir if scope == Scope.PROJECT and config.root_dir else Scope.USER
     return KnowledgeGraph(get_app_dir(resolved) / "knowledge.db")
 
 
@@ -24,7 +24,7 @@ def kg_add_entity(
     description: str = "",
     properties: dict = None,
     confidence: float = 1.0,
-    scope: str = "project",
+    scope: Scope = Scope.PROJECT,
     config: AppConfig = None,
 ) -> str:
     """
@@ -73,7 +73,7 @@ def kg_add_relation(
     source_type: str = "",
     target_type: str = "",
     weight: float = 1.0,
-    scope: str = "project",
+    scope: Scope = Scope.PROJECT,
     config: AppConfig = None,
 ) -> str:
     """
@@ -115,7 +115,7 @@ def kg_add_alias(
     name: str,
     alias: str,
     type: str = "",
-    scope: str = "project",
+    scope: Scope = Scope.PROJECT,
     config: AppConfig = None,
 ) -> str:
     """
@@ -144,7 +144,7 @@ def kg_update_entity(
     type: str = "",
     description: str = "",
     confidence: float = -1,
-    scope: str = "project",
+    scope: Scope = Scope.PROJECT,
     config: AppConfig = None,
 ) -> str:
     """
@@ -178,7 +178,7 @@ def kg_update_entity(
 def kg_delete_entity(
     name: str,
     type: str = "",
-    scope: str = "project",
+    scope: Scope = Scope.PROJECT,
     config: AppConfig = None,
 ) -> str:
     """
@@ -205,7 +205,7 @@ def kg_delete_relation(
     source: str,
     target: str,
     relation: str,
-    scope: str = "project",
+    scope: Scope = Scope.PROJECT,
     config: AppConfig = None,
 ) -> str:
     """
@@ -234,7 +234,7 @@ def kg_merge_entities(
     target: str,
     source_type: str = "",
     target_type: str = "",
-    scope: str = "project",
+    scope: Scope = Scope.PROJECT,
     config: AppConfig = None,
 ) -> str:
     """
@@ -272,7 +272,7 @@ def kg_merge_entities(
 def kg_get_entity(
     name: str,
     type: str = "",
-    scope: str = "project",
+    scope: Scope = Scope.PROJECT,
     config: AppConfig = None,
 ) -> str:
     """
@@ -326,7 +326,7 @@ def kg_search(
     keyword: str,
     type: str = "",
     limit: int = 20,
-    scope: str = "project",
+    scope: Scope = Scope.PROJECT,
     config: AppConfig = None,
 ) -> str:
     """
@@ -362,7 +362,7 @@ def kg_neighbors(
     depth: int = 1,
     type: str = "",
     relation_type: str = "",
-    scope: str = "project",
+    scope: Scope = Scope.PROJECT,
     config: AppConfig = None,
 ) -> str:
     """
@@ -402,7 +402,7 @@ def kg_path(
     source: str,
     target: str,
     max_depth: int = 5,
-    scope: str = "project",
+    scope: Scope = Scope.PROJECT,
     config: AppConfig = None,
 ) -> str:
     """
@@ -438,7 +438,7 @@ def kg_path(
 
 @tool
 def kg_stats(
-    scope: str = "project",
+    scope: Scope = Scope.PROJECT,
     config: AppConfig = None,
 ) -> str:
     """
@@ -473,7 +473,7 @@ def kg_stats(
 @tool
 def kg_export(
     path: str,
-    scope: str = "project",
+    scope: Scope = Scope.PROJECT,
     config: AppConfig = None,
 ) -> str:
     """
@@ -511,7 +511,7 @@ def kg_export(
 def kg_list(
     type: str = "",
     limit: int = 50,
-    scope: str = "project",
+    scope: Scope = Scope.PROJECT,
     config: AppConfig = None,
 ) -> str:
     """
@@ -544,7 +544,7 @@ def kg_list(
 async def kg_extract(
     text: str = "",
     path: str = "",
-    scope: str = "project",
+    scope: Scope = Scope.PROJECT,
     config: AppConfig = None,
 ) -> str:
     """
@@ -686,7 +686,7 @@ async def kg_extract(
 
 @tool
 def kg_clear(
-    scope: str = "project",
+    scope: Scope = Scope.PROJECT,
     config: AppConfig = None,
 ) -> str:
     """

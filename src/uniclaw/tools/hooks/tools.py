@@ -175,7 +175,7 @@ def hook_add(
     commands: str,
     name: str = "",
     matcher: str = "",
-    scope: str = "project",
+    scope: Scope = Scope.PROJECT,
     config: AppConfig = None,
 ) -> str:
     """
@@ -196,11 +196,11 @@ def hook_add(
         raise ValueError("hook_add 需要 config 中的 current_agent 来获取 root_dir")
     root_dir = config.root_dir
     cmd_list = [c.strip() for c in commands.strip().split("\n") if c.strip()]
-    if scope == "project" and root_dir is None:
+    if scope == Scope.PROJECT and root_dir is None:
         return (
             f"{TOOL_ERROR}: 当前会话无工作目录,无法添加项目级 hook,请使用 scope='user'"
         )
-    root = root_dir if scope == "project" else Scope.USER
+    root = root_dir if scope == Scope.PROJECT else Scope.USER
     new_id = add_hook(
         event=event,
         commands=cmd_list,
