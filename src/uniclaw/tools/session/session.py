@@ -803,6 +803,29 @@ class Session:
         self._messages.append(user_message)
         self.history.append(user_message)
 
+    @staticmethod
+    def _sanitize_tool_calls(tool_calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """修复畸形 tool_call arguments JSON,避免后续 API 调用 400 错误。"""
+        for tc in tool_calls:
+            fn = tc.get("function")
+            if not fn:
+                continue
+            raw = fn.get("arguments", "")
+            if isinstance(raw, str) and raw:
+                try:
+                    json.loads(raw)
+                except (json.JSONDecodeError, TypeError):
+                    import logging
+
+                    logging.getLogger("session").warning(
+                        "畸形 tool_call arguments,已替换为空 JSON: "
+                        "tool=%s, args=%s",
+                        fn.get("name"),
+                        raw[:200],
+                    )
+                    fn["arguments"] = "{}"
+        return tool_calls
+
     def add_assistant_message(
         self,
         content: SupportedContent,
@@ -811,6 +834,8 @@ class Session:
         reasoning_content: str | None = None,
         tool_calls: list[dict[str, Any]] | None = None,
     ) -> None:
+        if tool_calls:
+            tool_calls = self._sanitize_tool_calls(tool_calls)
         assistant_message = AIMessage(
             content=content,
             model_name=model_name,
