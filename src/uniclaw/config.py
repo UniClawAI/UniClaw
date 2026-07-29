@@ -21,7 +21,7 @@ from uniclaw.spinner import BaseSpinner
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from uniclaw.agent import AgentStatus, AgentTask
+    from uniclaw.agent import AgentTask
     from uniclaw.tools.session.session import Session, SessionType
 
 
@@ -118,8 +118,10 @@ class AppConfig:
         """父代理,通过 parent_config.current_agent 获得。"""
         return self.parent_config.current_agent if self.parent_config else None
 
-    def get_running_subs(self) -> list["AppConfig"]:
+    def get_running_subs(self) -> list[AppConfig]:
         """获取正在运行的子代理(RUNNING 状态)。"""
+        from uniclaw.agent import AgentStatus
+
         return [
             sub
             for sub in self.sub_configs
@@ -131,7 +133,7 @@ class AppConfig:
         return bool(self.get_running_subs())
 
     @property
-    def root_config(self) -> "AppConfig | None":
+    def root_config(self) -> AppConfig | None:
         """沿 parent_config 链向上追溯,返回最顶级配置(非 sub)。若顶级仍为 sub 则返回 None。"""
         config = self
         while config.parent_config is not None:
