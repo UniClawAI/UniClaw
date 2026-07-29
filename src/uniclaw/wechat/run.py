@@ -35,7 +35,6 @@ from uniclaw.ilink_bot import IlinkBotClient, IncomingMessage
 from uniclaw.ilink_bot.media import download_media, detect_ext
 from uniclaw.context import build_system_prompt
 from uniclaw.console.ui import C, clr, info, ok, warn, err
-from uniclaw.utils.logger import get_logger
 
 # 每个用户独立的配置(含 session 和 agent)
 _user_configs: dict[str, AppConfig] = {}
@@ -191,9 +190,7 @@ async def _collect_response(
                     try:
                         client.reply_text(f"🔧 {label}")
                     except Exception as e:
-                        get_logger("wechat", config.root_dir).debug(
-                            "发送工具调用通知失败: %s", e
-                        )
+                        await warn(f"发送工具调用通知失败: {e}", config)
             elif isinstance(event, ToolEvent):
                 print(
                     clr(
@@ -294,9 +291,7 @@ def make_handler():
                 try:
                     bot.send_typing()
                 except Exception as e:
-                    get_logger("wechat", config.root_dir).debug(
-                        "发送打字状态失败: %s", e
-                    )
+                    await warn(f"发送打字状态失败: {e}", config)
                 try:
                     system_prompt = await build_system_prompt(config)
                     multi_agent.start_agent(
@@ -341,7 +336,7 @@ def make_handler():
         try:
             bot.send_typing()
         except Exception as e:
-            get_logger("wechat", config.root_dir).debug("发送打字状态失败: %s", e)
+            await warn(f"发送打字状态失败: {e}", config)
 
         try:
             system_prompt = await build_system_prompt(config)
@@ -365,12 +360,12 @@ def make_handler():
             try:
                 bot.reply_text(f"处理出错: {e}")
             except Exception as e2:
-                get_logger("wechat", config.root_dir).debug("发送错误回复失败: %s", e2)
+                await warn(f"发送错误回复失败: {e2}", config)
         finally:
             try:
                 bot.stop_typing()
             except Exception as e:
-                get_logger("wechat", config.root_dir).debug("停止打字状态失败: %s", e)
+                await warn(f"停止打字状态失败: {e}", config)
 
     return handler
 
