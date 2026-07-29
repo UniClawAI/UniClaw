@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import copy
 import inspect
 import json
 import logging
+import re
+import typing
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, get_type_hints
 
@@ -24,6 +27,9 @@ _TYPE_MAP = {
 
 # 运行时注入的参数,不写入 schema
 _INJECTED_PARAMS = {"config"}
+
+# 参数行正则: "name: desc" 或 "name (type): desc",冒号前为小写/下划线标识符,冒号后有空格
+_PARAM_LINE_RE = re.compile(r"^[a-z_][a-zA-Z0-9_]*\s*(?:\(.*?\))?\s*:\s")
 
 # 常用类型名称映射,避免 eval
 _BUILTIN_TYPE_NAMES: dict[str, type] = {
@@ -89,14 +95,14 @@ def _python_type_to_schema(tp: Any) -> dict:
         return {"type": "null"}
 
     # 处理 Optional[X] / X | None / Union[X, Y]
-    if hasattr(tp, "__args__"):
+    if origin is typing.Union:
         schemas = [_python_type_to_schema(a) for a in tp.__args__]
         types = [s["type"] for s in schemas]
         # 如果只有一种类型,直接返回完整 schema(保留 enum/items 等)
         if len(schemas) == 1:
             return schemas[0]
         # 多种类型合并 type 数组(保留第一个非 null schema 的额外字段)
-        base = next((s for s in schemas if s["type"] != "null"), schemas[0])
+        base = copy.copy(next((s for s in schemas if s["type"] != "null"), schemas[0]))
         base["type"] = types
         return base
 
@@ -107,57 +113,73 @@ def _python_type_to_schema(tp: Any) -> dict:
     return {"type": "string"}
 
 
-def _parse_arg_descriptions(func: Callable) -> dict[str, str]:
-    """从 docstring 的 Args: 部分解析每个参数的描述。"""
-    doc = inspect.getdoc(func) or ""
-    if "Args:" not in doc:
-        return {}
+def _parse_docstring(func: Callable) -> tuple[str, dict[str, str]]:
+    """从 docstring 一次性提取工具描述和参数描述。
 
-    descriptions: dict[str, str] = {}
+    Args 之前和之后的所有内容作为工具描述,Args 内容解析为参数描述。
+    参数行格式为 "name: desc" 或 "name (type): desc",
+    冒号前为小写/下划线开头的标识符。同级缩进的非参数行视为 Args 结束。
+
+    Returns:
+        tuple: (description, arg_descriptions)
+    """
+    doc = inspect.getdoc(func) or ""
+    if not doc:
+        return func.__name__, {}
+
+    desc_lines: list[str] = []
+    arg_descs: dict[str, str] = {}
     in_args = False
+    args_indent = 0  # Args: 的缩进级别
+    param_indent = -1  # 参数行的缩进级别
     current_name: str | None = None
     current_lines: list[str] = []
 
+    def _flush_param():
+        nonlocal current_name
+        if current_name:
+            arg_descs[current_name] = "\n".join(current_lines).strip()
+            current_name = None
+
     for line in doc.split("\n"):
         stripped = line.strip()
-        if stripped.startswith("Args:"):
+        # Args 段落开始
+        if stripped == "Args:":
+            _flush_param()
             in_args = True
+            args_indent = len(line) - len(line.lstrip())
             continue
         if in_args:
-            # 遇到 Returns: 或其他顶级段落,结束解析
-            if (
-                stripped.startswith("Returns:")
-                or stripped.startswith("Raises:")
-                or stripped.startswith("Example")
-            ):
+            if not stripped:
+                continue
+            indent = len(line) - len(line.lstrip())
+            # 缩进比参数更深 → 当前参数的续行
+            if indent > param_indent >= 0:
                 if current_name:
-                    descriptions[current_name] = "\n".join(current_lines).strip()
-                break
-            # 新参数行: "name (type): desc" 或 "name: desc"
-            # 列表项("- "开头)视为续行,不作为新参数
-            if (
-                stripped
-                and not stripped[0].isspace()
-                and ":" in stripped
-                and not stripped.startswith("- ")
-            ):
-                if current_name:
-                    descriptions[current_name] = "\n".join(current_lines).strip()
-                # 提取参数名(冒号之前的部分,去掉类型标注)
+                    current_lines.append(stripped)
+                continue
+            # 比 Args 更深缩进 + 匹配参数行 → 新参数
+            if indent > args_indent and _PARAM_LINE_RE.match(stripped) and not stripped.startswith("- "):
+                _flush_param()
+                if param_indent < 0:
+                    param_indent = indent
                 header, _, rest = stripped.partition(":")
-                param_name = header.split("(")[0].strip()
-                current_name = param_name
+                current_name = header.split("(")[0].strip()
                 current_lines = [rest.strip()] if rest.strip() else []
-            elif current_name and stripped:
-                # 多行描述的续行
-                current_lines.append(stripped)
+                continue
+            # 同级或更浅缩进,或不像参数 → Args 结束
+            _flush_param()
+            in_args = False
+            # fall through to description collection
+        if stripped:
+            desc_lines.append(stripped)
 
-    if current_name:
-        descriptions[current_name] = "\n".join(current_lines).strip()
-    return descriptions
+    _flush_param()
+    description = "\n".join(desc_lines) if desc_lines else doc
+    return description, arg_descs
 
 
-def _build_parameters(func: Callable) -> dict:
+def _build_parameters(func: Callable, arg_descs: dict[str, str] = None) -> dict:
     """从函数签名生成 OpenAI function calling 的 parameters schema。"""
     sig = inspect.signature(func)
     func_globals = getattr(func, "__globals__", {})
@@ -167,7 +189,8 @@ def _build_parameters(func: Callable) -> dict:
         logger.debug("get_type_hints 失败,使用空 hints: %s", e)
         hints = {}
 
-    arg_descs = _parse_arg_descriptions(func)
+    if arg_descs is None:
+        arg_descs = {}
     properties = {}
     required = []
 
@@ -211,58 +234,6 @@ def _build_parameters(func: Callable) -> dict:
     }
 
 
-def _extract_description(func: Callable) -> str:
-    """从 docstring 提取工具描述和返回值说明。"""
-    doc = inspect.getdoc(func) or ""
-    if not doc:
-        return func.__name__
-
-    desc_lines: list[str] = []
-    returns_lines: list[str] = []
-    section = "desc"  # desc -> args -> returns
-
-    _SECTION_HEADERS = (
-        "Args:",
-        "Returns:",
-        "Raises:",
-        "Example:",
-        "Examples:",
-        "Note:",
-        "Warning:",
-    )
-
-    for line in doc.split("\n"):
-        stripped = line.strip()
-        # 检测顶级段落标题(不以空格开头,且是已知段落名)
-        if (
-            stripped
-            and not line[0].isspace()
-            and any(stripped.startswith(h) for h in _SECTION_HEADERS)
-        ):
-            if stripped.startswith("Args:"):
-                section = "args"
-            elif stripped.startswith("Returns:"):
-                section = "returns"
-            else:
-                # Raises/Example/Note 等结束 returns
-                if section == "returns":
-                    break
-            continue
-
-        if section == "desc" and stripped:
-            desc_lines.append(stripped)
-        elif section == "returns" and stripped:
-            returns_lines.append(stripped)
-
-    if desc_lines:
-        description = "\n".join(desc_lines)
-        if returns_lines:
-            description += "\nReturns:\n" + "\n".join(returns_lines)
-    else:
-        description = doc
-    return description
-
-
 @dataclass
 class Tool:
     """工具对象 — 包含名称、描述、函数引用和参数 schema。"""
@@ -279,8 +250,6 @@ class Tool:
 
     def _maybe_inject_explain(self, parameters: dict) -> dict:
         """在 parameters schema 中注入 _explain 参数(explain 模式)。"""
-        import copy
-
         params = copy.deepcopy(parameters)
         params["properties"]["_explain"] = {
             "type": "string",
@@ -333,9 +302,12 @@ class Tool:
         # 将位置参数映射到函数参数名
         if args:
             params = list(inspect.signature(self.func).parameters)
+            if len(args) > len(params):
+                raise TypeError(
+                    f"{self.name}() takes {len(params)} positional arguments but {len(args)} were given"
+                )
             for i, arg in enumerate(args):
-                if i < len(params):
-                    kwargs[params[i]] = arg
+                kwargs[params[i]] = arg
         kwargs.pop("_explain", None)
         # 过滤函数签名中不接受的注入参数(如 config)
         func_params = inspect.signature(self.func).parameters
@@ -372,8 +344,8 @@ def tool(func: Callable = None, *, name: str = None) -> Tool:
 
     def decorator(f: Callable) -> Tool:
         tool_name = name or f.__name__
-        description = _extract_description(f)
-        parameters = _build_parameters(f)
+        description, arg_descs = _parse_docstring(f)
+        parameters = _build_parameters(f, arg_descs)
         return Tool(
             name=tool_name, description=description, func=f, parameters=parameters
         )
@@ -432,8 +404,6 @@ def tc_name(tc: dict) -> str:
 
 def tc_args(tc: dict) -> dict:
     """从 tool_call 提取参数 dict(兼容 OpenAI 和旧格式)。"""
-    import json
-
     fn = tc.get("function")
     if fn:
         args = fn.get("arguments", "")
