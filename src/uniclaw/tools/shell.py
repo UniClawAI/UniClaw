@@ -350,7 +350,7 @@ async def _has_native_grep() -> bool:
 def _python_grep(
     pattern: str,
     path: str,
-    glob: str = None,
+    glob: str | None = None,
     output_mode: GrepOutputMode = GrepOutputMode.content,
     case_insensitive: bool = False,
     context: int = 0,
@@ -436,7 +436,7 @@ def _python_grep(
 async def Grep(
     pattern: str,
     path: str,
-    glob: str = None,
+    glob: str | None = None,
     output_mode: GrepOutputMode = GrepOutputMode.content,
     case_insensitive: bool = False,
     context: int = 0,
@@ -538,7 +538,7 @@ async def _check_es() -> str | None:
 async def search_files_with_everything(
     query: str,
     max_results: int = 0,
-    path_filter: str = None,
+    path_filter: str | None = None,
 ) -> str:
     """
     使用 Everything 搜索引擎的文件名搜索工具(es 命令行)

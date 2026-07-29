@@ -40,6 +40,7 @@ _BUILTIN_TYPE_NAMES: dict[str, type] = {
     "list": list,
     "dict": dict,
     "bytes": bytes,
+    "None": type(None),
 }
 
 
@@ -49,9 +50,6 @@ def _resolve_str_annotation(tp: str, func_globals: dict = None) -> Any:
     # 简单类型直接查表
     if tp in _BUILTIN_TYPE_NAMES:
         return _BUILTIN_TYPE_NAMES[tp]
-    # None / NoneType
-    if tp == "None":
-        return type(None)
     try:
         import builtins
 
@@ -64,8 +62,14 @@ def _resolve_str_annotation(tp: str, func_globals: dict = None) -> Any:
         return str
 
 
-def _python_type_to_schema(tp: Any) -> dict:
-    """将 Python 类型注解转换为 JSON Schema。"""
+def _python_type_to_schema(tp: Any, multi_type: bool = False) -> dict:
+    """将 Python 类型注解转换为 JSON Schema。
+
+    Args:
+        tp: Python 类型注解。
+        multi_type: 是否使用多类型写法(如 ["string", "null"])。
+                    默认为 False,Optional[X] 只保留 X 的类型。
+    """
     if tp is inspect.Parameter.empty:
         return {"type": "string"}
 
@@ -83,7 +87,7 @@ def _python_type_to_schema(tp: Any) -> dict:
     if origin is list:
         args = getattr(tp, "__args__", None)
         if args:
-            return {"type": "array", "items": _python_type_to_schema(args[0])}
+            return {"type": "array", "items": _python_type_to_schema(args[0], multi_type)}
         return {"type": "array"}
 
     # Dict[str, X] / dict[str, X]
@@ -96,15 +100,15 @@ def _python_type_to_schema(tp: Any) -> dict:
 
     # 处理 Optional[X] / X | None / Union[X, Y]
     if origin is typing.Union:
-        schemas = [_python_type_to_schema(a) for a in tp.__args__]
-        types = [s["type"] for s in schemas]
-        # 如果只有一种类型,直接返回完整 schema(保留 enum/items 等)
-        if len(schemas) == 1:
-            return schemas[0]
-        # 多种类型合并 type 数组(保留第一个非 null schema 的额外字段)
-        base = copy.copy(next((s for s in schemas if s["type"] != "null"), schemas[0]))
-        base["type"] = types
-        return base
+        schemas = [_python_type_to_schema(a, multi_type) for a in tp.__args__]
+        if multi_type:
+            types = [s["type"] for s in schemas]
+            base = copy.copy(schemas[0])
+            base["type"] = types
+            return base
+        # 单类型模式:跳过 null,取第一个有效类型
+        non_null = [s for s in schemas if s.get("type") != "null"]
+        return non_null[0] if non_null else schemas[0]
 
     # Enum → string
     if hasattr(tp, "__members__"):
@@ -159,7 +163,11 @@ def _parse_docstring(func: Callable) -> tuple[str, dict[str, str]]:
                     current_lines.append(stripped)
                 continue
             # 比 Args 更深缩进 + 匹配参数行 → 新参数
-            if indent > args_indent and _PARAM_LINE_RE.match(stripped) and not stripped.startswith("- "):
+            if (
+                indent > args_indent
+                and _PARAM_LINE_RE.match(stripped)
+                and not stripped.startswith("- ")
+            ):
                 _flush_param()
                 if param_indent < 0:
                     param_indent = indent
@@ -179,8 +187,18 @@ def _parse_docstring(func: Callable) -> tuple[str, dict[str, str]]:
     return description, arg_descs
 
 
-def _build_parameters(func: Callable, arg_descs: dict[str, str] = None) -> dict:
-    """从函数签名生成 OpenAI function calling 的 parameters schema。"""
+def _build_parameters(
+    func: Callable,
+    arg_descs: dict[str, str] = None,
+    multi_type: bool = False,
+) -> dict:
+    """从函数签名生成 OpenAI function calling 的 parameters schema。
+
+    Args:
+        func: 工具函数。
+        arg_descs: 参数描述字典。
+        multi_type: 是否使用多类型写法(如 ["integer", "null"])。默认为 False。
+    """
     sig = inspect.signature(func)
     func_globals = getattr(func, "__globals__", {})
     try:
@@ -207,21 +225,15 @@ def _build_parameters(func: Callable, arg_descs: dict[str, str] = None) -> dict:
                 tp = _resolve_str_annotation(ann, func_globals)
             else:
                 tp = ann
-        schema = _python_type_to_schema(tp)
+        schema = _python_type_to_schema(tp, multi_type)
 
         # 注入参数描述
         if name in arg_descs:
             schema["description"] = arg_descs[name]
 
-        # 处理 list 类型的 items(从注解中提取)
+        # 注入默认值
         if param.default is not inspect.Parameter.empty:
-            # 默认值为 None 时,自动标记为 nullable
-            if param.default is None:
-                tp = schema.get("type")
-                if isinstance(tp, str) and tp != "null":
-                    schema["type"] = [tp, "null"]
-                elif isinstance(tp, list) and "null" not in tp:
-                    tp.append("null")
+            schema["default"] = param.default
         else:
             required.append(name)
 
@@ -231,6 +243,7 @@ def _build_parameters(func: Callable, arg_descs: dict[str, str] = None) -> dict:
         "type": "object",
         "properties": properties,
         "required": required,
+        "additionalProperties": False,
     }
 
 
@@ -269,6 +282,7 @@ class Tool:
             "function": {
                 "name": self.name,
                 "description": self.description,
+                "strict": True,
                 "parameters": parameters,
             },
         }
@@ -281,6 +295,7 @@ class Tool:
         return {
             "name": self.name,
             "description": self.description,
+            "strict": True,
             "input_schema": parameters,
         }
 
@@ -328,7 +343,7 @@ class Tool:
         return await self.func(**kwargs)
 
 
-def tool(func: Callable = None, *, name: str = None) -> Tool:
+def tool(func: Callable = None, *, name: str | None = None, multi_type: bool = False) -> Tool:
     """装饰器:将函数包装为 Tool 对象,自动生成 OpenAI function calling schema。
 
     用法:
@@ -340,12 +355,17 @@ def tool(func: Callable = None, *, name: str = None) -> Tool:
         @tool(name="custom_name")
         def my_func(...):
             ...
+
+        @tool(multi_type=True)
+        def my_func2(x: int | None = None) -> str:
+            \"\"\"支持多类型写法的工具。\"\"\"
+            ...
     """
 
     def decorator(f: Callable) -> Tool:
         tool_name = name or f.__name__
         description, arg_descs = _parse_docstring(f)
-        parameters = _build_parameters(f, arg_descs)
+        parameters = _build_parameters(f, arg_descs, multi_type)
         return Tool(
             name=tool_name, description=description, func=f, parameters=parameters
         )

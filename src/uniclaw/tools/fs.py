@@ -30,7 +30,10 @@ def generate_unified_diff(
 # ── Read ─────────────────────────────────────────────────────────────────
 @tool
 def Read(
-    file_path: str, limit: int = None, offset: int = None, encoding: str = "utf-8"
+    file_path: str,
+    limit: int | None = None,
+    offset: int | None = None,
+    encoding: str = "utf-8",
 ) -> str:
     """
     读取文本文件内容并返回带行号的文本。只能读取文本文件,不能读取图片、音频、视频等非文本文件。
@@ -226,7 +229,7 @@ def Glob(pattern: str, path: str) -> str:
 
 # ── ReadPDF ──────────────────────────────────────────────────────────────
 @tool
-def ReadPDF(file_path: str, pages: str = None, encoding: str = "utf-8") -> str:
+def ReadPDF(file_path: str, pages: str | None = None, encoding: str = "utf-8") -> str:
     """
     读取 PDF 文件内容并返回文本。
 

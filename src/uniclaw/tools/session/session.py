@@ -191,7 +191,7 @@ class BaseMessage:
     def to_content(self) -> str:
         raise NotImplementedError
 
-    def estimate_tokens(self, model: str = None) -> int:
+    def estimate_tokens(self, model: str | None = None) -> int:
         """估算本条消息的 token 数量。"""
         total = 0
         content = self.content
@@ -1027,7 +1027,7 @@ class Session:
 
     # ── Token 估算与压缩 ────────────────────────────────────
 
-    def estimate_tokens(self, model: str = None) -> int:
+    def estimate_tokens(self, model: str | None = None) -> int:
         """估算当前消息的 token 数量。"""
         if not self._messages:
             return 0

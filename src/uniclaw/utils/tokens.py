@@ -24,7 +24,7 @@ MODEL_ENCODINGS: dict[str, str] = {
 _encoder_cache: dict[str, Any] = {}
 
 
-def get_encoder(model: str = None):
+def get_encoder(model: str | None = None):
     """获取 tiktoken 编码器(带缓存)。tiktoken 未安装时返回 None。"""
     try:
         import tiktoken
@@ -47,7 +47,7 @@ def get_encoder(model: str = None):
     return _encoder_cache[encoding_name]
 
 
-def count_tokens(text: str, model: str = None) -> int:
+def count_tokens(text: str, model: str | None = None) -> int:
     """估算文本的 token 数量。tiktoken 未安装时按字符数近似。"""
     encoder = get_encoder(model)
     if encoder is None:
