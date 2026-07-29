@@ -4,6 +4,7 @@ from typing import Optional, List
 from uniclaw.tools.base import tool
 from uniclaw.utils.constants import TOOL_ERROR
 from uniclaw.config import AppConfig
+from uniclaw.context import APP_NAME
 from uniclaw.provider.fallback import achat
 from uniclaw.tools.skill.executor import run_skill
 from .loader import SkillDef, load_skills, find_skill
@@ -35,13 +36,17 @@ def get_skill_system_prompt(root_dir: Path | None) -> str:
     if not skills:
         return ""
     skill_names = "\n".join(skill.name for skill in skills)
+    dir_info = f"用户级 ~/.{APP_NAME}/skills/"
+    if root_dir:
+        dir_info += f", 项目级 {root_dir}/.{APP_NAME}/skills/"
     return f"""
 如果用户的请求无法直接完成,可以先使用 {skill_suggest.name} 查看可用技能,寻找可帮助解决问题的 skill,而不是立刻拒绝。
 如果某个skill有用,在执行前调用 {skill_read.name} 加载其完整的 skill.md。
 按照技能说明操作。
 如果技能需要 CLI 命令或脚本,使用选中的技能名称调用 {skill_run_command.name},优先使用包含可执行文件名的完整命令。
 你已掌握的技能包括:
-{skill_names}。通过 {skill_read.name} 获取技能详情。"""
+{skill_names}。通过 {skill_read.name} 获取技能详情。
+技能目录: {dir_info}"""
 
 
 def skill_summary(skill: SkillDef) -> str:

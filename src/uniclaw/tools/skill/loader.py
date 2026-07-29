@@ -24,18 +24,12 @@ class SkillDef:
 def _get_skill_paths(root_dir: Path | None) -> dict[str, list[Path]]:
     skill_paths = {
         "user": [
-            Path.home() / ".claude" / "skills",
-            Path.home() / ".codex" / "skills",
-            Path.home() / ".agents" / "skills",
             *Path.home().glob(".*/skills"),
         ],
     }
     if root_dir:
         skill_paths["project"] = [
             root_dir / "skills",
-            root_dir / ".claude" / "skills",
-            root_dir / ".codex" / "skills",
-            root_dir / ".agents" / "skills",
             *root_dir.glob(".*/skills"),
         ]
     return skill_paths
