@@ -150,7 +150,7 @@ async def handle_slash(line: str, config: AppConfig) -> Union[bool, str]:
 
         if shutil.which(skill.name):
             # command-based skill:直接执行
-            rendered = run_skill(skill, skill_args, config=config)
+            rendered = await run_skill(skill, skill_args, config=config)
             return f"[skill: {skill.name}]\n\n{rendered}"
         else:
             # prompt-based skill:注入 prompt + 设置工具白名单
