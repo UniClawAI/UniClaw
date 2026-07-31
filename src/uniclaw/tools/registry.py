@@ -109,10 +109,8 @@ def _build_extended_keywords() -> dict[str, list[str]]:
     from .session.recall import recall_history, get_history_range
     from .scheduler.tools import (
         schedule_create,
-        schedule_monitor,
         schedule_list,
         schedule_update,
-        schedule_monitor_update,
         schedule_remove,
         schedule_toggle,
     )
@@ -409,22 +407,8 @@ def _build_extended_keywords() -> dict[str, list[str]]:
             "timer",
             "periodic",
         ],
-        schedule_monitor.name: [
-            "监控",
-            "monitor",
-            "健康检查",
-            "异常检测",
-            "周期检查",
-            "定时监控",
-        ],
         schedule_list.name: ["定时列表", "list schedule", "定时任务列表"],
         schedule_update.name: ["修改定时", "update schedule", "更新定时", "修改action"],
-        schedule_monitor_update.name: [
-            "修改监控",
-            "update monitor",
-            "更新监控",
-            "修改监控命令",
-        ],
         schedule_remove.name: [
             "删除定时",
             "remove schedule",
@@ -1129,10 +1113,8 @@ def _build_tool_categories() -> dict[str, str]:
     from .session.recall import recall_history, get_history_range
     from .scheduler.tools import (
         schedule_create,
-        schedule_monitor,
         schedule_list,
         schedule_update,
-        schedule_monitor_update,
         schedule_remove,
         schedule_toggle,
     )
@@ -1271,10 +1253,8 @@ def _build_tool_categories() -> dict[str, str]:
         recall_history.name: "会话管理",
         get_history_range.name: "会话管理",
         schedule_create.name: "定时任务",
-        schedule_monitor.name: "定时任务",
         schedule_list.name: "定时任务",
         schedule_update.name: "定时任务",
-        schedule_monitor_update.name: "定时任务",
         schedule_remove.name: "定时任务",
         schedule_toggle.name: "定时任务",
         mcp_add_server.name: "MCP管理",

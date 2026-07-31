@@ -85,65 +85,6 @@ def schedule_create(
     return f"已创建定时任务: {task.id} ({name}, {schedule})"
 
 
-@tool
-def schedule_monitor(
-    name: str,
-    schedule: str,
-    command: str,
-    agent_message: str,
-    config=None,
-) -> str:
-    """
-    创建定时监控任务:周期执行 shell 命令,退出码非零时调用 agent 处理。
-    适用于健康检查、异常检测等"没问题就不处理"的场景。
-    如果只想修改监控任务内容(如检查命令、agent 提示词、调度时间),使用 schedule_monitor_update,而不是删除任务重新创建。
-
-    工作流程:
-    1. 按 schedule 周期执行 command
-    2. command 退出码 = 0 → 正常,不调用 agent,仅输出 stdout
-    3. command 退出码 ≠ 0 → 调用 agent,将 stdout/stderr 作为上下文交给 agent 处理
-
-    Args:
-        name: 任务名称(人类可读),如 "监控服务健康"、"检查邮箱"、"检测磁盘空间"
-        schedule: Cron 表达式(分 时 日 月 周),如:
-                  - "*/5 * * * *" 每 5 分钟
-                  - "0 * * * *" 每小时
-                  - "0 9 * * *" 每天 9:00
-                  - "0 9 * * 1-5" 工作日 9:00
-                  最小粒度为 1 分钟
-        command: 要执行的 shell 命令,退出码决定是否触发 agent:
-                 - 退出码 = 0 → 正常,不触发 agent
-                 - 退出码 ≠ 0 → 触发 agent 处理
-                 示例: "curl -sf http://localhost:8080/health"、"python check.py"、"test -f /tmp/alert.flag"
-        agent_message: 触发 agent 时的提示词,描述需要 agent 做什么。command 的 stdout/stderr 会自动附在提示词后面作为上下文。
-                       示例: "服务挂了,排查原因并修复"、"有新邮件,读取并总结"
-
-    Returns:
-        str: 创建结果消息,包含任务 ID、检查命令和触发条件
-    """
-    from .scheduler import Scheduler
-
-    action = json.dumps(
-        {
-            "type": "monitor",
-            "command": command,
-            "agent": {"message": agent_message},
-        },
-        ensure_ascii=False,
-    )
-
-    scheduler = Scheduler.get_instance()
-    try:
-        task = scheduler.add_task(name, schedule, action, config=config)
-    except ValueError as e:
-        return f"{TOOL_ERROR}: {e}"
-
-    return (
-        f"已创建监控任务: {task.id} ({name}, {schedule})\n"
-        f"检查命令: {command}\n"
-        f"触发条件: 退出码非零"
-    )
-
 
 @tool
 def schedule_list() -> str:
@@ -182,7 +123,7 @@ def schedule_list() -> str:
 def schedule_remove(task_id: str) -> str:
     """
     删除定时任务。
-    如果只想修改任务内容(如 action、调度时间),使用 schedule_update 或 schedule_monitor_update,而不是删除重建。
+    如果只想修改任务内容(如 action、调度时间),使用 schedule_update,而不是删除重建。
 
     Args:
         task_id: 要删除的任务 ID
@@ -242,53 +183,6 @@ def schedule_update(
     return f"已更新任务 {task_id}"
 
 
-@tool
-def schedule_monitor_update(
-    task_id: str,
-    command: str = "",
-    agent_message: str = "",
-    schedule: str = "",
-) -> str:
-    """
-    修改监控任务的检查命令、agent 提示词和/或调度时间。至少提供一个修改项。
-
-    Args:
-        task_id: 任务 ID
-        command: 新的检查命令(可选)。退出码 = 0 → 正常,非零 → 触发 agent
-        agent_message: 新的 agent 提示词(可选),描述触发时需要 agent 做什么
-        schedule: 新的 Cron 表达式(可选),如 "*/10 * * * *"
-
-    Returns:
-        str: 操作结果消息
-    """
-    from .scheduler import Scheduler
-
-    if not command and not agent_message and not schedule:
-        return f"{TOOL_ERROR}: 至少需要提供 command、agent_message 或 schedule 之一"
-
-    scheduler = Scheduler.get_instance()
-    task_data = scheduler.get_task(task_id)
-    if not task_data:
-        return f"{TOOL_ERROR}: 任务 '{task_id}' 不存在"
-
-    action_data = json.loads(task_data.action)
-    agent_data = action_data.get("agent", {})
-
-    if command:
-        action_data["command"] = command
-    if agent_message:
-        agent_data["message"] = agent_message
-    if agent_data:
-        action_data["agent"] = agent_data
-
-    new_action = json.dumps(action_data, ensure_ascii=False)
-    scheduler.update_action(task_id, new_action)
-
-    if schedule:
-        scheduler.update_schedule(task_id, schedule.strip())
-
-    return f"已更新监控任务 {task_id}"
-
 
 @tool
 def schedule_toggle(
@@ -319,10 +213,8 @@ def get_tools() -> list:
     """获取调度器工具列表"""
     return [
         schedule_create,
-        schedule_monitor,
         schedule_list,
         schedule_update,
-        schedule_monitor_update,
         schedule_remove,
         schedule_toggle,
     ]

@@ -606,7 +606,7 @@ UniClaw 提供了丰富的斜杠命令(`/command`),用于管理系统功能和�
 - 周期执行 shell 命令,退出码 = 0 表示正常(不触发 agent),非零表示需要处理
 - 适用于健康检查、异常检测等"没问题就不处理"的场景
 - 每个任务分配独立工作目录,检查脚本放在任务目录中
-- 支持通过 `schedule_monitor_update` 修改检查命令、agent 提示词和调度时间
+- 通过 `schedule_create` 的 `type: "monitor"` action 创建,用 `schedule_update` 修改
 
 #### 后台任务命令 🔄
 
@@ -999,7 +999,6 @@ UniClaw 提供了丰富的内置工具,AI 助手可以自动调用这些工具�
 
 - **skill_suggest** - 根据当前任务智能推荐合适的技能,返回技能总数和推荐数量
 - **skill_read** - 读取指定技能的详细内容
-- **skill_run_command** - 执行技能中定义的命令
 
 **内置技能**:
 - `code-review` (`/code-review`, `/review`) — 多维度代码审查(安全性、正确性、性能、代码质量、可读性)
@@ -1211,11 +1210,9 @@ UniClaw 提供了丰富的内置工具,AI 助手可以自动调用这些工具�
 
 #### 调度器工具 ⏰
 
-- **schedule_create** - 创建定时任务(支持周期性或一次性执行)
-- **schedule_monitor** - 创建监控任务(周期执行 shell 命令,退出码非零时触发 agent)
+- **schedule_create** - 创建定时任务(支持 shell/agent/py/monitor 四种类型)
 - **schedule_list** - 列出所有定时任务及其状态
 - **schedule_update** - 修改定时任务的动作和调度时间
-- **schedule_monitor_update** - 修改监控任务的检查命令、agent 提示词和调度时间
 - **schedule_remove** - 删除指定的定时任务
 - **schedule_toggle** - 启用或禁用定时任务
 
