@@ -26,6 +26,7 @@ from uniclaw.utils.http_download import (
     HttpDownloader,
     DownloadStatus,
     file_format,
+    time_format,
 )
 
 
@@ -156,10 +157,18 @@ async def http_download(
             downloader.cancel()
             return
         percent = info.downloaded / info.total * 100 if info.total > 0 else 0
+        now = datetime.now().strftime("%H:%M:%S")
+        # 估算剩余时间
+        if info.speed > 0 and info.total > info.downloaded:
+            remain_sec = (info.total - info.downloaded) / info.speed
+            eta = time_format(remain_sec)
+        else:
+            eta = "计算中..."
         msg = (
-            f"\r下载进度: {file_format(info.downloaded)}/{file_format(info.total)} "
+            f"\r[{now}] 下载进度: {file_format(info.downloaded)}/{file_format(info.total)} "
             f"({percent:.1f}%) "
-            f"速度: {file_format(info.speed)}/s"
+            f"速度: {file_format(info.speed)}/s "
+            f"剩余: {eta}"
         )
         await tool_stream(msg)
 
