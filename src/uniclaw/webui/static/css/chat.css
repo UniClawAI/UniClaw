@@ -811,7 +811,7 @@ pre:hover .code-copy-btn {
     align-items: center;
     gap: 10px;
     padding: 8px 18px;
-    background: var(--bg-2);
+    background: transparent;
     border: 1px solid var(--border);
     border-radius: var(--r-full);
     font-size: var(--text-sm);
