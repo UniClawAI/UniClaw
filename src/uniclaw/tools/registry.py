@@ -26,7 +26,7 @@ def _build_core_tools() -> list:
     from .search import platform_search
     from .memory.tools import memory_save, memory_delete, memory_list, memory_search
     from .plan import enter_plan_mode, exit_plan_mode
-    from .skill.tools import skill_suggest, skill_read, skill_run_command
+    from .skill.tools import skill_suggest, skill_read
 
     return [
         Read,
@@ -46,7 +46,6 @@ def _build_core_tools() -> list:
         exit_plan_mode,
         skill_suggest,
         skill_read,
-        skill_run_command,
     ]
 
 

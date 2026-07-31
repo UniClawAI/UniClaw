@@ -5,7 +5,7 @@ from uniclaw.context import Scope, get_app_dir
 from uniclaw.tools.fs import Glob, Read, ReadPDF, Write
 from uniclaw.tools.media import ReadMedia
 from uniclaw.tools.shell import Bash, Grep
-from uniclaw.tools.skill.tools import skill_suggest, skill_read, skill_run_command
+from uniclaw.tools.skill.tools import skill_suggest, skill_read
 from uniclaw.tools.web import webSearch, webFetch
 from uniclaw.tools.search import platform_search
 from uniclaw.utils.frontmatter import parse_frontmatter
@@ -119,7 +119,6 @@ def get_builtin_agent_definitions() -> Dict[str, AgentDefinition]:
                 platform_search.name,
                 skill_suggest.name,
                 skill_read.name,
-                skill_run_command.name,
             ],
             source="built-in",
         ),

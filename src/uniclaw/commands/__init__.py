@@ -2,7 +2,6 @@ from typing import Union
 
 from uniclaw.agent import AgentTask
 from uniclaw.config import AppConfig
-from uniclaw.tools.skill.executor import run_skill
 from uniclaw.commands.session import cmd_compact, cmd_clear, cmd_export
 from uniclaw.commands.model import cmd_model
 from uniclaw.commands.system import cmd_cwd, cmd_skills, cmd_exit, cmd_usage, cmd_help
@@ -143,20 +142,10 @@ async def handle_slash(line: str, config: AppConfig) -> Union[bool, str]:
         cmd_parts = line.strip().split(maxsplit=1)
         skill_args = cmd_parts[1] if len(cmd_parts) > 1 else ""
 
-        # 区分 prompt-based skill 和 command-based skill:
-        # - 如果 skill 名称是 PATH 上的可执行文件,走 run_skill(bash 执行)
-        # - 否则是 prompt-based skill,把 prompt 注入为用户消息让 LLM 读取
-        import shutil
-
-        if shutil.which(skill.name):
-            # command-based skill:直接执行
-            rendered = await run_skill(skill, skill_args, config=config)
-            return f"[skill: {skill.name}]\n\n{rendered}"
-        else:
-            # prompt-based skill:注入 prompt + 设置工具白名单
-            if skill.tools:
-                set_active_skill_tools(skill.tools)
-            task = skill_args if skill_args else ""
-            return f"[skill: {skill.name}] 请使用这个skill帮我完成以下任务: {task}"
+        # 注入 prompt + 设置工具白名单
+        if skill.tools:
+            set_active_skill_tools(skill.tools)
+        task = skill_args if skill_args else ""
+        return f"[skill: {skill.name}] 请使用这个skill帮我完成以下任务: {task}"
 
     return False
