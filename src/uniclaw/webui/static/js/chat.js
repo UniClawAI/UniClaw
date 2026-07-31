@@ -1007,9 +1007,8 @@ const Chat = {
         const pre = streamEl.querySelector('pre');
         // 判断用户是否在底部附近(距离底部 50px 以内)
         const isNearBottom = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 50;
-        // 处理 \r 回车:回退到当前行开头再覆盖,用于渲染进度条
-        // \r\n 视为普通换行,单独 \r 清空当前行(进度条覆盖)
-        if (!pre._streamBuf) { pre._streamBuf = ''; pre._lineBuf = ''; }
+        // 控制台风格: 普通文本追加, \r 覆盖当前行, \n 换行
+        if (pre._streamBuf == null) { pre._streamBuf = ''; pre._lineBuf = ''; }
         for (let i = 0; i < msg.content.length; i++) {
             const ch = msg.content[i];
             if (ch === '\r' && msg.content[i + 1] === '\n') {

@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
 from rank_bm25 import BM25Okapi
@@ -204,6 +204,7 @@ def _build_extended_keywords() -> dict[str, list[str]]:
         kg_clear,
     )
     from .advisor import advisor_list, ask_advisor, investigate
+    from .download.tools import http_download, http_download_status
 
     # tool.name → 关键词列表(中英文+语义同义词)
     return {
@@ -1046,6 +1047,30 @@ def _build_extended_keywords() -> dict[str, list[str]]:
             "查一下",
             "了解一下",
         ],
+        http_download.name: [
+            "下载",
+            "download",
+            "下载文件",
+            "HTTP下载",
+            "HTTPS下载",
+            "文件下载",
+            "download file",
+            "http download",
+            "下载链接",
+            "多线程下载",
+            "断点续传",
+            "限速下载",
+            "URL下载",
+        ],
+        http_download_status.name: [
+            "下载状态",
+            "download status",
+            "下载进度",
+            "查看下载",
+            "暂停下载",
+            "恢复下载",
+            "取消下载",
+        ],
     }
 
 
@@ -1199,6 +1224,7 @@ def _build_tool_categories() -> dict[str, str]:
         kg_clear,
     )
     from .advisor import advisor_list, ask_advisor, investigate
+    from .download.tools import http_download, http_download_status
 
     # tool.name → 类别
     return {
@@ -1344,6 +1370,8 @@ def _build_tool_categories() -> dict[str, str]:
         advisor_list.name: "顾问",
         ask_advisor.name: "顾问",
         investigate.name: "顾问",
+        http_download.name: "下载",
+        http_download_status.name: "下载",
     }
 
 
