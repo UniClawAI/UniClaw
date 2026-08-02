@@ -112,6 +112,7 @@ async def skill_suggest(
             model_name=config.mini_model_name,
             enable_thinking=False,
             thinking=False,
+            response_format={"type": "json_object"},
             config=config,
         )
         content = resp.content

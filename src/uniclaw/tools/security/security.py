@@ -608,6 +608,7 @@ explanation 要求:
             max_tokens=5000,
             enable_thinking=False,
             thinking=False,
+            response_format={"type": "json_object"},
             config=config,
         )
         result = parse_json_from_llm(response.content)

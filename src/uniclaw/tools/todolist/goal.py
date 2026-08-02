@@ -138,6 +138,7 @@ async def evaluate_goal(
             tools=None,
             enable_thinking=False,
             thinking=False,
+            response_format={"type": "json_object"},
         )
         text = (result.content or "").strip()
         if not text:

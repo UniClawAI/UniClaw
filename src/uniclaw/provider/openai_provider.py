@@ -130,6 +130,7 @@ def stream(
     thinking=True,
     audio: dict | None = None,
     asr_options: dict | None = None,
+    response_format: dict | None = None,
     config=None,
 ) -> Iterator[StreamChunk]:
     """流式调用 LLM,每次 yield StreamChunk (delta)。"""
@@ -179,6 +180,8 @@ def stream(
         audio.setdefault("format", "pcm16")
         kwargs["modalities"] = ["text", "audio"]
         kwargs["audio"] = audio
+    if response_format:
+        kwargs["response_format"] = response_format
 
     try:
         yield from _stream_inner(client, kwargs)
@@ -287,6 +290,7 @@ async def astream(
     thinking=True,
     audio: dict | None = None,
     asr_options: dict | None = None,
+    response_format: dict | None = None,
     config=None,
 ) -> AsyncIterator[StreamChunk]:
     """异步流式调用 LLM,每次 yield StreamChunk (delta)。"""
@@ -336,6 +340,8 @@ async def astream(
         audio.setdefault("format", "pcm16")
         kwargs["modalities"] = ["text", "audio"]
         kwargs["audio"] = audio
+    if response_format:
+        kwargs["response_format"] = response_format
 
     try:
         async for chunk in _astream_inner(client, kwargs):
@@ -437,6 +443,7 @@ def chat(
     thinking=True,
     audio: dict | None = None,
     asr_options: dict | None = None,
+    response_format: dict | None = None,
     config=None,
 ) -> AIMessage:
     """同步调用 LLM,返回 AIMessage。"""
@@ -474,6 +481,8 @@ def chat(
         audio.setdefault("format", "wav")
         kwargs["modalities"] = ["text", "audio"]
         kwargs["audio"] = audio
+    if response_format:
+        kwargs["response_format"] = response_format
 
     try:
         response = client.chat.completions.create(**kwargs)
@@ -513,6 +522,7 @@ async def achat(
     thinking=True,
     audio: dict | None = None,
     asr_options: dict | None = None,
+    response_format: dict | None = None,
     config=None,
 ) -> AIMessage:
     """异步调用 LLM,返回 AIMessage。"""
@@ -550,6 +560,8 @@ async def achat(
         audio.setdefault("format", "wav")
         kwargs["modalities"] = ["text", "audio"]
         kwargs["audio"] = audio
+    if response_format:
+        kwargs["response_format"] = response_format
 
     try:
         response = await client.chat.completions.create(**kwargs)

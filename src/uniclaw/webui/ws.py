@@ -1208,6 +1208,7 @@ async def _filter_filler_words(text: str, config: AppConfig) -> dict:
             config=config,
             enable_thinking=False,
             thinking=False,
+            response_format={"type": "json_object"},
         )
         result = parse_json_from_llm(ai_msg.content)
         if result:

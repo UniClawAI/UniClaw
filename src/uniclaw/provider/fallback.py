@@ -27,6 +27,7 @@ def chat(
     tools: list | None = None,
     enable_thinking=True,
     thinking=True,
+    response_format: dict | None = None,
     config=None,
 ) -> AIMessage:
     """同步调用 LLM,支持模型列表回退。
@@ -51,6 +52,7 @@ def chat(
                 tools=tools,
                 enable_thinking=enable_thinking,
                 thinking=thinking,
+                response_format=response_format,
                 config=config,
             )
         except Exception as e:
@@ -74,6 +76,7 @@ async def achat(
     tools: list | None = None,
     enable_thinking=True,
     thinking=True,
+    response_format: dict | None = None,
     config=None,
 ) -> AIMessage:
     """异步调用 LLM,支持模型列表回退。
@@ -98,6 +101,7 @@ async def achat(
                 tools=tools,
                 enable_thinking=enable_thinking,
                 thinking=thinking,
+                response_format=response_format,
                 config=config,
             )
         except Exception as e:

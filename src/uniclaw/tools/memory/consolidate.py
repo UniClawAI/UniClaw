@@ -111,6 +111,7 @@ async def consolidate_session(session, config: AppConfig) -> list[Memory]:
         model_name=config.mini_model_name,
         enable_thinking=False,
         thinking=False,
+        response_format={"type": "json_object"},
         config=config,
     )
 
