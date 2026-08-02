@@ -500,6 +500,7 @@ async def get_settings():
         "tts_model": data.get("tts_model", "") or "",
         "asr_model": data.get("asr_model", "") or "",
         "image_model": data.get("image_model", "") or "",
+        "embedding_model": data.get("embedding_model", "") or "",
         "audio": data.get("audio") or None,
         "temperature": data.get("temperature"),
         "max_tokens": data.get("max_tokens"),
@@ -588,6 +589,7 @@ async def update_settings(body: SettingsUpdate):
         "tts_model": body.tts_model,
         "asr_model": body.asr_model,
         "image_model": body.image_model,
+        "embedding_model": body.embedding_model,
         "temperature": body.temperature,
         "max_tokens": body.max_tokens,
         "top_p": body.top_p,
@@ -677,6 +679,7 @@ async def _update_session_settings(body: SettingsUpdate) -> dict:
     config.tts_model = body.tts_model
     config.asr_model = body.asr_model
     config.image_model = body.image_model
+    config.embedding_model = body.embedding_model
     config.audio = body.audio if body.audio else None
     config.temperature = body.temperature
     config.max_tokens = body.max_tokens
@@ -697,6 +700,7 @@ async def list_models(body: dict):
 
     body 格式: {"providers": {name: {protocol, api_key, base_url, proxy_url}, ...}, "proxy_url": "..."}
     api_key 中的 **** 脱敏值会从 settings.json 恢复。
+    返回普通模型和 embedding 模型,前端可根据 embedding 标记区分。
     """
     import asyncio
     from uniclaw.commands.model import fetch_openai_models, fetch_anthropic_models
@@ -720,41 +724,59 @@ async def list_models(body: dict):
         providers[name] = {**p, "api_key": api_key}
 
     all_models: list[dict] = []
+    embedding_models: list[dict] = []
     providers_info: dict[str, dict] = {}
 
-    async def _fetch(name: str, p: dict) -> list[dict]:
+    async def _fetch(name: str, p: dict) -> tuple[list[dict], list[dict]]:
         protocol = (p.get("protocol") or "openai").lower()
         base_url = p.get("base_url") or ""
         api_key = p.get("api_key") or ""
         proxy = p.get("proxy_url") or global_proxy or ""
         if not base_url or not api_key:
-            return []
+            return [], []
         try:
             if protocol == "anthropic":
                 ids = await fetch_anthropic_models(base_url, api_key, proxy)
+                return [{"id": mid, "provider": name} for mid in sorted(ids)], []
             else:
-                ids = await fetch_openai_models(base_url, api_key, proxy)
-            ids.sort()
-            return [{"id": mid, "provider": name} for mid in ids]
+                tasks = [
+                    fetch_openai_models(base_url, api_key, proxy),
+                    fetch_openai_models(base_url, api_key, proxy, "embeddings"),
+                ]
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                normal = results[0] if not isinstance(results[0], Exception) else []
+                embed = results[1] if not isinstance(results[1], Exception) else []
+                normal.sort()
+                embed.sort()
+                return (
+                    [{"id": mid, "provider": name} for mid in normal],
+                    [{"id": mid, "provider": name} for mid in embed],
+                )
         except Exception as e:
             get_logger("webui", Path.cwd()).warning(
                 f"获取 provider {name} 模型列表失败: {e}"
             )
-            return []
+            return [], []
 
     tasks = [_fetch(name, p) for name, p in providers.items()]
     if tasks:
         results = await asyncio.gather(*tasks, return_exceptions=True)
         for result in results:
-            if isinstance(result, list):
-                all_models.extend(result)
+            if isinstance(result, tuple):
+                normal, embed = result
+                all_models.extend(normal)
+                embedding_models.extend(embed)
 
     # 标记无法获取模型列表的 provider 为 allow_custom
     fetched_providers = {m["provider"] for m in all_models}
     for name in providers:
         providers_info[name] = {"allow_custom": name not in fetched_providers}
 
-    return {"models": all_models, "providers_info": providers_info}
+    return {
+        "models": all_models,
+        "embedding_models": embedding_models,
+        "providers_info": providers_info,
+    }
 
 
 @router.post("/asr")

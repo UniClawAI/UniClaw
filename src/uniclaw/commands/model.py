@@ -4,7 +4,10 @@ from uniclaw.console.ui import info, ok, warn, err
 
 
 def fetch_openai_models_sync(
-    base_url: str, api_key: str, proxy_url: str = ""
+    base_url: str,
+    api_key: str,
+    proxy_url: str = "",
+    output_modalities: str = "",
 ) -> list[str]:
     """同步版本: 通过 base_url 和 api_key 获取可用模型列表
 
@@ -12,6 +15,7 @@ def fetch_openai_models_sync(
         base_url: API 基础 URL
         api_key: API 密钥
         proxy_url: 代理 URL
+        output_modalities: 输出模态过滤(如 "embeddings"),仅 OpenRouter 支持
 
     Returns:
         list[str]: 模型 ID 列表
@@ -20,6 +24,8 @@ def fetch_openai_models_sync(
     if not base.endswith("/v1"):
         base += "/v1"
     url = f"{base}/models"
+    if output_modalities:
+        url += f"?output_modalities={output_modalities}"
     headers = {"Authorization": f"Bearer {api_key}"}
     client_kwargs = {"headers": headers, "timeout": 10}
     if proxy_url:
@@ -31,7 +37,10 @@ def fetch_openai_models_sync(
 
 
 async def fetch_openai_models(
-    base_url: str, api_key: str, proxy_url: str = ""
+    base_url: str,
+    api_key: str,
+    proxy_url: str = "",
+    output_modalities: str = "",
 ) -> list[str]:
     """异步版本: 通过 base_url 和 api_key 获取可用模型列表
 
@@ -39,6 +48,7 @@ async def fetch_openai_models(
         base_url: API 基础 URL
         api_key: API 密钥
         proxy_url: 代理 URL
+        output_modalities: 输出模态过滤(如 "embeddings"),仅 OpenRouter 支持
 
     Returns:
         list[str]: 模型 ID 列表
@@ -47,6 +57,8 @@ async def fetch_openai_models(
     if not base.endswith("/v1"):
         base += "/v1"
     url = f"{base}/models"
+    if output_modalities:
+        url += f"?output_modalities={output_modalities}"
     headers = {"Authorization": f"Bearer {api_key}"}
     client_kwargs = {}
     if proxy_url:
@@ -95,7 +107,9 @@ async def fetch_anthropic_models(
     return [m["id"] for m in data.get("data", [])]
 
 
-async def _fetch_provider_models(profile: ProviderProfile) -> list[str]:
+async def _fetch_provider_models(
+    profile: ProviderProfile, output_modalities: str = ""
+) -> list[str]:
     """获取指定 provider 的模型列表。"""
     if profile.protocol == "anthropic":
         return await fetch_anthropic_models(
@@ -103,7 +117,10 @@ async def _fetch_provider_models(profile: ProviderProfile) -> list[str]:
         )
     else:
         return await fetch_openai_models(
-            profile.base_url, profile.api_key, profile.proxy_url
+            profile.base_url,
+            profile.api_key,
+            profile.proxy_url,
+            output_modalities,
         )
 
 
@@ -142,7 +159,8 @@ async def _apply_model(model_ref: str, config: AppConfig) -> None:
         "  [5] 设为 TTS 模型\n"
         "  [6] 设为 ASR 模型\n"
         "  [7] 设为图片生成模型\n"
-        "选择 (1-7, 回车取消): ",
+        "  [8] 设为 Embedding 模型\n"
+        "选择 (1-8, 回车取消): ",
         config=config,
     )
     choice = choice.strip()
@@ -193,6 +211,11 @@ async def _apply_model(model_ref: str, config: AppConfig) -> None:
         save_config(config)
         await ok(f"✓ 已设为图片生成模型: {model_ref}", config)
         await _notify_webui()
+    elif choice == "8":
+        config.embedding_model = model_ref
+        save_config(config)
+        await ok(f"✓ 已设为 Embedding 模型: {model_ref}", config)
+        await _notify_webui()
 
 
 async def cmd_model(args: str, config: AppConfig) -> bool:
@@ -240,7 +263,14 @@ async def cmd_model(args: str, config: AppConfig) -> bool:
 
     async def _fetch(name: str, profile) -> list[str]:
         try:
-            models = await _fetch_provider_models(profile)
+            tasks = [_fetch_provider_models(profile)]
+            if profile.protocol != "anthropic":
+                tasks.append(_fetch_provider_models(profile, "embeddings"))
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            models = results[0] if not isinstance(results[0], Exception) else []
+            if len(results) > 1 and not isinstance(results[1], Exception):
+                model_set = set(models)
+                models.extend(m for m in results[1] if m not in model_set)
             models.sort()
             return [f"{name}/{m}" for m in models]
         except Exception as e:
@@ -285,6 +315,7 @@ async def cmd_model(args: str, config: AppConfig) -> bool:
     current_tts = config.tts_model
     current_asr = config.asr_model
     current_image = config.image_model
+    current_embedding = config.embedding_model
 
     title = (
         provider_name if provider_name and provider_name in search_providers else "所有"
@@ -300,6 +331,8 @@ async def cmd_model(args: str, config: AppConfig) -> bool:
         prompt_list.append(f"  当前 ASR: {current_asr}")
     if current_image:
         prompt_list.append(f"  当前图片生成: {current_image}")
+    if current_embedding:
+        prompt_list.append(f"  当前 Embedding: {current_embedding}")
     for i, m in enumerate(all_models, 1):
         tags = []
         if m == current_main:
@@ -316,6 +349,8 @@ async def cmd_model(args: str, config: AppConfig) -> bool:
             tags.append("ASR")
         if m == current_image:
             tags.append("图片生成")
+        if m == current_embedding:
+            tags.append("embedding")
         marker = f" ← {', '.join(tags)}" if tags else ""
         prompt_list.append(f"  [{i}] {m}{marker}")
 

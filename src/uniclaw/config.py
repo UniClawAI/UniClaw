@@ -72,6 +72,7 @@ class AppConfig:
     tts_model: str = ""  # TTS 模型名称
     asr_model: str = ""  # ASR 模型名称
     image_model: str = ""  # 图片生成模型名称
+    embedding_model: str = ""  # Embedding 模型名称
     audio: dict | None = None  # TTS 音频配置 (voice, format 等)
     providers: dict[str, ProviderProfile] = field(
         default_factory=dict
@@ -198,6 +199,7 @@ class AppConfig:
             tts_model=self.tts_model,
             asr_model=self.asr_model,
             image_model=self.image_model,
+            embedding_model=self.embedding_model,
             audio=self.audio,
             providers=dict(self.providers),
             temperature=self.temperature,
@@ -413,6 +415,7 @@ def _create_config_from_data(data: dict[str, Any]) -> AppConfig:
         tts_model=data.get("tts_model", ""),
         asr_model=data.get("asr_model", ""),
         image_model=data.get("image_model", ""),
+        embedding_model=data.get("embedding_model", ""),
         audio=data.get("audio"),
         providers=providers,
         temperature=data.get("temperature"),
@@ -572,6 +575,7 @@ def load_config(
         tts_model=data.get("tts_model", ""),
         asr_model=data.get("asr_model", ""),
         image_model=data.get("image_model", ""),
+        embedding_model=data.get("embedding_model", ""),
         audio=data.get("audio"),
         providers=providers,
         temperature=data.get("temperature"),
@@ -617,6 +621,7 @@ def save_config(config: AppConfig) -> None:
         "tts_model": config.tts_model,
         "asr_model": config.asr_model,
         "image_model": config.image_model,
+        "embedding_model": config.embedding_model,
         "audio": config.audio,
         "temperature": config.temperature,
         "max_tokens": config.max_tokens,

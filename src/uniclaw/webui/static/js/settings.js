@@ -41,13 +41,16 @@ const Settings = {
                 if (modelsResp.ok) {
                     const modelsData = await modelsResp.json();
                     this._models = modelsData.models || [];
+                    this._embeddingModels = modelsData.embedding_models || [];
                     this._providersInfo = modelsData.providers_info || {};
                 } else {
                     this._models = [];
+                    this._embeddingModels = [];
                     this._providersInfo = {};
                 }
             } catch {
                 this._models = [];
+                this._embeddingModels = [];
                 this._providersInfo = {};
             }
 
@@ -84,6 +87,7 @@ const Settings = {
         this._renderProviders();
 
         // 模型字段:初始化 combo 组件
+        this._embeddingModels = this._embeddingModels || [];
         this._initCombo('settings-model-name', d.model_name || []);
         this._initCombo('settings-mini-model', d.mini_model_name || []);
         this._initCombo('settings-multimodal-model', d.multimodal_model_name || []);
@@ -91,6 +95,7 @@ const Settings = {
         this._initCombo('settings-tts-model', d.tts_model ? [d.tts_model] : []);
         this._initCombo('settings-asr-model', d.asr_model ? [d.asr_model] : []);
         this._initCombo('settings-image-model', d.image_model ? [d.image_model] : []);
+        this._initCombo('settings-embedding-model', d.embedding_model ? [d.embedding_model] : []);
 
         // 音频配置
         const audioEl = document.getElementById('settings-audio');
@@ -186,12 +191,14 @@ const Settings = {
         const dropdown = container.querySelector('.combo-dropdown');
         const selected = this._getComboValues(container);
         const selectedSet = new Set(selected);
-        const isTtsAsr = ['settings-tts-model', 'settings-asr-model', 'settings-image-model'].includes(container.id);
+        const isTtsAsr = ['settings-tts-model', 'settings-asr-model', 'settings-image-model', 'settings-embedding-model'].includes(container.id);
         const filterLower = filter.toLowerCase();
 
-        // TTS/ASR/图片生成: 只显示 OpenAI 协议的模型
+        // TTS/ASR/图片生成/Embedding: 只显示 OpenAI 协议的模型
         let availableModels = this._models;
-        if (isTtsAsr) {
+        if (container.id === 'settings-embedding-model') {
+            availableModels = this._embeddingModels || [];
+        } else if (isTtsAsr) {
             availableModels = this._models.filter(m => {
                 const info = this._providersInfo[m.provider];
                 return info && !info.allow_custom;
@@ -277,9 +284,9 @@ const Settings = {
 
     /** 判断当前 combo 是否允许自定义输入 */
     _allowCustomInput(container) {
-        const isTtsAsr = ['settings-tts-model', 'settings-asr-model', 'settings-image-model'].includes(container.id);
+        const isTtsAsr = ['settings-tts-model', 'settings-asr-model', 'settings-image-model', 'settings-embedding-model'].includes(container.id);
         if (isTtsAsr) {
-            // TTS/ASR/图片生成:仅 OpenAI 协议,不允许自定义输入
+            // TTS/ASR/图片生成/Embedding:仅 OpenAI 协议,不允许自定义输入
             return false;
         }
         // 主模型/轻量/多模态:只要有任一 provider 是 allow_custom(Anthropic)就允许
@@ -395,9 +402,9 @@ const Settings = {
         if (!this._providers[providerName]) return false;
 
         const info = this._providersInfo[providerName];
-        const isTtsAsr = ['settings-tts-model', 'settings-asr-model', 'settings-image-model'].includes(container.id);
+        const isTtsAsr = ['settings-tts-model', 'settings-asr-model', 'settings-image-model', 'settings-embedding-model'].includes(container.id);
 
-        // TTS/ASR/图片生成:仅允许 OpenAI 协议(非 allow_custom)的 provider
+        // TTS/ASR/图片生成/Embedding:仅允许 OpenAI 协议(非 allow_custom)的 provider
         if (isTtsAsr && info && info.allow_custom) return false;
 
         // allow_custom 的 provider:自由输入
@@ -405,6 +412,9 @@ const Settings = {
 
         // 非 allow_custom 的 provider:必须在模型列表中
         const modelId = value.split('/').slice(1).join('/');
+        if (container.id === 'settings-embedding-model' && this._embeddingModels) {
+            return this._embeddingModels.some(m => m.provider === providerName && m.id === modelId);
+        }
         return this._models.some(m => m.provider === providerName && m.id === modelId);
     },
 
@@ -569,6 +579,7 @@ const Settings = {
         const ttsValues = this._getComboValues(document.getElementById('settings-tts-model'));
         const asrValues = this._getComboValues(document.getElementById('settings-asr-model'));
         const imageValues = this._getComboValues(document.getElementById('settings-image-model'));
+        const embeddingValues = this._getComboValues(document.getElementById('settings-embedding-model'));
 
         // 验证模型名的 provider 前缀
         const providerNames = new Set(Object.keys(providers));
@@ -580,6 +591,7 @@ const Settings = {
             ...ttsValues.map(m => ({ field: 'TTS 模型', value: m })),
             ...asrValues.map(m => ({ field: 'ASR 模型', value: m })),
             ...imageValues.map(m => ({ field: '图片生成模型', value: m })),
+            ...embeddingValues.map(m => ({ field: 'Embedding 模型', value: m })),
         ];
         for (const { field, value } of allModels) {
             if (!value.includes('/')) {
@@ -611,6 +623,7 @@ const Settings = {
             tts_model: ttsValues[0] || '',
             asr_model: asrValues[0] || '',
             image_model: imageValues[0] || '',
+            embedding_model: embeddingValues[0] || '',
             audio: audio,
             temperature: temperature !== '' ? parseFloat(temperature) : null,
             max_tokens: maxTokens !== '' ? parseInt(maxTokens) : null,
@@ -743,6 +756,7 @@ const Settings = {
             if (resp.ok) {
                 const data = await resp.json();
                 this._models = data.models || [];
+                this._embeddingModels = data.embedding_models || [];
                 this._providersInfo = data.providers_info || {};
             }
         } catch {
@@ -758,6 +772,7 @@ const Settings = {
             'settings-tts-model',
             'settings-asr-model',
             'settings-image-model',
+            'settings-embedding-model',
         ];
         for (const id of comboIds) {
             const container = document.getElementById(id);
