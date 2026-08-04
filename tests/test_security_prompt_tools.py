@@ -82,7 +82,7 @@ async def test_llm_safe_check_uses_injected_system_prompt(monkeypatch, tmp_path)
         captured["system_prompt"] = system_prompt
         return SimpleNamespace(content='{"is_safe": true, "explanation": "OK"}')
 
-    monkeypatch.setattr("uniclaw.provider.achat", fake_achat)
+    monkeypatch.setattr("uniclaw.provider.fallback.achat", fake_achat)
 
     _save_llm_safe_prompt("允许 git push 操作", root_dir=tmp_path)
 
@@ -105,7 +105,7 @@ async def test_llm_safe_check_uses_config_prompt(monkeypatch, tmp_path):
         captured["system_prompt"] = system_prompt
         return SimpleNamespace(content='{"is_safe": true, "explanation": "OK"}')
 
-    monkeypatch.setattr("uniclaw.provider.achat", fake_achat)
+    monkeypatch.setattr("uniclaw.provider.fallback.achat", fake_achat)
 
     _save_llm_safe_prompt("允许 docker logs 操作", root_dir=tmp_path)
 

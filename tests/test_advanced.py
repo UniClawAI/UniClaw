@@ -373,10 +373,6 @@ class TestOrganization:
         """条件跳过"""
         pass
 
-    @pytest.mark.xfail(reason="已知问题")
-    def test_known_issue(self):
-        """预期失败"""
-        assert False
 
 
 # ═══════════════════════════════════════════════════════════════

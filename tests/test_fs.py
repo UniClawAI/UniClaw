@@ -135,6 +135,31 @@ def test_edit_no_match(tmp_path):
     assert "未找到" in result or "错误" in result
 
 
+def test_edit_multiple_matches_no_replace_all(tmp_path):
+    f = tmp_path / "edit.txt"
+    f.write_text("aaa bbb aaa\n", encoding="utf-8")
+    result = Edit.func(
+        file_path=str(f), old_string="aaa", new_string="ccc", replace_all=False
+    )
+    assert "出现了 2 次" in result
+
+
+def test_edit_multiple_matches_replace_all(tmp_path):
+    f = tmp_path / "edit.txt"
+    f.write_text("aaa bbb aaa\n", encoding="utf-8")
+    result = Edit.func(
+        file_path=str(f), old_string="aaa", new_string="ccc", replace_all=True
+    )
+    assert f.read_text(encoding="utf-8") == "ccc bbb ccc\n"
+
+
+def test_edit_file_not_found(tmp_path):
+    result = Edit.func(
+        file_path=str(tmp_path / "nope.txt"), old_string="a", new_string="b"
+    )
+    assert "未找到" in result
+
+
 # ── Glob tool ─────────────────────────────────────────────
 
 
@@ -159,3 +184,17 @@ def test_glob_recursive(tmp_path):
 def test_glob_no_match(tmp_path):
     result = Glob.func(pattern="*.xyz", path=str(tmp_path))
     assert "未找到" in result or "No files" in result or result.strip() == ""
+
+
+def test_glob_sorted(tmp_path):
+    (tmp_path / "c.txt").write_text("c", encoding="utf-8")
+    (tmp_path / "a.txt").write_text("a", encoding="utf-8")
+    (tmp_path / "b.txt").write_text("b", encoding="utf-8")
+    result = Glob.func(pattern="*.txt", path=str(tmp_path))
+    lines = result.strip().split("\n")
+    assert lines == sorted(lines)
+
+
+def test_glob_empty_dir(tmp_path):
+    result = Glob.func(pattern="*", path=str(tmp_path))
+    assert "未找到" in result
