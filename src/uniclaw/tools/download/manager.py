@@ -70,6 +70,16 @@ class DownloadManager:
         dl.cancel()
         return f"任务 {task_id} 已取消。"
 
+    def remove_task(self, task_id: str) -> str:
+        """手动删除已完成/失败/取消的任务,释放内存。"""
+        dl = self._tasks.get(task_id)
+        if not dl:
+            return f"未找到任务: {task_id}"
+        if dl.progress.status == DownloadStatus.DOWNLOADING:
+            return f"任务 {task_id} 正在下载中,请先取消后再删除。"
+        del self._tasks[task_id]
+        return f"任务 {task_id} 已删除。"
+
     async def _run_task(
         self, task_id: str, downloader: HttpDownloader, config: AppConfig
     ):
@@ -84,13 +94,15 @@ class DownloadManager:
             # 通知模型
             from uniclaw.utils.constants import SYSTEM_PREFIX
             from uniclaw.utils.wakeup import wake_agent
+            from uniclaw.tools.download.tools import http_download, http_download_status, http_download_remove
 
             if progress.status == DownloadStatus.COMPLETED:
                 message = (
                     f"{SYSTEM_PREFIX}(download_complete)\n"
                     f"下载完成: {progress.save_path}\n"
                     f"大小: {file_format(progress.total_size)}, "
-                    f"耗时: {progress.elapsed:.1f}s"
+                    f"耗时: {progress.elapsed:.1f}s\n"
+                    f"可使用 {http_download_status.__name__}(task_id='{task_id}') 查看详情"
                 )
             elif progress.status == DownloadStatus.CANCELLED:
                 message = (
@@ -98,13 +110,14 @@ class DownloadManager:
                     f"下载已取消: {progress.save_path}\n"
                     f"进度: {file_format(progress.downloaded_size)}/{file_format(progress.total_size)} "
                     f"({progress.progress_percent:.1f}%)\n"
-                    f"可使用 http_download 重新下载以继续"
+                    f"可使用 {http_download.__name__}(url='{progress.url}') 重新下载以继续,或使用 {http_download_remove.__name__}(task_id='{task_id}') 删除任务"
                 )
             else:
                 message = (
                     f"{SYSTEM_PREFIX}(download_failed)\n"
                     f"下载失败: {progress.save_path}\n"
-                    f"原因: {progress.error}"
+                    f"原因: {progress.error}\n"
+                    f"可使用 {http_download_remove.__name__}(task_id='{task_id}') 删除任务"
                 )
 
             await wake_agent(message, config)
@@ -121,4 +134,4 @@ class DownloadManager:
             )
             await wake_agent(message, config)
         finally:
-            self._tasks.pop(task_id, None)
+            pass

@@ -236,9 +236,26 @@ async def http_download_status(
     return manager.get_status(task_id)
 
 
+@tool
+def http_download_remove(task_id: str) -> str:
+    """删除已完成的 HTTP 下载任务,释放内存。
+
+    用于手动清理下载任务列表中已完成、失败或取消的任务。
+    正在下载中的任务无法删除,需先使用 http_download_status(action="cancel") 取消。
+
+    Args:
+        task_id: 要删除的下载任务 ID。
+
+    Returns:
+        str: 操作结果。
+    """
+    manager = get_download_manager()
+    return manager.remove_task(task_id)
+
+
 def get_tools() -> list:
     """获取运行时工具列表。"""
-    return [http_download, http_download_status]
+    return [http_download, http_download_status, http_download_remove]
 
 
 def get_all_tools() -> list:

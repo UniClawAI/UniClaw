@@ -201,7 +201,7 @@ def _build_extended_keywords() -> dict[str, list[str]]:
         kg_clear,
     )
     from .advisor import advisor_list, ask_advisor, investigate
-    from .download.tools import http_download, http_download_status
+    from .download.tools import http_download, http_download_status, http_download_remove
     from .rag.tools import (
         rag_ingest,
         rag_search,
@@ -1061,6 +1061,14 @@ def _build_extended_keywords() -> dict[str, list[str]]:
             "恢复下载",
             "取消下载",
         ],
+        http_download_remove.name: [
+            "删除下载",
+            "清理下载",
+            "remove download",
+            "delete download",
+            "移除下载任务",
+            "清除下载记录",
+        ],
         # RAG 工具
         rag_ingest.name: [
             "RAG",
@@ -1259,7 +1267,7 @@ def _build_tool_categories() -> dict[str, str]:
         kg_clear,
     )
     from .advisor import advisor_list, ask_advisor, investigate
-    from .download.tools import http_download, http_download_status
+    from .download.tools import http_download, http_download_status, http_download_remove
     from .rag.tools import (
         rag_ingest,
         rag_search,
@@ -1412,6 +1420,7 @@ def _build_tool_categories() -> dict[str, str]:
         investigate.name: "顾问",
         http_download.name: "下载",
         http_download_status.name: "下载",
+        http_download_remove.name: "下载",
         # RAG 工具
         rag_ingest.name: "RAG",
         rag_search.name: "RAG",
