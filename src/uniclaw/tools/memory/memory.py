@@ -4,16 +4,34 @@
 
 from __future__ import annotations
 from datetime import datetime
+from enum import StrEnum
 import logging
 import os
 import re
-from typing import Optional, Literal
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 from uniclaw.context import Scope, get_app_dir, APP_NAME
 from pathlib import Path
 from uniclaw.utils import frontmatter
 from uniclaw.utils.truncation import truncate_text_by_lines
+
+
+class MemoryType(StrEnum):
+    """记忆类型。"""
+
+    user = "user"
+    feedback = "feedback"
+    project = "project"
+    reference = "reference"
+
+
+class MemorySource(StrEnum):
+    """记忆来源。"""
+
+    user = "user"
+    model = "model"
+    tool = "tool"
 
 
 class Memory:
@@ -25,8 +43,8 @@ class Memory:
         description: str,
         content: str,
         scope: Scope | Path,
-        type: Literal["user", "feedback", "project", "reference"] = "user",
-        source: Literal["user", "model", "tool"] = "user",
+        type: MemoryType | str = MemoryType.user,
+        source: MemorySource | str = MemorySource.user,
         confidence: float = 1,
         created: Optional[str] = None,
         last_used_at: Optional[str] = None,
@@ -262,8 +280,8 @@ class Memory:
         metadata = {
             "name": self.name,
             "description": self.description,
-            "type": self.type,
-            "source": self.source,
+            "type": str(self.type),
+            "source": str(self.source),
             "scope": self.scope_name,
             "confidence": self.confidence,
             "created": self.created,

@@ -1,30 +1,12 @@
 import math
 import time
-from enum import StrEnum
 from pathlib import Path
 
 from uniclaw.tools.base import tool
 from uniclaw.config import AppConfig
 from uniclaw.console.ui import warn
 from uniclaw.tools.memory.context import ai_select_memories, memory_freshness_text
-from .memory import Memory, Scope
-
-
-class MemoryType(StrEnum):
-    """记忆类型。"""
-
-    user = "user"
-    feedback = "feedback"
-    project = "project"
-    reference = "reference"
-
-
-class MemorySource(StrEnum):
-    """记忆来源。"""
-
-    user = "user"
-    model = "model"
-    tool = "tool"
+from .memory import Memory, MemorySource, MemoryType, Scope
 
 
 @tool
