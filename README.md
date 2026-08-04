@@ -19,6 +19,7 @@
 - 💬 **微信集成**: 支持通过 iLink Bot 协议接入微信,实现移动端交互
 - 🧠 **记忆系统**: 持久化记忆管理,支持用户偏好、项目信息和反馈记录
 - 🗺️ **知识图谱**: 基于 SQLite 的知识图谱系统,支持实体/关系管理、全文搜索、路径发现、自动提取和可视化导出,用户级和项目级双层管理
+- 📚 **RAG 检索增强**: 文档导入、智能拆分、向量嵌入和语义检索,支持多集合管理和用户级/项目级双层作用域
 - 👥 **多智能体协作**: 全异步架构支持创建和管理多个专业智能体,实现任务分工协作和智能体间通信
 - 🖥️ **计算机控制**: 屏幕截图、鼠标/键盘自动化操作(全平台异步实现),支持全局热键 (Ctrl+U) 切换,`/cu` 命令一键开关
 - 🔊 **语音合成**: TTS 文本转语音,支持多种风格/情绪/方言控制,`/voice` 命令切换语音模式
@@ -43,7 +44,9 @@
 - 🌐 **平台搜索**: 支持 GitHub/arXiv/Stack Overflow/Hacker News/B站等多平台并发搜索
 - 🔎 **智能搜索**: webSearch 自动切换 Exa 语义搜索 → Bing → DuckDuckGo,内置 Exa MCP 服务器
 - 🌍 **浏览器自动化**: 基于 Playwright 的浏览器控制,支持导航/点击/输入/截图/JS 执行等操作
+- ⬇️ **HTTP 下载**: 多协程并发下载、断点续传、代理支持、自动重试和文件校验,支持同步/异步两种模式
 - 🎯 **技能系统**: 可扩展的技能机制,支持自定义任务模板和工作流
+- 🎨 **主题定制**: 内置 uniclaw-theme 技能,支持自定义 WebUI 主题颜色、字体和样式
 - 🔌 **MCP 集成**: 支持 Model Context Protocol,异步命令管理,可连接多种外部工具服务
 - ⏱️ **异步等待**: sleep_timer 工具支持延时唤醒,不阻塞主线程
 - 📸 **Git 检查点**: 自动创建 git stash 检查点,支持一键回滚 AI 的文件编辑,智能处理 .gitignore,不污染 git 历史
@@ -66,6 +69,8 @@
 - [微信机器人集成](#-微信机器人集成)
 - [工具系统](#-工具系统)
 - [知识图谱系统](#-知识图谱系统)
+- [RAG 检索增强系统](#-rag-检索增强系统)
+- [MCP 集成](#-mcp-集成)
 - [架构设计](#-架构设计)
 - [常见问题](#-常见问题)
 
@@ -142,7 +147,7 @@ uv run uniclaw
 # 使用 uv 运行(WebUI 模式)
 uv run uniclaw --mode webui
 uv run uniclaw --mode webui --host 0.0.0.0  # 局域网可访问
-uv run uniclaw --mode webui --host 0.0.0.0 --ssl  # 启用 HTTPS
+uv run uniclaw --mode webui --host 0.0.0.0 --no-ssl  # 禁用 HTTPS
 
 # 或者直接运行入口文件
 uv run python src/uniclaw/main.py
@@ -200,8 +205,11 @@ uv run uniclaw --mode webui
 # 局域网可访问
 uv run uniclaw --mode webui --host 0.0.0.0
 
-# 启用 HTTPS(自动生成自签名证书)
-uv run uniclaw --mode webui --host 0.0.0.0 --ssl --domain uniclaw.example.com
+# 禁用 HTTPS(使用 HTTP)
+uv run uniclaw --mode webui --host 0.0.0.0 --no-ssl
+
+# 指定域名(用于 HTTPS 证书)
+uv run uniclaw --mode webui --host 0.0.0.0 --domain uniclaw.example.com
 ```
 
 详细使用方法请参考 [WebUI 模式](#-webui-模式) 章节。
@@ -370,6 +378,11 @@ UniClaw 使用工作空间概念管理文件访问范围：
 - **manual**: 所有工具调用都需要用户手动确认
 - **accept-all**: 自动批准所有操作(谨慎使用)
 - **plan**: 计划模式(通过工具调用进入)
+
+**配置方式：**
+- WebUI 设置页面直接切换权限模式
+- 配置文件 `settings.json` 中设置 `permission_mode` 字段
+- 命令 `/permissions mode <模式>` 临时切换
 
 ### 持久化权限规则 🔒
 
@@ -703,17 +716,17 @@ UniClaw 提供基于 WebSocket 的 Web 用户界面,支持在浏览器中与 AI 
 ### 启动 WebUI
 
 ```bash
-# 仅本机访问(默认)
+# 仅本机访问(默认,HTTPS 已启用)
 uv run uniclaw --mode webui
 
 # 局域网可访问
 uv run uniclaw --mode webui --host 0.0.0.0
 
-# 启用 HTTPS(自动生成自签名证书)
-uv run uniclaw --mode webui --host 0.0.0.0 --ssl
+# 禁用 HTTPS(使用 HTTP)
+uv run uniclaw --mode webui --host 0.0.0.0 --no-ssl
 
 # 指定域名(用于 HTTPS 证书)
-uv run uniclaw --mode webui --host 0.0.0.0 --ssl --domain uniclaw.example.com
+uv run uniclaw --mode webui --host 0.0.0.0 --domain uniclaw.example.com
 
 # 或使用安装后的命令
 uniclaw --mode webui
@@ -727,7 +740,7 @@ uniclaw --mode webui
 - ✅ **子代理创建 API** — 通过 REST API 创建和管理子代理,支持多智能体协作
 - ✅ **微信 Bot 管理** — 在 WebUI 中直接管理微信 Bot 账号,支持异步登录
 - ✅ **可信 IP 免登录** — 配置 `trusted_ips` 后指定 IP 跳过登录认证,适合家庭/办公网络
-- ✅ **HTTPS 支持** — `--ssl` 启用 HTTPS,自动生成自签名证书;`--domain` 指定域名
+- ✅ **HTTPS 支持** — 默认启用 HTTPS(自动生成自签名证书),`--no-ssl` 可禁用;`--domain` 指定域名
 - ✅ **IPv6 支持** — 支持 IPv6 监听地址(如 `::`)和访问
 - ✅ **局域网共享** — 通过 `--host 0.0.0.0` 让局域网内其他设备访问
 - ✅ **自定义系统提示词** — 每个会话可设置独立的系统提示词,AI 可优化提示词内容
@@ -749,6 +762,9 @@ uniclaw --mode webui
 - ✅ **登录自动跳转** — 已登录用户打开页面时自动跳转到聊天界面
 - ✅ **跨会话通知** — 非活跃会话的消息触发注意力指示器和 toast 通知
 - ✅ **移动端响应式设计** — 完美适配手机和平板设备,支持触摸手势操作
+- ✅ **侧边栏树形分类** — 会话列表按项目分组显示,支持折叠/展开,便于管理多项目会话
+- ✅ **登录 IP 限流** — 登录接口支持 IP 限流防护,防止暴力破解攻击
+- ✅ **主题定制** — 内置 uniclaw-theme 技能,支持自定义 WebUI 主题颜色和样式
 - ✅ **精美 UI 样式** — 基础 CSS 样式和动画效果,提升视觉体验
 
 ---
@@ -769,15 +785,13 @@ uv run uniclaw --mode webui
 
 在 WebUI 侧边栏中点击"添加微信账号"按钮，扫描二维码登录即可。
 
-**常用命令：**
+**管理方式：**
 
-- `add <名称>` - 添加并登录一个微信账号
-- `remove <名称>` - 移除一个微信账号
-- `list` - 查看所有账号状态
-- `stop` - 停止消息监听
-- `start` - 重新启动消息监听
-- `help` - 显示帮助
-- `exit` - 退出程序
+微信机器人已完全集成到 WebUI 中，所有操作通过 WebUI 侧边栏完成：
+- **添加账号**: 点击侧边栏微信区域的"添加"按钮
+- **移除账号**: 点击账号旁的"移除"按钮
+- **查看状态**: 侧边栏实时显示账号在线状态
+- **消息监听**: 已登录账号自动启动消息监听
 
 ### 微信中的使用方法
 
@@ -917,6 +931,47 @@ UniClaw 提供了丰富的内置工具,AI 助手可以自动调用这些工具�
   - GitHub 支持 repositories/code/issues/users 类型和 stars/forks/updated 排序
   - 支持 `GITHUB_TOKEN` 环境变量提高 GitHub API 速率限制
 
+#### 下载工具 ⬇️
+
+HTTP/HTTPS 文件下载引擎,支持多协程并发、断点续传、代理、重试和文件校验：
+
+- **http_download** - 下载文件(支持同步和异步两种模式)
+  - **多协程并发**: 默认 10 个协程同时下载,大幅提速大文件下载
+  - **断点续传**: 自动记录下载进度,中断后可继续下载,无需重新开始
+  - **代理支持**: 支持 HTTP/HTTPS 代理
+  - **自动重试**: 失败自动重试(默认 3 次),支持指数退避
+  - **文件校验**: 支持 MD5/SHA256 校验,确保文件完整性
+  - **Cookie 支持**: 支持需要登录的下载场景
+  - **同步模式**: 流式显示进度,下载完成返回结果
+  - **异步模式**: 立即返回任务 ID,后台执行,完成/失败时自动唤醒 AI
+  - **智能取消**: 同步下载时用户取消自动转为后台继续下载
+- **http_download_status** - 查看或管理异步下载任务
+  - 查看任务进度(下载速度、已下载大小、剩余时间)
+  - 暂停/恢复/取消下载任务
+  - 列出所有下载任务
+- **http_download_remove** - 删除指定的下载任务记录(清理已完成或已取消的任务)
+
+**使用示例**:
+```
+# AI 会自动调用工具下载文件
+http_download(url="https://example.com/file.zip")
+
+# 指定保存路径
+http_download(url="https://example.com/file.zip", save_path="downloads/file.zip")
+
+# 异步下载(后台执行)
+http_download(url="https://example.com/large.iso", async_mode=True)
+# 返回任务 ID,可稍后查询进度
+http_download_status(task_id="xxx")
+
+# 带校验的下载
+http_download(
+    url="https://example.com/file.zip",
+    checksum_algorithm="sha256",
+    checksum_value="abc123..."
+)
+```
+
 #### 浏览器自动化工具 🌍
 
 基于 Playwright 的浏览器控制,支持多标签页管理和持久化浏览器上下文：
@@ -1006,6 +1061,7 @@ UniClaw 提供了丰富的内置工具,AI 助手可以自动调用这些工具�
 - `pr-create` (`/pr-create`, `/pr`) — AI 生成 PR 标题和描述,调用 gh CLI 创建 GitHub PR
 - `memory-organize` (`/memory-organize`, `/organize-memory`, `/memory-clean`) — 记忆管家:整理记忆系统,从会话中提取有价值内容
 - `skill-forge` (`/skill-forge`, `/forge-skill`, `技能锻造`) — 技能锻造:创建新 Skill 和优化已有的自定义 Skill(只操作自建 Skill)
+- `uniclaw-theme` (`/uniclaw-theme`, `/theme`) — 主题定制:自定义 WebUI 主题颜色、字体和样式
 
 **技能文件搜索路径**:
 技能系统支持从多个常见目录中自动加载技能文件：
@@ -1160,6 +1216,27 @@ UniClaw 提供了丰富的内置工具,AI 助手可以自动调用这些工具�
 
 > 💡 **提示**: 知识图谱支持自动提取功能,AI 可以分析文本或文件,自动识别实体和关系并添加到图谱中。使用 `/kg` 命令管理图谱。
 
+#### RAG 检索增强工具 📚
+
+基于向量数据库的文档检索增强生成(RAG)系统,支持文档导入、智能拆分和语义检索：
+
+- **rag_ingest** - 读取文件或目录,递归拆分为文档块,生成 embedding 后存入向量数据库
+  - 支持格式: txt/md/py/json/yaml/csv/html/pdf 等
+  - 可配置文档块大小(`chunk_size`)和重叠度(`chunk_overlap`)
+  - 支持用户级/项目级双层作用域
+- **rag_search** - 在指定集合中语义检索,返回最相关的文档片段
+  - 支持 `score_threshold` 过滤低相关度结果
+  - 支持 `top_k` 控制返回数量
+- **rag_list_collections** - 列出所有 RAG 集合及其统计信息(文档数量、描述等)
+- **rag_delete_collection** - 删除指定集合及其所有文档
+- **rag_set_desc** - 设置或更新集合描述,便于后续检索时识别
+
+**作用域：**
+- `user` - 用户级(跨项目共享)
+- `project` - 项目级(默认)
+
+> 💡 **提示**: RAG 系统适合对大量文档进行语义检索。先用 `rag_ingest` 导入文档,再用 `rag_search` 检索相关内容。每个集合可独立管理,适合按主题或项目组织文档。
+
 #### 顾问模型工具 🎓
 
 - **advisor_list** - 列出已配置的顾问模型列表
@@ -1298,6 +1375,9 @@ UniClaw/
     │   ├── shell.py        # Shell(Bash/Grep/Everything)
     │   ├── web.py          # Web(webFetch/webSearch)
     │   ├── search.py       # 平台搜索(GitHub/arXiv/Stack Overflow 等)
+    │   ├── download/       # HTTP 下载(多协程并发 + 断点续传) ⬇️
+    │   │   ├── tools.py    # 工具定义(http_download/status/remove)
+    │   │   └── manager.py  # 异步下载任务管理器
     │   ├── media.py        # 多媒体(ReadMedia 多模态 + GenerateImage 文生图)
     │   ├── sandbox.py      # 代码沙箱(Docker 隔离执行)
     │   ├── plan.py         # 计划模式(enter/exit)
@@ -1325,10 +1405,17 @@ UniClaw/
     │   ├── advisor.py      # 顾问模型工具(ask_advisor 多模型并发咨询) 🎓
     │   ├── wechat.py       # 微信工具(联系人/发送文本/图片/文件)
     │   ├── help.py         # AI 自助帮助工具 📖
-    │   └── send_file.py    # 文件发送工具 📤
+    │   ├── send_file.py    # 文件发送工具 📤
+    │   ├── stream.py       # 工具流式输出(实时推送执行进度到前端)
+    │   └── rag/            # RAG 检索增强(文档导入/语义检索/集合管理) 📚
+    │       ├── tools.py    # 工具定义(rag_ingest/search/list/delete/set_desc)
+    │       ├── rag.py      # RAG 管理器(向量数据库 + embedding)
+    │       ├── loader.py   # 文档加载器(多格式支持)
+    │       └── splitter.py # 文档拆分器(智能分块)
     │
     ├── utils/              # 实用工具
     │   ├── checkpoint.py   # 文件快照检查点系统
+    │   ├── http_download.py # HTTP 下载引擎(多协程并发 + 断点续传)
     │   ├── usage.py        # Token 用量统计 + OpenRouter 定价
     │   ├── tokenize.py     # 分词(BM25 索引用)
     │   ├── truncation.py   # 基于 token 的文本截取
@@ -1355,9 +1442,9 @@ UniClaw/
   - Web: `webFetch`, `webSearch`, `platform_search`
   - 记忆: `memory_save/delete/list/search`
   - 计划: `enter/exit_plan_mode`
-  - 技能: `skill_suggest/read/run_command`
+  - 技能: `skill_suggest/read`
   - 元工具: `search_tools`（按需发现和加载扩展工具）
-- **扩展工具** (135 个): 初始不加载,通过 `search_tools` 元工具按需发现
+- **扩展工具** (141 个): 初始不加载,通过 `search_tools` 元工具按需发现
   - 基于 BM25 算法搜索,支持中英文关键词 + 语义同义词
   - **LRU + 能量机制**: 每个扩展工具初始 30 点能量,每轮对话 -1,被调用或搜索命中恢复满能量,归零自动卸载;最多同时加载 25 个扩展工具,超出时按 LRU 顺序淘汰能量最低者
   - 搜索结果自动注入到当前任务的可用工具集
@@ -1538,6 +1625,63 @@ kg_path(source="Guido", target="人工智能")
 - 关系类型过滤
 - 实体搜索
 - 详情查看
+
+---
+
+## 📚 RAG 检索增强系统
+
+UniClaw 内置 RAG (Retrieval-Augmented Generation) 系统,支持文档导入、智能拆分、向量嵌入和语义检索。
+
+### 核心特性
+
+- **多格式支持**: txt/md/py/json/yaml/csv/html/pdf 等常见文档格式
+- **智能拆分**: 可配置文档块大小和重叠度,保证语义连贯性
+- **向量嵌入**: 自动生成文档 embedding,支持语义相似度检索
+- **多集合管理**: 按主题或项目组织文档,每个集合独立管理
+- **双层作用域**: 用户级(跨项目共享)和项目级独立管理
+
+### 使用示例
+
+#### 导入文档
+
+```
+# 导入单个文件
+rag_ingest(path="docs/api.md", collection="api-docs")
+
+# 导入整个目录
+rag_ingest(path="src/", collection="source-code", chunk_size=500)
+
+# 用户级导入(跨项目共享)
+rag_ingest(path="~/notes/", collection="my-notes", scope="user")
+```
+
+#### 语义检索
+
+```
+# 搜索相关文档
+rag_search(query="如何配置 MCP 服务器", collection="api-docs")
+
+# 限制返回数量和相关度阈值
+rag_search(query="认证流程", collection="api-docs", top_k=3, score_threshold=0.7)
+```
+
+#### 管理集合
+
+```
+# 列出所有集合
+rag_list_collections()
+
+# 设置集合描述
+rag_set_desc(collection="api-docs", desc="API 接口文档")
+
+# 删除集合
+rag_delete_collection(collection="old-docs")
+```
+
+### 存储位置
+
+- **用户级**: `~/.UniClaw/rag.db` (跨项目共享)
+- **项目级**: `.UniClaw/rag.db` (当前项目)
 
 ---
 
@@ -1911,7 +2055,7 @@ A:
 
 局域网共享：`uv run uniclaw --mode webui --host 0.0.0.0`,其他设备可通过你的 IP 地址访问。
 
-**HTTPS 模式**：`uv run uniclaw --mode webui --host 0.0.0.0 --ssl`,自动生成自签名证书。也可指定域名：`--ssl --domain uniclaw.example.com`。
+**HTTPS 模式**：WebUI 默认启用 HTTPS(自动生成自签名证书)。如需使用 HTTP：`--no-ssl`。指定域名：`--domain uniclaw.example.com`。
 
 **可信 IP 免登录**：在 `settings.json` 中配置 `trusted_ips` 后,指定 IP 的客户端无需登录即可访问 WebUI。
 
