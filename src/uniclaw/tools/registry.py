@@ -207,6 +207,7 @@ def _build_extended_keywords() -> dict[str, list[str]]:
         rag_search,
         rag_list_collections,
         rag_delete_collection,
+        rag_set_desc,
     )
 
     # tool.name → 关键词列表(中英文+语义同义词)
@@ -1099,6 +1100,14 @@ def _build_extended_keywords() -> dict[str, list[str]]:
             "清除集合",
             "移除集合",
         ],
+        rag_set_desc.name: [
+            "RAG",
+            "设置描述",
+            "set description",
+            "集合描述",
+            "collection description",
+            "修改描述",
+        ],
     }
 
 
@@ -1256,6 +1265,7 @@ def _build_tool_categories() -> dict[str, str]:
         rag_search,
         rag_list_collections,
         rag_delete_collection,
+        rag_set_desc,
     )
 
     # tool.name → 类别
@@ -1407,6 +1417,7 @@ def _build_tool_categories() -> dict[str, str]:
         rag_search.name: "RAG",
         rag_list_collections.name: "RAG",
         rag_delete_collection.name: "RAG",
+        rag_set_desc.name: "RAG",
     }
 
 
