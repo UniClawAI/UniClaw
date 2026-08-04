@@ -13,6 +13,25 @@ from .loader import load_directory, load_file
 from .rag import RAGManager
 from .splitter import split_documents
 
+
+def _validate_chunk_params(chunk_size: int, chunk_overlap: int) -> None:
+    """验证文档拆分参数。
+
+    Args:
+        chunk_size: 每个文档块的最大 token 数。
+        chunk_overlap: 相邻文档块的重叠 token 数。
+
+    Raises:
+        ValueError: 参数无效。
+    """
+    if chunk_size <= 0:
+        raise ValueError("chunk_size 必须为正整数")
+    if chunk_overlap < 0:
+        raise ValueError("chunk_overlap 不能为负数")
+    if chunk_overlap >= chunk_size:
+        raise ValueError("chunk_overlap 必须小于 chunk_size")
+
+
 _manager_cache: dict[tuple, RAGManager] = {}
 
 
@@ -49,11 +68,15 @@ async def rag_ingest(
     if not config:
         return f"{TOOL_ERROR}: 无法获取配置"
 
-    target = Path(path)
-    if not target.exists():
-        return f"{TOOL_ERROR}: 路径不存在: {path}"
-
     try:
+        # 验证参数
+        _validate_chunk_params(chunk_size, chunk_overlap)
+
+        # 验证路径
+        target = Path(path)
+        if not target.exists():
+            return f"{TOOL_ERROR}: 路径不存在: {path}"
+
         # 加载文档
         if target.is_file():
             docs = load_file(target)
@@ -161,7 +184,11 @@ async def rag_search(
                 return x["rerank_score"]
             if "rrf_score" in x:
                 return x["rrf_score"]
-            return 1 - x.get("distance", 0)
+            if "cosine_similarity" in x:
+                return x["cosine_similarity"]
+            if "distance" in x:
+                return 1 - x["distance"]
+            return -1  # 没有分数的排在最后
 
         all_results.sort(key=_sort_key, reverse=True)
         all_results = [r for r in all_results if _sort_key(r) >= min_score][:top_k]
@@ -310,7 +337,13 @@ def rag_delete_collection(
 
 def get_tools() -> list:
     """获取 RAG 工具列表。"""
-    return [rag_ingest, rag_search, rag_list_collections, rag_set_desc, rag_delete_collection]
+    return [
+        rag_ingest,
+        rag_search,
+        rag_list_collections,
+        rag_set_desc,
+        rag_delete_collection,
+    ]
 
 
 def get_all_tools() -> list:
