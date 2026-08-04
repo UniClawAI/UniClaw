@@ -236,6 +236,13 @@ async def build_system_prompt(config: AppConfig):
     if kg_ctx:
         system_prompt += f"\n\n{kg_ctx}\n"
 
+    # RAG 文档检索 — 完全静态内容(有集合数据时才注入)
+    from uniclaw.tools.rag.context import get_rag_system_prompt
+
+    rag_ctx = get_rag_system_prompt(config.root_dir)
+    if rag_ctx:
+        system_prompt += f"\n\n{rag_ctx}\n"
+
     # 子代理提示 — 完全静态内容
     from uniclaw.tools.multi_agent.tools import get_sub_agent_system_prompt
 

@@ -202,6 +202,12 @@ def _build_extended_keywords() -> dict[str, list[str]]:
     )
     from .advisor import advisor_list, ask_advisor, investigate
     from .download.tools import http_download, http_download_status
+    from .rag.tools import (
+        rag_ingest,
+        rag_search,
+        rag_list_collections,
+        rag_delete_collection,
+    )
 
     # tool.name → 关键词列表(中英文+语义同义词)
     return {
@@ -1054,6 +1060,45 @@ def _build_extended_keywords() -> dict[str, list[str]]:
             "恢复下载",
             "取消下载",
         ],
+        # RAG 工具
+        rag_ingest.name: [
+            "RAG",
+            "导入文档",
+            "向量数据库",
+            "文档导入",
+            "ingest",
+            "embedding",
+            "文档入库",
+            "知识库导入",
+            "add documents",
+            "index documents",
+        ],
+        rag_search.name: [
+            "RAG",
+            "语义检索",
+            "向量检索",
+            "文档检索",
+            "semantic search",
+            "vector search",
+            "搜索文档",
+            "search documents",
+            "知识库检索",
+            "相似搜索",
+        ],
+        rag_list_collections.name: [
+            "RAG",
+            "集合列表",
+            "list collections",
+            "向量集合",
+            "RAG列表",
+        ],
+        rag_delete_collection.name: [
+            "RAG",
+            "删除集合",
+            "delete collection",
+            "清除集合",
+            "移除集合",
+        ],
     }
 
 
@@ -1206,6 +1251,12 @@ def _build_tool_categories() -> dict[str, str]:
     )
     from .advisor import advisor_list, ask_advisor, investigate
     from .download.tools import http_download, http_download_status
+    from .rag.tools import (
+        rag_ingest,
+        rag_search,
+        rag_list_collections,
+        rag_delete_collection,
+    )
 
     # tool.name → 类别
     return {
@@ -1351,6 +1402,11 @@ def _build_tool_categories() -> dict[str, str]:
         investigate.name: "顾问",
         http_download.name: "下载",
         http_download_status.name: "下载",
+        # RAG 工具
+        rag_ingest.name: "RAG",
+        rag_search.name: "RAG",
+        rag_list_collections.name: "RAG",
+        rag_delete_collection.name: "RAG",
     }
 
 

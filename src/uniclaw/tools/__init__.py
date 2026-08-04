@@ -79,6 +79,7 @@ from .advisor import (
     get_tools as advisor_get_tools,
     get_all_tools as advisor_get_all_tools,
 )
+from .rag import get_tools as rag_get_tools, get_all_tools as rag_get_all_tools
 from .download.tools import (
     get_tools as download_get_tools,
     get_all_tools as download_get_all_tools,
@@ -156,6 +157,7 @@ async def get_tools(config) -> list:
         *knowledge_get_tools(),
         *advisor_get_tools(config),
         *download_get_tools(),
+        *rag_get_tools(),
         *registry_get_tools(),
         *mcp_tools,
     ]
@@ -209,5 +211,6 @@ async def get_all_tools() -> list:
         *knowledge_get_all_tools(),
         *advisor_get_all_tools(),
         *download_get_all_tools(),
+        *rag_get_all_tools(),
         *mcp_tools,
     ]
