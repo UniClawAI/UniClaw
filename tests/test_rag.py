@@ -861,7 +861,7 @@ class TestRAGContext:
 
         with patch("uniclaw.tools.rag.rag.RAGManager", return_value=mock_manager), \
              patch.dict(sys.modules, {"uniclaw.config": MagicMock(config=mock_config)}):
-            result = get_rag_system_prompt(tmp_path)
+            result = get_rag_system_prompt(mock_config)
         assert result == ""
 
     def test_with_collections(self, tmp_path):
@@ -882,7 +882,7 @@ class TestRAGContext:
 
         with patch("uniclaw.tools.rag.rag.RAGManager", return_value=mock_manager), \
              patch.dict(sys.modules, {"uniclaw.config": MagicMock(config=mock_config)}):
-            result = get_rag_system_prompt(tmp_path)
+            result = get_rag_system_prompt(mock_config)
         assert "RAG 文档检索" in result
         assert "test-collection" in result
         assert "10 块" in result
@@ -911,7 +911,7 @@ class TestRAGContext:
 
         with patch("uniclaw.tools.rag.rag.RAGManager", return_value=mock_manager), \
              patch.dict(sys.modules, {"uniclaw.config": MagicMock(config=mock_config)}):
-            result = get_rag_system_prompt(tmp_path)
+            result = get_rag_system_prompt(mock_config)
         # empty-collection 应该被过滤掉（count=0）
         assert "- empty-collection" not in result
         assert "populated-collection" in result
@@ -939,7 +939,7 @@ class TestRAGContext:
 
         with patch("uniclaw.tools.rag.rag.RAGManager", side_effect=side_effect), \
              patch.dict(sys.modules, {"uniclaw.config": MagicMock(config=mock_config)}):
-            result = get_rag_system_prompt(tmp_path)
+            result = get_rag_system_prompt(mock_config)
         assert "项目级集合" in result
         assert "project-col" in result
         assert "用户级集合" in result
@@ -959,7 +959,7 @@ class TestRAGContext:
 
         with patch("uniclaw.tools.rag.rag.RAGManager", return_value=mock_manager), \
              patch.dict(sys.modules, {"uniclaw.config": MagicMock(config=mock_config)}):
-            result = get_rag_system_prompt(None)
+            result = get_rag_system_prompt(mock_config)
         # 应该只有用户级集合
         assert "user-col" in result
         assert "项目级集合" not in result

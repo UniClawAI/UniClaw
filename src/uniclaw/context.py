@@ -278,7 +278,7 @@ async def build_system_prompt(config: AppConfig):
     # RAG 文档检索 — 完全静态内容(有集合数据时才注入)
     from uniclaw.tools.rag.context import get_rag_system_prompt
 
-    rag_ctx = get_rag_system_prompt(config.root_dir, config)
+    rag_ctx = get_rag_system_prompt(config)
     if rag_ctx:
         system_prompt += f"\n\n{rag_ctx}\n"
 

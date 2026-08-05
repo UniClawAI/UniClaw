@@ -11,11 +11,10 @@ if TYPE_CHECKING:
     from uniclaw.config import AppConfig
 
 
-def get_rag_system_prompt(root_dir: Path | None, config: AppConfig | None = None) -> str:
+def get_rag_system_prompt(config: AppConfig | None = None) -> str:
     """构建 RAG 的系统提示词。分层级列出可用 collection 列表。
 
     Args:
-        root_dir: 项目根目录,None 表示仅用户级。
         config: 应用配置实例。为 None 时跳过 RAG。
 
     Returns:
@@ -23,7 +22,6 @@ def get_rag_system_prompt(root_dir: Path | None, config: AppConfig | None = None
     """
     if config is None:
         return ""
-
 
     # 未配置 embedding_model 时直接跳过
     if not config.embedding_model:
@@ -44,6 +42,7 @@ def get_rag_system_prompt(root_dir: Path | None, config: AppConfig | None = None
         pass
 
     # 项目级
+    root_dir = config.root_dir
     if root_dir is not None:
         try:
             manager = RAGManager(config, Scope.PROJECT)
