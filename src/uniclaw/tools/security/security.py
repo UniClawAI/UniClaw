@@ -260,6 +260,13 @@ def is_safe_tool(name: str) -> bool:
     )
     from uniclaw.tools.advisor import advisor_list, ask_advisor
     from uniclaw.tools.security.tools import read_llm_safe_prompt
+    from uniclaw.tools.rag.tools import rag_search, rag_list_collections, rag_set_desc
+    from uniclaw.tools.download.tools import http_download, http_download_status, http_download_remove
+    from uniclaw.tools.help import list_slash_commands, get_command_help
+    from uniclaw.tools.tts.tools import text_to_speech
+    from uniclaw.tools.monitor.tools import monitor_stop
+    from uniclaw.tools.session.tools import session_update_title
+    from uniclaw.tools.hooks.tools import hook_remove
     from uniclaw.tools.web_browse.tools import (
         browser_screenshot,
         browser_get_text,
@@ -313,6 +320,7 @@ def is_safe_tool(name: str) -> bool:
         exit_plan_mode.name,
         # ── 进程监控 ──
         monitor_list.name,
+        monitor_stop.name,
         monitor_output.name,
         monitor_get_matched.name,
         monitor_update_pattern.name,
@@ -333,11 +341,13 @@ def is_safe_tool(name: str) -> bool:
         # ── 会话管理 ──
         session_list.name,
         session_detail.name,
+        session_update_title.name,
         recall_history.name,
         get_history_range.name,
         # ── Hooks ──
         hook_docs.name,
         hook_read.name,
+        hook_remove.name,
         # ── MCP ──
         mcp_list_servers.name,
         # ── 安全 ──
@@ -347,6 +357,11 @@ def is_safe_tool(name: str) -> bool:
         push_notification.name,
         send_file.name,
         sleep_timer.name,
+        # ── 帮助 ──
+        list_slash_commands.name,
+        get_command_help.name,
+        # ── TTS ──
+        text_to_speech.name,
         # ── 微信(全部安全) ──
         wechat_list_contacts.name,
         wechat_send_text.name,
@@ -369,6 +384,14 @@ def is_safe_tool(name: str) -> bool:
         kg_extract.name,
         kg_clear.name,
         kg_merge_entities.name,
+        # ── RAG ──
+        rag_search.name,
+        rag_list_collections.name,
+        rag_set_desc.name,
+        # ── HTTP 下载 ──
+        http_download.name,
+        http_download_status.name,
+        http_download_remove.name,
         # ── Web Browse 只读 ──
         browser_screenshot.name,
         browser_get_text.name,
