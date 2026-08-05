@@ -335,8 +335,10 @@ def rag_delete_collection(
         return f"{TOOL_ERROR}: 删除集合失败: {e}"
 
 
-def get_tools() -> list:
-    """获取 RAG 工具列表。"""
+def get_tools(config=None) -> list:
+    """获取 RAG 工具列表。仅当配置了 embedding_model 时才返回工具。"""
+    if not config or not config.embedding_model:
+        return []
     return [
         rag_ingest,
         rag_search,
@@ -348,4 +350,10 @@ def get_tools() -> list:
 
 def get_all_tools() -> list:
     """获取所有 RAG 工具。"""
-    return get_tools()
+    return [
+        rag_ingest,
+        rag_search,
+        rag_list_collections,
+        rag_set_desc,
+        rag_delete_collection,
+    ]

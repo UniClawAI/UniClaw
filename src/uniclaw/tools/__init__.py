@@ -157,7 +157,7 @@ async def get_tools(config) -> list:
         *knowledge_get_tools(),
         *advisor_get_tools(config),
         *download_get_tools(),
-        *rag_get_tools(),
+        *rag_get_tools(config),
         *registry_get_tools(),
         *mcp_tools,
     ]

@@ -14,11 +14,15 @@ def get_rag_system_prompt(root_dir: Path | None) -> str:
         root_dir: 项目根目录,None 表示仅用户级。
 
     Returns:
-        RAG 系统提示词,无数据时返回空字符串。
+        RAG 系统提示词,无数据或未配置 embedding_model 时返回空字符串。
     """
-    from .rag import RAGManager
-
     from uniclaw.config import config as app_config
+
+    # 未配置 embedding_model 时直接跳过
+    if not app_config.embedding_model:
+        return ""
+
+    from .rag import RAGManager
 
     user_collections: list[dict] = []
     project_collections: list[dict] = []
