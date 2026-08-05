@@ -3,23 +3,30 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from uniclaw.context import Scope
 
+if TYPE_CHECKING:
+    from uniclaw.config import AppConfig
 
-def get_rag_system_prompt(root_dir: Path | None) -> str:
+
+def get_rag_system_prompt(root_dir: Path | None, config: AppConfig | None = None) -> str:
     """构建 RAG 的系统提示词。分层级列出可用 collection 列表。
 
     Args:
         root_dir: 项目根目录,None 表示仅用户级。
+        config: 应用配置实例。为 None 时跳过 RAG。
 
     Returns:
         RAG 系统提示词,无数据或未配置 embedding_model 时返回空字符串。
     """
-    from uniclaw.config import config as app_config
+    if config is None:
+        return ""
+
 
     # 未配置 embedding_model 时直接跳过
-    if not app_config.embedding_model:
+    if not config.embedding_model:
         return ""
 
     from .rag import RAGManager
@@ -29,7 +36,7 @@ def get_rag_system_prompt(root_dir: Path | None) -> str:
 
     # 用户级
     try:
-        manager = RAGManager(app_config, Scope.USER)
+        manager = RAGManager(config, Scope.USER)
         for c in manager.list_collections():
             if c["count"] > 0:
                 user_collections.append(c)
@@ -39,7 +46,7 @@ def get_rag_system_prompt(root_dir: Path | None) -> str:
     # 项目级
     if root_dir is not None:
         try:
-            manager = RAGManager(app_config, Scope.PROJECT)
+            manager = RAGManager(config, Scope.PROJECT)
             for c in manager.list_collections():
                 if c["count"] > 0:
                     project_collections.append(c)
