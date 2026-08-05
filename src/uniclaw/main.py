@@ -90,38 +90,4 @@ def main():
 
 
 if __name__ == "__main__":
-    # main()
-    import asyncio
-    from uniclaw.tools.rag.tools import (
-        rag_ingest,
-        rag_search,
-        rag_list_collections,
-        rag_delete_collection,
-        rag_set_desc
-    )
-    from uniclaw.webui.ws import get_or_load_session
-
-    async def test():
-        config = await get_or_load_session("20260802_181412_67a7828ca7b0")
-        
-
-        # ret = await rag_ingest(
-        #     path=r"E:\data\mydata\小说\三国演义.txt", collection="Three", config=config
-        # )
-        # print(ret)
-
-        # ret = await rag_set_desc(collection="Three", description="《三国演义》相关文档", config=config)
-        # print(ret)
-
-        ret = await rag_search(query="卫弘", collection="Three", config=config)
-        print(ret)
-
-        # ret = await rag_delete_collection(
-        #     collection="Three", scope="project", config=config
-        # )
-        # print(ret)
-
-        # c = await rag_list_collections(config=config)
-        # print(c)
-
-    asyncio.run(test())
+    main()
