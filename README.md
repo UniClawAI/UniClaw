@@ -1324,7 +1324,7 @@ UniClaw/
     │   ├── types.py        # Provider/Effort 枚举,StreamChunk,AIMessage
     │   └── common.py       # get_provider(),compare_urls()
     │
-    ├── commands/           # 斜杠命令系统 📝 (30 个命令 + 7 个别名)
+    ├── commands/           # 斜杠命令系统 📝 (30 个命令 + 8 个别名)
     │   ├── __init__.py     # 命令注册中心(COMMANDS dict)
     │   ├── session.py      # 会话管理(clear/compact/export)
     │   ├── resume.py       # 会话恢复(list/del/search/fork) 💬
@@ -1348,7 +1348,8 @@ UniClaw/
     │   ├── undo.py         # 撤销文件编辑
     │   ├── voice.py        # 语音模式切换 🔊
     │   ├── cu.py           # Computer Use 模式切换 🖥️
-    │   └── explain.py      # 工具解释模式切换 🔧
+    │   ├── explain.py      # 工具解释模式切换 🔧
+    │   └── knowledge.py    # 知识图谱管理 🗺️
     │
     ├── console/            # 控制台交互界面(prompt_toolkit REPL)
     │   ├── launcher.py     # 控制台启动器
@@ -1364,6 +1365,9 @@ UniClaw/
     │   ├── api.py          # REST API 路由(含子代理创建 API)
     │   ├── ws.py           # WebSocket 处理(会话任务管理)
     │   ├── models.py       # 数据模型
+    │   ├── auth.py         # 认证层(登录/可信 IP/IP 限流)
+    │   ├── crypto.py       # 加密模块
+    │   ├── encrypt_static.py # 静态资源加密
     │   ├── spinner.py      # WebUI 加载动画
     │   └── static/         # 前端静态资源(CSS 样式 + 动画效果)
     │
@@ -1384,7 +1388,12 @@ UniClaw/
     │   ├── sleep.py        # 异步等待
     │   ├── ask.py          # 用户交互(AskUserQuestion)
     │   ├── notify.py       # 系统通知 🔔
-    │   ├── computer_use.py # 计算机控制(截图/鼠标/键盘) 🖥️
+    │   ├── computer_use/   # 计算机控制(截图/鼠标/键盘) 🖥️
+    │   │   ├── tools.py    # 工具定义(screenshot/mouse/keyboard)
+    │   │   ├── automation.py # 自动化抽象层
+    │   │   ├── automation_win.py # Windows 实现
+    │   │   ├── automation_mac.py # macOS 实现
+    │   │   └── automation_linux.py # Linux 实现
     │   ├── web_browse/     # 浏览器自动化(Playwright) 🌍
     │   ├── security/       # 安全检查和权限管理 🔒
     │   ├── scheduler/      # 调度器 ⏰(会话关联 + monitor 监控类型)
@@ -1411,7 +1420,8 @@ UniClaw/
     │       ├── tools.py    # 工具定义(rag_ingest/search/list/delete/set_desc)
     │       ├── rag.py      # RAG 管理器(向量数据库 + embedding)
     │       ├── loader.py   # 文档加载器(多格式支持)
-    │       └── splitter.py # 文档拆分器(智能分块)
+    │       ├── splitter.py # 文档拆分器(智能分块)
+    │       └── context.py  # 上下文注入
     │
     ├── utils/              # 实用工具
     │   ├── checkpoint.py   # 文件快照检查点系统
@@ -1427,7 +1437,8 @@ UniClaw/
     │   ├── manager.py      # 多账号管理器(异步登录)
     │   ├── media.py        # 媒体处理
     │   ├── storage.py      # 本地消息缓存
-    │   └── models.py       # 数据模型
+    │   ├── models.py       # 数据模型
+    │   └── exceptions.py   # 异常定义
     │
     └── assets/             # 静态资源(logo.png)
 ```
