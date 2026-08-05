@@ -170,6 +170,15 @@ async def cmd_help(_args: str, config: AppConfig) -> bool:
   /permissions list      - 查看所有权限规则
   /permissions remove <类型> <模式> - 删除权限规则
 
+【A2A】
+  /a2a start [token]     - 启用 A2A 端点(仅 WebUI 模式)
+  /a2a stop              - 禁用 A2A 端点
+  /a2a                   - 查看 A2A 服务状态
+  /a2a add <名称> <URL> [token] - 添加远程 A2A Agent
+  /a2a list              - 列出已配置的远程 Agent
+  /a2a remove <名称>     - 删除远程 Agent
+  /a2a test <名称>       - 测试远程 Agent 连接
+
 💡 提示:
   - 输入 /<命令> help 可查看该命令的详细说明(如 /memory help)
   - 输入 ! 开头的命令可直接执行 Shell 命令(如 !ls -la)

@@ -69,6 +69,40 @@ def get_base_system_prompt(config: AppConfig) -> str:
     return system_prompt
 
 
+def _get_a2a_base_system_prompt(config: AppConfig) -> str:
+    """A2A 远程 Agent 的基础提示词。"""
+    task = config.current_agent
+    root_dir = task.session.root_dir
+
+    env_lines = [
+        f"- 当前日期:{datetime.now().strftime('%Y-%m-%d %A')}",
+    ]
+    if root_dir:
+        env_lines.append(f"- 工作目录:{root_dir}")
+    env_lines += [
+        f"- 平台:{platform.system()}",
+    ]
+    env_text = "\n".join(env_lines)
+
+    return f"""你是 {APP_NAME} A2A 远程 Agent,通过 A2A 协议接收外部任务并执行。
+
+## 行为准则
+- **任务导向**:专注于完成委托方交给你的任务,高效执行,自主判断。
+- **追求最优解**:以解决根本问题为目标,优先选择健壮、可维护的方案,充分考虑边界情况和潜在风险。
+- **勇于探索**:遇到不熟悉的任务时,不要轻易说"做不到"。先充分利用已有资源(工具、skill、记忆、项目文档等)探索解决方案。
+- **自主决策**:不需要与用户交互,自行判断并执行;遇到问题时尝试自行解决,实在无法完成再返回错误说明。
+
+## 工作规范
+- 任务完成后给出清晰的结果摘要
+- 优先编辑现有文件而不是创建新文件
+- 文件操作始终使用绝对路径
+- 多步骤任务系统地逐步完成
+
+## 环境
+{env_text}{get_platform_hints()}
+"""
+
+
 def get_claude_md(session) -> str:
     """加载 CLAUDE.md 项目指令,防止提示词注入"""
     root_dir = session.root_dir
@@ -211,7 +245,11 @@ async def build_system_prompt(config: AppConfig):
     if config.is_free_chat:
         return _build_free_chat_prompt(config)
 
-    system_prompt = get_base_system_prompt(config)
+    from uniclaw.tools.session.session import SessionType
+
+    is_a2a = config.current_agent.session.session_type == SessionType.A2A
+
+    system_prompt = _get_a2a_base_system_prompt(config) if is_a2a else get_base_system_prompt(config)
 
     # === 稳定内容(低频变化,最大化缓存前缀命中) ===
 
@@ -222,12 +260,13 @@ async def build_system_prompt(config: AppConfig):
     if security_ctx:
         system_prompt += f"\n\n{security_ctx}"
 
-    # Hooks — 完全静态内容
-    from uniclaw.tools.hooks.tools import get_hooks_system_prompt
+    # Hooks — 完全静态内容(A2A 跳过)
+    if not is_a2a:
+        from uniclaw.tools.hooks.tools import get_hooks_system_prompt
 
-    hooks_ctx = get_hooks_system_prompt()
-    if hooks_ctx:
-        system_prompt += f"\n\n{hooks_ctx}"
+        hooks_ctx = get_hooks_system_prompt()
+        if hooks_ctx:
+            system_prompt += f"\n\n{hooks_ctx}"
 
     # 知识图谱 — 完全静态内容(图谱非空时才注入)
     from uniclaw.tools.knowledge.context import get_knowledge_system_prompt
@@ -286,33 +325,37 @@ async def build_system_prompt(config: AppConfig):
     if memory_ctx:
         system_prompt += f"\n\n# 记忆\n你的持久化记忆:\n{memory_ctx}\n"
 
-    # Plan mode — 仅在计划模式下启用
-    from uniclaw.tools.plan import get_plan_system_prompt
+    # Plan mode — 仅在计划模式下启用(A2A 跳过)
+    if not is_a2a:
+        from uniclaw.tools.plan import get_plan_system_prompt
 
-    plan_prompt = get_plan_system_prompt(config)
-    if plan_prompt:
-        system_prompt += plan_prompt
+        plan_prompt = get_plan_system_prompt(config)
+        if plan_prompt:
+            system_prompt += plan_prompt
 
-    # Computer Use — 中频变化(启用/禁用时变化)
-    from uniclaw.tools.computer_use import get_cu_system_prompt
+    # Computer Use — 中频变化(A2A 跳过)
+    if not is_a2a:
+        from uniclaw.tools.computer_use import get_cu_system_prompt
 
-    cu_prompt = get_cu_system_prompt(config)
-    if cu_prompt:
-        system_prompt += cu_prompt
+        cu_prompt = get_cu_system_prompt(config)
+        if cu_prompt:
+            system_prompt += cu_prompt
 
     # === 高频变化内容(放在最后,减少对缓存前缀的影响) ===
 
-    # TodoList — 每次任务状态更新都变化(放在最后,减少对缓存前缀的影响)
-    from uniclaw.tools.todolist import get_list_system_prompt
+    # TodoList — A2A 跳过
+    if not is_a2a:
+        from uniclaw.tools.todolist import get_list_system_prompt
 
-    todolist_ctx = get_list_system_prompt(config.current_agent.todolist)
-    if todolist_ctx:
-        system_prompt += f"\n\n{todolist_ctx}\n"
+        todolist_ctx = get_list_system_prompt(config.current_agent.todolist)
+        if todolist_ctx:
+            system_prompt += f"\n\n{todolist_ctx}\n"
 
-    # Goal — 目标停止条件
-    goal_mgr = config.current_agent.goal_manager if config.current_agent else None
-    if goal_mgr and goal_mgr.active:
-        system_prompt += f"\n\n# 当前目标\n目标: {goal_mgr.goal}\n请确保你的工作朝着这个目标推进,并在完成后明确说明目标已达成。\n"
+    # Goal — A2A 跳过
+    if not is_a2a:
+        goal_mgr = config.current_agent.goal_manager if config.current_agent else None
+        if goal_mgr and goal_mgr.active:
+            system_prompt += f"\n\n# 当前目标\n目标: {goal_mgr.goal}\n请确保你的工作朝着这个目标推进,并在完成后明确说明目标已达成。\n"
 
     return system_prompt
 

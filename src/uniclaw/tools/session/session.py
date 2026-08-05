@@ -533,6 +533,7 @@ class SessionType(StrEnum):
     CONSOLE = "console"
     WECHAT = "wechat"
     FREE_CHAT = "free_chat"
+    A2A = "a2a"
 
 
 @dataclass

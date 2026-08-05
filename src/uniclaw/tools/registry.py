@@ -209,9 +209,19 @@ def _build_extended_keywords() -> dict[str, list[str]]:
         rag_delete_collection,
         rag_set_desc,
     )
+    from uniclaw.tools.a2a.tools import (
+        a2a_send_task, a2a_add_agent, a2a_list_agents,
+        a2a_submit_task, a2a_get_task, a2a_cancel_task,
+    )
 
     # tool.name → 关键词列表(中英文+语义同义词)
     return {
+        a2a_send_task.name: ["a2a", "remote agent", "远程智能体", "控制电脑", "委托任务"],
+        a2a_add_agent.name: ["a2a", "add remote agent", "添加远程服务", "连接 A2A"],
+        a2a_list_agents.name: ["a2a", "list remote agents", "外部智能体", "远程服务列表"],
+        a2a_submit_task.name: ["a2a", "async", "异步任务", "多轮对话", "继续远程对话"],
+        a2a_get_task.name: ["a2a", "task status", "任务状态", "查询远程任务"],
+        a2a_cancel_task.name: ["a2a", "cancel task", "取消远程任务"],
         ReadPDF.name: ["pdf", "PDF", "文档", "阅读PDF", "read pdf", "parse pdf"],
         search_files_with_everything.name: [
             "everything",

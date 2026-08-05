@@ -17,6 +17,7 @@ from uniclaw.webui.api import router as api_router
 from uniclaw.webui.ws import websocket_endpoint
 from uniclaw.webui import auth
 from uniclaw.webui.crypto import decrypt_data, is_encrypted
+from uniclaw.tools.a2a.server import mount_a2a_routes
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,9 @@ _AUTH_WHITELIST = (
     "/static/",
     "/assets/",
     "/favicon.ico",
+    "/a2a",
+    "/.well-known/agent-card.json",
+    "/.well-known/agent.json",
 )
 
 
@@ -73,6 +77,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="UniClaw WebUI", version="1.0.0", lifespan=lifespan)
+mount_a2a_routes(app)
 
 # CORS 中间件(开发用)
 app.add_middleware(

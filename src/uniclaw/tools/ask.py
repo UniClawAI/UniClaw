@@ -31,6 +31,11 @@ async def AskUserQuestion(
             {"question": "目标平台？", "options": ["Web 后端", "CLI 工具", "桌面应用", "移动端"]},
         ])
     """
+    from uniclaw.tools.session.session import SessionType
+
+    if config and config.current_agent.session.session_type == SessionType.A2A:
+        return "错误:A2A 远程 Agent 模式下无法向用户提问,请自主决策。"
+
     from uniclaw.console.ui import get_multi_input
 
     answers = await get_multi_input(questions=questions, title=title, config=config)
