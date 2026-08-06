@@ -563,16 +563,95 @@ class Session:
     from uniclaw.tools.search import platform_search
     from uniclaw.tools.shell import Grep
     from uniclaw.tools.web import webFetch, webSearch
+    from uniclaw.tools.web_browse.tools import (
+        browser_get_text,
+        browser_get_html,
+        browser_get_attribute,
+        browser_get_elements,
+        browser_get_url,
+        browser_get_title,
+        browser_get_value,
+        browser_get_count,
+        browser_get_box,
+        browser_get_styles,
+        browser_list_pages,
+    )
+    from uniclaw.tools.knowledge.tools import (
+        kg_get_entity,
+        kg_search,
+        kg_neighbors,
+        kg_path,
+        kg_stats,
+        kg_list,
+    )
+    from uniclaw.tools.memory.tools import memory_list, memory_search
+    from uniclaw.tools.rag.tools import rag_search, rag_list_collections
+    from uniclaw.tools.todolist import todolist_list
+    from uniclaw.tools.help import list_slash_commands, get_command_help
+    from uniclaw.tools.monitor.tools import monitor_list, monitor_output
+    from uniclaw.tools.scheduler.tools import schedule_list
+    from uniclaw.tools.mcp.tools import mcp_list_servers
+    from uniclaw.tools.advisor import advisor_list
+    from uniclaw.tools.a2a.tools import a2a_list_agents
+    from uniclaw.tools.hooks.tools import hook_docs, hook_read
 
     # 只读工具去重集合
     _DEDUP_TOOLS = frozenset(
         {
+            # fs
             Read.name,
             Glob.name,
+            # shell
             Grep.name,
+            # web
             webFetch.name,
             webSearch.name,
+            # search
             platform_search.name,
+            # web_browse (只读 getter)
+            browser_list_pages.name,
+            browser_get_text.name,
+            browser_get_html.name,
+            browser_get_attribute.name,
+            browser_get_elements.name,
+            browser_get_url.name,
+            browser_get_title.name,
+            browser_get_value.name,
+            browser_get_count.name,
+            browser_get_box.name,
+            browser_get_styles.name,
+            # knowledge graph (只读查询)
+            kg_get_entity.name,
+            kg_search.name,
+            kg_neighbors.name,
+            kg_path.name,
+            kg_stats.name,
+            kg_list.name,
+            # memory (只读查询)
+            memory_list.name,
+            memory_search.name,
+            # rag (只读查询)
+            rag_search.name,
+            rag_list_collections.name,
+            # todolist
+            todolist_list.name,
+            # help
+            list_slash_commands.name,
+            get_command_help.name,
+            # monitor (只读)
+            monitor_list.name,
+            monitor_output.name,
+            # scheduler
+            schedule_list.name,
+            # mcp
+            mcp_list_servers.name,
+            # advisor (只读)
+            advisor_list.name,
+            # a2a
+            a2a_list_agents.name,
+            # hooks (只读)
+            hook_docs.name,
+            hook_read.name,
         }
     )
     _DEDUP_MIN_CHARS = 500
@@ -966,6 +1045,7 @@ class Session:
             del self.history[len(self.history) - count :]
         else:
             self.history.clear()
+        self.dedup_cache.clear()
         return count
 
     def _delete_tail_from_history(self, count: int) -> int:
@@ -983,6 +1063,7 @@ class Session:
             self._messages.extend(self.history)
         else:
             del self._messages[keep:]
+        self.dedup_cache.clear()
         return count
 
     def replace_messages(self, messages: list[dict[str, Any]]) -> None:
