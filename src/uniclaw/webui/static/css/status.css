@@ -238,6 +238,9 @@
     color: var(--orange);
     font-size: var(--text-sm);
     margin: 8px 0;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: break-word;
 }
 .perm-countdown {
     font-family: var(--font-mono);

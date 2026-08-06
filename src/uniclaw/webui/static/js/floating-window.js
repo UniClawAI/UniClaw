@@ -56,6 +56,14 @@ const FloatingWindow = {
     },
 
     /**
+     * Center a floating window in the current viewport.
+     */
+    center(id) {
+        const state = this._windows.get(id);
+        if (state && state.el) this._centerWindow(state.el);
+    },
+
+    /**
      * 绑定拖拽功能
      */
     _bindDrag(id, state) {

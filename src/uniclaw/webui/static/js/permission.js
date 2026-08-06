@@ -61,12 +61,15 @@ const Permission = {
             this._permDiffMode = 'unified';
             this._renderPermDiff(msg.args.old_string, msg.args.new_string || '');
             this._bindDiffToggle(msg.args.old_string, msg.args.new_string || '');
-            if (modal) modal.style.maxWidth = '680px';
+            if (modal) {
+                modal.style.width = '';
+                modal.style.maxWidth = '680px';
+            }
         } else {
             argsEl.style.display = '';
             diffWrap.style.display = 'none';
             argsEl.textContent = JSON.stringify(msg.args || {}, null, 2);
-            if (modal) modal.style.maxWidth = '';
+            this._resizeDialog(argsEl.textContent);
         }
 
         const expl = document.getElementById('perm-explanation');
@@ -103,9 +106,29 @@ const Permission = {
             if (cancelBtn) cancelBtn.style.display = '';
         }
         FloatingWindow.show('permission-modal');
+        requestAnimationFrame(() => FloatingWindow.center('permission-modal'));
         if (!msg.countdown_cancelled) {
             this._startCountdown(msg.created_at, msg.timeout);
         }
+    },
+
+    _resizeDialog(argsText) {
+        const modal = document.querySelector('#permission-modal .modal-content');
+        const argsEl = document.getElementById('perm-args');
+        if (!modal || !argsEl) return;
+
+        // Match the dialog width to its longest argument line, while keeping it
+        // usable on narrow viewports. Long lines remain horizontally scrollable.
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d');
+        context.font = getComputedStyle(argsEl).font;
+        const longestLine = Math.max(...argsText.split('\n').map(line => context.measureText(line).width), 0);
+        const chromeWidth = 48 + 24 + 2 + 32; // dialog padding, args padding/border, buffer
+        const maxWidth = Math.max(320, Math.floor(window.innerWidth * 0.9));
+        const idealWidth = Math.min(Math.max(320, Math.ceil(longestLine + chromeWidth)), maxWidth);
+
+        modal.style.maxWidth = '';
+        modal.style.width = `${idealWidth}px`;
     },
 
     closeIfSessionMismatch(targetSid) {
