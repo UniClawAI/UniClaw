@@ -48,6 +48,7 @@
 - 🎯 **技能系统**: 可扩展的技能机制,支持自定义任务模板和工作流
 - 🎨 **主题定制**: 内置 uniclaw-theme 技能,支持自定义 WebUI 主题颜色、字体和样式
 - 🔌 **MCP 集成**: 支持 Model Context Protocol,异步命令管理,可连接多种外部工具服务
+- 🌉 **A2A 远程代理**: 支持 Agent2Agent 协议,可调用外部 A2A Agent 或将 UniClaw 暴露为 A2A 端点,实现多 Agent 协作
 - ⏱️ **异步等待**: sleep_timer 工具支持延时唤醒,不阻塞主线程
 - 📸 **Git 检查点**: 自动创建 git stash 检查点,支持一键回滚 AI 的文件编辑,智能处理 .gitignore,不污染 git 历史
 - 📝 **斜杠命令**: 丰富的内置命令系统,支持会话管理、模型切换、任务管理等
@@ -71,6 +72,7 @@
 - [知识图谱系统](#-知识图谱系统)
 - [RAG 检索增强系统](#-rag-检索增强系统)
 - [MCP 集成](#-mcp-集成)
+- [A2A 远程代理](#-a2a-远程代理)
 - [架构设计](#-架构设计)
 - [常见问题](#-常见问题)
 
@@ -670,6 +672,20 @@ monitor_start("npm run dev", name="开发服务器")
 | `/kg export html\|json\|markdown [user\|project]` | 导出图谱 | `/kg export html` |
 | `/kg clear [user\|project]` | 清空图谱(需确认) | `/kg clear project` |
 
+#### A2A 远程代理命令 🌉
+
+| 命令 | 说明 | 示例 |
+|------|------|------|
+| `/a2a` 或 `/a2a status` | 查看 A2A 服务状态 | `/a2a` |
+| `/a2a start [token]` | 启用 A2A 端点(仅 WebUI 模式) | `/a2a start` |
+| `/a2a stop` | 禁用 A2A 端点 | `/a2a stop` |
+| `/a2a add <名称> <URL> [token]` | 添加远程 A2A Agent | `/a2a add coder http://192.168.1.100:8080/a2a` |
+| `/a2a list` | 列出已配置的远程 Agent | `/a2a list` |
+| `/a2a remove <名称>` | 删除远程 Agent | `/a2a remove coder` |
+| `/a2a test <名称>` | 测试远程 Agent 连接 | `/a2a test coder` |
+
+> 💡 A2A 服务复用 WebUI 的 HTTP 端口,需要先以 `--mode webui` 启动。启动后会自动生成 Bearer Token,其他 UniClaw 实例可通过 `a2a_add_agent` 工具连接。
+
 #### 其他命令
 
 | 命令 | 说明 | 示例 |
@@ -1095,6 +1111,26 @@ http_download(
 
 配置文件位置：`~/.UniClaw/mcp.json`
 
+#### A2A 远程代理工具 🌉
+
+基于 Agent2Agent 协议的远程代理协作工具,支持调用外部 A2A Agent 和将 UniClaw 暴露为 A2A 端点：
+
+**客户端工具（调用外部 Agent）：**
+- **a2a_send_task** - 向外部 A2A Agent 发送任务并同步等待回复(支持多轮对话)
+- **a2a_submit_task** - 异步提交远程任务,立即返回 task_id(支持多轮对话)
+- **a2a_get_task** - 查询异步任务状态和结果
+- **a2a_cancel_task** - 取消正在执行的远程任务
+- **a2a_add_agent** - 添加或更新外部 A2A Agent 配置
+- **a2a_list_agents** - 列出已配置的外部 A2A Agent
+
+**服务端（暴露 UniClaw 为 A2A 端点）：**
+- 通过 `/a2a start` 启用,挂载到 WebUI 的 `/a2a` 路径
+- 支持 JSON-RPC 2.0 协议(`message/send`、`tasks/get`、`tasks/cancel`)
+- Agent Card 暴露在 `/.well-known/agent-card.json`
+- 每个 `context_id` 维护独立的对话上下文
+
+> 💡 **提示**: 使用 `/a2a` 命令管理 A2A 服务。A2A 配置持久化在 `~/.UniClaw/a2a/a2a.json`。服务启动后自动生成 Bearer Token 用于认证。
+
 #### 计算机控制工具 🖥️
 
 - **screenshot** - 截取屏幕截图(全屏或指定区域)
@@ -1324,7 +1360,7 @@ UniClaw/
     │   ├── types.py        # Provider/Effort 枚举,StreamChunk,AIMessage
     │   └── common.py       # get_provider(),compare_urls()
     │
-    ├── commands/           # 斜杠命令系统 📝 (30 个命令 + 8 个别名)
+    ├── commands/           # 斜杠命令系统 📝 (31 个命令 + 8 个别名)
     │   ├── __init__.py     # 命令注册中心(COMMANDS dict)
     │   ├── session.py      # 会话管理(clear/compact/export)
     │   ├── resume.py       # 会话恢复(list/del/search/fork) 💬
@@ -1416,12 +1452,17 @@ UniClaw/
     │   ├── help.py         # AI 自助帮助工具 📖
     │   ├── send_file.py    # 文件发送工具 📤
     │   ├── stream.py       # 工具流式输出(实时推送执行进度到前端)
-    │   └── rag/            # RAG 检索增强(文档导入/语义检索/集合管理) 📚
-    │       ├── tools.py    # 工具定义(rag_ingest/search/list/delete/set_desc)
-    │       ├── rag.py      # RAG 管理器(向量数据库 + embedding)
-    │       ├── loader.py   # 文档加载器(多格式支持)
-    │       ├── splitter.py # 文档拆分器(智能分块)
-    │       └── context.py  # 上下文注入
+    │   ├── rag/            # RAG 检索增强(文档导入/语义检索/集合管理) 📚
+    │   │   ├── tools.py    # 工具定义(rag_ingest/search/list/delete/set_desc)
+    │   │   ├── rag.py      # RAG 管理器(向量数据库 + embedding)
+    │   │   ├── loader.py   # 文档加载器(多格式支持)
+    │   │   ├── splitter.py # 文档拆分器(智能分块)
+    │   │   └── context.py  # 上下文注入
+    │   └── a2a/            # A2A 远程代理(客户端/服务端/管理器) 🌉
+    │       ├── client.py   # A2A 客户端(Agent Card 发现 + JSON-RPC)
+    │       ├── server.py   # A2A 服务端(挂载到 WebUI 的 /a2a 路径)
+    │       ├── manager.py  # A2A 管理器(配置持久化 + 服务状态)
+    │       └── tools.py    # 工具定义(send/submit/get/cancel/add/list)
     │
     ├── utils/              # 实用工具
     │   ├── checkpoint.py   # 文件快照检查点系统
@@ -1455,7 +1496,7 @@ UniClaw/
   - 计划: `enter/exit_plan_mode`
   - 技能: `skill_suggest/read`
   - 元工具: `search_tools`（按需发现和加载扩展工具）
-- **扩展工具** (141 个): 初始不加载,通过 `search_tools` 元工具按需发现
+- **扩展工具** (147 个): 初始不加载,通过 `search_tools` 元工具按需发现
   - 基于 BM25 算法搜索,支持中英文关键词 + 语义同义词
   - **LRU + 能量机制**: 每个扩展工具初始 30 点能量,每轮对话 -1,被调用或搜索命中恢复满能量,归零自动卸载;最多同时加载 25 个扩展工具,超出时按 LRU 顺序淘汰能量最低者
   - 搜索结果自动注入到当前任务的可用工具集
@@ -1846,6 +1887,116 @@ HTTP 类协议通过 `headers` 传递认证信息：
 | `/mcp tools [name]` | 列出可用工具 |
 
 > 所有命令在终端和微信模式下都可用,`add` 支持交互式和 JSON 两种模式。
+
+---
+
+## 🌉 A2A 远程代理
+
+UniClaw 支持 Agent2Agent (A2A) 协议,既可以作为客户端调用外部 A2A Agent,也可以将自身暴露为 A2A 端点供其他 Agent 调用。
+
+### 核心特性
+
+- **双向通信**: 既可调用外部 Agent,也可被外部 Agent 调用
+- **多轮对话**: 通过 `context_id` 维持对话连续性
+- **异步任务**: 支持同步等待和异步提交两种模式
+- **自动发现**: 通过 Agent Card (`/.well-known/agent-card.json`) 自动发现服务能力
+- **配置持久化**: Agent 配置和服务状态持久化到 `~/.UniClaw/a2a/a2a.json`
+- **独立上下文**: 每个 `context_id` 维护独立的 `AppConfig` 和会话
+
+### 作为客户端（调用外部 Agent）
+
+#### 添加外部 Agent
+
+```bash
+# 通过斜杠命令添加
+/a2a add coder http://192.168.1.100:8080/a2a your-token
+
+# 或让 AI 直接调用工具
+a2a_add_agent(agent_name="coder", url="http://192.168.1.100:8080/a2a", token="your-token")
+```
+
+#### 同步调用（等待结果）
+
+```python
+# AI 自动调用
+a2a_send_task(agent_name="coder", message="帮我写一个快速排序算法")
+# 带多轮对话
+a2a_send_task(agent_name="coder", message="优化一下性能", context_id="上一轮返回的 context_id")
+```
+
+#### 异步调用（立即返回）
+
+```python
+# 提交任务
+result = a2a_submit_task(agent_name="coder", message="重构整个模块")
+# 返回: {"task_id": "xxx", "context_id": "yyy", "state": "working"}
+
+# 查询结果
+a2a_get_task(agent_name="coder", task_id="xxx")
+
+# 取消任务
+a2a_cancel_task(agent_name="coder", task_id="xxx")
+```
+
+> 💡 异步任务完成后会自动唤醒 AI,无需手动轮询。
+
+### 作为服务端（暴露 UniClaw 为 A2A 端点）
+
+#### 启用服务
+
+```bash
+# 需要先以 WebUI 模式启动
+uv run uniclaw --mode webui
+
+# 启用 A2A 端点
+/a2a start
+
+# 查看状态（含 Bearer Token）
+/a2a status
+```
+
+#### 服务端点
+
+| 端点 | 说明 |
+|------|------|
+| `/.well-known/agent-card.json` | Agent Card（服务能力描述） |
+| `/a2a` | JSON-RPC 2.0 端点 |
+
+#### 支持的 JSON-RPC 方法
+
+| 方法 | 说明 |
+|------|------|
+| `message/send` | 发送消息并创建任务 |
+| `tasks/get` | 查询任务状态和结果 |
+| `tasks/cancel` | 取消正在执行的任务 |
+
+#### 其他 UniClaw 实例连接示例
+
+```bash
+# 在另一个 UniClaw 实例中
+/a2a add remote-coder http://192.168.1.100:8080/a2a <token>
+
+# 或让 AI 调用
+a2a_add_agent(agent_name="remote-coder", url="http://192.168.1.100:8080/a2a", token="<token>")
+a2a_send_task(agent_name="remote-coder", message="帮我审查这段代码")
+```
+
+### 命令参考
+
+| 命令 | 说明 |
+|------|------|
+| `/a2a` 或 `/a2a status` | 查看 A2A 服务状态 |
+| `/a2a start [token]` | 启用 A2A 端点（仅 WebUI 模式） |
+| `/a2a stop` | 禁用 A2A 端点 |
+| `/a2a add <名称> <URL> [token]` | 添加远程 A2A Agent |
+| `/a2a list` | 列出已配置的远程 Agent |
+| `/a2a remove <名称>` | 删除远程 Agent |
+| `/a2a test <名称>` | 测试远程 Agent 连接 |
+
+### 存储位置
+
+- **配置文件**: `~/.UniClaw/a2a/a2a.json`（Agent 列表 + 服务状态）
+- **工作空间**: `~/.UniClaw/a2a/workspace/`（A2A 服务端的隔离工作目录）
 
 ---
 
@@ -2394,6 +2545,35 @@ http://你的IP地址:8080
 - 对话功能完整可用
 - 文件上传支持
 - 工具调用可视化
+
+### Q: 如何使用 A2A 远程代理功能？
+
+A: A2A 功能允许 UniClaw 与其他 Agent 系统互操作：
+
+**作为客户端调用外部 Agent：**
+1. 添加远程 Agent：`/a2a add <名称> <URL> [token]`
+2. 测试连接：`/a2a test <名称>`
+3. 让 AI 调用：AI 会自动使用 `a2a_send_task` 或 `a2a_submit_task` 工具
+
+**将 UniClaw 暴露为 A2A 端点：**
+1. 以 WebUI 模式启动：`uv run uniclaw --mode webui`
+2. 启用 A2A 端点：`/a2a start`
+3. 查看 Token：`/a2a status`
+4. 其他 Agent 可通过 `/.well-known/agent-card.json` 发现服务能力
+
+**多轮对话：** 使用 `context_id` 维持对话连续性,每轮返回的 `context_id` 传入下一轮请求。
+
+**异步任务：** 使用 `a2a_submit_task` 提交后立即返回,任务完成时自动唤醒 AI。
+
+### Q: A2A 服务的安全性如何保障？
+
+A: A2A 服务使用 Bearer Token 认证：
+- 启动时自动生成随机 Token（也可手动指定）
+- 所有请求必须在 `Authorization` header 中携带 Token
+- Token 存储在 `~/.UniClaw/a2a/a2a.json`
+- A2A 任务使用独立的 `AppConfig`,与主会话隔离
+
+> ⚠️ 建议仅在可信网络环境中使用 A2A 服务,不要将 Token 泄露给不可信的第三方。
 
 ## 📄 许可证
 
