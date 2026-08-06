@@ -42,15 +42,16 @@ def parse_frontmatter(content: str) -> Tuple[Dict[str, Any], str]:
 
     # 定义 frontmatter 的正则表达式模式
     # 匹配以 --- 开头和结尾的 YAML 块
-    pattern = r"^---\s*\n(.*?)\n---\s*\n(.*)"
+    pattern = r"^(.*?)---\s*\n(.*?)\n---\s*\n(.*)"
     match = re.match(pattern, content, re.DOTALL)
 
     if not match:
         # 如果没有找到 frontmatter,返回空字典和原文本
         return {}, content
 
-    yaml_content = match.group(1)
-    body_content = match.group(2)
+    prefix = match.group(1)      # --- 之前的内容（可能为空）
+    yaml_content = match.group(2)
+    body_content = match.group(3)
 
     # 使用 PyYAML 安全地解析 YAML 内容
     try:
@@ -67,6 +68,10 @@ def parse_frontmatter(content: str) -> Tuple[Dict[str, Any], str]:
                 metadata = {}
         except yaml.YAMLError:
             metadata = {}
+
+    # 将 --- 之前的内容拼回正文，避免丢失
+    if prefix:
+        body_content = prefix + "---\n" + body_content if body_content else prefix
 
     return metadata, body_content
 
