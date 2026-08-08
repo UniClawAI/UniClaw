@@ -1207,9 +1207,13 @@ async def list_commands(root_dir: str = ""):
 
     try:
         skills = load_skills(Path(root_dir) if root_dir else None)
+        existing = {c["name"] for c in commands}
         for skill in skills:
             for trigger in skill.triggers:
                 trigger_name = trigger.lstrip("/")
+                if trigger_name in existing:
+                    continue
+                existing.add(trigger_name)
                 commands.append(
                     {
                         "name": trigger_name,
