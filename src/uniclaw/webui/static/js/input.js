@@ -221,7 +221,8 @@ const Input = {
             if (this.completionPopup) {
                 if (e.key === 'ArrowDown') { e.preventDefault(); this._completionNav(1); return; }
                 if (e.key === 'ArrowUp') { e.preventDefault(); this._completionNav(-1); return; }
-                if (e.key === 'Tab' || e.key === 'Enter') { e.preventDefault(); this._completionSelect(); return; }
+                if (e.key === 'Tab') { e.preventDefault(); this._completionSelect(); return; }
+                if (e.key === 'Enter') { e.preventDefault(); this._completionSelectOrSend(); return; }
             }
             if (!this.completionPopup && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
                 if (this._historyNav(e.key === 'ArrowUp' ? -1 : 1)) e.preventDefault();
@@ -991,14 +992,9 @@ const Input = {
             this._renderCompletion(matches.map(c => ({
                 label: `/${c.name}`, desc: c.is_skill ? `技能: ${c.description}` : c.description, fill: () => { document.getElementById('chat-input').value = `/${c.name}`; }, onSelect: () => {
                     const inp = document.getElementById('chat-input');
-                    const val = `/${c.name} `;
-                    inp.value = val;
+                    inp.value = `/${c.name}`;
                     this._hideCompletion();
                     inp.focus();
-                    // 选中后立即显示子命令
-                    if (this._subcommandsCache[c.name]?.length) {
-                        this._showCommandCompletion(val);
-                    }
                 }
             })));
         } catch (e) { console.error('获取命令列表失败:', e); }
@@ -1073,6 +1069,21 @@ const Input = {
     _completionSelect() {
         if (!this.completionPopup) return;
         this.completionPopup.items[this.completionPopup.selectedIdx].onSelect();
+    },
+
+    /** Enter 键:精确匹配的命令直接发送,否则走正常选中逻辑 */
+    _completionSelectOrSend() {
+        if (!this.completionPopup) return;
+        const inp = document.getElementById('chat-input');
+        const val = inp.value.trim();
+        const item = this.completionPopup.items[this.completionPopup.selectedIdx];
+        // 精确匹配命令且无后续内容 → 直接发送
+        if (val.startsWith('/') && item.label === val && !val.includes(' ', 1)) {
+            this._hideCompletion();
+            this.send();
+        } else {
+            item.onSelect();
+        }
     },
 
     _hideCompletion() {
