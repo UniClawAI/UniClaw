@@ -978,7 +978,7 @@ const Input = {
             if (subQuery !== null && cmdName) {
                 const subs = this._subcommandsCache[cmdName];
                 if (subs?.length) {
-                    const matches = subs.filter(s => s.toLowerCase().startsWith(subQuery)).slice(0, 10);
+                    const matches = subs.filter(s => s.toLowerCase().startsWith(subQuery));
                     if (matches.length) {
                         this._renderCompletion(matches.map(s => ({ label: `/${cmdName} ${s}`, desc: '子命令', fill: () => { document.getElementById('chat-input').value = `/${cmdName} ${s}`; }, onSelect: () => { this._suppressAutoComplete = true; document.getElementById('chat-input').value = `/${cmdName} ${s}`; this._hideCompletion(); document.getElementById('chat-input').focus(); } })));
                         return;
@@ -986,7 +986,7 @@ const Input = {
                 }
                 this._hideCompletion(); return;
             }
-            const matches = this._commandsCache.filter(c => c.name.startsWith(cmdName.toLowerCase())).slice(0, 10);
+            const matches = this._commandsCache.filter(c => c.name.startsWith(cmdName.toLowerCase()));
             if (!matches.length) { this._hideCompletion(); return; }
             this._renderCompletion(matches.map(c => ({
                 label: `/${c.name}`, desc: c.is_skill ? `技能: ${c.description}` : c.description, fill: () => { document.getElementById('chat-input').value = `/${c.name}`; }, onSelect: () => {
@@ -1015,7 +1015,7 @@ const Input = {
             }
             const lastAt = text.lastIndexOf('@');
             const query = text.substring(lastAt + 1).toLowerCase();
-            const matches = this._filesCache.filter(f => f.path.toLowerCase().includes(query)).slice(0, 10);
+            const matches = this._filesCache.filter(f => f.path.toLowerCase().includes(query));
             if (!matches.length) { this._hideCompletion(); return; }
             this._renderCompletion(matches.map(f => ({
                 label: f.path, desc: f.is_dir ? '目录' : '文件',
