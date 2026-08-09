@@ -213,9 +213,47 @@ def _build_extended_keywords() -> dict[str, list[str]]:
         a2a_send_task, a2a_add_agent, a2a_list_agents,
         a2a_submit_task, a2a_get_task, a2a_cancel_task,
     )
+    from .ipython.tools import (
+        ipython_start,
+        ipython_execute,
+        ipython_inspect,
+        ipython_vars,
+        ipython_history,
+        ipython_stop,
+        ipython_list_kernels,
+    )
 
     # tool.name → 关键词列表(中英文+语义同义词)
     return {
+        # ── IPython ──
+        ipython_start.name: [
+            "ipython", "jupyter", "kernel", "内核", "启动内核", "python执行",
+            "start kernel", "interactive python", "交互式python",
+        ],
+        ipython_execute.name: [
+            "ipython", "jupyter", "execute", "run code", "执行代码", "运行代码",
+            "python", "magic", "魔术命令", "代码执行",
+        ],
+        ipython_inspect.name: [
+            "ipython", "inspect", "变量", "查看变量", "检查", "类型",
+            "variable", "type", "查看类型", "对象信息",
+        ],
+        ipython_vars.name: [
+            "ipython", "variables", "变量列表", "命名空间", "namespace",
+            "列出变量", "查看所有变量",
+        ],
+        ipython_history.name: [
+            "ipython", "history", "历史", "执行历史", "历史记录", "代码历史",
+            "command history", "执行记录",
+        ],
+        ipython_stop.name: [
+            "ipython", "stop", "停止", "关闭内核", "shutdown", "释放资源",
+            "stop kernel", "关闭kernel",
+        ],
+        ipython_list_kernels.name: [
+            "ipython", "list kernels", "内核列表", "查看内核", "运行中的内核",
+        ],
+        # ── A2A ──
         a2a_send_task.name: ["a2a", "remote agent", "远程智能体", "控制电脑", "委托任务"],
         a2a_add_agent.name: ["a2a", "add remote agent", "添加远程服务", "连接 A2A"],
         a2a_list_agents.name: ["a2a", "list remote agents", "外部智能体", "远程服务列表"],
@@ -1285,9 +1323,26 @@ def _build_tool_categories() -> dict[str, str]:
         rag_delete_collection,
         rag_set_desc,
     )
+    from .ipython.tools import (
+        ipython_start,
+        ipython_execute,
+        ipython_inspect,
+        ipython_vars,
+        ipython_history,
+        ipython_stop,
+        ipython_list_kernels,
+    )
 
     # tool.name → 类别
     return {
+        # ── IPython ──
+        ipython_start.name: "IPython",
+        ipython_execute.name: "IPython",
+        ipython_inspect.name: "IPython",
+        ipython_vars.name: "IPython",
+        ipython_history.name: "IPython",
+        ipython_stop.name: "IPython",
+        ipython_list_kernels.name: "IPython",
         ReadPDF.name: "文件系统",
         search_files_with_everything.name: "Shell",
         cu_screenshot.name: "计算机操作",

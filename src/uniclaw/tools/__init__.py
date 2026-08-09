@@ -80,6 +80,7 @@ from .advisor import (
     get_all_tools as advisor_get_all_tools,
 )
 from .rag import get_tools as rag_get_tools, get_all_tools as rag_get_all_tools
+from .ipython.tools import get_tools as ipython_get_tools, get_all_tools as ipython_get_all_tools
 from .download.tools import (
     get_tools as download_get_tools,
     get_all_tools as download_get_all_tools,
@@ -160,6 +161,7 @@ async def get_tools(config) -> list:
         *download_get_tools(),
         *rag_get_tools(config),
         *a2a_get_tools(),
+        *ipython_get_tools(),
         *registry_get_tools(),
         *mcp_tools,
     ]
@@ -215,5 +217,6 @@ async def get_all_tools() -> list:
         *download_get_all_tools(),
         *rag_get_all_tools(),
         *a2a_get_all_tools(),
+        *ipython_get_all_tools(),
         *mcp_tools,
     ]

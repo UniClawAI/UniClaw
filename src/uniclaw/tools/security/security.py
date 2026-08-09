@@ -286,6 +286,12 @@ def is_safe_tool(name: str) -> bool:
         browser_scroll,
         browser_list_pages,
     )
+    from uniclaw.tools.ipython.tools import (
+        ipython_inspect,
+        ipython_vars,
+        ipython_history,
+        ipython_list_kernels,
+    )
 
     # 使用 .name 属性获取工具的实际名称,构建安全工具集合
     safe_tools = [
@@ -418,6 +424,11 @@ def is_safe_tool(name: str) -> bool:
         # ── Advisor 只读 ──
         advisor_list.name,
         ask_advisor.name,
+        # ── IPython 只读 ──
+        ipython_inspect.name,
+        ipython_vars.name,
+        ipython_history.name,
+        ipython_list_kernels.name,
     ]
 
     return name in safe_tools
