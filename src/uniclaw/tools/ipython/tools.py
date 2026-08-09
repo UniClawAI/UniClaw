@@ -16,7 +16,7 @@ async def ipython_start(
     kernel_id: str = "default", kernel_name: str = "python3"
 ) -> str:
     """
-    启动一个 IPython 内核,用于执行 Python 代码。
+    启动一个 IPython 内核,用于执行 Python 代码(变量持久化)。
 
     内核启动后变量会持久保存,后续调用 ipython_execute 时可继续使用。
     支持同时运行多个内核(通过 kernel_id 区分)。
