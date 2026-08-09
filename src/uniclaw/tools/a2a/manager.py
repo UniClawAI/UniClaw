@@ -64,13 +64,16 @@ class A2AManager:
         data = self._config["agents"].get(name)
         return {"name": name, **data} if data else None
 
-    async def add_agent(self, name: str, url: str, token: str = "") -> None:
+    async def add_agent(self, name: str, url: str, token: str = "", card: dict | None = None) -> None:
         await self.load_config()
         if not name or not name.replace("_", "").replace("-", "").isalnum():
             raise ValueError("名称只能包含字母、数字、连字符和下划线")
         if not url.startswith(("http://", "https://")):
             raise ValueError("A2A URL 必须以 http:// 或 https:// 开头")
-        self._config["agents"][name] = {"url": url.rstrip("/"), "token": token}
+        entry: dict = {"url": url.rstrip("/"), "token": token}
+        if card:
+            entry["card"] = card
+        self._config["agents"][name] = entry
         await self.save_config()
 
     async def remove_agent(self, name: str) -> bool:

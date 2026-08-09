@@ -102,8 +102,16 @@ async def a2a_add_agent(agent_name: str, url: str, token: str = "") -> str:
     """
     try:
         card = await A2AClient(url, token).get_card()
-        await A2AManager.get_instance().add_agent(agent_name, url, token)
-        return f"已添加 A2A Agent '{agent_name}':{card.get('name', agent_name)}"
+        await A2AManager.get_instance().add_agent(agent_name, url, token, card=card)
+        summary = {"name": card.get("name", agent_name), "description": card.get("description", "")}
+        if card.get("skills"):
+            summary["skills"] = [
+                {"name": s.get("name", ""), "description": s.get("description", "")}
+                for s in card["skills"]
+            ]
+        if card.get("capabilities"):
+            summary["capabilities"] = card["capabilities"]
+        return f"已添加 A2A Agent '{agent_name}':\n{json.dumps(summary, ensure_ascii=False, indent=2)}"
     except Exception as exc:
         return f"{TOOL_ERROR}: 无法添加 A2A Agent: {exc}"
 
@@ -114,7 +122,20 @@ async def a2a_list_agents() -> str:
     agents = await A2AManager.get_instance().list_agents()
     if not agents:
         return "尚未配置外部 A2A Agent。"
-    return "\n".join(f"- {item['name']}: {item['url']}" for item in agents)
+    lines = []
+    for item in agents:
+        card = item.get("card", {})
+        desc = card.get("description", "")
+        line = f"- {item['name']}: {item['url']}"
+        if desc:
+            line += f"\n  描述: {desc}"
+        skills = card.get("skills")
+        if skills:
+            skill_strs = [s.get("name", "") for s in skills if s.get("name")]
+            if skill_strs:
+                line += f"\n  技能: {', '.join(skill_strs)}"
+        lines.append(line)
+    return "\n".join(lines)
 
 
 @tool
