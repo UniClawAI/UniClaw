@@ -34,6 +34,7 @@
 - 🔔 **系统通知**: 支持 Windows/macOS/Linux 桌面通知,任务完成时自动提醒
 - 📝 **计划模式**: 支持进入计划模式进行任务规划,暂存方案后再执行
 - 🔧 **工具解释模式**: 通过 `/explain` 命令开启,AI 调用工具前会解释原因,便于理解和调试工具调用逻辑
+- 🐍 **IPython 内核**: 持久化 Python 交互式执行环境,变量跨调用保持,支持魔术命令和富文本输出
 - 🛠️ **丰富的工具集**: 内置文件系统操作、Shell 命令、网络搜索、技能系统等工具
 - 🔒 **权限管理**: 支持多种权限模式(自动/手动/全部接受),保障操作安全
 - 📋 **持久化规则**: 自定义权限规则,记住您的权限偏好,避免重复确认
@@ -930,7 +931,23 @@ UniClaw 提供了丰富的内置工具,AI 助手可以自动调用这些工具�
   - 安全限制：默认禁止网络访问、内存限制 256MB、CPU 限制 1 核、禁止提权
   - 可选参数：`network=true` 启用网络访问(用于测试 HTTP 请求等场景)
 
-> ⚠️ **环境依赖**：Grep 需要 ripgrep 或 grep；search_files_with_everything 需要 Everything (es.exe)；RunCode 需要 Docker。启动时会自动检测环境,不可用的工具会被禁用并提示原因。
+> ⚠️ **环境依赖**：Grep 需要 ripgrep 或 grep；search_files_with_everything 需要 Everything (es.exe)；RunCode 需要 Docker；IPython 工具需要 `ipykernel`(已包含在项目依赖中)。启动时会自动检测环境,不可用的工具会被禁用并提示原因。
+
+#### IPython 工具
+
+提供持久化 Python 交互式执行环境,变量在多次调用间保持,支持 IPython 魔术命令：
+
+- **ipython_start** - 启动 IPython 内核(支持多内核并行,通过 kernel_id 区分)
+- **ipython_execute** - 在内核中执行 Python 代码(支持魔术命令如 `%timeit`、`%matplotlib`、`%pip` 等,自动启动默认内核)
+- **ipython_inspect** - 检查变量详细信息(类型、值、长度、形状、文档字符串)
+- **ipython_vars** - 列出当前所有用户变量(支持按类型过滤)
+- **ipython_history** - 获取代码执行历史
+- **ipython_stop** - 停止内核并释放资源
+- **ipython_list_kernels** - 列出所有运行中的内核
+
+> 💡 **使用场景**：IPython 工具提供持久化执行环境,适合需要跨多次调用保持状态的场景,如数据分析、变量调试、包管理等。
+
+> ⚠️ **资源管理**：IPython 内核会持续占用系统资源,用完后请调用 `ipython_stop` 关闭。
 
 #### Web 工具
 
@@ -1459,11 +1476,14 @@ UniClaw/
     │   │   ├── loader.py   # 文档加载器(多格式支持)
     │   │   ├── splitter.py # 文档拆分器(智能分块)
     │   │   └── context.py  # 上下文注入
-    │   └── a2a/            # A2A 远程代理(客户端/服务端/管理器) 🌉
-    │       ├── client.py   # A2A 客户端(Agent Card 发现 + JSON-RPC)
-    │       ├── server.py   # A2A 服务端(挂载到 WebUI 的 /a2a 路径)
-    │       ├── manager.py  # A2A 管理器(配置持久化 + 服务状态)
-    │       └── tools.py    # 工具定义(send/submit/get/cancel/add/list)
+    │   ├── a2a/            # A2A 远程代理(客户端/服务端/管理器) 🌉
+    │   │   ├── client.py   # A2A 客户端(Agent Card 发现 + JSON-RPC)
+    │   │   ├── server.py   # A2A 服务端(挂载到 WebUI 的 /a2a 路径)
+    │   │   ├── manager.py  # A2A 管理器(配置持久化 + 服务状态)
+    │   │   └── tools.py    # 工具定义(send/submit/get/cancel/add/list)
+    │   └── ipython/        # IPython 内核(持久化 Python 执行环境) 🐍
+    │       ├── kernel.py   # 内核管理器(启动/停止/执行/变量检查)
+    │       └── tools.py    # 工具定义(start/execute/inspect/vars/history/stop/list)
     │
     ├── utils/              # 实用工具
     │   ├── checkpoint.py   # 文件快照检查点系统
