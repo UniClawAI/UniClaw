@@ -42,6 +42,7 @@ from uniclaw.tools.multi_agent.tools import (
 )
 from uniclaw.tools.shell import Bash
 from uniclaw.utils.checkpoint import create_checkpoint
+from uniclaw.utils.wakeup import wake_agent
 from uniclaw.utils.git import (
     create_worktree,
     get_git_root,
@@ -578,8 +579,9 @@ class MultiAgent:
                         notify_parent
                         and parent_task is not None
                         and parent_task is not task
+                        and config.parent_config is not None
                     ):
-                        parent_task.user_queue.put_nowait(
+                        msg = (
                             f"{SYSTEM_PREFIX}[child_agent]\n"
                             f"名称: {task.name}\n"
                             f"任务ID: {task.id}\n"
@@ -589,6 +591,7 @@ class MultiAgent:
                             f'- 使用 {subagent_send_message.name}(task_id="{task.id}", message="...") 发送消息\n'
                             f'- 使用 {subagent_close.name}(task_id="{task.id}") 关闭智能体'
                         )
+                        await wake_agent(msg, config.parent_config)
                     if not keep_alive:
                         break
                 if not task.result:
