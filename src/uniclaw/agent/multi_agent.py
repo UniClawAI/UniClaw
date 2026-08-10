@@ -491,6 +491,8 @@ class MultiAgent:
         ):
             task.event_queue = parent_task.event_queue
             task.cancel_event = parent_task.cancel_event
+            # 同步子 agent:共享 cancel_event,ESC 可直接取消
+            # 异步子 agent:不走此分支,各自独立的 cancel_event
         self.id2AgentTask[task.id] = task
 
         base_system_prompt = get_base_system_prompt(config)
@@ -567,9 +569,6 @@ class MultiAgent:
                         if keep_alive:
                             continue
                         break
-                    if msg == "__agent_close__":
-                        task.status = AgentStatus.COMPLETED
-                        break
                     await self.run(msg, system_prompt, config, allowed_tools)
                     if task.cancel_event.is_set():
                         task.result = "任务已取消。"
@@ -638,7 +637,7 @@ class MultiAgent:
             AgentStatus.CANCELLED,
         ):
             return True
-        task.user_queue.put_nowait("__agent_close__")
+        task.cancel_event.set()
         return True
 
     async def _run_init(self, user_message, config: AppConfig) -> bool:
