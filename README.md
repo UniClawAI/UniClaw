@@ -924,14 +924,27 @@ UniClaw 提供了丰富的内置工具,AI 助手可以自动调用这些工具�
 - **ReadMedia** - 读取媒体文件(图片/音频/视频)并以多模态方式发送给 LLM 进行分析,支持本地路径和网络 URL
 - **GenerateImage** - AI 文生图工具(需配置 `image_model`),支持自定义尺寸(如 `"2K"`, `"1024x1024"`),可保存为文件或直接返回多模态数据供 AI 分析
 
-#### 代码沙箱工具
+#### Docker 沙箱工具
 
-- **RunCode** - 在 Docker 沙箱中安全运行代码片段(需要 Docker 环境)
-  - 支持语言：Python、JavaScript (Node.js)、Shell/Bash
-  - 安全限制：默认禁止网络访问、内存限制 256MB、CPU 限制 1 核、禁止提权
-  - 可选参数：`network=true` 启用网络访问(用于测试 HTTP 请求等场景)
+完整的 Docker 容器与镜像生命周期管理(需要 Docker 环境)：
 
-> ⚠️ **环境依赖**：Grep 需要 ripgrep 或 grep；search_files_with_everything 需要 Everything (es.exe)；RunCode 需要 Docker；IPython 工具需要 `ipykernel`(已包含在项目依赖中)。启动时会自动检测环境,不可用的工具会被禁用并提示原因。
+**容器管理：**
+- **DockerCreate** - 创建持久容器,支持 `-v` 目录挂载、`-p` 端口映射、自定义内存/CPU 限制
+- **DockerExec** - 在已有容器中执行命令,容器状态(安装的包、创建的文件)在多次调用间保持
+- **DockerStop** - 停止运行中的容器
+- **DockerRemove** - 停止并删除容器,释放资源
+- **DockerList** - 列出所有管理的容器及状态
+
+**镜像管理：**
+- **DockerPull** - 拉取 Docker 镜像
+- **DockerSearch** - 在 Docker Hub 搜索镜像(返回镜像名、描述、星数、是否官方)
+- **DockerImages** - 列出本地所有镜像
+- **DockerRemoveImage** - 删除本地镜像
+- **DockerBuild** - 从 Dockerfile 构建镜像
+
+**安全限制：** 默认禁止网络访问、内存限制 256MB、CPU 限制 1 核、禁止提权
+
+> ⚠️ **环境依赖**：Grep 需要 ripgrep 或 grep；search_files_with_everything 需要 Everything (es.exe)；Docker 沙箱工具需要 Docker；IPython 工具需要 `ipykernel`(已包含在项目依赖中)。启动时会自动检测环境,不可用的工具会被禁用并提示原因。
 
 #### IPython 工具
 
@@ -1072,16 +1085,16 @@ http_download(
 
 #### 多智能体工具 👥
 
-- **agent_create** - 创建新的专业智能体(定义角色、能力和权限)
-- **list_agent_definitions** - 查看所有已定义的智能体列表
-- **get_agent_definition** - 查看指定子智能体类型的详细定义(系统提示词、工具列表等)
-- **list_agent_tasks** - 查看所有正在运行的智能体任务
-- **check_agent_result** - 检查子智能体的执行结果和状态
-- **send_message** - 向指定智能体发送消息进行通信
-- **agent_close** - 关闭指定的子智能体
-- **agent_discuss** - 启动多个智能体之间的讨论协作
+- **subagent_create** - 创建并启动子智能体任务(支持同步/异步模式和 worktree 隔离)
+- **subagent_send_message** - 向指定智能体发送消息进行通信
+- **subagent_close** - 关闭后台子智能体释放资源
+- **subagent_check_result** - 检查子智能体的执行结果和状态(支持增量读取)
+- **subagent_list_tasks** - 列出所有子智能体任务的当前状态
+- **subagent_discuss** - 启动多个智能体之间的多轮讨论协作
+- **subagent_list_definitions** - 查看所有可用的智能体类型定义
+- **subagent_get_definition** - 查看指定子智能体类型的详细定义(系统提示词、工具列表等)
 
-> 💡 **提示**: 多智能体系统采用全异步架构,允许为不同任务创建专门的助手,实现更精细的任务分工。支持智能体间的异步通信和结果传递,可通过 `keep_alive` 模式保持智能体持续运行并接收新指令。支持 worktree 隔离模式(`isolation=True`),子智能体在独立的 git 分支上工作,避免文件冲突。支持事件继承(`inherit_events=True`),子智能体的工具调用、思考过程等事件会自动广播到父级队列,前端可实时显示执行进度。
+> 💡 **提示**: 多智能体系统采用全异步架构,允许为不同任务创建专门的助手,实现更精细的任务分工。支持智能体间的异步通信和结果传递,可通过 `keep_alive` 模式保持智能体持续运行并接收新指令。支持 worktree 隔离模式(`isolation=True`),子智能体在独立的 git 分支上工作,避免文件冲突。支持事件继承(`inherit_events=True`),子智能体的工具调用、思考过程等事件会自动广播到父级队列,前端可实时显示执行进度。子智能体完成后会自动通知父智能体,支持唤醒代理机制确保父任务及时处理子任务结果。
 
 #### 技能系统
 
@@ -2109,32 +2122,36 @@ A: 记忆系统会自动工作,但您也可以手动管理：
 A: 多智能体系统采用全异步架构,允许创建专业化的助手并进行协作：
 
 **基本功能**:
-- **创建智能体**: 使用 `agent_create` 定义新智能体的角色和能力
-- **查看智能体**: 使用 `list_agent_definitions` 查看所有可用智能体
-- **查看任务**: 使用 `list_agent_tasks` 查看所有正在运行的智能体任务
+- **创建智能体**: 使用 `subagent_create` 创建并启动子智能体任务
+- **查看智能体类型**: 使用 `subagent_list_definitions` 查看所有可用智能体类型
+- **查看任务**: 使用 `subagent_list_tasks` 查看所有正在运行的智能体任务
 - **任务分配**: AI 会根据任务类型自动选择合适的智能体
 
 **高级功能**:
-- **智能体通信**: 使用 `send_message` 向指定智能体发送消息
-- **结果检查**: 使用 `check_agent_result` 查看子智能体的执行结果和状态
-- **关闭智能体**: 使用 `agent_close` 关闭不再需要的智能体
-- **智能体讨论**: 使用 `agent_discuss` 启动多个智能体之间的协作讨论
-- **持续运行**: 支持 `keep_alive` 模式,智能体可保持运行状态并接收新指令
+- **智能体通信**: 使用 `subagent_send_message` 向指定智能体发送消息
+- **结果检查**: 使用 `subagent_check_result` 查看子智能体的执行结果和状态
+- **关闭智能体**: 使用 `subagent_close` 关闭不再需要的智能体
+- **智能体讨论**: 使用 `subagent_discuss` 启动多个智能体之间的多轮协作讨论
+- **持续运行**: 异步模式(`wait=False`)下智能体可保持运行状态并接收新指令
 - **父子任务继承**: 子代理自动继承父代理的工具配置和权限
+- **唤醒机制**: 子智能体完成后自动通知父智能体,确保及时处理结果
 
 **使用场景示例**:
 ```
-# 创建一个代码审查智能体
-agent_create(name="CodeReviewer", role="专业代码审查员", capabilities=["代码质量检查", "最佳实践建议"])
+# 同步创建代码审查智能体(等待完成后返回结果)
+subagent_create(prompt="审查这段代码", subagent_type="code_reviewer", name="review-task")
+
+# 异步创建智能体(立即返回,后台运行)
+subagent_create(prompt="编写测试", subagent_type="test_writer", name="test-task", wait=False)
 
 # 向智能体发送消息
-send_message(task_id="xxx", message="请审查这段代码")
+subagent_send_message(task_id="test-task", message="补充要求")
 
 # 检查结果
-check_agent_result(task_id="xxx")
+subagent_check_result(task_id="test-task")
 
 # 关闭智能体
-agent_close(task_id="xxx")
+subagent_close(task_id="test-task")
 ```
 
 例如,您可以创建专门用于代码审查、文档编写或数据分析的智能体,并通过消息传递实现它们之间的协作。
