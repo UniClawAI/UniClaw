@@ -698,7 +698,8 @@ async def _update_session_settings(body: SettingsUpdate) -> dict:
 async def list_models(body: dict):
     """从各 provider 获取可用模型列表(使用前端传入的 providers)。
 
-    body 格式: {"providers": {name: {protocol, api_key, base_url, proxy_url}, ...}, "proxy_url": "..."}
+    body 格式: {"providers": {name: {protocol, api_key, base_url, proxy_url}, ...}}
+    每个 provider 只使用它自己的 proxy_url,全局 proxy_url 不用于任何模型。
     api_key 中的 **** 脱敏值会从 settings.json 恢复。
     返回普通模型和 embedding 模型,前端可根据 embedding 标记区分。
     """
@@ -707,7 +708,6 @@ async def list_models(body: dict):
 
     _, original = _read_settings_raw()
     original_providers = original.get("providers", {})
-    global_proxy = body.get("proxy_url") or original.get("proxy_url") or ""
 
     raw_providers = body.get("providers", {})
     # 恢复脱敏的 api_key(通过 masked key 的前4后4字符匹配原始 key)
@@ -731,7 +731,7 @@ async def list_models(body: dict):
         protocol = (p.get("protocol") or "openai").lower()
         base_url = p.get("base_url") or ""
         api_key = p.get("api_key") or ""
-        proxy = p.get("proxy_url") or global_proxy or ""
+        proxy = p.get("proxy_url") or ""
         if not base_url or not api_key:
             return [], []
         try:

@@ -35,7 +35,6 @@ const Settings = {
                     headers: { 'Content-Type': 'application/json', ...authHeaders },
                     body: JSON.stringify({
                         providers: this._data.providers || {},
-                        proxy_url: this._data.proxy_url || '',
                     }),
                 });
                 if (modelsResp.ok) {
@@ -487,7 +486,7 @@ const Settings = {
                     </div>
                     <div class="form-group" style="grid-column:1/-1">
                         <label>代理 (proxy_url)</label>
-                        <input type="text" class="input settings-p-proxy" value="${this._esc(p.proxy_url || '')}" placeholder="留空则使用全局代理" />
+                        <input type="text" class="input settings-p-proxy" value="${this._esc(p.proxy_url || '')}" placeholder="留空则直连(不使用代理)" />
                     </div>
                 </div>
             `;
@@ -741,7 +740,6 @@ const Settings = {
         refreshBtn.textContent = '刷新中...';
 
         this._syncProviders();
-        const proxyUrl = document.getElementById('settings-proxy').value.trim();
 
         try {
             const token = localStorage.getItem('uniclaw_token');
@@ -751,7 +749,7 @@ const Settings = {
                     'Content-Type': 'application/json',
                     'Authorization': 'Bearer ' + token,
                 },
-                body: JSON.stringify({ providers: this._providers, proxy_url: proxyUrl }),
+                body: JSON.stringify({ providers: this._providers }),
             });
             if (resp.ok) {
                 const data = await resp.json();

@@ -140,7 +140,10 @@ def resolve_params(config: AppConfig | None = None, **kwargs):
                 if config.multimodal_model_name
                 else None
             ),
-            "proxy_url": config.proxy_url,
+            # 全局 proxy_url 不应用到任何模型,模型只使用它自己配置的代理。
+            # 这里保留空串键位,避免下游 p["proxy_url"] 读取时 KeyError;
+            # provider profile 的自有代理在下方(profile.proxy_url)覆盖该值。
+            "proxy_url": "",
             "temperature": config.temperature,
             "max_tokens": config.max_tokens,
             "top_p": config.top_p,
@@ -168,6 +171,10 @@ def resolve_params(config: AppConfig | None = None, **kwargs):
                 kwargs["openai_api_base"] = profile.base_url
             if profile.proxy_url:
                 kwargs["proxy_url"] = profile.proxy_url
+
+    # 兜底:保证返回的 dict 始终含 proxy_url 键(config 为 None 或调用方未传时),
+    # 无自有代理则保持空串(直连),避免下游 p["proxy_url"] 读取时 KeyError。
+    kwargs.setdefault("proxy_url", "")
 
     return kwargs
 
