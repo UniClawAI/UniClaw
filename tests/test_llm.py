@@ -573,6 +573,49 @@ class TestResolveParams:
         assert result["openai_api_base"] == "https://api.openai.com/v1/"
         assert result["openai_api_key"] == "test-key"
 
+    def test_global_proxy_not_applied_to_models(self):
+        """全局 proxy_url 不应用到模型:provider 无自有代理时直连。"""
+        config = MagicMock()
+        config.model_name = ["mimo/gpt-4"]
+        config.multimodal_model_name = []
+        config.proxy_url = "http://global-proxy:8080"
+        config.providers = {
+            "mimo": ProviderProfile(
+                name="mimo",
+                protocol="openai",
+                api_key="test-key",
+                base_url="https://api.openai.com/v1/",
+                proxy_url="",
+            )
+        }
+
+        result = resolve_params(config)
+        assert result["proxy_url"] == ""
+
+    def test_provider_proxy_overrides(self):
+        """provider 自有代理生效,不被全局代理干扰。"""
+        config = MagicMock()
+        config.model_name = ["mimo/gpt-4"]
+        config.multimodal_model_name = []
+        config.proxy_url = "http://global-proxy:8080"
+        config.providers = {
+            "mimo": ProviderProfile(
+                name="mimo",
+                protocol="openai",
+                api_key="test-key",
+                base_url="https://api.openai.com/v1/",
+                proxy_url="http://my-proxy:3128",
+            )
+        }
+
+        result = resolve_params(config)
+        assert result["proxy_url"] == "http://my-proxy:3128"
+
+    def test_no_config_proxy_default_empty(self):
+        """无 config 时 proxy_url 兜底为空串(直连),不抛 KeyError。"""
+        result = resolve_params(None, model_name="gpt-4", openai_api_key="key")
+        assert result["proxy_url"] == ""
+
     def test_kwargs_override_config(self):
         """测试 kwargs 覆盖 config"""
         config = MagicMock()

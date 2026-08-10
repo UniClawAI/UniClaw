@@ -69,6 +69,9 @@ include = ["uniclaw*"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 asyncio_mode = "auto"
+markers = [
+    "slow: 耗时较长的测试,可用 -m 'not slow' 排除",
+]
 
 [[tool.uv.index]]
 url = "https://pypi.tuna.tsinghua.edu.cn/simple"
