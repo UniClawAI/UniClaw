@@ -127,7 +127,19 @@ def _build_extended_keywords() -> dict[str, list[str]]:
         clear_llm_safe_prompt,
     )
     from .hooks.tools import hook_docs, hook_read, hook_add, hook_remove
-    from .sandbox import RunCode
+    from .sandbox.tools import (
+        DockerCreate,
+        DockerExec,
+        DockerStart,
+        DockerStop,
+        DockerRemove,
+        DockerList,
+        DockerPull,
+        DockerSearch,
+        DockerImages,
+        DockerRemoveImage,
+        DockerBuild,
+    )
     from .sleep import sleep_timer, wait
     from .media import ReadMedia, GenerateImage
     from .ask import AskUserQuestion
@@ -201,7 +213,11 @@ def _build_extended_keywords() -> dict[str, list[str]]:
         kg_clear,
     )
     from .advisor import advisor_list, ask_advisor, investigate
-    from .download.tools import http_download, http_download_status, http_download_remove
+    from .download.tools import (
+        http_download,
+        http_download_status,
+        http_download_remove,
+    )
     from .rag.tools import (
         rag_ingest,
         rag_search,
@@ -210,8 +226,12 @@ def _build_extended_keywords() -> dict[str, list[str]]:
         rag_set_desc,
     )
     from uniclaw.tools.a2a.tools import (
-        a2a_send_task, a2a_add_agent, a2a_list_agents,
-        a2a_submit_task, a2a_get_task, a2a_cancel_task,
+        a2a_send_task,
+        a2a_add_agent,
+        a2a_list_agents,
+        a2a_submit_task,
+        a2a_get_task,
+        a2a_cancel_task,
     )
     from .ipython.tools import (
         ipython_start,
@@ -227,36 +247,91 @@ def _build_extended_keywords() -> dict[str, list[str]]:
     return {
         # ── IPython ──
         ipython_start.name: [
-            "ipython", "jupyter", "kernel", "内核", "启动内核", "python执行",
-            "start kernel", "interactive python", "交互式python",
+            "ipython",
+            "jupyter",
+            "kernel",
+            "内核",
+            "启动内核",
+            "python执行",
+            "start kernel",
+            "interactive python",
+            "交互式python",
         ],
         ipython_execute.name: [
-            "ipython", "jupyter", "execute", "run code", "执行代码", "运行代码",
-            "python", "magic", "魔术命令", "代码执行",
+            "ipython",
+            "jupyter",
+            "execute",
+            "run code",
+            "执行代码",
+            "运行代码",
+            "python",
+            "magic",
+            "魔术命令",
+            "代码执行",
         ],
         ipython_inspect.name: [
-            "ipython", "inspect", "变量", "查看变量", "检查", "类型",
-            "variable", "type", "查看类型", "对象信息",
+            "ipython",
+            "inspect",
+            "变量",
+            "查看变量",
+            "检查",
+            "类型",
+            "variable",
+            "type",
+            "查看类型",
+            "对象信息",
         ],
         ipython_vars.name: [
-            "ipython", "variables", "变量列表", "命名空间", "namespace",
-            "列出变量", "查看所有变量",
+            "ipython",
+            "variables",
+            "变量列表",
+            "命名空间",
+            "namespace",
+            "列出变量",
+            "查看所有变量",
         ],
         ipython_history.name: [
-            "ipython", "history", "历史", "执行历史", "历史记录", "代码历史",
-            "command history", "执行记录",
+            "ipython",
+            "history",
+            "历史",
+            "执行历史",
+            "历史记录",
+            "代码历史",
+            "command history",
+            "执行记录",
         ],
         ipython_stop.name: [
-            "ipython", "stop", "停止", "关闭内核", "shutdown", "释放资源",
-            "stop kernel", "关闭kernel",
+            "ipython",
+            "stop",
+            "停止",
+            "关闭内核",
+            "shutdown",
+            "释放资源",
+            "stop kernel",
+            "关闭kernel",
         ],
         ipython_list_kernels.name: [
-            "ipython", "list kernels", "内核列表", "查看内核", "运行中的内核",
+            "ipython",
+            "list kernels",
+            "内核列表",
+            "查看内核",
+            "运行中的内核",
         ],
         # ── A2A ──
-        a2a_send_task.name: ["a2a", "remote agent", "远程智能体", "控制电脑", "委托任务"],
+        a2a_send_task.name: [
+            "a2a",
+            "remote agent",
+            "远程智能体",
+            "控制电脑",
+            "委托任务",
+        ],
         a2a_add_agent.name: ["a2a", "add remote agent", "添加远程服务", "连接 A2A"],
-        a2a_list_agents.name: ["a2a", "list remote agents", "外部智能体", "远程服务列表"],
+        a2a_list_agents.name: [
+            "a2a",
+            "list remote agents",
+            "外部智能体",
+            "远程服务列表",
+        ],
         a2a_submit_task.name: ["a2a", "async", "异步任务", "多轮对话", "继续远程对话"],
         a2a_get_task.name: ["a2a", "task status", "任务状态", "查询远程任务"],
         a2a_cancel_task.name: ["a2a", "cancel task", "取消远程任务"],
@@ -501,15 +576,39 @@ def _build_extended_keywords() -> dict[str, list[str]]:
         hook_read.name: ["读取钩子", "hook", "查看钩子", "读取hook", "read hook"],
         hook_add.name: ["添加钩子", "add hook", "创建钩子", "create hook"],
         hook_remove.name: ["删除钩子", "remove hook", "移除钩子"],
-        RunCode.name: [
+        DockerCreate.name: [
             "沙箱",
             "sandbox",
             "Docker",
-            "代码执行",
+            "创建容器",
+            "docker create",
+            "容器",
+            "container",
+        ],
+        DockerExec.name: [
+            "执行命令",
+            "docker exec",
+            "容器执行",
             "运行代码",
             "run code",
             "execute code",
         ],
+        DockerStart.name: ["启动容器", "docker start", "重启容器", "restart"],
+        DockerStop.name: ["停止容器", "docker stop"],
+        DockerRemove.name: ["删除容器", "docker rm", "移除容器"],
+        DockerList.name: ["容器列表", "docker ps", "列出容器"],
+        DockerPull.name: ["拉取镜像", "docker pull", "下载镜像"],
+        DockerSearch.name: [
+            "搜索镜像",
+            "docker search",
+            "查找镜像",
+            "镜像搜索",
+            "image",
+            "search image",
+        ],
+        DockerImages.name: ["镜像列表", "docker images", "查看镜像"],
+        DockerRemoveImage.name: ["删除镜像", "docker rmi", "移除镜像"],
+        DockerBuild.name: ["构建镜像", "docker build", "编译镜像"],
         sleep_timer.name: ["睡眠", "sleep", "等待", "定时器", "wait", "delay", "timer"],
         wait.name: ["等待", "wait", "延迟", "delay"],
         ReadMedia.name: [
@@ -1241,7 +1340,19 @@ def _build_tool_categories() -> dict[str, str]:
         clear_llm_safe_prompt,
     )
     from .hooks.tools import hook_docs, hook_read, hook_add, hook_remove
-    from .sandbox import RunCode
+    from .sandbox.tools import (
+        DockerCreate,
+        DockerExec,
+        DockerStart,
+        DockerStop,
+        DockerRemove,
+        DockerList,
+        DockerPull,
+        DockerSearch,
+        DockerImages,
+        DockerRemoveImage,
+        DockerBuild,
+    )
     from .sleep import sleep_timer, wait
     from .media import ReadMedia, GenerateImage
     from .ask import AskUserQuestion
@@ -1315,7 +1426,11 @@ def _build_tool_categories() -> dict[str, str]:
         kg_clear,
     )
     from .advisor import advisor_list, ask_advisor, investigate
-    from .download.tools import http_download, http_download_status, http_download_remove
+    from .download.tools import (
+        http_download,
+        http_download_status,
+        http_download_remove,
+    )
     from .rag.tools import (
         rag_ingest,
         rag_search,
@@ -1403,7 +1518,17 @@ def _build_tool_categories() -> dict[str, str]:
         hook_read.name: "Hook管理",
         hook_add.name: "Hook管理",
         hook_remove.name: "Hook管理",
-        RunCode.name: "沙箱",
+        DockerCreate.name: "沙箱",
+        DockerExec.name: "沙箱",
+        DockerStart.name: "沙箱",
+        DockerStop.name: "沙箱",
+        DockerRemove.name: "沙箱",
+        DockerList.name: "沙箱",
+        DockerPull.name: "沙箱",
+        DockerSearch.name: "沙箱",
+        DockerImages.name: "沙箱",
+        DockerRemoveImage.name: "沙箱",
+        DockerBuild.name: "沙箱",
         sleep_timer.name: "睡眠/等待",
         wait.name: "睡眠/等待",
         ReadMedia.name: "媒体",

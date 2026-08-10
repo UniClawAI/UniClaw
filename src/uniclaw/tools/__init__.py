@@ -80,12 +80,18 @@ from .advisor import (
     get_all_tools as advisor_get_all_tools,
 )
 from .rag import get_tools as rag_get_tools, get_all_tools as rag_get_all_tools
-from .ipython.tools import get_tools as ipython_get_tools, get_all_tools as ipython_get_all_tools
+from .ipython.tools import (
+    get_tools as ipython_get_tools,
+    get_all_tools as ipython_get_all_tools,
+)
 from .download.tools import (
     get_tools as download_get_tools,
     get_all_tools as download_get_all_tools,
 )
-from uniclaw.tools.a2a.tools import get_tools as a2a_get_tools, get_all_tools as a2a_get_all_tools
+from uniclaw.tools.a2a.tools import (
+    get_tools as a2a_get_tools,
+    get_all_tools as a2a_get_all_tools,
+)
 from .mcp import MCPManager
 from .registry import get_tools as registry_get_tools, init_registry
 

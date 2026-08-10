@@ -181,7 +181,19 @@ def is_safe_tool(name: str) -> bool:
     from uniclaw.tools.fs import Read, Glob, ReadPDF
     from uniclaw.tools.shell import Grep, search_files_with_everything
     from uniclaw.tools.media import ReadMedia
-    from uniclaw.tools.sandbox import RunCode
+    from uniclaw.tools.sandbox.tools import (
+        DockerCreate,
+        DockerExec,
+        DockerStart,
+        DockerStop,
+        DockerRemove,
+        DockerList,
+        DockerPull,
+        DockerSearch,
+        DockerImages,
+        DockerRemoveImage,
+        DockerBuild,
+    )
     from uniclaw.tools.web import webFetch, webSearch
     from uniclaw.tools.search import platform_search
     from uniclaw.tools.memory.tools import (
@@ -261,7 +273,11 @@ def is_safe_tool(name: str) -> bool:
     from uniclaw.tools.advisor import advisor_list, ask_advisor
     from uniclaw.tools.security.tools import read_llm_safe_prompt
     from uniclaw.tools.rag.tools import rag_search, rag_list_collections, rag_set_desc
-    from uniclaw.tools.download.tools import http_download, http_download_status, http_download_remove
+    from uniclaw.tools.download.tools import (
+        http_download,
+        http_download_status,
+        http_download_remove,
+    )
     from uniclaw.tools.help import list_slash_commands, get_command_help
     from uniclaw.tools.tts.tools import text_to_speech
     from uniclaw.tools.monitor.tools import monitor_stop
@@ -301,7 +317,17 @@ def is_safe_tool(name: str) -> bool:
         ReadMedia.name,
         Glob.name,
         Grep.name,
-        RunCode.name,
+        DockerCreate.name,
+        DockerExec.name,
+        DockerStart.name,
+        DockerStop.name,
+        DockerRemove.name,
+        DockerList.name,
+        DockerPull.name,
+        DockerSearch.name,
+        DockerImages.name,
+        DockerRemoveImage.name,
+        DockerBuild.name,
         search_files_with_everything.name,
         # ── Web / 搜索 ──
         webFetch.name,
