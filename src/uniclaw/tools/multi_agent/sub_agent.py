@@ -204,7 +204,7 @@ def load_agent_definitions_from_scope(
     user_dir = get_app_dir(root_dir) / "agents"
     defs = dict()
     for p in user_dir.glob("*.md"):
-        metadata, system_prompt = parse_frontmatter(p)
+        metadata, system_prompt = parse_frontmatter(p.read_text(encoding="utf-8"))
         agent_def = AgentDefinition(
             name=metadata["name"],
             description=metadata.get("description", ""),
