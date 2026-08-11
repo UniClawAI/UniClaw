@@ -14,10 +14,15 @@ from uniclaw.tools.session.tools import (
 from uniclaw.tools.session.recall import (
     recall_history,
     get_history_range,
-    get_recall_system_prompt,
+    get_recall_hint,
     get_tools as recall_get_tools,
 )
-from uniclaw.tools.session.session import Session, UserMessage, AIMessage
+from uniclaw.tools.session.session import (
+    Session,
+    SUMMARY_PREFIX,
+    UserMessage,
+    AIMessage,
+)
 
 
 def _make_config(session: Session = None) -> MagicMock:
@@ -51,7 +56,7 @@ def _make_session() -> Session:
         UserMessage(content="下一步"),
     ]
     s._messages = [
-        UserMessage(content="[之前的对话摘要] 早期内容已被压缩..."),
+        UserMessage(content=f"{SUMMARY_PREFIX} 早期内容已被压缩..."),
         AIMessage(content="已经修复"),
         UserMessage(content="下一步"),
     ]
@@ -70,7 +75,7 @@ def _make_compacted_session() -> Session:
         s.add_user_message(content=f"用户问题 {i}: 数据库迁移")
         s.add_assistant_message(content=f"回答 {i}", model_name="gpt-4o", usage={})
     s._messages = [
-        UserMessage(content="[之前的对话摘要]\n数据库迁移"),
+        UserMessage(content=f"{SUMMARY_PREFIX}\n数据库迁移"),
         AIMessage(content="已阅读之前的对话摘要,继续当前任务。", model_name=""),
     ] + s._messages[6:]
     s._compact_count = 2
@@ -354,27 +359,26 @@ class TestCountRecentMessages:
         s = Session()
         s._compact_count = 0
         s._messages = [
-            UserMessage(content="[之前的对话摘要]\n旧摘要"),
+            UserMessage(content=f"{SUMMARY_PREFIX}\n旧摘要"),
             AIMessage(content="回复", model_name=""),
             UserMessage(content="新问题"),
         ]
         assert _count_recent_messages(s) == 2
 
 
-class TestGetRecallSystemPrompt:
-    """get_recall_system_prompt 测试。"""
+class TestGetRecallHint:
+    """get_recall_hint 测试。"""
 
     def test_no_archived_returns_empty(self):
         """无归档返回空。"""
-        s = Session()
-        s.history = [UserMessage(content="x")]
-        s._messages = [UserMessage(content="x")]
-        assert get_recall_system_prompt(s) == ""
+        assert get_recall_hint(0, 1) == ""
+        assert get_recall_hint(-1, 1) == ""
 
     def test_with_archived(self):
-        """有归档返回提示。"""
-        s = _make_session()
-        prompt = get_recall_system_prompt(s)
+        """有归档返回提示,含计数信息。"""
+        prompt = get_recall_hint(3, 5)
         assert "历史上下文" in prompt
+        assert "5 条完整历史消息" in prompt
+        assert "3 条已被压缩" in prompt
         assert "recall_history" in prompt
         assert "get_history_range" in prompt

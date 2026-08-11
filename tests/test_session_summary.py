@@ -8,6 +8,7 @@ from uniclaw.provider.types import Usage
 from uniclaw.tools.session.session import (
     AIMessage,
     CHECKPOINT_TEMPLATE,
+    SUMMARY_PREFIX,
     Session,
     ToolCallMessage,
     UserMessage,
@@ -174,8 +175,32 @@ async def test_compact_prepends_summary_pair():
 
     assert len(s._messages) == 4  # 摘要对(2) + recent(2)
     assert isinstance(s._messages[0], UserMessage)
-    assert "[之前的对话摘要]" in s._messages[0].content
+    assert SUMMARY_PREFIX in s._messages[0].content
     assert isinstance(s._messages[1], AIMessage)
+    assert s._compact_count == 2
+
+
+@pytest.mark.asyncio
+async def test_compact_appends_recall_hint_to_summary():
+    """压缩后,历史检索提示追加到摘要消息末尾(而非 system prompt)。"""
+    s = _make_filled_session()
+    with (
+        patch(
+            "uniclaw.tools.session.session.Session._find_split_point", return_value=4
+        ),
+        patch("uniclaw.provider.fallback.achat", new=AsyncMock()) as mock_achat,
+    ):
+        mock_achat.return_value = AIMessage(
+            content="## 用户需求\n...", model_name="gpt-4o", usage=Usage.from_dict({})
+        )
+        await s.compact(_mock_config())
+
+    summary_content = s._messages[0].content
+    assert SUMMARY_PREFIX in summary_content
+    assert "recall_history" in summary_content
+    assert "历史上下文" in summary_content
+    # 提示拼进摘要内容,不新增消息,头部仍为摘要对
+    assert len(s._messages) == 4
     assert s._compact_count == 2
 
 

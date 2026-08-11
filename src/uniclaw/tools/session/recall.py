@@ -12,6 +12,7 @@ from uniclaw.tools.base import tool
 from uniclaw.utils.constants import TOOL_ERROR
 from uniclaw.tools.session.session import (
     Session,
+    SUMMARY_PREFIX,
     UserMessage,
     AIMessage,
     ToolCallMessage,
@@ -35,7 +36,7 @@ def _count_recent_messages(session: Session) -> int:
         if any(
             isinstance(m, UserMessage)
             and isinstance(m.content, str)
-            and m.content.startswith("[之前的对话摘要]")
+            and m.content.startswith(SUMMARY_PREFIX)
             for m in head
         ):
             return max(0, len(session._messages) - compact_count)
@@ -44,7 +45,7 @@ def _count_recent_messages(session: Session) -> int:
         if (
             isinstance(msg, UserMessage)
             and isinstance(msg.content, str)
-            and msg.content.startswith("[之前的对话摘要]")
+            and msg.content.startswith(SUMMARY_PREFIX)
         ):
             break
         count += 1
@@ -240,15 +241,24 @@ def get_history_range(
     return "\n".join(lines)
 
 
-def get_recall_system_prompt(session: Session) -> str:
-    """返回历史检索的系统提示词,仅当存在被压缩的历史消息时返回内容。"""
-    recent_count = len(session._messages) - session._compact_count
-    archived_count = len(session.history) - recent_count
+def get_recall_hint(archived_count: int, total_count: int) -> str:
+    """返回历史检索提示段,由 Session.compact() 追加到压缩摘要消息末尾。
+
+    仅在存在被压缩的历史消息时返回内容。传入的计数由调用方(compact)
+    计算,本函数不依赖 session 的当前状态。
+
+    Args:
+        archived_count: 被压缩移出当前上下文的归档消息数。
+        total_count: 完整历史消息总数(len(session.history))。
+
+    Returns:
+        str: 提示段;archived_count <= 0 时返回空串。
+    """
     if archived_count <= 0:
         return ""
     return (
         f"## 历史上下文\n"
-        f"当前会话有 {len(session.history)} 条完整历史消息,"
+        f"截至上次压缩,会话共有 {total_count} 条完整历史消息,"
         f"其中 {archived_count} 条已被压缩移出当前上下文。\n"
         f"当用户提及或你需要回忆已压缩的早期内容时,"
         f"使用 {recall_history.name} 工具搜索历史(支持多关键词)。\n"

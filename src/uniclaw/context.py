@@ -311,13 +311,6 @@ async def build_system_prompt(config: AppConfig):
 
     # === 中频变化内容 ===
 
-    # 历史消息检索提示 — 仅当有被压缩的历史消息时注入
-    from uniclaw.tools.session.recall import get_recall_system_prompt
-
-    recall_ctx = get_recall_system_prompt(task.session)
-    if recall_ctx:
-        system_prompt += f"\n\n{recall_ctx}"
-
     # 记忆 — 中频变化(保存/删除时变化)
     from uniclaw.tools.memory.context import get_memory_system_prompt
 

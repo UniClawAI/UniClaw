@@ -538,6 +538,10 @@ CHECKPOINT_TEMPLATE = """请将以下对话整理为**续作摘要**。这份摘
 - 信息密度优先,不写空话套话;没有对应内容的分节写"无"
 - 总长度控制在 __BUDGET__ token 以内"""
 
+# 压缩摘要消息的前缀 — 生成端(compact)与识别端(recall 前缀扫描)共用。
+# 改动此处时两端自动同步,避免压缩会话无法被 recall 识别。
+SUMMARY_PREFIX = "[之前的对话摘要]"
+
 # 摘要输出 token 预算下限/上限(自适应: 按被替换的 token 量分配)
 _SUMMARY_MIN_TOKENS = 500
 _SUMMARY_MAX_TOKENS = 1500
@@ -1249,8 +1253,21 @@ class Session:
 
         self._messages.clear()
         self.dedup_cache.clear()
+        # 历史检索提示追加到摘要消息末尾,与压缩数据同生共死:
+        # system prompt 在 run 开始时一次性构建,而压缩可能在运行中途后台触发,
+        # 若提示只放在 system prompt 中,压缩发生后 LLM 便无从得知可用
+        # recall_history 检索归档消息,且提示中的归档数量也会过期。
+        # 归档数 = 完整历史 - 保留的最近消息,用本次压缩的局部变量即可算出。
+        from uniclaw.tools.session.recall import get_recall_hint
+
+        archived_count = len(self.history) - len(recent)
+        recall_hint = get_recall_hint(archived_count, len(self.history))
+        summary_content = f"{SUMMARY_PREFIX}\n{resp.content}"
+        if recall_hint:
+            summary_content += f"\n\n{recall_hint}"
+
         # 直接操作 _messages,不走 add_* 以避免污染 history
-        self._messages.append(UserMessage(content=f"[之前的对话摘要]\n{resp.content}"))
+        self._messages.append(UserMessage(content=summary_content))
         self._messages.append(
             AIMessage(
                 content="已阅读之前的对话摘要,继续当前任务。",
