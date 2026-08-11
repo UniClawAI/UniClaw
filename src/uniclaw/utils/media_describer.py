@@ -35,7 +35,7 @@ async def describe_media(
     if cached:
         return cached
 
-    from uniclaw.provider import achat
+    from uniclaw.provider.fallback import achat
     from uniclaw.tools.session.session import Session
 
     prompt = _MEDIA_PROMPTS.get(media_type, "请描述这个媒体文件的内容。")

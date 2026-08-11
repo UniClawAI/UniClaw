@@ -20,7 +20,7 @@ async def cmd_btw(args: str, config: AppConfig) -> bool:
         await err("用法: /btw <问题>\n示例: /btw 什么是 Python GIL?", config)
         return True
 
-    from uniclaw.provider import achat
+    from uniclaw.provider.fallback import achat
     from uniclaw.tools.session.session import Session
 
     # 构建带上下文的消息
@@ -46,6 +46,7 @@ async def cmd_btw(args: str, config: AppConfig) -> bool:
         response = await achat(
             system_content,
             _session,
+            model_name=config.model_name,
             temperature=None,
             max_tokens=None,
             enable_thinking=False,
