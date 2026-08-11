@@ -7,14 +7,17 @@ import asyncio
 from openai import AsyncOpenAI, OpenAI
 
 from uniclaw.provider.common import (
+    OPENROUTER_SESSION_PREFIX_CHARS,
     REQUEST_TIMEOUT_SECONDS,
     build_extra_body,
     create_async_http_client,
     create_http_client,
     is_multimodal_error,
+    is_openrouter_api,
     record_usage_async,
     resolve_params,
     safe_parse_args,
+    usage_field,
 )
 from collections.abc import AsyncIterator, Iterator
 from uniclaw.provider.thought_parser import ThoughtParser
@@ -31,6 +34,68 @@ def _sanitize_surrogates(obj):
     if isinstance(obj, dict):
         return {k: _sanitize_surrogates(v) for k, v in obj.items()}
     return obj
+
+
+def _session_prefix(messages) -> str:
+    """提取首条系统消息的文本前缀,用于 OpenRouter 粘性路由 session_id 哈希。
+
+    router 层约定 messages[0] 为 {"role": "system", "content": system_prompt},
+    这里兼容 dict 与消息对象两种形态,多模态 content 列表只拼纯文本块。
+
+    Args:
+        messages: OpenAI 格式消息列表。
+
+    Returns:
+        系统提示词前 OPENROUTER_SESSION_PREFIX_CHARS 个字符;取不到则返回空串。
+    """
+    if not messages:
+        return ""
+    first = messages[0]
+    content = (
+        first.get("content", "") if isinstance(first, dict) else getattr(first, "content", "")
+    )
+    if isinstance(content, list):
+        content = "".join(b.get("text", "") for b in content if isinstance(b, dict))
+    if not isinstance(content, str):
+        return ""
+    return content[:OPENROUTER_SESSION_PREFIX_CHARS]
+
+
+def _usage_from_prompt_details(usage, extra_discount=0.0) -> Usage:
+    """从 OpenAI/OpenRouter/DeepSeek usage 对象解析 Usage,含缓存观测字段。
+
+    OpenRouter 在 usage.prompt_tokens_details 返回 cached_tokens(命中)与
+    cache_write_tokens(写入),响应体顶层返回 cache_discount(读正写负)。
+    DeepSeek 在 usage 顶层返回 prompt_cache_hit_tokens(命中)与
+    prompt_cache_miss_tokens(未命中),分别映射到 cached_tokens / cache_write_tokens。
+
+    Args:
+        usage: OpenAI SDK 的 usage 对象(含 prompt_tokens_details 或顶层缓存字段)。
+        extra_discount: 响应体顶层的 cache_discount,流式/非流式均可为 0。
+
+    Returns:
+        填充了缓存字段的 Usage 实例。
+    """
+    details = usage_field(usage, "prompt_tokens_details", None)
+    if isinstance(details, dict):
+        cached = details.get("cached_tokens", 0)
+        write = details.get("cache_write_tokens", 0)
+    else:
+        cached = getattr(details, "cached_tokens", 0) if details else 0
+        write = getattr(details, "cache_write_tokens", 0) if details else 0
+    # DeepSeek: usage 顶层返回命中/未命中,OpenRouter 则无这两个字段
+    if not cached:
+        cached = usage_field(usage, "prompt_cache_hit_tokens")
+    if not write:
+        write = usage_field(usage, "prompt_cache_miss_tokens")
+    return Usage(
+        input_tokens=usage.prompt_tokens or 0,
+        output_tokens=usage.completion_tokens or 0,
+        total_tokens=usage.total_tokens or 0,
+        cached_tokens=cached or 0,
+        cache_write_tokens=write or 0,
+        cache_discount=float(extra_discount or 0),
+    )
 
 
 # ── 多模态降级 ─────────────────────────────────────────────────
@@ -145,7 +210,9 @@ def stream(
     client = _build_openai_client(
         p["openai_api_base"], p["openai_api_key"], p["proxy_url"]
     )
-    extra_body = build_extra_body(p["openai_api_base"], enable_thinking, thinking)
+    extra_body = build_extra_body(
+        p["openai_api_base"], enable_thinking, thinking, _session_prefix(messages)
+    )
     if asr_options:
         extra_body["asr_options"] = asr_options
     from uniclaw.tools.base import should_explain
@@ -172,6 +239,9 @@ def stream(
         top_p=p["top_p"],
         stream=True,
     )
+    # OpenRouter 流式默认不返回 usage,显式请求以观测缓存命中(cached_tokens)
+    if is_openrouter_api(p["openai_api_base"]):
+        kwargs["stream_options"] = {"include_usage": True}
     if openai_tools:
         kwargs["tools"] = openai_tools
     if extra_body:
@@ -260,10 +330,8 @@ def _stream_inner(client: OpenAI, kwargs: dict):
 
         # usage
         if chunk.usage:
-            sc.usage = Usage(
-                input_tokens=chunk.usage.prompt_tokens or 0,
-                output_tokens=chunk.usage.completion_tokens or 0,
-                total_tokens=chunk.usage.total_tokens or 0,
+            sc.usage = _usage_from_prompt_details(
+                chunk.usage, getattr(chunk, "cache_discount", 0)
             )
 
         if hasattr(chunk, "model") and chunk.model:
@@ -305,7 +373,9 @@ async def astream(
     client = _build_async_openai_client(
         p["openai_api_base"], p["openai_api_key"], p["proxy_url"]
     )
-    extra_body = build_extra_body(p["openai_api_base"], enable_thinking, thinking)
+    extra_body = build_extra_body(
+        p["openai_api_base"], enable_thinking, thinking, _session_prefix(messages)
+    )
     if asr_options:
         extra_body["asr_options"] = asr_options
     from uniclaw.tools.base import should_explain
@@ -332,6 +402,9 @@ async def astream(
         top_p=p["top_p"],
         stream=True,
     )
+    # OpenRouter 流式默认不返回 usage,显式请求以观测缓存命中(cached_tokens)
+    if is_openrouter_api(p["openai_api_base"]):
+        kwargs["stream_options"] = {"include_usage": True}
     if openai_tools:
         kwargs["tools"] = openai_tools
     if extra_body:
@@ -414,10 +487,8 @@ async def _astream_inner(client: AsyncOpenAI, kwargs: dict):
                         )
 
         if chunk.usage:
-            sc.usage = Usage(
-                input_tokens=chunk.usage.prompt_tokens or 0,
-                output_tokens=chunk.usage.completion_tokens or 0,
-                total_tokens=chunk.usage.total_tokens or 0,
+            sc.usage = _usage_from_prompt_details(
+                chunk.usage, getattr(chunk, "cache_discount", 0)
             )
 
         if hasattr(chunk, "model") and chunk.model:
@@ -458,7 +529,9 @@ def chat(
     client = _build_openai_client(
         p["openai_api_base"], p["openai_api_key"], p["proxy_url"]
     )
-    extra_body = build_extra_body(p["openai_api_base"], enable_thinking, thinking)
+    extra_body = build_extra_body(
+        p["openai_api_base"], enable_thinking, thinking, _session_prefix(messages)
+    )
     if asr_options:
         extra_body["asr_options"] = asr_options
     openai_tools = [t.to_openai_schema() for t in tools] if tools else None
@@ -537,7 +610,9 @@ async def achat(
     client = _build_async_openai_client(
         p["openai_api_base"], p["openai_api_key"], p["proxy_url"]
     )
-    extra_body = build_extra_body(p["openai_api_base"], enable_thinking, thinking)
+    extra_body = build_extra_body(
+        p["openai_api_base"], enable_thinking, thinking, _session_prefix(messages)
+    )
     if asr_options:
         extra_body["asr_options"] = asr_options
     openai_tools = [t.to_openai_schema() for t in tools] if tools else None
@@ -608,10 +683,8 @@ def _response_to_ai_message(response) -> AIMessage:
     # usage
     usage = None
     if response.usage:
-        usage = Usage(
-            input_tokens=response.usage.prompt_tokens or 0,
-            output_tokens=response.usage.completion_tokens or 0,
-            total_tokens=response.usage.total_tokens or 0,
+        usage = _usage_from_prompt_details(
+            response.usage, getattr(response, "cache_discount", 0)
         )
 
     # post-process: parse <thought> tags from content

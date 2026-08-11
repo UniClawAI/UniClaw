@@ -155,7 +155,7 @@ const Chat = {
                         this._appendToolBlock(el, name, args, resultContent, success, tcId, explain);
                     });
                 }
-                this._appendUsageInfo(el, msg.usage?.input_tokens, msg.usage?.output_tokens, msg.model_name);
+                this._appendUsageInfo(el, msg.usage?.input_tokens, msg.usage?.output_tokens, msg.model_name, msg.usage?.cached_tokens, msg.usage?.cache_write_tokens);
             }
         });
     },
@@ -544,13 +544,16 @@ const Chat = {
         body.innerHTML = Utils.renderDiff(ctrl.dataset.diffOld || '', ctrl.dataset.diffNew || '', mode);
     },
 
-    _appendUsageInfo(parentEl, inTokens, outTokens, modelName) {
-        if (!inTokens && !outTokens && !modelName) return;
+    _appendUsageInfo(parentEl, inTokens, outTokens, modelName, cachedTokens, cacheWriteTokens) {
+        if (!inTokens && !outTokens && !modelName && !cachedTokens && !cacheWriteTokens) return;
         const el = document.createElement('div');
         el.className = 'msg-tokens';
         const parts = [];
         if (modelName) parts.push(modelName);
         if (inTokens || outTokens) parts.push(`${this._fmtTk(inTokens)}→${this._fmtTk(outTokens)}`);
+        // 缓存字段仅 OpenRouter 等提供商返回;缺失或为 0 时不展示,保持原显示
+        if (cachedTokens > 0) parts.push(`缓存 ${this._fmtTk(cachedTokens)}`);
+        if (cacheWriteTokens > 0) parts.push(`写 ${this._fmtTk(cacheWriteTokens)}`);
         el.textContent = parts.join(' · ');
         parentEl.appendChild(el);
     },
@@ -876,7 +879,7 @@ const Chat = {
                 this._appendToolBlock(this.streamingEl, name, args, null, null, tc.id || '');
             });
         }
-        if (this.streamingEl) this._appendUsageInfo(this.streamingEl, msg.in_tokens, msg.out_tokens, msg.model_name);
+        if (this.streamingEl) this._appendUsageInfo(this.streamingEl, msg.in_tokens, msg.out_tokens, msg.model_name, msg.cached_tokens, msg.cache_write_tokens);
         this.streamingEl = null; this.streamingContent = ''; this.streamingBody = null;
     },
 

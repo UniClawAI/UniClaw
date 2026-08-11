@@ -97,6 +97,9 @@ class AssistantEvent:
     in_tokens: int = 0
     out_tokens: int = 0
     model_name: str = ""
+    cached_tokens: int = 0
+    cache_write_tokens: int = 0
+    cache_discount: float = 0.0
 
 
 @dataclass
@@ -725,6 +728,9 @@ class MultiAgent:
         in_tokens = resp.usage.input_tokens if resp.usage else 0
         out_tokens = resp.usage.output_tokens if resp.usage else 0
         total_tokens = resp.usage.total_tokens if resp.usage else in_tokens + out_tokens
+        cached_tokens = resp.usage.cached_tokens if resp.usage else 0
+        cache_write_tokens = resp.usage.cache_write_tokens if resp.usage else 0
+        cache_discount = resp.usage.cache_discount if resp.usage else 0.0
         actual_model = resp.model_name or (
             config.model_name[0] if config.model_name else ""
         )
@@ -732,6 +738,9 @@ class MultiAgent:
             "input_tokens": in_tokens,
             "output_tokens": out_tokens,
             "total_tokens": total_tokens,
+            "cached_tokens": cached_tokens,
+            "cache_write_tokens": cache_write_tokens,
+            "cache_discount": cache_discount,
         }
 
         task.session.add_message(
@@ -762,6 +771,9 @@ class MultiAgent:
                 in_tokens=in_tokens,
                 out_tokens=out_tokens,
                 model_name=actual_model,
+                cached_tokens=cached_tokens,
+                cache_write_tokens=cache_write_tokens,
+                cache_discount=cache_discount,
             ),
             config,
         )

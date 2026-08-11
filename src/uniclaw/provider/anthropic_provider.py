@@ -8,12 +8,16 @@ import json
 import anthropic
 
 from uniclaw.provider.common import (
+    OPENROUTER_SESSION_PREFIX_CHARS,
     REQUEST_TIMEOUT_SECONDS,
     create_async_http_client,
     create_http_client,
+    is_openrouter_base_url,
+    make_session_id,
     record_usage_async,
     resolve_params,
     safe_parse_args,
+    usage_field,
 )
 from collections.abc import AsyncIterator, Iterator
 from uniclaw.provider.types import Usage
@@ -54,6 +58,61 @@ def _build_async_anthropic_client(
     if http_client:
         kwargs["http_client"] = http_client
     return anthropic.AsyncAnthropic(**kwargs)
+
+
+def _openrouter_session_extra(base_url: str, system_prompt: str) -> dict | None:
+    """OpenRouter 端点时构建粘性路由的 session_id extra_body,否则返回 None。
+
+    与 OpenAI 路径同一算法: 取系统提示词前 OPENROUTER_SESSION_PREFIX_CHARS
+    字符做 sha256 哈希。相同系统提示词的不同会话路由到同一上游,共享前缀缓存。
+    Anthropic 兼容端点(Messages API)同样接受顶层 session_id 字段。
+
+    Args:
+        base_url: Anthropic API base_url。
+        system_prompt: 系统提示词。
+
+    Returns:
+        {"session_id": <hash>} 或 None(非 OpenRouter 端点/前缀为空时)。
+    """
+    if not is_openrouter_base_url(base_url):
+        return None
+    prefix = (system_prompt or "")[:OPENROUTER_SESSION_PREFIX_CHARS]
+    if not prefix:
+        return None
+    return {"session_id": make_session_id(prefix)}
+
+
+def _usage_from_anthropic(usage, extra_discount=0.0) -> Usage:
+    """从 Anthropic/OpenRouter/DeepSeek usage 对象解析 Usage,含缓存观测字段。
+
+    OpenRouter 的 Anthropic 兼容端点以 Anthropic 原生命名返回缓存用量:
+    cache_read_input_tokens(命中)与 cache_creation_input_tokens(写入);
+    响应体顶层 cache_discount 为缓存折扣(读正写负)。
+    DeepSeek 以顶层 prompt_cache_hit_tokens(命中)与
+    prompt_cache_miss_tokens(未命中)命名,同样映射到 cached_tokens / cache_write_tokens。
+
+    Args:
+        usage: Anthropic SDK 的 usage 对象。
+        extra_discount: 响应体顶层的 cache_discount。
+
+    Returns:
+        填充了缓存字段的 Usage 实例。
+    """
+    cached = usage_field(usage, "cache_read_input_tokens") or 0
+    write = usage_field(usage, "cache_creation_input_tokens") or 0
+    # DeepSeek: 顶层返回命中/未命中(OpenRouter Anthropic 端点无这两个字段)
+    if not cached:
+        cached = usage_field(usage, "prompt_cache_hit_tokens") or 0
+    if not write:
+        write = usage_field(usage, "prompt_cache_miss_tokens") or 0
+    return Usage(
+        input_tokens=usage_field(usage, "input_tokens") or 0,
+        output_tokens=usage_field(usage, "output_tokens") or 0,
+        total_tokens=usage_field(usage, "total_tokens") or 0,
+        cached_tokens=cached,
+        cache_write_tokens=write,
+        cache_discount=float(extra_discount or 0),
+    )
 
 
 # ── 多模态降级 ─────────────────────────────────────────────────
@@ -173,6 +232,11 @@ def stream(
             "budget_tokens": max((resolved_max_tokens or 8192) // 2, 1024),
         }
 
+    # OpenRouter 粘性路由: 相同系统提示词 → 相同 session_id → 同一上游共享缓存
+    session_extra = _openrouter_session_extra(base_url, system_prompt)
+    if session_extra:
+        kwargs["extra_body"] = session_extra
+
     try:
         yield from _stream_inner(client, kwargs)
     except Exception as e:
@@ -251,11 +315,7 @@ def _stream_inner(client: anthropic.Anthropic, kwargs: dict):
                 # usage 信息
                 usage = getattr(event, "usage", None)
                 if usage:
-                    sc.usage = Usage(
-                        input_tokens=usage.input_tokens or 0,
-                        output_tokens=usage.output_tokens or 0,
-                        total_tokens=getattr(usage, "total_tokens", 0) or 0,
-                    )
+                    sc.usage = _usage_from_anthropic(usage)
 
             elif event.type == "message_start":
                 message = event.message
@@ -335,6 +395,11 @@ async def astream(
             "budget_tokens": max((resolved_max_tokens or 8192) // 2, 1024),
         }
 
+    # OpenRouter 粘性路由: 相同系统提示词 → 相同 session_id → 同一上游共享缓存
+    session_extra = _openrouter_session_extra(base_url, system_prompt)
+    if session_extra:
+        kwargs["extra_body"] = session_extra
+
     try:
         async for chunk in _astream_inner(client, kwargs):
             yield chunk
@@ -388,11 +453,7 @@ async def _astream_inner(client: anthropic.AsyncAnthropic, kwargs: dict):
             elif event.type == "message_delta":
                 usage = getattr(event, "usage", None)
                 if usage:
-                    sc.usage = Usage(
-                        input_tokens=usage.input_tokens or 0,
-                        output_tokens=usage.output_tokens or 0,
-                        total_tokens=getattr(usage, "total_tokens", 0) or 0,
-                    )
+                    sc.usage = _usage_from_anthropic(usage)
 
             elif event.type == "message_start":
                 message = event.message
@@ -456,6 +517,11 @@ def chat(
             "type": "enabled",
             "budget_tokens": max((resolved_max_tokens or 8192) // 2, 1024),
         }
+
+    # OpenRouter 粘性路由: 相同系统提示词 → 相同 session_id → 同一上游共享缓存
+    session_extra = _openrouter_session_extra(base_url, system_prompt)
+    if session_extra:
+        kwargs["extra_body"] = session_extra
 
     try:
         response = client.messages.create(**kwargs)
@@ -532,6 +598,11 @@ async def achat(
             "budget_tokens": max((resolved_max_tokens or 8192) // 2, 1024),
         }
 
+    # OpenRouter 粘性路由: 相同系统提示词 → 相同 session_id → 同一上游共享缓存
+    session_extra = _openrouter_session_extra(base_url, system_prompt)
+    if session_extra:
+        kwargs["extra_body"] = session_extra
+
     try:
         response = await client.messages.create(**kwargs)
     except Exception as e:
@@ -574,10 +645,8 @@ def _response_to_ai_message(response) -> AIMessage:
 
     usage = None
     if response.usage:
-        usage = Usage(
-            input_tokens=response.usage.input_tokens or 0,
-            output_tokens=response.usage.output_tokens or 0,
-            total_tokens=getattr(response.usage, "total_tokens", 0) or 0,
+        usage = _usage_from_anthropic(
+            response.usage, getattr(response, "cache_discount", 0)
         )
 
     return AIMessage(

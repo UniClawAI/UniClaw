@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
@@ -41,6 +42,16 @@ def is_openrouter_api(openai_api_base):
         openai_api_base,
         "https://openrouter.ai/api/v1/",
     )
+
+
+def is_openrouter_base_url(base_url: str) -> bool:
+    """判断是否为 OpenRouter 端点(按 host 匹配)。
+
+    OpenRouter 同时提供 OpenAI 兼容端点(https://openrouter.ai/api/v1/)
+    和 Anthropic 兼容端点(https://openrouter.ai/api/v1/anthropic 或
+    https://openrouter.ai/api),按 host 判断可覆盖所有形态。
+    """
+    return urlparse(base_url).netloc.lower() == "openrouter.ai"
 
 
 def is_anthropic_api(base_url: str) -> bool:
@@ -197,11 +208,43 @@ def get_protocol(config: AppConfig | None = None, **kwargs) -> Protocol:
 
 # ── extra_body 构建 ────────────────────────────────────────────
 
+# OpenRouter 粘性路由 session_id: 系统提示词前缀取前 N 字符做哈希。
+# 相同系统提示词的不同会话 → 相同 session_id → 路由到同一上游 → 跨会话共享前缀缓存。
+# 500 字当前落在行为准则段(静态区),不受日期/PID/root_dir 影响;若提示词结构变动,
+# 需要重新校验该边界(见 context.py 的环境段位置)。
+OPENROUTER_SESSION_PREFIX_CHARS = 500
+
+
+def make_session_id(prefix_text: str) -> str:
+    """根据系统提示词前缀生成稳定的 OpenRouter session_id。
+
+    session_id 仅用于粘性路由(路由到同一上游,让前缀缓存保持温热),
+    缓存命中仍要求完整 prompt 前缀逐字节一致。
+
+    Args:
+        prefix_text: 系统提示词的前缀文本。
+
+    Returns:
+        32 位十六进制哈希,满足 OpenRouter session_id ≤256 字符限制。
+    """
+    return hashlib.sha256(prefix_text.encode("utf-8")).hexdigest()[:32]
+
 
 def build_extra_body(
-    openai_api_base: str, enable_thinking: bool, thinking: bool
+    openai_api_base: str,
+    enable_thinking: bool,
+    thinking: bool,
+    session_prefix: str = "",
 ) -> dict | None:
-    """构建 thinking/reasoning 相关的 extra_body。"""
+    """构建 thinking/reasoning 相关的 extra_body。
+
+    Args:
+        openai_api_base: OpenAI 兼容 API 的 base_url。
+        enable_thinking: 是否启用思考模式。
+        thinking: 当前是否处于思考状态。
+        session_prefix: 系统提示词前缀,非空且走 OpenRouter 时用于生成
+            粘性路由 session_id(相同前缀的会话路由到同一上游,共享缓存)。
+    """
     if is_google_api(openai_api_base):
         return None
     thinking_type = "enabled" if thinking else "disabled"
@@ -209,9 +252,42 @@ def build_extra_body(
         "enable_thinking": enable_thinking,
         "thinking": {"type": thinking_type},
     }
-    if not thinking and is_openrouter_api(openai_api_base):
-        extra_body["reasoning"] = {"effort": Effort.NONE}
+    if is_openrouter_api(openai_api_base):
+        if not thinking:
+            extra_body["reasoning"] = {"effort": Effort.NONE}
+        # session_id 是 OpenRouter 专有字段,其他提供商会因未知参数报 400
+        if session_prefix:
+            extra_body["session_id"] = make_session_id(session_prefix)
     return extra_body
+
+
+# ── usage 字段读取 ─────────────────────────────────────────────
+
+
+def usage_field(obj, name: str, default=0):
+    """从 usage 对象读取字段,兼容 dict 与 SDK 模型 extra 字段。
+
+    OpenAI/Anthropic SDK 对未知字段(如 DeepSeek 的 prompt_cache_hit_tokens)
+    会放入 model_extra 而非实例属性,直接 getattr 取不到,需要从 model_extra 兜底。
+
+    Args:
+        obj: usage 对象或 dict。
+        name: 字段名。
+        default: 字段缺失时的默认值。
+
+    Returns:
+        字段值,缺失时返回 default。
+    """
+    if obj is None:
+        return default
+    if isinstance(obj, dict):
+        return obj.get(name, default)
+    val = getattr(obj, name, None)
+    if val is None:
+        extra = getattr(obj, "model_extra", None)
+        if isinstance(extra, dict):
+            val = extra.get(name)
+    return val if val is not None else default
 
 
 # ── 消息格式转换 ───────────────────────────────────────────────

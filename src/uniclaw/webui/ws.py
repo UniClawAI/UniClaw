@@ -456,6 +456,9 @@ async def bridge_events(session_id: str, config: AppConfig):
                     "in_tokens": event.in_tokens,
                     "out_tokens": event.out_tokens,
                     "model_name": event.model_name,
+                    "cached_tokens": event.cached_tokens,
+                    "cache_write_tokens": event.cache_write_tokens,
+                    "cache_discount": event.cache_discount,
                     "is_subagent": is_subagent,
                     "agent_name": agent_name,
                 }
