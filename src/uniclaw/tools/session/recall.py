@@ -23,7 +23,22 @@ if TYPE_CHECKING:
 
 
 def _count_recent_messages(session: Session) -> int:
-    """计算 _messages 中非摘要消息的条数(即保留的最近消息)。"""
+    """计算 _messages 中非摘要消息的条数(即保留的最近消息)。
+
+    优先按 _compact_count 计算:摘要对(用户摘要 + 助手确认)固定占头部,
+    不应计入最近消息。仅当头部不是标准摘要格式时回退到前缀扫描
+    (兼容旧格式或摘要头被删除的会话)。
+    """
+    compact_count = session._compact_count
+    if compact_count > 0:
+        head = session._messages[:compact_count]
+        if any(
+            isinstance(m, UserMessage)
+            and isinstance(m.content, str)
+            and m.content.startswith("[之前的对话摘要]")
+            for m in head
+        ):
+            return max(0, len(session._messages) - compact_count)
     count = 0
     for msg in reversed(session._messages):
         if (
@@ -89,7 +104,7 @@ def recall_history(
 ) -> str:
     """搜索会话历史中被压缩移出当前上下文的旧消息。
 
-    使用 BM25 算法进行全文检索,支持中文分词,按相关度排序返回结果。
+    按关键词对历史消息做检索(任一关键词命中即匹配,命中次数越多排越前),
     消息序号可用于 get_history_range 工具进一步查看前后文。
 
     Args:

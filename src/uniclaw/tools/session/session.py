@@ -493,40 +493,119 @@ class ToolCallMessage(BaseMessage):
         return f"[tool]: {content}"
 
 
-# 结构化 checkpoint 模板 — 替代自由文本摘要
-CHECKPOINT_TEMPLATE = """请将以下对话历史整理为结构化摘要,严格按以下格式输出:
+# 结构化 checkpoint 模板 — 续作摘要,替代自由文本摘要
+CHECKPOINT_TEMPLATE = """请将以下对话整理为**续作摘要**。这份摘要将**替换原对话**,交给一个全新的 agent,它只能靠这份摘要继续工作。
 
-## 当前意图
-{用户最终想完成什么}
+本次压缩的特别关注点: __FOCUS__
 
-## 下一步动作
-{agent 正在做什么,做到哪一步了}
+严格按以下 Markdown 格式输出,只输出摘要内容,不要输出其他任何内容:
 
-## 涉及文件
-{文件路径 + 做了什么修改/操作}
+## 用户需求
+{用户的原始请求,尽量保留原话;多次请求按时间顺序逐条列出,简短指令如"继续"也要保留}
+
+## 当前进度
+{agent 正在做什么任务,已经推进到哪一步}
 
 ## 已完成
-{已完成的子任务,简要列出}
+{已完成的子任务和操作,简要列出}
 
 ## 待完成
-{未完成的子任务}
+{未完成或进行中的子任务}
+
+## 下一步动作
+{接下来应该做什么,具体怎么做}
+
+## 涉及文件
+{文件路径 + 做了什么操作;若涉及函数/API,附签名或关键返回类型;每行一条}
 
 ## 关键决策
-{做出的设计决策及原因}
+{重要的设计/技术决策及原因}
+
+## 关键认知
+{对话中沉淀的技术结论、API 行为、模式;如"某函数返回 dict 而非 int""某装饰器是 async",续作不必重新发现}
 
 ## 错误与修复
-{遇到的问题、原因、解决方案}
+{遇到的问题、原因、解决方案;保留关键报错行}
 
 ## 归档信息
-{归档的消息条数和时间范围}
-{本段对话涉及的核心主题,用于辅助检索,但不限于这些词}
+{归档消息条数和大致时间范围}
+{核心主题词,用于检索,不限于这些词}
 
-注意:
-- 每个 section 如果没有对应内容就写"无"
-- 文件路径、URL、端口号、变量名、命令等关键信息必须完整保留,一字不改
-- 错误信息和堆栈可以精简但不能省略关键行
-- 保持简洁,总长度控制在 1000 字以内
-- 归档信息中的主题词应覆盖本段对话的核心主题,但明确表示不限于此"""
+硬性要求:
+- 文件路径、URL、端口号、变量名、命令、API/工具名称必须一字不改完整保留
+- 报错信息保留关键行,可精简不可省略
+- 用户需求一节把每条用户消息原文列出,不合并、不概括
+- 信息密度优先,不写空话套话;没有对应内容的分节写"无"
+- 总长度控制在 __BUDGET__ token 以内"""
+
+# 摘要输出 token 预算下限/上限(自适应: 按被替换的 token 量分配)
+_SUMMARY_MIN_TOKENS = 500
+_SUMMARY_MAX_TOKENS = 1500
+
+
+def _build_summary_transcript(
+    messages: list,
+    *,
+    max_user_chars: int = 2000,
+    max_assistant_chars: int = 1500,
+    max_result_chars: int = 500,
+    max_total_chars: int = 12000,
+) -> str:
+    """把待归档消息整理为有界、结构化的转录文本,供摘要 LLM 使用。
+
+    相比直接 `[role]: content` 拼接,这里对每类消息做了针对性处理:
+    - 用户消息: 截断到 max_user_chars,保留原始请求
+    - 助手消息: 截断文本,若发起了工具调用则附一行调用工具名
+    - 工具消息: 参数经 format_args_for_display 缩短,结果截断并标记
+    - 整体超过 max_total_chars 即停止,防止摘要输入爆炸
+
+    Args:
+        messages: 待归档的消息列表。
+        max_user_chars: 单条用户消息的最大字符数。
+        max_assistant_chars: 单条助手消息的最大字符数。
+        max_result_chars: 单条工具结果的最大字符数。
+        max_total_chars: 转录总字符数上限。
+
+    Returns:
+        str: 有界的转录文本。
+    """
+    from uniclaw.utils.format import format_args_for_display
+
+    parts: list[str] = []
+    total = 0
+    for m in messages:
+        if isinstance(m, UserMessage):
+            text = m.to_content()
+            if len(text) > max_user_chars:
+                text = text[:max_user_chars] + "\n...(已省略)"
+            line = f"[用户]: {text}"
+        elif isinstance(m, AIMessage):
+            text = m.to_content()
+            if len(text) > max_assistant_chars:
+                text = text[:max_assistant_chars] + "\n...(已省略)"
+            line = f"[助手]: {text}"
+            if m.tool_calls:
+                names = [tc.get("function", {}).get("name", "?") for tc in m.tool_calls]
+                line += f"\n  (调用工具: {', '.join(names)})"
+        elif isinstance(m, ToolCallMessage):
+            args_str = format_args_for_display(m.args, max_length=120)
+            call = f"{m.name}({args_str})" if m.args else m.name
+            result = m.content if isinstance(m.content, str) else m.to_content() or ""
+            if len(result) > max_result_chars:
+                result = result[:max_result_chars] + "\n...(结果已截断)"
+            line = f"[工具] {call}"
+            if result:
+                line += f"\n{result}"
+        else:
+            continue
+        remaining = max_total_chars - total
+        if remaining <= 0:
+            break
+        if len(line) > remaining:
+            line = line[:remaining] + "\n...(已省略)"
+        parts.append(line)
+        total += len(line)
+    return "\n\n".join(parts)
 
 
 class SessionType(StrEnum):
@@ -1118,7 +1197,7 @@ class Session:
     async def compact(
         self, config: AppConfig, focus: str = "", keep_ratio: float = 0.3
     ) -> None:
-        """通过 LLM 将旧消息压缩为结构化摘要。"""
+        """通过 LLM 将旧消息压缩为结构化续作摘要。"""
         split = self._find_split_point(keep_ratio=keep_ratio)
         if split <= 0:
             return
@@ -1126,36 +1205,47 @@ class Session:
         old = self._messages[:split]
         recent = self._messages[split:]
 
-        # 构建旧消息文本
-        old_text = ""
-        for m in old:
-            if isinstance(m, UserMessage):
-                role = MessageRole.USER
-            elif isinstance(m, AIMessage):
-                role = MessageRole.ASSISTANT
-            else:
-                role = MessageRole.TOOL
-            content = m.to_content()
-            old_text += f"[{role}]: {content}\n"
+        # 有界转录 + 自适应摘要预算(按被替换的 token 量分配)
+        transcript = _build_summary_transcript(old)
+        replaced_tokens = sum(m.estimate_tokens() for m in old)
+        budget = min(
+            _SUMMARY_MAX_TOKENS,
+            max(_SUMMARY_MIN_TOKENS, replaced_tokens // 20),
+        )
 
-        summary_prompt = CHECKPOINT_TEMPLATE
-        if focus:
-            summary_prompt += f"\n\n特别关注:{focus}"
-        summary_prompt += "\n\n" + old_text
+        summary_prompt = CHECKPOINT_TEMPLATE.replace(
+            "__FOCUS__", focus if focus else "无"
+        ).replace("__BUDGET__", str(budget))
+        summary_prompt += "\n\n对话记录:\n" + transcript
 
         wait_id = config.spinner.start("压缩对话...")
         try:
-            from uniclaw.provider import achat
+            from uniclaw.provider.fallback import achat
 
             compact_session = Session()
             compact_session.add_user_message(content=summary_prompt)
             resp = await achat(
-                "你是一个简洁的摘要生成器。",
+                "你是一个对话压缩器。你的任务是把一段即将离开上下文的对话压缩成"
+                "结构化续作摘要,让一个没见过原对话的新 agent 只凭这份摘要就能无缝"
+                "继续工作。关键信息(文件路径、URL、端口号、变量名、命令、"
+                "API/工具名称、报错关键行)必须一字不改地保留。",
                 compact_session,
+                model_name=config.model_name,
                 config=config,
+                max_tokens=budget,
+                temperature=0.2,
+                enable_thinking=False,
+                thinking=False,
             )
+        except Exception as e:
+            logger.warning("对话压缩失败,保留原消息: %s", e)
+            return
         finally:
             config.spinner.stop(wait_id=wait_id)
+
+        if not resp.content or not resp.content.strip():
+            logger.warning("对话压缩返回空摘要,保留原消息")
+            return
 
         self._messages.clear()
         self.dedup_cache.clear()
@@ -1163,7 +1253,7 @@ class Session:
         self._messages.append(UserMessage(content=f"[之前的对话摘要]\n{resp.content}"))
         self._messages.append(
             AIMessage(
-                content="明白了。我已经了解了之前对话的上下文。让我们继续。",
+                content="已阅读之前的对话摘要,继续当前任务。",
                 model_name="",
                 usage=Usage.from_dict({}),
             )

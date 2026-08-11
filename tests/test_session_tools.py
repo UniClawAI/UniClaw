@@ -59,6 +59,24 @@ def _make_session() -> Session:
     return s
 
 
+def _make_compacted_session() -> Session:
+    """构造真实 compact(split=6) 之后的 Session 状态。
+
+    compact() 后:_messages = [摘要对(2 条)] + 原消息[6:],history 保持全量不变。
+    归档部分 = history[0:6] = #0~#5,当前上下文 = #6~#19。
+    """
+    s = Session()
+    for i in range(10):
+        s.add_user_message(content=f"用户问题 {i}: 数据库迁移")
+        s.add_assistant_message(content=f"回答 {i}", model_name="gpt-4o", usage={})
+    s._messages = [
+        UserMessage(content="[之前的对话摘要]\n数据库迁移"),
+        AIMessage(content="已阅读之前的对话摘要,继续当前任务。", model_name=""),
+    ] + s._messages[6:]
+    s._compact_count = 2
+    return s
+
+
 class TestToolRegistration:
     """工具注册测试。"""
 
@@ -149,7 +167,9 @@ class TestSessionDelete:
         assert "未找到会话ID" in result
 
     @pytest.mark.asyncio
-    @patch("uniclaw.tools.session.tools.SessionManager.delete_session", return_value=True)
+    @patch(
+        "uniclaw.tools.session.tools.SessionManager.delete_session", return_value=True
+    )
     @patch("uniclaw.tools.session.tools.SessionManager.load_session")
     @patch("uniclaw.console.ui.ok", new_callable=AsyncMock)
     async def test_delete_success(self, mock_ok, mock_load, mock_delete):
@@ -160,7 +180,9 @@ class TestSessionDelete:
         assert "待删会话" in result
 
     @pytest.mark.asyncio
-    @patch("uniclaw.tools.session.tools.SessionManager.delete_session", return_value=False)
+    @patch(
+        "uniclaw.tools.session.tools.SessionManager.delete_session", return_value=False
+    )
     @patch("uniclaw.tools.session.tools.SessionManager.load_session")
     @patch("uniclaw.console.ui.err", new_callable=AsyncMock)
     async def test_delete_failure(self, mock_err, mock_load, mock_delete):
@@ -178,7 +200,9 @@ class TestSessionUpdateTitle:
     async def test_not_found(self, mock_load):
         """未找到会话。"""
         mock_load.return_value = None
-        result = await session_update_title("nonexistent", "新标题", config=_make_config())
+        result = await session_update_title(
+            "nonexistent", "新标题", config=_make_config()
+        )
         assert "未找到会话ID" in result
 
     @pytest.mark.asyncio
@@ -194,7 +218,9 @@ class TestSessionUpdateTitle:
         assert "新标题" in result
 
     @pytest.mark.asyncio
-    @patch("uniclaw.tools.session.tools.SessionManager.update_title", return_value=False)
+    @patch(
+        "uniclaw.tools.session.tools.SessionManager.update_title", return_value=False
+    )
     @patch("uniclaw.tools.session.tools.SessionManager.load_session")
     @patch("uniclaw.console.ui.err", new_callable=AsyncMock)
     async def test_update_failure(self, mock_err, mock_load, mock_update):
@@ -243,6 +269,17 @@ class TestRecallHistory:
         )
         assert "找到" in result
 
+    @pytest.mark.asyncio
+    async def test_recall_searches_entire_archived(self):
+        """真实 compact 后,归档边界正确:最后一条归档消息也能被检索到。
+
+        回归: _count_recent_messages 曾把摘要对的助手消息误计为最近消息,
+        导致归档边界错一位(#5 被排除在可搜索范围外)。
+        """
+        s = _make_compacted_session()
+        result = await recall_history(["回答"], context_size=0, config=_make_config(s))
+        assert "#5" in result
+
 
 class TestGetHistoryRange:
     """get_history_range 测试。"""
@@ -278,6 +315,50 @@ class TestGetHistoryRange:
         s.history = [UserMessage(content=f"m{i}") for i in range(3)]
         result = await get_history_range(0, 99, config=_make_config(s))
         assert "m0" in result
+
+    @pytest.mark.asyncio
+    async def test_archived_boundary_after_compact(self):
+        """真实 compact 后,归档/当前上下文的 ○/● 边界正确。
+
+        回归: split=6 时归档应为 #0~#5(○),当前上下文为 #6+(●)。
+        旧代码把摘要助手消息误计为最近消息,边界错一位(#5 显示为 ●)。
+        """
+        s = _make_compacted_session()
+        result = await get_history_range(0, 20, config=_make_config(s))
+        lines = [
+            ln
+            for ln in result.splitlines()
+            if ln.startswith("  ○") or ln.startswith("  ●")
+        ]
+        assert lines[0].startswith("  ○ #0")
+        assert lines[5].startswith("  ○ #5")
+        assert lines[6].startswith("  ● #6")
+
+
+class TestCountRecentMessages:
+    """_count_recent_messages 单元测试。"""
+
+    def test_after_real_compact(self):
+        """真实 compact 后,最近消息数为 len(_messages) - _compact_count。"""
+        from uniclaw.tools.session.recall import _count_recent_messages
+
+        s = _make_compacted_session()
+        # _messages = 摘要对(2) + 最近(14) = 16,最近消息应为 14
+        assert len(s._messages) == 16
+        assert _count_recent_messages(s) == 14
+
+    def test_legacy_prefix_scan_fallback(self):
+        """头部非标准摘要格式时,回退前缀扫描仍可用。"""
+        from uniclaw.tools.session.recall import _count_recent_messages
+
+        s = Session()
+        s._compact_count = 0
+        s._messages = [
+            UserMessage(content="[之前的对话摘要]\n旧摘要"),
+            AIMessage(content="回复", model_name=""),
+            UserMessage(content="新问题"),
+        ]
+        assert _count_recent_messages(s) == 2
 
 
 class TestGetRecallSystemPrompt:
