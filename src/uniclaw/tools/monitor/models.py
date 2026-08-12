@@ -27,6 +27,7 @@ class Monitor:
         timeout: int,
         notify_model: bool = True,
         cwd: Path | None = None,
+        config=None,
     ):
         self.id = monitor_id
         self.command = command
@@ -35,6 +36,7 @@ class Monitor:
         self.timeout = timeout
         self.notify_model = notify_model
         self.cwd = cwd
+        self.config = config
         self.status = MonitorStatus.RUNNING
         self.process: asyncio.subprocess.Process | None = None
         self.stdout_thread: asyncio.Task | None = None
@@ -43,7 +45,6 @@ class Monitor:
         self.matched_lines: list[str] = []
         self.start_time = datetime.now()
         self.match_time: datetime | None = None
-        self._config = None
 
     def to_dict(self) -> dict:
         uptime = (datetime.now() - self.start_time).total_seconds()

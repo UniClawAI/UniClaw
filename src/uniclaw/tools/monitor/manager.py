@@ -90,9 +90,9 @@ class MonitorManager:
 
             monitor_id = uuid.uuid4().hex[:8]
             monitor = Monitor(
-                monitor_id, command, pattern, description, timeout, notify_model, cwd
+                monitor_id, command, pattern, description, timeout, notify_model, cwd,
+                config=config,
             )
-            monitor._config = config
             monitor.process = process
             self._monitors[monitor_id] = monitor
 
@@ -161,9 +161,9 @@ class MonitorManager:
 
             monitor_id = uuid.uuid4().hex[:8]
             monitor = Monitor(
-                monitor_id, command, "", description, timeout, False, cwd
+                monitor_id, command, "", description, timeout, False, cwd,
+                config=config,
             )
-            monitor._config = config
             monitor.process = process
             self._monitors[monitor_id] = monitor
 
@@ -247,7 +247,7 @@ class MonitorManager:
             logger.warning("发送桌面通知失败: %s", e)
 
         # 2. 通知模型(使用 wake_agent 统一唤醒逻辑)
-        if monitor.notify_model and monitor._config:
+        if monitor.notify_model and monitor.config:
             try:
                 from uniclaw.utils.wakeup import wake_agent
                 from uniclaw.utils.constants import SYSTEM_PREFIX
@@ -264,7 +264,7 @@ class MonitorManager:
                     f"  监控 ID: {monitor.id}\n"
                     f"请根据匹配结果继续处理。"
                 )
-                await wake_agent(message, monitor._config)
+                await wake_agent(message, monitor.config)
             except Exception as e:
                 logger.warning("唤醒模型失败: %s", e)
 
