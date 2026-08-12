@@ -604,8 +604,19 @@ async def search_files_with_everything(
         search_cmd += f" -n {max_results}"
     search_cmd += f' "{query}"'
 
-    result = await Bash(search_cmd)
-    return result
+    proc = await asyncio.create_subprocess_shell(
+        search_cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await proc.communicate()
+
+    if proc.returncode != 0:
+        error_msg = stderr.decode(errors="replace").strip()
+        return f"{STDERR_MARKER} {error_msg}" if error_msg else f"{STDERR_MARKER} 命令执行失败 (退出码: {proc.returncode})"
+
+    output = stdout.decode(errors="replace").strip()
+    return output if output else "(没有输出)"
 
 
 # 工具检测结果缓存(3分钟过期)
