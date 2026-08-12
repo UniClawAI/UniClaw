@@ -78,6 +78,121 @@ class TestGetStats:
         assert data["total"]["input_tokens"] == 0
 
 
+class TestRecordUsageCache:
+    """缓存字段落库测试"""
+
+    @pytest.mark.asyncio
+    async def test_record_cache_fields(self):
+        await record_usage(
+            input_tokens=5000,
+            output_tokens=200,
+            cached_tokens=4000,
+            cache_write_tokens=1000,
+            cache_discount=0.012,
+        )
+        data = get_stats()
+        assert data["total"]["cached_tokens"] == 4000
+        assert data["total"]["cache_write_tokens"] == 1000
+        assert data["total"]["cache_discount"] == pytest.approx(0.012)
+        day = list(data["daily"].values())[0]
+        assert day["cached_tokens"] == 4000
+        assert day["cache_write_tokens"] == 1000
+        assert day["cache_discount"] == pytest.approx(0.012)
+
+    @pytest.mark.asyncio
+    async def test_record_cache_accumulates(self):
+        await record_usage(input_tokens=5000, cached_tokens=4000)
+        await record_usage(input_tokens=5000, cached_tokens=3000, cache_discount=-0.001)
+        data = get_stats()
+        assert data["total"]["cached_tokens"] == 7000
+        assert data["total"]["cache_discount"] == pytest.approx(-0.001)
+
+    @pytest.mark.asyncio
+    async def test_record_skip_cache_only_zero(self):
+        # 只有缓存字段时才需要落库
+        await record_usage(cached_tokens=100)
+        data = get_stats()
+        assert data["total"]["cached_tokens"] == 100
+        assert data["total"]["api_calls"] == 1
+
+    @pytest.mark.asyncio
+    async def test_cache_discount_affects_cost(self, tmp_path):
+        """cache_discount 修正费用:基础费用 - 折扣 = 实际费用"""
+        from uniclaw.utils.usage import _estimate_cost_from_price
+
+        price = {"input": 2.5e-6, "output": 1e-5}
+        # 10000 input + 500 output,无折扣
+        base = _estimate_cost_from_price(10000, 500, price, 0)
+        assert base == pytest.approx(0.03)
+
+        # 缓存命中 8000 tokens,cache_discount 为正(省钱)
+        discounted = _estimate_cost_from_price(10000, 500, price, 0.012)
+        assert discounted == pytest.approx(0.018)  # 0.03 - 0.012
+
+        # 缓存写入,cache_discount 为负(多花钱)
+        expensive = _estimate_cost_from_price(10000, 500, price, -0.005)
+        assert expensive == pytest.approx(0.035)  # 0.03 + 0.005
+
+    @pytest.mark.asyncio
+    async def test_cache_discount_affects_cost(self, tmp_path):
+        """cache_discount 修正费用:基础费用 - 折扣 = 实际费用"""
+        from uniclaw.utils.usage import _estimate_cost_from_price
+
+        price = {"input": 2.5e-6, "output": 1e-5}
+        # 10000 input + 500 output,无折扣
+        base = _estimate_cost_from_price(10000, 500, price, 0)
+        assert base == pytest.approx(0.03)
+
+        # 缓存命中 8000 tokens,cache_discount 为正(省钱)
+        discounted = _estimate_cost_from_price(10000, 500, price, 0.012)
+        assert discounted == pytest.approx(0.018)  # 0.03 - 0.012
+
+        # 缓存写入,cache_discount 为负(多花钱)
+        expensive = _estimate_cost_from_price(10000, 500, price, -0.005)
+        assert expensive == pytest.approx(0.035)  # 0.03 + 0.005
+
+    @pytest.mark.asyncio
+    async def test_migrate_old_file(self, tmp_stats):
+        # 旧版 usage.json 缺少缓存字段,迁移后补 0,record_usage 不应 KeyError
+        tmp_stats.write_text(
+            json.dumps(
+                {
+                    "total": {
+                        "input_tokens": 100,
+                        "output_tokens": 50,
+                        "api_calls": 1,
+                        "tool_calls": 0,
+                    },
+                    "daily": {
+                        "2026-01-01": {
+                            "input_tokens": 100,
+                            "output_tokens": 50,
+                            "api_calls": 1,
+                            "tool_calls": 0,
+                            "cost": 0.0,
+                        }
+                    },
+                    "by_model": {
+                        "gpt-4o": {
+                            "input_tokens": 100,
+                            "output_tokens": 50,
+                            "api_calls": 1,
+                            "tool_calls": 0,
+                            "cost": 0.0,
+                        }
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        await record_usage(input_tokens=100, cached_tokens=50)
+        data = get_stats()
+        assert data["total"]["cached_tokens"] == 50
+        assert data["total"]["input_tokens"] == 200  # 旧字段保留并累计
+        assert data["daily"]["2026-01-01"]["cache_write_tokens"] == 0
+        assert data["by_model"]["gpt-4o"]["cached_tokens"] == 0
+
+
 class TestFormatStats:
     """格式化测试"""
 
@@ -102,6 +217,27 @@ class TestFormatStats:
         text = format_stats()
         assert "最近 7 天" in text
         assert "次调用" in text
+
+    @pytest.mark.asyncio
+    async def test_cache_line(self):
+        await record_usage(
+            input_tokens=5000,
+            output_tokens=200,
+            cached_tokens=4000,
+            cache_write_tokens=1000,
+            cache_discount=0.012,
+        )
+        text = format_stats()
+        assert "缓存" in text
+        assert "命中 4,000 tokens" in text
+        assert "写入 1,000" in text
+        assert "$0.0120" in text
+
+    @pytest.mark.asyncio
+    async def test_cache_line_hidden_when_zero(self):
+        await record_usage(input_tokens=100, output_tokens=50)
+        text = format_stats()
+        assert "缓存" not in text
 
 
 if __name__ == "__main__":

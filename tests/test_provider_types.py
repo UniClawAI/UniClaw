@@ -51,14 +51,44 @@ class TestUsage:
     def test_to_dict(self):
         u = Usage(input_tokens=10, output_tokens=20)
         d = u.to_dict()
-        assert d == {"input_tokens": 10, "output_tokens": 20, "total_tokens": 30}
+        assert d == {
+            "input_tokens": 10,
+            "output_tokens": 20,
+            "total_tokens": 30,
+            "cached_tokens": 0,
+            "cache_write_tokens": 0,
+            "cache_discount": 0.0,
+        }
+
+    def test_to_dict_with_cache_fields(self):
+        u = Usage(
+            input_tokens=10,
+            output_tokens=20,
+            cached_tokens=8,
+            cache_write_tokens=2,
+            cache_discount=0.4,
+        )
+        d = u.to_dict()
+        assert d["cached_tokens"] == 8
+        assert d["cache_write_tokens"] == 2
+        assert d["cache_discount"] == 0.4
 
     def test_from_dict(self):
-        d = {"input_tokens": 5, "output_tokens": 15, "total_tokens": 20}
+        d = {
+            "input_tokens": 5,
+            "output_tokens": 15,
+            "total_tokens": 20,
+            "cached_tokens": 3,
+            "cache_write_tokens": 1,
+            "cache_discount": 0.2,
+        }
         u = Usage.from_dict(d)
         assert u.input_tokens == 5
         assert u.output_tokens == 15
         assert u.total_tokens == 20
+        assert u.cached_tokens == 3
+        assert u.cache_write_tokens == 1
+        assert u.cache_discount == 0.2
 
     def test_from_dict_missing_keys(self):
         u = Usage.from_dict({})

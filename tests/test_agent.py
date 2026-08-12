@@ -82,12 +82,18 @@ class TestEventClasses:
             in_tokens=10,
             out_tokens=20,
             model_name="gpt-4",
+            cached_tokens=8,
+            cache_write_tokens=2,
+            cache_discount=0.4,
         )
         assert event.content == "response"
         assert event.tool_calls == [{"name": "test"}]
         assert event.in_tokens == 10
         assert event.out_tokens == 20
         assert event.model_name == "gpt-4"
+        assert event.cached_tokens == 8
+        assert event.cache_write_tokens == 2
+        assert event.cache_discount == 0.4
 
     def test_assistant_event_defaults(self):
         """测试 AssistantEvent 默认值"""
@@ -95,6 +101,9 @@ class TestEventClasses:
         assert event.in_tokens == 0
         assert event.out_tokens == 0
         assert event.model_name == ""
+        assert event.cached_tokens == 0
+        assert event.cache_write_tokens == 0
+        assert event.cache_discount == 0.0
 
     def test_tool_preparing_event(self):
         """测试 ToolPreparingEvent"""

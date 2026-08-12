@@ -43,10 +43,13 @@ def _extract_container_name(result: str) -> str:
 
 
 # 跳过整个模块如果 Docker 不可用
-pytestmark = pytest.mark.skipif(
-    not _is_docker_available(),
-    reason="Docker 不可用",
-)
+pytestmark = [
+    pytest.mark.skipif(
+        not _is_docker_available(),
+        reason="Docker 不可用",
+    ),
+    pytest.mark.slow,
+]
 
 
 # ════════════════════════════════════════════════════════════════

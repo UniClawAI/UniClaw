@@ -168,7 +168,8 @@ class TestStopMonitor:
         m.process = process
         task = MagicMock()
         task.done.return_value = False
-        m.thread = task
+        m.stdout_thread = task
+        m.stderr_thread = None
         mgr._monitors["m1"] = m
         with patch.object(mgr, "_kill_process_tree", new=AsyncMock()) as mock_kill:
             result = await mgr.stop_monitor("m1")
@@ -187,7 +188,8 @@ class TestStopMonitor:
         m.process = process
         task = MagicMock()
         task.done.return_value = True
-        m.thread = task
+        m.stdout_thread = task
+        m.stderr_thread = None
         mgr._monitors["m1"] = m
         with patch.object(mgr, "_kill_process_tree", new=AsyncMock()) as mock_kill:
             result = await mgr.stop_monitor("m1")
@@ -467,10 +469,8 @@ class TestReadOutput:
         process.stdout.readline = AsyncMock(side_effect=OSError("boom"))
         process.returncode = None
         m.process = process
-        with patch.object(mgr, "_kill_process_tree", new=AsyncMock()) as mock_kill:
-            await mgr._read_output(m)
+        await mgr._read_output(m)
         assert m.status == MonitorStatus.ERROR
-        mock_kill.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_cancelled(self):
@@ -482,13 +482,11 @@ class TestReadOutput:
         process.stdout.readline = AsyncMock(side_effect=gate.wait)
         process.returncode = None
         m.process = process
-        with patch.object(mgr, "_kill_process_tree", new=AsyncMock()) as mock_kill:
-            task = asyncio.create_task(mgr._read_output(m))
-            await asyncio.sleep(0)
-            task.cancel()
-            await task
+        task = asyncio.create_task(mgr._read_output(m))
+        await asyncio.sleep(0)
+        task.cancel()
+        await task
         assert m.status == MonitorStatus.RUNNING
-        mock_kill.assert_awaited_once()
 
 
 class TestNotifyMatch:
@@ -499,7 +497,7 @@ class TestNotifyMatch:
         """通知用户并唤醒模型。"""
         mgr = MonitorManager()
         m = _make_monitor(pattern="ERROR", description="日志")
-        m._config = MagicMock()
+        m.config = MagicMock()
         with patch(
             "uniclaw.tools.notify.push_notification",
             new_callable=AsyncMock,
@@ -516,7 +514,7 @@ class TestNotifyMatch:
         """无 config 时不唤醒模型,仅通知用户。"""
         mgr = MonitorManager()
         m = _make_monitor(pattern="ERROR")
-        m._config = None
+        m.config = None
         with patch(
             "uniclaw.tools.notify.push_notification",
             new_callable=AsyncMock,

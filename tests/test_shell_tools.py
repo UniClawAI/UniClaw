@@ -202,25 +202,24 @@ class TestBash:
         return proc
 
     @pytest.mark.asyncio
-    async def test_timeout_limit(self):
-        """超时超过 180 秒拒绝。"""
+    async def test_timeout_must_be_positive(self):
+        """超时必须大于 0。"""
         from uniclaw.tools.shell import Bash
 
         with patch("uniclaw.tools.shell.asyncio.create_subprocess_shell") as mock_exec:
-            result = await Bash("echo hi", timeout=181, config=self._config())
-        assert "180" in result
+            result = await Bash("echo hi", timeout=0, config=self._config())
+        assert "大于 0" in result
         mock_exec.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_async_mode(self):
-        """异步模式返回进程 ID。"""
+    async def test_timeout_negative_rejected(self):
+        """负数超时被拒绝。"""
         from uniclaw.tools.shell import Bash
 
-        proc = self._proc()
-        with patch("uniclaw.tools.shell.asyncio.create_subprocess_shell", new_callable=AsyncMock, return_value=proc):
-            result = await Bash("sleep 10", timeout=0, config=self._config())
-        assert "[async]" in result
-        assert "123" in result
+        with patch("uniclaw.tools.shell.asyncio.create_subprocess_shell") as mock_exec:
+            result = await Bash("echo hi", timeout=-1, config=self._config())
+        assert "大于 0" in result
+        mock_exec.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_no_output(self):
@@ -279,7 +278,7 @@ class TestBash:
 
     @pytest.mark.asyncio
     async def test_timeout(self):
-        """超时返回超时消息。"""
+        """超时后进程转入监控。"""
         from uniclaw.tools.shell import Bash
 
         async def never():
@@ -287,11 +286,15 @@ class TestBash:
 
         proc = self._proc(returncode=None)
         proc.wait = never
+        mock_monitor = AsyncMock()
+        mock_monitor.register_existing_process = AsyncMock(return_value=("abc12345", None))
         with patch("uniclaw.tools.shell.asyncio.create_subprocess_shell", new_callable=AsyncMock, return_value=proc), patch(
-            "uniclaw.tools.shell._kill_proc_tree", new_callable=AsyncMock
+            "uniclaw.tools.monitor.manager.MonitorManager.get_instance", return_value=mock_monitor
         ):
             result = await Bash("sleep 100", timeout=0.2, config=self._config())
         assert "超时" in result
+        assert "abc12345" in result
+        assert "监控" in result
 
     @pytest.mark.asyncio
     async def test_exception(self):
@@ -394,27 +397,37 @@ class TestGrepTool:
 class TestEverything:
     """Everything 搜索测试。"""
 
+    @staticmethod
+    def _make_proc(stdout: bytes = b"", stderr: bytes = b"", returncode: int = 0):
+        proc = AsyncMock()
+        proc.communicate = AsyncMock(return_value=(stdout, stderr))
+        proc.returncode = returncode
+        return proc
+
     @pytest.mark.asyncio
-    @patch("uniclaw.tools.shell.Bash", new_callable=AsyncMock, return_value="output")
-    async def test_basic(self, mock_bash):
+    @patch("uniclaw.tools.shell.asyncio.create_subprocess_shell", new_callable=AsyncMock)
+    async def test_basic(self, mock_shell):
         """基本搜索。"""
+        mock_shell.return_value = self._make_proc(stdout=b"output")
         result = await search_files_with_everything("readme")
         assert result == "output"
-        assert mock_bash.await_args.args[0] == 'es "readme"'
+        assert mock_shell.await_args.args[0] == 'es "readme"'
 
     @pytest.mark.asyncio
-    @patch("uniclaw.tools.shell.Bash", new_callable=AsyncMock)
-    async def test_path_filter(self, mock_bash):
+    @patch("uniclaw.tools.shell.asyncio.create_subprocess_shell", new_callable=AsyncMock)
+    async def test_path_filter(self, mock_shell):
         """路径过滤。"""
+        mock_shell.return_value = self._make_proc()
         await search_files_with_everything("config", path_filter="D:/Projects")
-        assert mock_bash.await_args.args[0] == 'es -p "D:/Projects" "config"'
+        assert mock_shell.await_args.args[0] == 'es -p "D:/Projects" "config"'
 
     @pytest.mark.asyncio
-    @patch("uniclaw.tools.shell.Bash", new_callable=AsyncMock)
-    async def test_max_results(self, mock_bash):
+    @patch("uniclaw.tools.shell.asyncio.create_subprocess_shell", new_callable=AsyncMock)
+    async def test_max_results(self, mock_shell):
         """限制结果数。"""
+        mock_shell.return_value = self._make_proc()
         await search_files_with_everything("*.py", max_results=10)
-        assert mock_bash.await_args.args[0] == 'es -n 10 "*.py"'
+        assert mock_shell.await_args.args[0] == 'es -n 10 "*.py"'
 
     @pytest.mark.asyncio
     @patch("uniclaw.tools.shell.asyncio.create_subprocess_exec", side_effect=FileNotFoundError)

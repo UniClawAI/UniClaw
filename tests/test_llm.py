@@ -2,6 +2,9 @@
 LLM 调用层的单元测试
 """
 
+import hashlib
+from types import SimpleNamespace
+
 import pytest
 from unittest.mock import patch, MagicMock
 from uniclaw.provider import (
@@ -24,7 +27,16 @@ from uniclaw.provider.common import (
     is_multimodal_error,
     safe_parse_args,
 )
-from uniclaw.provider.openai_provider import _extract_media_url
+from uniclaw.provider.openai_provider import (
+    _extract_media_url,
+    _session_prefix,
+    _usage_from_prompt_details,
+)
+from uniclaw.provider.anthropic_provider import (
+    _openrouter_session_extra,
+    _usage_from_anthropic,
+    _with_cache_control,
+)
 from uniclaw.config import ProviderProfile
 
 
@@ -95,6 +107,268 @@ class TestBuildExtraBody:
             "thinking": {"type": "disabled"},
             "reasoning": {"effort": "none"},
         }
+
+    def test_openrouter_adds_session_id_hash(self):
+        prefix = "你是 UniClaw,一个 AI 助手"
+        result = build_extra_body(
+            "https://openrouter.ai/api/v1/",
+            enable_thinking=True,
+            thinking=True,
+            session_prefix=prefix,
+        )
+        assert result["session_id"] == hashlib.sha256(prefix.encode("utf-8")).hexdigest()[
+            :32
+        ]
+        assert len(result["session_id"]) == 32
+
+    def test_same_prefix_same_session_id(self):
+        base = "https://openrouter.ai/api/v1/"
+        id1 = build_extra_body(base, True, True, "system-prefix-abc")["session_id"]
+        id2 = build_extra_body(base, True, True, "system-prefix-abc")["session_id"]
+        assert id1 == id2
+
+    def test_different_prefix_different_session_id(self):
+        base = "https://openrouter.ai/api/v1/"
+        id1 = build_extra_body(base, True, True, "system-prefix-abc")["session_id"]
+        id2 = build_extra_body(base, True, True, "system-prefix-abd")["session_id"]
+        assert id1 != id2
+
+    def test_session_id_ignored_for_non_openrouter(self):
+        result = build_extra_body(
+            "https://api.openai.com/v1/",
+            enable_thinking=True,
+            thinking=True,
+            session_prefix="some-prefix",
+        )
+        assert "session_id" not in result
+
+    def test_empty_prefix_no_session_id(self):
+        result = build_extra_body(
+            "https://openrouter.ai/api/v1/",
+            enable_thinking=True,
+            thinking=True,
+            session_prefix="",
+        )
+        assert "session_id" not in result
+
+    def test_session_prefix_extracts_first_500_chars(self):
+        messages = [{"role": "system", "content": "S" * 600}]
+        assert _session_prefix(messages) == "S" * 500
+
+    def test_session_prefix_handles_missing_system_message(self):
+        assert _session_prefix([]) == ""
+        assert _session_prefix([{"role": "user", "content": "hi"}]) == "hi"
+
+
+class TestAnthropicOpenRouterSession:
+    """Anthropic 路径的 OpenRouter 粘性路由 session_id 测试"""
+
+    def test_openrouter_base_adds_session_id(self):
+        prompt = "你是 UniClaw,一个 AI 助手"
+        extra = _openrouter_session_extra(
+            "https://openrouter.ai/api/v1/anthropic", prompt
+        )
+        assert extra == {
+            "session_id": hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:32]
+        }
+
+    def test_openrouter_api_base_adds_session_id(self):
+        # Claude Code 风格的 base: https://openrouter.ai/api (无 /v1/anthropic 后缀)
+        extra = _openrouter_session_extra("https://openrouter.ai/api", "prompt")
+        assert extra is not None and len(extra["session_id"]) == 32
+
+    def test_anthropic_official_no_session_id(self):
+        assert _openrouter_session_extra("https://api.anthropic.com", "prompt") is None
+
+    def test_empty_prompt_no_session_id(self):
+        assert (
+            _openrouter_session_extra("https://openrouter.ai/api/v1/anthropic", "")
+            is None
+        )
+
+    def test_same_prefix_same_session_id(self):
+        a = _openrouter_session_extra(
+            "https://openrouter.ai/api/v1/anthropic", "S" * 600
+        )
+        b = _openrouter_session_extra(
+            "https://openrouter.ai/api/v1/anthropic", "S" * 700
+        )
+        # 前 500 字符相同,提示词后段差异不影响 id
+        assert a == b
+
+
+class TestUsageCacheFields:
+    """Usage 缓存字段的序列化与解析测试"""
+
+    def test_to_dict_roundtrip(self):
+        u = Usage(
+            input_tokens=100,
+            output_tokens=50,
+            cached_tokens=90,
+            cache_write_tokens=10,
+            cache_discount=0.5,
+        )
+        restored = Usage.from_dict(u.to_dict())
+        assert restored == u
+
+    def test_from_dict_missing_cache_fields(self):
+        u = Usage.from_dict({"input_tokens": 1, "output_tokens": 2})
+        assert u.cached_tokens == 0
+        assert u.cache_write_tokens == 0
+        assert u.cache_discount == 0.0
+
+    def test_usage_from_prompt_details(self):
+        usage = SimpleNamespace(
+            prompt_tokens=100,
+            completion_tokens=20,
+            total_tokens=120,
+            prompt_tokens_details=SimpleNamespace(
+                cached_tokens=95, cache_write_tokens=0
+            ),
+        )
+        u = _usage_from_prompt_details(usage, extra_discount=0.25)
+        assert u.input_tokens == 100
+        assert u.cached_tokens == 95
+        assert u.cache_write_tokens == 0
+        assert u.cache_discount == 0.25
+        assert u.total_tokens == 120
+
+    def test_usage_from_prompt_details_no_details(self):
+        usage = SimpleNamespace(
+            prompt_tokens=1, completion_tokens=1, total_tokens=2
+        )
+        u = _usage_from_prompt_details(usage)
+        assert u.cached_tokens == 0
+        assert u.cache_discount == 0.0
+
+    def test_usage_from_prompt_details_mock_safe(self):
+        # MagicMock 对未设置的属性会自动创建占位对象,不应污染 Usage 的数值字段
+        usage = MagicMock()
+        usage.prompt_tokens = 100
+        usage.completion_tokens = 20
+        # total_tokens 未设置 → MagicMock,模拟 SDK 不返回 total 的场景
+        u = _usage_from_prompt_details(usage, extra_discount=MagicMock())
+        assert u.input_tokens == 100
+        assert u.output_tokens == 20
+        assert u.cached_tokens == 0
+        assert u.cache_write_tokens == 0
+        assert u.cache_discount == 0.0
+
+    def test_usage_from_prompt_details_deepseek_attr(self):
+        # DeepSeek: 顶层 prompt_cache_hit_tokens / prompt_cache_miss_tokens
+        usage = SimpleNamespace(
+            prompt_tokens=100,
+            completion_tokens=20,
+            total_tokens=120,
+            prompt_cache_hit_tokens=85,
+            prompt_cache_miss_tokens=15,
+        )
+        u = _usage_from_prompt_details(usage)
+        assert u.cached_tokens == 85
+        assert u.cache_write_tokens == 15
+
+    def test_usage_from_prompt_details_deepseek_model_extra(self):
+        # OpenAI SDK 把未知字段放入 model_extra,getattr 取不到
+        usage = SimpleNamespace(
+            prompt_tokens=100,
+            completion_tokens=20,
+            total_tokens=120,
+            model_extra={
+                "prompt_cache_hit_tokens": 90,
+                "prompt_cache_miss_tokens": 10,
+            },
+        )
+        u = _usage_from_prompt_details(usage)
+        assert u.cached_tokens == 90
+        assert u.cache_write_tokens == 10
+
+    def test_usage_from_anthropic(self):
+        usage = SimpleNamespace(
+            input_tokens=100,
+            output_tokens=20,
+            total_tokens=120,
+            cache_read_input_tokens=90,
+            cache_creation_input_tokens=10,
+        )
+        u = _usage_from_anthropic(usage, extra_discount=0.3)
+        assert u.cached_tokens == 90
+        assert u.cache_write_tokens == 10
+        assert u.cache_discount == 0.3
+        assert u.total_tokens == 120
+
+    def test_usage_from_anthropic_no_cache(self):
+        usage = SimpleNamespace(input_tokens=1, output_tokens=1, total_tokens=2)
+        u = _usage_from_anthropic(usage)
+        assert u.cached_tokens == 0
+        assert u.cache_write_tokens == 0
+
+    def test_usage_from_anthropic_mock_safe(self):
+        # MagicMock 未设置的缓存属性自动创建占位对象,应收敛为 0
+        usage = MagicMock()
+        usage.input_tokens = 100
+        usage.output_tokens = 20
+        u = _usage_from_anthropic(usage, extra_discount=MagicMock())
+        assert u.input_tokens == 100
+        assert u.output_tokens == 20
+        assert u.cached_tokens == 0
+        assert u.cache_write_tokens == 0
+        assert u.cache_discount == 0.0
+
+    def test_usage_from_anthropic_deepseek_attr(self):
+        # DeepSeek 经 Anthropic 兼容端点:顶层 prompt_cache_hit_tokens/miss
+        usage = SimpleNamespace(
+            input_tokens=100,
+            output_tokens=20,
+            total_tokens=120,
+            prompt_cache_hit_tokens=85,
+            prompt_cache_miss_tokens=15,
+        )
+        u = _usage_from_anthropic(usage)
+        assert u.cached_tokens == 85
+        assert u.cache_write_tokens == 15
+
+    def test_usage_from_anthropic_deepseek_model_extra(self):
+        # OpenAI/Anthropic SDK 把未知字段放入 model_extra,getattr 取不到
+        usage = SimpleNamespace(
+            input_tokens=100,
+            output_tokens=20,
+            total_tokens=120,
+            model_extra={
+                "prompt_cache_hit_tokens": 90,
+                "prompt_cache_miss_tokens": 10,
+            },
+        )
+        u = _usage_from_anthropic(usage)
+        assert u.cached_tokens == 90
+        assert u.cache_write_tokens == 10
+
+
+class TestAnthropicCacheControl:
+    """system prompt 的 cache_control 包装测试"""
+
+    def test_short_prompt_untouched(self):
+        # 过短提示词不加 cache_control,保持字符串
+        r = _with_cache_control("short prompt", "https://api.anthropic.com")
+        assert r == "short prompt"
+
+    def test_non_anthropic_url_untouched(self):
+        # 非 Anthropic 官方/OpenRouter 端点不加 cache_control
+        r = _with_cache_control("S" * 5000, "https://example.com/api")
+        assert r == "S" * 5000
+
+    def test_anthropic_long_prompt_gets_cache_control(self):
+        r = _with_cache_control("S" * 5000, "https://api.anthropic.com")
+        assert isinstance(r, list)
+        assert r[0]["type"] == "text"
+        assert r[0]["cache_control"] == {"type": "ephemeral"}
+        assert len(r[0]["text"]) == 5000
+
+    def test_openrouter_anthropic_endpoint_gets_cache_control(self):
+        r = _with_cache_control(
+            "S" * 5000, "https://openrouter.ai/api/v1/anthropic"
+        )
+        assert isinstance(r, list)
+        assert r[0]["cache_control"] == {"type": "ephemeral"}
 
 
 # ── 多轮对话带工具测试 ────────────────────────────────────────
