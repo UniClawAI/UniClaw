@@ -560,7 +560,10 @@ const Chat = {
 
     _fmtTk(n) { return !n ? '0' : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`; },
 
-    _showLightbox(url) {
+    // 累计一条消息的缓存统计(实时路径用 in_tokens/cached_tokens,回放路径用 usage.*)
+
+
+_showLightbox(url) {
         const lb = document.createElement('div');
         lb.className = 'lightbox';
         lb.innerHTML = `<img src="${url}" />`;
@@ -852,6 +855,7 @@ const Chat = {
         if (!msg || !this.currentSessionId || msg.session_id !== this.currentSessionId) return;
         // subagent 的 assistant 事件不需要在主聊天区显示(流式内容已在 tool-block 内渲染)
         if (msg.is_subagent) return;
+        // 会话级缓存统计(实时路径;subagent 不回放入主会话历史,故此处跳过以保持一致)
         if (this.thinkingEl) {
             const label = this.thinkingEl.querySelector('.thinking-label');
             if (label) label.textContent = `思考完成 (${this.thinkingContent.length}字)`;

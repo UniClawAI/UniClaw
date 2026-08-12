@@ -18,6 +18,7 @@ from uniclaw.provider.common import (
     resolve_params,
     safe_parse_args,
     usage_field,
+    usage_number,
 )
 from collections.abc import AsyncIterator, Iterator
 from uniclaw.provider.thought_parser import ThoughtParser
@@ -92,9 +93,9 @@ def _usage_from_prompt_details(usage, extra_discount=0.0) -> Usage:
         input_tokens=usage.prompt_tokens or 0,
         output_tokens=usage.completion_tokens or 0,
         total_tokens=usage.total_tokens or 0,
-        cached_tokens=cached or 0,
-        cache_write_tokens=write or 0,
-        cache_discount=float(extra_discount or 0),
+        cached_tokens=usage_number(cached),
+        cache_write_tokens=usage_number(write),
+        cache_discount=usage_number(extra_discount, 0.0, cast=float),
     )
 
 

@@ -18,7 +18,11 @@ from uniclaw.tools.session.session import StreamChunk
 from uniclaw.tools import get_core_tools, get_tools
 from uniclaw.utils.message import MessageRole, extract_text
 from dataclasses import dataclass, field
-from uniclaw.context import build_system_prompt, get_base_system_prompt
+from uniclaw.context import (
+    build_system_prompt,
+    get_base_system_prompt,
+    get_env_system_prompt,
+)
 from uniclaw.config import Permissions, AppConfig
 from uniclaw.tools.ask import AskUserQuestion
 
@@ -499,6 +503,8 @@ class MultiAgent:
         self.id2AgentTask[task.id] = task
 
         base_system_prompt = get_base_system_prompt(config)
+        # 环境段(日期/目录/PID)单独追加在末尾,避免打断稳定前缀缓存
+        base_system_prompt += f"\n\n{get_env_system_prompt(config)}"
         allowed_tools = None
         if agent_def:
             if agent_def.model_name:

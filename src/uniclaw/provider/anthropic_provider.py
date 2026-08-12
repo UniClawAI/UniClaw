@@ -12,12 +12,14 @@ from uniclaw.provider.common import (
     REQUEST_TIMEOUT_SECONDS,
     create_async_http_client,
     create_http_client,
+    is_anthropic_api,
     is_openrouter_base_url,
     make_session_id,
     record_usage_async,
     resolve_params,
     safe_parse_args,
     usage_field,
+    usage_number,
 )
 from collections.abc import AsyncIterator, Iterator
 from uniclaw.provider.types import Usage
@@ -109,10 +111,48 @@ def _usage_from_anthropic(usage, extra_discount=0.0) -> Usage:
         input_tokens=usage_field(usage, "input_tokens") or 0,
         output_tokens=usage_field(usage, "output_tokens") or 0,
         total_tokens=usage_field(usage, "total_tokens") or 0,
-        cached_tokens=cached,
-        cache_write_tokens=write,
-        cache_discount=float(extra_discount or 0),
+        cached_tokens=usage_number(cached),
+        cache_write_tokens=usage_number(write),
+        cache_discount=usage_number(extra_discount, 0.0, cast=float),
     )
+
+
+# Anthropic 缓存最小长度要求:block 至少 1024 tokens 才允许 cache_control
+# (实际以模型为准,保守按 1024 判断,避免对过短 block 打标记导致 400)
+_ANTHROPIC_CACHE_MIN_TOKENS = 1024
+
+
+def _with_cache_control(
+    system_prompt: str, base_url: str
+) -> str | list[dict]:
+    """将 system prompt 包装为带 cache_control 的 Anthropic blocks。
+
+    仅当目标是 Anthropic 官方或 OpenRouter 的 Anthropic 兼容端点、且
+    system prompt 足够长(≥1024 tokens)时,才转为 blocks 列表并打上
+    ephemeral 缓存标记,让缓存 TTL 显式提升至 5 分钟。其他情况(非 Anthropic
+    端点 / 提示词过短)返回原字符串,避免 API 400 或误加标记。
+
+    Args:
+        system_prompt: 系统提示词。
+        base_url: Anthropic API 的 base_url。
+
+    Returns:
+        Anthropic SDK 接受的 system 参数(字符串或 blocks 列表)。
+    """
+    if not system_prompt:
+        return system_prompt
+    if not (is_anthropic_api(base_url) or is_openrouter_base_url(base_url)):
+        return system_prompt
+    # 粗略估算 token 数:按中英文混合 1 token ≈ 1.5~2 字符,取保守下限
+    if len(system_prompt) < _ANTHROPIC_CACHE_MIN_TOKENS * 2:
+        return system_prompt
+    return [
+        {
+            "type": "text",
+            "text": system_prompt,
+            "cache_control": {"type": "ephemeral"},
+        }
+    ]
 
 
 # ── 多模态降级 ─────────────────────────────────────────────────
@@ -223,7 +263,7 @@ def stream(
         top_p=p["top_p"],
     )
     if system_prompt:
-        kwargs["system"] = system_prompt
+        kwargs["system"] = _with_cache_control(system_prompt, base_url)
     if anthropic_tools:
         kwargs["tools"] = anthropic_tools
     if enable_thinking and thinking:
@@ -386,7 +426,7 @@ async def astream(
         top_p=p["top_p"],
     )
     if system_prompt:
-        kwargs["system"] = system_prompt
+        kwargs["system"] = _with_cache_control(system_prompt, base_url)
     if anthropic_tools:
         kwargs["tools"] = anthropic_tools
     if enable_thinking and thinking:
@@ -509,7 +549,7 @@ def chat(
         top_p=p["top_p"],
     )
     if system_prompt:
-        kwargs["system"] = system_prompt
+        kwargs["system"] = _with_cache_control(system_prompt, base_url)
     if anthropic_tools:
         kwargs["tools"] = anthropic_tools
     if enable_thinking and thinking:
@@ -589,7 +629,7 @@ async def achat(
         top_p=p["top_p"],
     )
     if system_prompt:
-        kwargs["system"] = system_prompt
+        kwargs["system"] = _with_cache_control(system_prompt, base_url)
     if anthropic_tools:
         kwargs["tools"] = anthropic_tools
     if enable_thinking and thinking:

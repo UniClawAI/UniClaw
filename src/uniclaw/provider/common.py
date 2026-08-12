@@ -290,6 +290,17 @@ def usage_field(obj, name: str, default=0):
     return val if val is not None else default
 
 
+def usage_number(value, default: int | float = 0, cast: type = int):
+    """安全转为数值,防止非数值对象污染用量统计。
+
+    SDK 对未知字段会放入 model_extra;测试桩(MagicMock)对未设置的属性
+    会自动创建占位对象。此类值不可序列化,统一收敛为 default。
+    """
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return cast(value)
+    return default
+
+
 # ── 消息格式转换 ───────────────────────────────────────────────
 
 
@@ -331,8 +342,23 @@ def is_multimodal_error(e: Exception) -> bool:
 
 async def record_usage_async(model_name: str, usage: Usage | None):
     """记录 token 用量 (异步)。"""
-    if not usage or (not usage.input_tokens and not usage.output_tokens):
+    if not usage:
+        return
+    if not (
+        usage.input_tokens
+        or usage.output_tokens
+        or usage.cached_tokens
+        or usage.cache_write_tokens
+        or usage.cache_discount
+    ):
         return
     from uniclaw.utils.usage import record_usage
 
-    await record_usage(usage.input_tokens, usage.output_tokens, model=model_name)
+    await record_usage(
+        usage.input_tokens,
+        usage.output_tokens,
+        model=model_name,
+        cached_tokens=usage.cached_tokens,
+        cache_write_tokens=usage.cache_write_tokens,
+        cache_discount=usage.cache_discount,
+    )

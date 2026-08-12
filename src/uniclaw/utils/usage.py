@@ -79,10 +79,16 @@ async def _get_model_price(model: str) -> dict:
 
 
 def _estimate_cost_from_price(
-    input_tokens: int, output_tokens: int, price: dict
+    input_tokens: int, output_tokens: int, price: dict, cache_discount: float = 0.0
 ) -> float:
-    """用价格字典计算费用(美元)。"""
-    return (input_tokens * price["input"]) + (output_tokens * price["output"])
+    """用价格字典计算费用(美元)。
+
+    cache_discount 来自响应体:缓存命中为正(折扣,省钱),缓存写入为负(溢价)。
+    基础费用按全价输入计算后减去此折扣,得到实际费用。
+    无缓存字段的提供商传入 0,不影响计算。
+    """
+    base = (input_tokens * price["input"]) + (output_tokens * price["output"])
+    return base - cache_discount
 
 
 class UsageField(StrEnum):
@@ -90,6 +96,9 @@ class UsageField(StrEnum):
     OUTPUT_TOKENS = "output_tokens"
     API_CALLS = "api_calls"
     TOOL_CALLS = "tool_calls"
+    CACHED_TOKENS = "cached_tokens"
+    CACHE_WRITE_TOKENS = "cache_write_tokens"
+    CACHE_DISCOUNT = "cache_discount"
 
 
 # 数据结构的顶层键
@@ -102,6 +111,9 @@ _STAT_FIELDS = [
     UsageField.OUTPUT_TOKENS,
     UsageField.API_CALLS,
     UsageField.TOOL_CALLS,
+    UsageField.CACHED_TOKENS,
+    UsageField.CACHE_WRITE_TOKENS,
+    UsageField.CACHE_DISCOUNT,
 ]
 
 
@@ -117,9 +129,21 @@ def _load() -> dict:
     if not p.exists():
         return {TOTAL: _new_record(), DAILY: {}}
     try:
-        return json.loads(p.read_text(encoding="utf-8"))
+        data = json.loads(p.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, IOError):
         return {TOTAL: _new_record(), DAILY: {}}
+    _migrate(data)
+    return data
+
+
+def _migrate(data: dict):
+    """兼容旧版 usage.json:补齐后新增的统计字段(如缓存字段)。"""
+    records = [data.setdefault(TOTAL, {})] + list(
+        data.setdefault(DAILY, {}).values()
+    ) + list(data.get("by_model", {}).values())
+    for rec in records:
+        for f in _STAT_FIELDS:
+            rec.setdefault(f.value, 0)
 
 
 def _save(data: dict):
@@ -133,17 +157,40 @@ def _new_record() -> dict:
 
 
 async def record_usage(
-    input_tokens: int = 0, output_tokens: int = 0, tool_calls: int = 0, model: str = ""
+    input_tokens: int = 0,
+    output_tokens: int = 0,
+    tool_calls: int = 0,
+    model: str = "",
+    cached_tokens: int = 0,
+    cache_write_tokens: int = 0,
+    cache_discount: float = 0.0,
 ):
-    """记录一次 API 调用的用量和费用"""
-    if input_tokens == 0 and output_tokens == 0 and tool_calls == 0:
+    """记录一次 API 调用的用量和费用。
+
+    Args:
+        input_tokens: 输入 token 数。
+        output_tokens: 输出 token 数。
+        tool_calls: 工具调用数。
+        model: 模型名。
+        cached_tokens: 缓存命中 token 数(OpenRouter/DeepSeek/Anthropic 可选)。
+        cache_write_tokens: 缓存写入 token 数(同上)。
+        cache_discount: 缓存折扣金额(美元,读为正写为负,非缓存提供商为 0)。
+    """
+    if (
+        input_tokens == 0
+        and output_tokens == 0
+        and tool_calls == 0
+        and cached_tokens == 0
+        and cache_write_tokens == 0
+        and cache_discount == 0
+    ):
         return
     today = datetime.now().strftime("%Y-%m-%d")
     model_key = model or "unknown"
 
     # 查询价格并计算本次费用
     price = await _get_model_price(model_key)
-    cost = _estimate_cost_from_price(input_tokens, output_tokens, price)
+    cost = _estimate_cost_from_price(input_tokens, output_tokens, price, cache_discount)
 
     with _lock:
         data = _load()
@@ -152,6 +199,9 @@ async def record_usage(
         data[TOTAL][UsageField.OUTPUT_TOKENS] += output_tokens
         data[TOTAL][UsageField.API_CALLS] += 1
         data[TOTAL][UsageField.TOOL_CALLS] += tool_calls
+        data[TOTAL][UsageField.CACHED_TOKENS] += cached_tokens
+        data[TOTAL][UsageField.CACHE_WRITE_TOKENS] += cache_write_tokens
+        data[TOTAL][UsageField.CACHE_DISCOUNT] += cache_discount
         # 按模型统计
         if "by_model" not in data:
             data["by_model"] = {}
@@ -162,6 +212,9 @@ async def record_usage(
         m[UsageField.OUTPUT_TOKENS] += output_tokens
         m[UsageField.API_CALLS] += 1
         m[UsageField.TOOL_CALLS] += tool_calls
+        m[UsageField.CACHED_TOKENS] += cached_tokens
+        m[UsageField.CACHE_WRITE_TOKENS] += cache_write_tokens
+        m[UsageField.CACHE_DISCOUNT] += cache_discount
         m["cost"] = m.get("cost", 0.0) + cost
         # 每日统计
         if today not in data[DAILY]:
@@ -171,6 +224,9 @@ async def record_usage(
         day[UsageField.OUTPUT_TOKENS] += output_tokens
         day[UsageField.API_CALLS] += 1
         day[UsageField.TOOL_CALLS] += tool_calls
+        day[UsageField.CACHED_TOKENS] += cached_tokens
+        day[UsageField.CACHE_WRITE_TOKENS] += cache_write_tokens
+        day[UsageField.CACHE_DISCOUNT] += cache_discount
         day["cost"] = day.get("cost", 0.0) + cost
         _save(data)
 
@@ -197,6 +253,18 @@ def format_stats(data: dict | None = None) -> str:
     total_tokens = total[UsageField.INPUT_TOKENS] + total[UsageField.OUTPUT_TOKENS]
     lines.append(f"  总 tokens: {total_tokens:,}")
 
+    # 缓存统计(OpenRouter/DeepSeek/Anthropic 等返回缓存字段时才展示)
+    cached = total.get(UsageField.CACHED_TOKENS, 0)
+    cache_write = total.get(UsageField.CACHE_WRITE_TOKENS, 0)
+    cache_discount = total.get(UsageField.CACHE_DISCOUNT, 0)
+    if cached or cache_write or cache_discount:
+        cache_parts = [f"命中 {cached:,} tokens"]
+        if cache_write:
+            cache_parts.append(f"写入 {cache_write:,}")
+        if cache_discount:
+            cache_parts.append(f"折扣 ${cache_discount:.4f}")
+        lines.append(f"  缓存: {', '.join(cache_parts)}")
+
     if daily:
         lines.append("")
         lines.append("  最近 7 天:")
@@ -204,9 +272,13 @@ def format_stats(data: dict | None = None) -> str:
             day = daily[date]
             in_t = day[UsageField.INPUT_TOKENS]
             out_t = day[UsageField.OUTPUT_TOKENS]
-            lines.append(
+            day_line = (
                 f"    {date}: {in_t:,}+{out_t:,}={in_t + out_t:,} tokens, "
                 f"{day[UsageField.API_CALLS]} 次调用"
             )
+            day_cached = day.get(UsageField.CACHED_TOKENS, 0)
+            if day_cached:
+                day_line += f", 缓存命中 {day_cached:,}"
+            lines.append(day_line)
 
     return "\n".join(lines)

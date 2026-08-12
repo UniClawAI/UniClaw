@@ -11,35 +11,46 @@ from uniclaw.utils.constants import SYSTEM_PREFIX
 APP_NAME = "UniClaw"
 
 
-def get_base_system_prompt(config: AppConfig) -> str:
-    from uniclaw.tools.fs import Write
-    from uniclaw.tools.monitor.tools import monitor_start
-    from uniclaw.tools.registry import search_tools
-    from uniclaw.tools.shell import Bash
-    from uniclaw.tools.web import webSearch
+def get_env_system_prompt(config: AppConfig, is_a2a: bool = False) -> str:
+    """构建动态环境信息段(日期/目录/PID 等)。
 
+    单独提取并追加到系统提示词末尾:日期/PID/root_dir 等高频变化内容
+    若放在提示词中部,会打断稳定前缀,使前缀缓存命中范围仅剩开头一小段。
+    统一后移到末尾后,稳定部分(行为准则/工具提示/CLAUDE.md 等)可完整命中缓存。
+    """
     task = config.current_agent
     session = task.session
     root_dir = session.root_dir
-    # 额外工作空间目录
-    extra = list(config.workspace)
+
+    # 额外工作空间目录(普通模式才有)
     extra_text = ""
-    if extra and root_dir:
-        extra.append(root_dir)  # 确保当前目录在工作空间中
-        extra_lines = "\n".join(f"  - {d}" for d in extra)
-        extra_text = f"\n\n# 额外工作空间目录\n用户已授权你访问以下额外目录(均可读写):\n{extra_lines}\n"
+    if not is_a2a:
+        extra = list(config.workspace)
+        if extra and root_dir:
+            extra.append(root_dir)  # 确保当前目录在工作空间中
+            extra_lines = "\n".join(f"  - {d}" for d in extra)
+            extra_text = f"\n\n# 额外工作空间目录\n用户已授权你访问以下额外目录(均可读写):\n{extra_lines}\n"
 
     # 环境信息行
     env_lines = [
         f"- 当前日期:{datetime.now().strftime('%Y-%m-%d %A')}",
     ]
     if root_dir:
-        env_lines.append(f"- 当前目录:{root_dir}")
-    env_lines += [
-        f"- 平台:{platform.system()}",
-        f"- 进程:{sys.argv[0]} (PID:{os.getpid()})",
-    ]
+        env_lines.append(f"- {'工作目录' if is_a2a else '当前目录'}:{root_dir}")
+    env_lines.append(f"- 平台:{platform.system()}")
+    if not is_a2a:
+        env_lines.append(f"- 进程:{sys.argv[0]} (PID:{os.getpid()})")
     env_text = "\n".join(env_lines)
+
+    return f"## 环境\n{env_text}{extra_text}"
+
+
+def get_base_system_prompt(config: AppConfig) -> str:
+    from uniclaw.tools.fs import Write
+    from uniclaw.tools.monitor.tools import monitor_start
+    from uniclaw.tools.registry import search_tools
+    from uniclaw.tools.shell import Bash
+    from uniclaw.tools.web import webSearch
 
     system_prompt = f"""你是 {APP_NAME},一个运行在终端中的 AI 编程和办公助手,帮助用户完成编写代码、调试、重构、解释等软件工程任务。
 
@@ -62,28 +73,13 @@ def get_base_system_prompt(config: AppConfig) -> str:
 - 临时文件使用完毕后及时清理
 - **长任务进展汇报**:执行多步骤任务时,每完成约20次工具调用后,主动向用户简要汇报当前进展(已完成什么、正在做什么、下一步计划),保持用户对任务状态的感知。
 
-## 环境
-{env_text}
-{extra_text}{get_platform_hints()}
+{get_platform_hints()}
 """
     return system_prompt
 
 
 def _get_a2a_base_system_prompt(config: AppConfig) -> str:
-    """A2A 远程 Agent 的基础提示词。"""
-    task = config.current_agent
-    root_dir = task.session.root_dir
-
-    env_lines = [
-        f"- 当前日期:{datetime.now().strftime('%Y-%m-%d %A')}",
-    ]
-    if root_dir:
-        env_lines.append(f"- 工作目录:{root_dir}")
-    env_lines += [
-        f"- 平台:{platform.system()}",
-    ]
-    env_text = "\n".join(env_lines)
-
+    """A2A 远程 Agent 的基础提示词(不含环境段,环境段由末尾统一追加)。"""
     return f"""你是 {APP_NAME} A2A 远程 Agent,通过 A2A 协议接收外部任务并执行。
 
 ## 行为准则
@@ -98,8 +94,7 @@ def _get_a2a_base_system_prompt(config: AppConfig) -> str:
 - 文件操作始终使用绝对路径
 - 多步骤任务系统地逐步完成
 
-## 环境
-{env_text}{get_platform_hints()}
+{get_platform_hints()}
 """
 
 
@@ -213,7 +208,6 @@ def get_platform_hints() -> str:
 
 def _build_free_chat_prompt(config: AppConfig) -> str:
     """自由聊天模式的精简提示词。"""
-    from datetime import datetime
     from uniclaw.tools.memory.memory import Memory
     from uniclaw.tools.web import webSearch
 
@@ -229,7 +223,6 @@ def _build_free_chat_prompt(config: AppConfig) -> str:
             f"- 涉及实时信息、事实核查、不确定的内容时,主动使用 {webSearch.name} 搜索",
             "- 搜索无结果时,更换关键词、同义词或更宽泛/具体的表述多次尝试",
             "- 不确定时坦诚说明,不要编造",
-            f"- 当前日期:{datetime.now().strftime('%Y-%m-%d %A')}",
         ]
     # scope 限制:无论是否有自定义提示词,始终生效
     lines.append("- 有 scope 的工具写入只允许修改项目级,不允许修改用户级")
@@ -237,6 +230,9 @@ def _build_free_chat_prompt(config: AppConfig) -> str:
     index = Memory.get_memory_index_preview(task.session.root_dir)
     if index:
         lines += ["", "# 记忆", index]
+    # 环境段(日期/目录/PID)— 自由聊天同样需要 root_dir 与当前时间,
+    # 统一放到末尾,与主提示词保持一致,避免动态内容打断稳定前缀
+    lines += ["", get_env_system_prompt(config)]
     return "\n".join(lines)
 
 
@@ -349,6 +345,9 @@ async def build_system_prompt(config: AppConfig):
         goal_mgr = config.current_agent.goal_manager if config.current_agent else None
         if goal_mgr and goal_mgr.active:
             system_prompt += f"\n\n# 当前目标\n目标: {goal_mgr.goal}\n请确保你的工作朝着这个目标推进,并在完成后明确说明目标已达成。\n"
+
+    # 环境段(日期/目录/PID)— 最高频变化,放在末尾,避免打断稳定前缀缓存
+    system_prompt += f"\n\n{get_env_system_prompt(config, is_a2a)}"
 
     return system_prompt
 
