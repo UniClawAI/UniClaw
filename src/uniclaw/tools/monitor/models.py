@@ -37,7 +37,8 @@ class Monitor:
         self.cwd = cwd
         self.status = MonitorStatus.RUNNING
         self.process: asyncio.subprocess.Process | None = None
-        self.thread: asyncio.Task | None = None
+        self.stdout_thread: asyncio.Task | None = None
+        self.stderr_thread: asyncio.Task | None = None
         self.output_lines: deque[str] = deque(maxlen=1000)
         self.matched_lines: list[str] = []
         self.start_time = datetime.now()

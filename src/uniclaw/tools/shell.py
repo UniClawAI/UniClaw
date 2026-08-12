@@ -143,86 +143,64 @@ async def Bash(command: str, timeout: int = 30, config: AppConfig = None) -> str
     该函数通过 asyncio.subprocess 执行指定的 shell 命令,不阻塞事件循环。
     Windows 上默认使用 cmd.exe,可用 `bash -c "命令"` 调用 Git Bash,用 `powershell -c "命令"` 调用 PowerShell。
     Unix/Linux/macOS 上使用 /bin/sh。
-    如果命令执行超时,会自动终止进程及其子进程树。
 
     注意:某些命令可能触发分页器(如 git log、man),导致阻塞等待用户交互。建议添加禁用分页参数:
     - git:`git --no-pager <subcommand>`(--no-pager 必须在 git 和子命令之间)
     - man:`MANPAGER=cat man <command>` 或 `man <command> | cat`
 
-    重要提示:
-    - 超时上限为 180 秒。如果命令执行时间可能超过 180 秒,请使用 monitor_start 工具而非本函数。
-    - 如果需要启动长期运行的后台服务(如 Web 服务器、数据库等),请使用 monitor_start 工具,否则总是超时。
-    - 如果需要下载 HTTP/HTTPS 文件,请优先使用 http_download 工具(支持断点续传、并发下载、进度显示)。
-    monitor_start 提供了更好的进程管理功能,包括进程监控、日志捕获和生命周期管理。
+    超时行为:
+    - 如果命令执行超时,进程会自动转入后台监控系统,返回监控 ID。
+    - 使用 monitor_output 查看后续输出,monitor_stop 停止进程,monitor_list 查看所有进程。
+
+    注意:
+    - 下载 HTTP/HTTPS 文件请使用 http_download 工具(支持断点续传、并发下载、进度显示)。
+    - 长期运行的后台服务请使用 monitor_start 工具。
 
     Args:
         command (str): 要执行的 shell 命令字符串。
-        timeout (int): 命令执行的超时时间(秒),默认为 30 秒,最大 180 秒。
-                       小于等于 0 时进入异步模式,命令在后台运行,立即返回进程 ID。
+        timeout (int): 命令执行的超时时间(秒),默认为 30 秒,必须大于 0。
+                       超时后进程自动转入后台监控。
 
     Returns:
-        str: 同步模式:命令的标准输出内容。如果存在标准错误输出,会追加在标准输出之后。
-             如果超时,返回超时错误信息。如果发生异常,返回[stderr]开头的标准错误。
+        str: 命令的标准输出内容。如果存在标准错误输出,会追加在标准输出之后。
+             如果超时,进程转入后台监控并返回监控 ID 和已有输出。
+             如果发生异常,返回[stderr]开头的标准错误。
              如果没有输出内容,返回 "(没有输出)"。
-             异步模式(timeout<=0):返回 "[async] 进程已启动,PID: {pid}" 格式的消息。
     """
     root_dir = config.root_dir
     cancel_event = config.current_agent.cancel_event
 
-    # 超时上限校验:超过 180 秒直接拒绝,引导使用 monitor_start
-    if timeout > 180:
-        return f"{TOOL_ERROR}: 超时上限 180 秒,请改用 monitor_start 工具。"
-
-    # Windows 上 asyncio.subprocess.DEVNULL 可能无法打开 nul 设备(Python 3.14+)
-    if sys.platform == "win32":
-        stdout_flag = asyncio.subprocess.PIPE
-        stderr_flag = asyncio.subprocess.PIPE
-    else:
-        stdout_flag = (
-            asyncio.subprocess.PIPE if timeout > 0 else asyncio.subprocess.DEVNULL
-        )
-        stderr_flag = (
-            asyncio.subprocess.PIPE if timeout > 0 else asyncio.subprocess.DEVNULL
-        )
-
-    # Windows 上 asyncio.subprocess.DEVNULL 可能无法正确打开 nul 设备
-    # 在 Windows 上始终使用 PIPE 作为 stdin 来避免这个问题
-    stdin_flag = (
-        asyncio.subprocess.PIPE
-        if sys.platform == "win32"
-        else asyncio.subprocess.DEVNULL
-    )
+    # 超时校验
+    if timeout <= 0:
+        return f"{TOOL_ERROR}: timeout 必须大于 0,后台任务请使用 monitor_start 工具。"
 
     # 如果是 bash 命令,自动修正 nul 重定向
     if command.strip().lower().startswith("bash "):
         command = fix_bash_nul_redirect(command)
 
     # 根据平台准备命令参数
+    # Windows 上 asyncio.subprocess.DEVNULL 可能无法正确打开 nul 设备,stdin 用 PIPE
     if sys.platform != "win32":
         proc = await asyncio.create_subprocess_shell(
             command.strip(),
             stdin=asyncio.subprocess.DEVNULL,
-            stdout=stdout_flag,
-            stderr=stderr_flag,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
             cwd=root_dir,
             start_new_session=True,
         )
     else:
         proc = await asyncio.create_subprocess_shell(
             command.strip(),
-            stdin=stdin_flag,
-            stdout=stdout_flag,
-            stderr=stderr_flag,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
             cwd=root_dir,
         )
 
     # 关闭 stdin pipe 以允许子进程正常退出
     if sys.platform == "win32" and proc.stdin:
         proc.stdin.close()
-
-    # 异步模式:立即返回进程信息
-    if timeout <= 0:
-        return f"[async] 进程已启动,PID: {proc.pid}"
 
     start_time = time.monotonic()
 
@@ -246,14 +224,15 @@ async def Bash(command: str, timeout: int = 30, config: AppConfig = None) -> str
         except (asyncio.CancelledError, Exception):
             pass
 
+    # 提前创建 read tasks,超时时可从外部取消
+    read_tasks = []
+    if proc.stdout:
+        read_tasks.append(asyncio.create_task(_read_stream(proc.stdout, "stdout")))
+    if proc.stderr:
+        read_tasks.append(asyncio.create_task(_read_stream(proc.stderr, "stderr")))
+
     async def _wait_with_cancel():
         """等待进程完成,同时逐行推送输出。"""
-        read_tasks = []
-        if proc.stdout:
-            read_tasks.append(asyncio.create_task(_read_stream(proc.stdout, "stdout")))
-        if proc.stderr:
-            read_tasks.append(asyncio.create_task(_read_stream(proc.stderr, "stderr")))
-
         try:
             while proc.returncode is None:
                 if cancel_event is not None and cancel_event.is_set():
@@ -295,17 +274,40 @@ async def Bash(command: str, timeout: int = 30, config: AppConfig = None) -> str
         return out.strip() or "(没有输出)"
 
     except asyncio.TimeoutError:
-        await _kill_proc_tree(proc.pid)
-        # 等待一小段时间让读取任务收集最后的输出
-        await asyncio.sleep(0.1)
+        # 确保旧的 read tasks 已停止,避免与 monitor 的 reader 竞争
+        for t in read_tasks:
+            t.cancel()
+        await asyncio.gather(*read_tasks, return_exceptions=True)
+
+        # 将仍在运行的进程转移到 monitor 系统
+        from uniclaw.tools.monitor.manager import MonitorManager
+
+        manager = MonitorManager.get_instance()
+        try:
+            monitor_id, _ = await manager.register_existing_process(
+                process=proc,
+                command=command,
+                description=command[:80],
+                cwd=root_dir,
+                config=config,
+            )
+        except RuntimeError as e:
+            # 并发数已满,回退到杀死进程
+            await _kill_proc_tree(proc.pid)
+            return f"{TOOL_ERROR}: 超时且无法转入监控 - {e}"
 
         stdout = sanitize_progress_line("".join(_collected["stdout"]))
         stderr = sanitize_progress_line("".join(_collected["stderr"]))
         out = stdout
         if stderr:
             out += ("\n" if out else "") + f"{STDERR_MARKER}" + stderr
-        timeout_msg = f"{TOOL_ERROR}: 在 {timeout} 秒后超时(进程已终止)"
-        return (out.strip() + "\n" + timeout_msg).strip()
+
+        header = (
+            f"进程在 {timeout} 秒后超时,已转入后台监控\n"
+            f"  监控 ID: {monitor_id}\n"
+            f"  使用 monitor_output 查看输出,monitor_stop 停止进程"
+        )
+        return (header + "\n" + out.strip()).strip()
 
     except Exception as e:
         return f"{TOOL_ERROR}: {e}"

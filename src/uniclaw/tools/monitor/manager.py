@@ -79,7 +79,7 @@ class MonitorManager:
                 process = await asyncio.create_subprocess_shell(
                     command,
                     stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.STDOUT,
+                    stderr=asyncio.subprocess.PIPE,
                     stdin=asyncio.subprocess.PIPE,
                     cwd=str(cwd) if cwd else None,
                     limit=2**20,
@@ -96,8 +96,11 @@ class MonitorManager:
             monitor.process = process
             self._monitors[monitor_id] = monitor
 
-        # 启动异步读取任务
-        monitor.thread = asyncio.create_task(self._read_output(monitor))
+        # 启动 stdout 和 stderr 读取任务
+        monitor.stdout_thread = asyncio.create_task(self._read_output(monitor))
+        monitor.stderr_thread = asyncio.create_task(
+            self._read_output(monitor, is_stderr=True)
+        )
 
         notify_info = ""
         if pattern:
@@ -116,15 +119,85 @@ class MonitorManager:
             f"  通知: {notify_info}"
         )
 
-    async def _read_output(self, monitor: Monitor):
-        """异步读取进程输出并匹配模式"""
+    async def register_existing_process(
+        self,
+        process: asyncio.subprocess.Process,
+        command: str,
+        description: str = "",
+        timeout: int = 0,
+        cwd: Path | None = None,
+        config=None,
+    ) -> tuple[str, "Monitor"]:
+        """将一个已运行的进程注册到监控系统。
+
+        用于 Bash 超时后将仍在运行的进程转移到 monitor 管理。
+
+        Args:
+            process: 已在运行的 asyncio.subprocess.Process
+            command: 原始命令字符串
+            description: 进程描述
+            timeout: 剩余超时时间(秒),0 表示不限制
+            cwd: 工作目录
+            config: AppConfig 实例
+
+        Returns:
+            tuple[str, Monitor]: (monitor_id, monitor 对象)
+        """
+        async with self._manager_lock:
+            if len(self._monitors) >= self._max_concurrent:
+                info_lines = []
+                for m in self._monitors.values():
+                    uptime = int((datetime.now() - m.start_time).total_seconds())
+                    info_lines.append(
+                        f"  [{m.status.value}] {m.description or m.command[:30]} "
+                        f"(ID:{m.id} | 运行:{uptime}s)"
+                    )
+                proc_list = "\n".join(info_lines)
+                raise RuntimeError(
+                    f"已达到最大并发数({self._max_concurrent})\n"
+                    f"当前进程列表:\n{proc_list}\n"
+                    f"请先关闭不需要的进程。"
+                )
+
+            monitor_id = uuid.uuid4().hex[:8]
+            monitor = Monitor(
+                monitor_id, command, "", description, timeout, False, cwd
+            )
+            monitor._config = config
+            monitor.process = process
+            self._monitors[monitor_id] = monitor
+
+        # 启动 stdout 读取任务
+        monitor.stdout_thread = asyncio.create_task(self._read_output(monitor))
+
+        # 如果 stderr 是独立 PIPE(非 STDOUT),启动单独的读取任务防止缓冲区满导致阻塞
+        if (
+            process.stderr is not None
+            and process.stderr is not process.stdout
+        ):
+            monitor.stderr_thread = asyncio.create_task(
+                self._read_output(monitor, is_stderr=True)
+            )
+
+        return monitor_id, monitor
+
+    async def _read_output(self, monitor: Monitor, is_stderr: bool = False):
+        """异步读取进程输出并匹配模式。
+
+        Args:
+            monitor: 监控对象
+            is_stderr: 是否读取 stderr 流,默认 False(读取 stdout)
+        """
+        stream = monitor.process.stderr if is_stderr else monitor.process.stdout
+        prefix = "[stderr] " if is_stderr else ""
+
         deadline = None
         if monitor.timeout > 0:
             deadline = asyncio.get_event_loop().time() + monitor.timeout
 
         try:
             while True:
-                line = await monitor.process.stdout.readline()
+                line = await stream.readline()
                 if not line:
                     break
 
@@ -133,8 +206,9 @@ class MonitorManager:
                 if not line:
                     continue
 
-                # 保存输出
-                monitor.output_lines.append(line)
+                # 保存输出(stderr 加前缀区分)
+                output_line = f"{prefix}{line}"
+                monitor.output_lines.append(output_line)
 
                 # 检查是否匹配
                 if monitor.pattern and re.search(monitor.pattern, line):
@@ -148,21 +222,17 @@ class MonitorManager:
                     monitor.status = MonitorStatus.TIMEOUT
                     break
 
-            # 进程正常结束
-            if monitor.status == MonitorStatus.RUNNING:
+            # 进程正常结束(仅 stdout 任务负责更新状态,避免竞争)
+            if not is_stderr and monitor.status == MonitorStatus.RUNNING:
                 monitor.status = MonitorStatus.STOPPED
 
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            logger.warning("读取进程输出失败: %s", e)
+            logger.warning("读取进程 %s 输出失败: %s", "stderr" if is_stderr else "stdout", e)
             if monitor.status == MonitorStatus.RUNNING:
                 monitor.status = MonitorStatus.ERROR
 
-        finally:
-            # 确保进程已结束
-            if monitor.process and monitor.process.returncode is None:
-                await self._kill_process_tree(monitor.process)
 
     async def _notify_match(self, monitor: Monitor, line: str):
         """匹配成功时通知用户和模型"""
@@ -207,12 +277,15 @@ class MonitorManager:
 
             monitor.status = MonitorStatus.STOPPED
             process = monitor.process
-            task = monitor.thread
+            stdout_task = monitor.stdout_thread
+            stderr_task = monitor.stderr_thread
             del self._monitors[monitor_id]
 
         # 取消读取任务
-        if task and not task.done():
-            task.cancel()
+        if stdout_task and not stdout_task.done():
+            stdout_task.cancel()
+        if stderr_task and not stderr_task.done():
+            stderr_task.cancel()
 
         # 异步杀进程
         if process and process.returncode is None:
