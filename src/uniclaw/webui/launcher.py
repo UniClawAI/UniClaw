@@ -44,7 +44,7 @@ async def launch(
         exc = context.get("exception")
         if isinstance(exc, ConnectionResetError):
             return
-        _default_handler(loop, context)
+        _default_handler(context)
 
     loop.set_exception_handler(_suppress_connection_reset)
 
