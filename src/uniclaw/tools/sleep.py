@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from uniclaw.utils.constants import SYSTEM_PREFIX, TOOL_ERROR
 from uniclaw.utils.wakeup import wake_agent
 from uniclaw.tools.base import tool
+from uniclaw.tools.stream import tool_stream
 from uniclaw.config import AppConfig
 
 
@@ -68,18 +69,29 @@ async def wait(seconds: float, config: AppConfig = None) -> str:
     cancel_event = config.current_agent.cancel_event if config else None
 
     try:
-        # 每 0.5 秒检查一次取消信号
         deadline = time.monotonic() + seconds
+        last_displayed = -1
+
         while time.monotonic() < deadline:
             if cancel_event and cancel_event.is_set():
                 elapsed = seconds - (deadline - time.monotonic())
                 return (
                     f"{SYSTEM_PREFIX}(wait) 等待被取消(已等待 {max(0, elapsed):.1f} 秒)"
                 )
-            await asyncio.sleep(min(0.5, deadline - time.monotonic()))
+
+            remaining = deadline - time.monotonic()
+            sec = int(remaining)
+
+            if sec != last_displayed:
+                last_displayed = sec
+                await tool_stream(f"\r⏳ 剩余 {sec}s")
+
+            await asyncio.sleep(min(0.2, remaining))
+
     except asyncio.CancelledError:
         return f"{SYSTEM_PREFIX}(wait) 等待被取消"
 
+    await tool_stream("✅ 完成")
     return f"已等待 {seconds} 秒"
 
 

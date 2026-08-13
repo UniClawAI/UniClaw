@@ -209,7 +209,7 @@ def is_safe_tool(name: str) -> bool:
         schedule_toggle,
     )
     from uniclaw.tools.skill.tools import skill_suggest, skill_read
-    from uniclaw.tools.sleep import sleep_timer
+    from uniclaw.tools.sleep import sleep_timer, wait
     from uniclaw.tools.plan import enter_plan_mode, exit_plan_mode
     from uniclaw.tools.monitor.tools import (
         monitor_list,
@@ -389,6 +389,7 @@ def is_safe_tool(name: str) -> bool:
         push_notification.name,
         send_file.name,
         sleep_timer.name,
+        wait.name,
         # ── 帮助 ──
         list_slash_commands.name,
         get_command_help.name,
