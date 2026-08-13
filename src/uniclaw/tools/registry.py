@@ -55,7 +55,7 @@ CORE_TOOL_NAMES = {t.name for t in CORE_TOOLS}
 
 def _build_extended_keywords() -> dict[str, list[str]]:
     """从扩展工具对象动态构建关键词映射(避免硬编码字符串)。"""
-    from .fs import ReadPDF
+    from .fs import ConvertToMarkdown
     from .shell import search_files_with_everything
     from .computer_use import (
         cu_screenshot,
@@ -335,7 +335,11 @@ def _build_extended_keywords() -> dict[str, list[str]]:
         a2a_submit_task.name: ["a2a", "async", "异步任务", "多轮对话", "继续远程对话"],
         a2a_get_task.name: ["a2a", "task status", "任务状态", "查询远程任务"],
         a2a_cancel_task.name: ["a2a", "cancel task", "取消远程任务"],
-        ReadPDF.name: ["pdf", "PDF", "文档", "阅读PDF", "read pdf", "parse pdf"],
+        ConvertToMarkdown.name: [
+            "pdf", "PDF", "文档", "docx", "word", "pptx", "xlsx", "excel",
+            "read document", "parse pdf", "read pdf", "markdown", "convert",
+            "阅读文档", "文档转换",
+        ],
         search_files_with_everything.name: [
             "everything",
             "文件搜索",
@@ -1268,7 +1272,7 @@ def _build_extended_keywords() -> dict[str, list[str]]:
 
 def _build_tool_categories() -> dict[str, str]:
     """从扩展工具对象动态构建类别映射(避免硬编码字符串)。"""
-    from .fs import ReadPDF
+    from .fs import ConvertToMarkdown
     from .shell import search_files_with_everything
     from .computer_use import (
         cu_screenshot,
@@ -1458,7 +1462,7 @@ def _build_tool_categories() -> dict[str, str]:
         ipython_history.name: "IPython",
         ipython_stop.name: "IPython",
         ipython_list_kernels.name: "IPython",
-        ReadPDF.name: "文件系统",
+        ConvertToMarkdown.name: "文件系统",
         search_files_with_everything.name: "Shell",
         cu_screenshot.name: "计算机操作",
         cu_mouse_move.name: "计算机操作",

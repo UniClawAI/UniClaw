@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict
 from uniclaw.context import Scope, get_app_dir
-from uniclaw.tools.fs import Glob, Read, ReadPDF, Write
+from uniclaw.tools.fs import Glob, Read, ConvertToMarkdown, Write
 from uniclaw.tools.media import ReadMedia
 from uniclaw.tools.shell import Bash, Grep
 from uniclaw.tools.skill.tools import skill_suggest, skill_read
@@ -109,7 +109,7 @@ def get_builtin_agent_definitions() -> Dict[str, AgentDefinition]:
             ),
             tools=[
                 Read.name,
-                ReadPDF.name,
+                ConvertToMarkdown.name,
                 ReadMedia.name,
                 Glob.name,
                 Grep.name,
@@ -191,7 +191,7 @@ def get_builtin_agent_definitions() -> Dict[str, AgentDefinition]:
                 "7. 最终输出必须是一个合法的 JSON 对象\n"
                 "8. 为每个实体和关系提供 confidence 置信度(0.0~1.0): 文本中明确陈述的给 0.9~1.0,间接推断的给 0.6~0.8,不确定的给 0.3~0.5"
             ),
-            tools=[Read.name, ReadPDF.name, ReadMedia.name, Glob.name, Grep.name],
+            tools=[Read.name, ConvertToMarkdown.name, ReadMedia.name, Glob.name, Grep.name],
             source="built-in",
         ),
     }

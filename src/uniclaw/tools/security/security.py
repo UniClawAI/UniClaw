@@ -178,7 +178,7 @@ def is_safe_tool(name: str) -> bool:
         bool: 如果是安全工具返回True,否则返回False
     """
     # 从各个模块导入安全工具函数
-    from uniclaw.tools.fs import Read, Glob, ReadPDF
+    from uniclaw.tools.fs import Read, Glob, ConvertToMarkdown
     from uniclaw.tools.shell import Grep, search_files_with_everything
     from uniclaw.tools.media import ReadMedia
     from uniclaw.tools.sandbox.tools import (
@@ -313,7 +313,7 @@ def is_safe_tool(name: str) -> bool:
     safe_tools = [
         # ── 文件系统 / Shell ──
         Read.name,
-        ReadPDF.name,
+        ConvertToMarkdown.name,
         ReadMedia.name,
         Glob.name,
         Grep.name,

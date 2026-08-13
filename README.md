@@ -894,7 +894,7 @@ UniClaw 提供了丰富的内置工具,AI 助手可以自动调用这些工具�
 - **Write** - 写入或创建文件(自动创建父目录,返回差异报告)
 - **Edit** - 精确替换文件中的字符串(支持统一差异格式)
 - **Glob** - 根据通配符模式搜索文件(如 `*.py`, `**/*.txt`)
-- **ReadPDF** - 读取 PDF 文件内容(支持指定页码范围,基于 pypdf)
+- **ConvertToMarkdown** - 将文档转换为 Markdown 格式并保存为 .md 文件(支持 PDF、DOCX、PPTX、XLSX 等,基于 markitdown)
 
 #### Shell 工具
 

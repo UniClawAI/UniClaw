@@ -1,5 +1,7 @@
 import difflib
+import re
 from pathlib import Path
+from uniclaw.config import AppConfig
 from uniclaw.tools.base import tool
 from uniclaw.utils.constants import TOOL_ERROR
 
@@ -227,76 +229,155 @@ def Glob(pattern: str, path: str) -> str:
         return f"{TOOL_ERROR}: {e}"
 
 
-# ── ReadPDF ──────────────────────────────────────────────────────────────
-@tool
-def ReadPDF(file_path: str, pages: str | None = None, encoding: str = "utf-8") -> str:
-    """
-    读取 PDF 文件内容并返回文本。
+# ── ConvertToMarkdown ───────────────────────────────────────────────────
 
-    Args:
-        file_path: 要读取的 PDF 文件路径
-        pages: 可选,指定要读取的页码范围,格式如 "1-5" 或 "1,3,5"。如果未指定,则读取所有页
-        encoding: 可选,文本编码格式。默认为 "utf-8"
+_DOCUMENT_EXTENSIONS = {
+    ".pdf",
+    ".docx",
+    ".doc",
+    ".pptx",
+    ".ppt",
+    ".xlsx",
+    ".xls",
+    ".html",
+    ".htm",
+    ".csv",
+    ".json",
+    ".xml",
+    ".epub",
+}
+
+
+def _build_llm_client(config):
+    """根据 config 构建 OpenAI 客户端供 markitdown 使用。遍历 multimodal_model_name 找到第一个 OpenAI 兼容的模型。
 
     Returns:
-        str: PDF 文件的文本内容,每页以 "--- 第 X 页 ---" 分隔。
-             如果文件不存在或出错,返回错误信息字符串
+        tuple[OpenAI, str] | tuple[None, None]: (客户端, 模型名) 或 (None, None)
+    """
+    from uniclaw.provider.common import resolve_params
+    from uniclaw.provider.openai_provider import _build_openai_client
+
+    for model in config.multimodal_model_name:
+        p = resolve_params(config, model_name=model)
+        if "anthropic_api_key" in p:
+            continue
+        api_key = p.get("openai_api_key", "")
+        api_base = p.get("openai_api_base", "")
+        client = _build_openai_client(api_base, api_key, p.get("proxy_url", ""))
+        return (client, p.get("model_name", model))
+
+    return (None, None)
+
+
+@tool
+def ConvertToMarkdown(file_path: str, output_path: str = "", config: AppConfig = None) -> str:
+    """
+    将文档转换为 Markdown 格式并保存为 .md 文件,返回生成的文件路径和文档结构概览。支持 PDF、DOCX、PPTX、XLSX、HTML、CSV、JSON、XML、EPUB。
+
+    转换过程保留文档结构(标题、列表、表格等),输出对 LLM 友好的 Markdown 文本。
+    当配置了 multimodal_model_name 时,自动提取文档中的图片并通过视觉模型生成文字描述。
+
+    Args:
+        file_path: 文档文件路径,必须是绝对路径
+        output_path: 可选,.md 文件的保存路径,必须是绝对路径。为空时保存在源文件同目录下,文件名为原文件名替换为 .md 后缀(如 report.pdf → report.md)。若文件已存在则自动添加数字后缀(如 report_1.md)
+
+    Returns:
+        str: 转换结果说明,包含生成的文件路径、文档标题结构和统计信息。如果文件不存在或格式不支持,返回错误信息字符串
     """
     try:
-        from pypdf import PdfReader
+        from markitdown import MarkItDown
     except ImportError:
-        return f"{TOOL_ERROR}: pypdf 库未安装,请运行: uv sync"
+        return f"{TOOL_ERROR}: markitdown 库未安装,请运行: uv sync"
 
     p = Path(file_path)
+    if not p.is_absolute():
+        return f"{TOOL_ERROR}: file_path 必须是绝对路径: {file_path}"
+    if output_path and not Path(output_path).is_absolute():
+        return f"{TOOL_ERROR}: output_path 必须是绝对路径: {output_path}"
     if not p.exists():
         return f"{TOOL_ERROR}: 文件未找到: {file_path}"
     if p.is_dir():
         return f"{TOOL_ERROR}: {file_path} 是一个目录"
-    if p.suffix.lower() != ".pdf":
-        return f"{TOOL_ERROR}: {file_path} 不是 PDF 文件"
+
+    suffix = p.suffix.lower()
+    if suffix not in _DOCUMENT_EXTENSIONS:
+        return (
+            f"{TOOL_ERROR}: 不支持的格式 '{suffix}',"
+            f"支持的格式: {', '.join(sorted(_DOCUMENT_EXTENSIONS))}"
+        )
 
     try:
-        reader = PdfReader(str(p))
-        total_pages = len(reader.pages)
+        # 配置了多模态模型时启用图片提取
+        llm_client, vision_model = (None, None)
+        if config and config.multimodal_model_name:
+            llm_client, vision_model = _build_llm_client(config)
 
-        # 解析页码范围
-        page_numbers = []
-        if pages:
-            for part in pages.split(","):
-                part = part.strip()
-                if "-" in part:
-                    start, end = part.split("-", 1)
-                    start = max(1, int(start))
-                    end = min(total_pages, int(end))
-                    page_numbers.extend(range(start, end + 1))
-                else:
-                    page_num = int(part)
-                    if 1 <= page_num <= total_pages:
-                        page_numbers.append(page_num)
+        if llm_client and vision_model:
+            md = MarkItDown(
+                llm_client=llm_client,
+                llm_model=vision_model,
+                enable_plugins=True,
+            )
         else:
-            page_numbers = list(range(1, total_pages + 1))
+            md = MarkItDown(enable_plugins=False)
 
-        # 提取文本
-        result = []
-        for page_num in page_numbers:
-            page = reader.pages[page_num - 1]  # pypdf 使用 0-based 索引
-            text = page.extract_text()
-            if text:
-                result.append(f"--- 第 {page_num} 页 ---\n{text}")
+        result = md.convert(str(p))
+        text = result.text_content.strip() if result.text_content else ""
 
-        if not result:
-            return "(PDF 文件无文本内容或无法提取文本)"
+        if not text:
+            return "(文档无文本内容或无法提取文本)"
 
-        return "\n\n".join(result)
+        # 确定输出路径
+        if output_path:
+            out = Path(output_path)
+            out.parent.mkdir(parents=True, exist_ok=True)
+        else:
+            # 默认: report.pdf → report.md, 若已存在则 report_1.md, report_2.md ...
+            out = p.with_suffix(".md")
+            if out.exists():
+                stem = out.stem
+                counter = 1
+                while out.exists():
+                    out = p.parent / f"{stem}_{counter}.md"
+                    counter += 1
+        out.write_text(text, encoding="utf-8")
+
+        # 统计转换信息
+        lines = text.count('\n') + 1
+        chars = len(text)
+        size_kb = len(text.encode('utf-8')) / 1024
+
+        # 提取标题结构(含offset,方便Read工具定位)
+        headings = []
+        for m in re.finditer(r'^(#{1,6})\s+(.+)$', text, re.MULTILINE):
+            offset_val = text[:m.start()].count('\n')  # 0-based,与Read工具offset一致
+            headings.append((len(m.group(1)), m.group(2), offset_val))
+        h1_headings = [(title, off) for level, title, off in headings if level == 1]
+        h2_headings = [(title, off) for level, title, off in headings if level == 2]
+
+        heading_info = ""
+        if h1_headings:
+            items = [f"{title}(offset={off})" for title, off in h1_headings]
+            heading_info += f"\n一级标题({len(h1_headings)}个): {', '.join(items)}"
+        if h2_headings:
+            items = [f"{title}(offset={off})" for title, off in h2_headings]
+            heading_info += f"\n二级标题({len(h2_headings)}个): {', '.join(items)}"
+
+        return (
+            f"已将 {p.name} 转换为 Markdown 格式\n"
+            f"输出文件: {out}\n"
+            f"统计: {lines} 行, {chars} 字符, {size_kb:.1f} KB"
+            f"{heading_info}"
+        )
     except Exception as e:
         return f"{TOOL_ERROR}: {e}"
 
 
 def get_tools() -> list:
     """获取文件系统工具列表"""
-    return [Read, Write, Edit, Glob, ReadPDF]
+    return [Read, Write, Edit, Glob, ConvertToMarkdown]
 
 
 def get_all_tools() -> list:
     """获取所有文件系统工具(无条件返回)"""
-    return get_tools()
+    return [Read, Write, Edit, Glob, ConvertToMarkdown]
