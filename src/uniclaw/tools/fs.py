@@ -1,9 +1,11 @@
+import asyncio
 import difflib
 import re
+import time
 from pathlib import Path
 from uniclaw.config import AppConfig
 from uniclaw.tools.base import tool
-from uniclaw.utils.constants import TOOL_ERROR
+from uniclaw.utils.constants import SYSTEM_PREFIX, TOOL_ERROR
 
 
 def _read_preserving_newlines(p: Path, encoding: str = "utf-8") -> str:
@@ -270,10 +272,11 @@ def _build_llm_client(config):
 
 
 @tool
-def ConvertToMarkdown(file_path: str, output_path: str = "", config: AppConfig = None) -> str:
+async def ConvertToMarkdown(file_path: str, output_path: str = "", config: AppConfig = None) -> str:
     """
-    将文档转换为 Markdown 格式并保存为 .md 文件,返回生成的文件路径和文档结构概览。支持 PDF、DOCX、PPTX、XLSX、HTML、CSV、JSON、XML、EPUB。
+    将文档转换为 Markdown 格式并保存为 .md 文件。支持 PDF、DOCX、PPTX、XLSX、HTML、CSV、JSON、XML、EPUB。
 
+    函数立即返回,转换在后台异步执行,完成后自动唤醒 AI 并返回结果。
     转换过程保留文档结构(标题、列表、表格等),输出对 LLM 友好的 Markdown 文本。
     当配置了 multimodal_model_name 时,自动提取文档中的图片并通过视觉模型生成文字描述。
 
@@ -282,10 +285,11 @@ def ConvertToMarkdown(file_path: str, output_path: str = "", config: AppConfig =
         output_path: 可选,.md 文件的保存路径,必须是绝对路径。为空时保存在源文件同目录下,文件名为原文件名替换为 .md 后缀(如 report.pdf → report.md)。若文件已存在则自动添加数字后缀(如 report_1.md)
 
     Returns:
-        str: 转换结果说明,包含生成的文件路径、文档标题结构和统计信息。如果文件不存在或格式不支持,返回错误信息字符串
+        str: 立即返回转换任务已启动的确认信息。实际转换结果将通过唤醒机制异步返回
     """
+    # -- 参数校验(立即完成) --
     try:
-        from markitdown import MarkItDown
+        from markitdown import MarkItDown  # noqa: F401 — 验证已安装
     except ImportError:
         return f"{TOOL_ERROR}: markitdown 库未安装,请运行: uv sync"
 
@@ -306,8 +310,22 @@ def ConvertToMarkdown(file_path: str, output_path: str = "", config: AppConfig =
             f"支持的格式: {', '.join(sorted(_DOCUMENT_EXTENSIONS))}"
         )
 
-    try:
-        # 配置了多模态模型时启用图片提取
+    # 确定输出路径(提前计算,避免异步竞争)
+    if output_path:
+        out = Path(output_path)
+    else:
+        out = p.with_suffix(".md")
+        if out.exists():
+            stem = out.stem
+            counter = 1
+            while out.exists():
+                out = p.parent / f"{stem}_{counter}.md"
+                counter += 1
+
+    def _do_convert() -> tuple[str, float]:
+        """在线程池中执行同步转换(避免阻塞事件循环)"""
+        from markitdown import MarkItDown
+
         llm_client, vision_model = (None, None)
         if config and config.multimodal_model_name:
             llm_client, vision_model = _build_llm_client(config)
@@ -321,56 +339,67 @@ def ConvertToMarkdown(file_path: str, output_path: str = "", config: AppConfig =
         else:
             md = MarkItDown(enable_plugins=False)
 
+        start = time.monotonic()
         result = md.convert(str(p))
+        elapsed = time.monotonic() - start
         text = result.text_content.strip() if result.text_content else ""
 
         if not text:
-            return "(文档无文本内容或无法提取文本)"
+            return "", elapsed
 
-        # 确定输出路径
-        if output_path:
-            out = Path(output_path)
-            out.parent.mkdir(parents=True, exist_ok=True)
-        else:
-            # 默认: report.pdf → report.md, 若已存在则 report_1.md, report_2.md ...
-            out = p.with_suffix(".md")
-            if out.exists():
-                stem = out.stem
-                counter = 1
-                while out.exists():
-                    out = p.parent / f"{stem}_{counter}.md"
-                    counter += 1
+        out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(text, encoding="utf-8")
+        return text, elapsed
 
-        # 统计转换信息
-        lines = text.count('\n') + 1
-        chars = len(text)
-        size_kb = len(text.encode('utf-8')) / 1024
+    async def _convert():
+        """后台执行转换,完成后唤醒 AI"""
+        try:
+            text, elapsed = await asyncio.to_thread(_do_convert)
 
-        # 提取标题结构(含offset,方便Read工具定位)
-        headings = []
-        for m in re.finditer(r'^(#{1,6})\s+(.+)$', text, re.MULTILINE):
-            offset_val = text[:m.start()].count('\n')  # 0-based,与Read工具offset一致
-            headings.append((len(m.group(1)), m.group(2), offset_val))
-        h1_headings = [(title, off) for level, title, off in headings if level == 1]
-        h2_headings = [(title, off) for level, title, off in headings if level == 2]
+            if not text:
+                await _wake(f"文档 {p.name} 无文本内容或无法提取文本")
+                return
 
-        heading_info = ""
-        if h1_headings:
-            items = [f"{title}(offset={off})" for title, off in h1_headings]
-            heading_info += f"\n一级标题({len(h1_headings)}个): {', '.join(items)}"
-        if h2_headings:
-            items = [f"{title}(offset={off})" for title, off in h2_headings]
-            heading_info += f"\n二级标题({len(h2_headings)}个): {', '.join(items)}"
+            lines = text.count('\n') + 1
+            chars = len(text)
+            size_kb = len(text.encode('utf-8')) / 1024
 
-        return (
-            f"已将 {p.name} 转换为 Markdown 格式\n"
-            f"输出文件: {out}\n"
-            f"统计: {lines} 行, {chars} 字符, {size_kb:.1f} KB"
-            f"{heading_info}"
-        )
-    except Exception as e:
-        return f"{TOOL_ERROR}: {e}"
+            headings = []
+            for m in re.finditer(r'^(#{1,6})\s+(.+)$', text, re.MULTILINE):
+                offset_val = text[:m.start()].count('\n')
+                headings.append((len(m.group(1)), m.group(2), offset_val))
+            h1_headings = [(title, off) for level, title, off in headings if level == 1]
+            h2_headings = [(title, off) for level, title, off in headings if level == 2]
+
+            heading_info = ""
+            if h1_headings:
+                items = [f"{title}(offset={off})" for title, off in h1_headings]
+                heading_info += f"\n一级标题({len(h1_headings)}个): {', '.join(items)}"
+            if h2_headings:
+                items = [f"{title}(offset={off})" for title, off in h2_headings]
+                heading_info += f"\n二级标题({len(h2_headings)}个): {', '.join(items)}"
+
+            summary = (
+                f"已将 {p.name} 转换为 Markdown 格式(耗时 {elapsed:.1f}s)\n"
+                f"输出文件: {out}\n"
+                f"统计: {lines} 行, {chars} 字符, {size_kb:.1f} KB"
+                f"{heading_info}"
+            )
+            await _wake(summary)
+        except Exception as e:
+            await _wake(f"转换 {p.name} 失败: {e}")
+
+    async def _wake(message: str):
+        from uniclaw.utils.wakeup import wake_agent
+        await wake_agent(f"{SYSTEM_PREFIX}(ConvertToMarkdown) {message}", config)
+
+    asyncio.create_task(_convert())
+
+    return (
+        f"文档 {p.name} 转换任务已启动,正在后台异步执行...\n"
+        f"输出文件: {out}\n"
+        f"转换完成后将自动通知,请继续处理其他任务。"
+    )
 
 
 def get_tools() -> list:
