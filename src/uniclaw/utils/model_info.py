@@ -258,6 +258,7 @@ class ModelInfoProvider:
         支持:
         - 完整 ID: "openai/gpt-4o"
         - 短名称: "gpt-4o"
+        - 自定义提供商前缀: "custom-provider/openai/gpt-4o" -> "openai/gpt-4o"
         - 模糊匹配: 查找后缀匹配
         """
         if not model_name:
@@ -277,6 +278,26 @@ class ModelInfoProvider:
         for mid in self._cache:
             if mid.lower().endswith("/" + model_lower):
                 return mid
+
+        # 处理自定义提供商前缀: "custom-provider/openai/gpt-4o" -> "openai/gpt-4o"
+        # 用户可能在 OpenRouter 配置了自定义提供商名，需要去除
+        parts = model_name.split("/")
+        if len(parts) >= 3:
+            # 尝试去除第一个提供商名，用剩余部分匹配
+            without_custom_provider = "/".join(parts[1:])
+            result = self._resolve_model_id(without_custom_provider)
+            if result:
+                return result
+
+        # 尝试匹配模型名的最后一部分（去掉所有提供商前缀）
+        if "/" in model_name:
+            short_name = model_name.split("/")[-1]
+            if short_name in self._short_name_index:
+                return self._short_name_index[short_name]
+            # 模糊匹配短名称
+            for mid in self._cache:
+                if mid.lower().endswith("/" + short_name.lower()):
+                    return mid
 
         return None
 

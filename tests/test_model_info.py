@@ -339,6 +339,32 @@ class TestModelInfoProvider:
             result = provider._resolve_model_id("claude-3.5-sonnet")
             assert result == "anthropic/claude-3.5-sonnet"
 
+    async def test_resolve_model_id_custom_provider(self, provider, mock_api_response):
+        """测试自定义提供商前缀（如 my-provider/openai/gpt-4o）。"""
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__ = AsyncMock(
+                return_value=MagicMock(get=AsyncMock(return_value=mock_api_response))
+            )
+            mock_client.return_value.__aexit__ = AsyncMock()
+
+            await provider._ensure_cache()
+            # 自定义提供商前缀 + 完整 ID
+            result = provider._resolve_model_id("custom-provider/openai/gpt-4o")
+            assert result == "openai/gpt-4o"
+
+    async def test_resolve_model_id_custom_provider_short(self, provider, mock_api_response):
+        """测试自定义提供商前缀 + 短名称。"""
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__ = AsyncMock(
+                return_value=MagicMock(get=AsyncMock(return_value=mock_api_response))
+            )
+            mock_client.return_value.__aexit__ = AsyncMock()
+
+            await provider._ensure_cache()
+            # 多级自定义提供商 + 短名称
+            result = provider._resolve_model_id("my-org/my-provider/gpt-4o")
+            assert result == "openai/gpt-4o"
+
     async def test_resolve_model_id_not_found(self, provider, mock_api_response):
         """测试未找到模型。"""
         with patch("httpx.AsyncClient") as mock_client:
