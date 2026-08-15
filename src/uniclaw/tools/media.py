@@ -8,6 +8,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+from uniclaw.config import AppConfig
 from uniclaw.utils.constants import SYSTEM_PREFIX, TOOL_ERROR
 from uniclaw.tools.base import tool
 
@@ -246,8 +247,23 @@ def _read_media_impl(file_path: str, fps: int = 2) -> list | str:
         return f"{TOOL_ERROR}: {e}"
 
 
+def _get_description_prompt(content: list[dict]) -> str:
+    """根据多模态内容类型返回对应的描述提示词。"""
+    for item in content:
+        item_type = item.get("type", "")
+        if item_type == "image_url":
+            return "请详细描述这张图片的内容。包括:图片中的所有可见元素、文字内容、颜色搭配、布局构图、人物或物体的位置关系等。"
+        elif item_type == "input_audio":
+            return "请详细描述这段音频的内容。包括:语音内容(如有)、背景音乐、音效、说话人语气情感、时长等。"
+        elif item_type == "video_url":
+            return "请详细描述这段视频的内容。包括:画面场景、人物动作、文字字幕、语音对话、背景音乐、视频时长和节奏等。"
+    return "请详细描述这个媒体文件的内容。"
+
+
 @tool
-async def ReadMedia(file_path: str, fps: int = 2) -> list | str:
+async def ReadMedia(
+    file_path: str, fps: int = 2, as_text: bool = False, config: AppConfig = None
+) -> list | str:
     """
     读取媒体文件(图片、音频、视频)并返回多模态内容供分析。
 
@@ -265,15 +281,51 @@ async def ReadMedia(file_path: str, fps: int = 2) -> list | str:
         fps: 视频抽帧速率(帧/秒),默认2
 
     Returns:
-        list: 多模态内容块列表(成功时),str: 错误信息(失败时)
+        list: 多模态内容块列表(成功时),str: 文字描述或错误信息
     """
-    return await asyncio.to_thread(_read_media_impl, file_path, fps)
+    result = await asyncio.to_thread(_read_media_impl, file_path, fps)
+
+    # 如果不是要求转为文本,或者原始结果已经是错误信息,直接返回
+    if not as_text or isinstance(result, str):
+        return result
+
+    # 使用多模态模型将多模态内容转换为文字描述
+    if not config or not config.multimodal_model_name:
+        return f"{TOOL_ERROR}: 未配置多模态模型(multimodal_model_name),无法转换为文字描述"
+
+    try:
+        from uniclaw.provider.fallback import achat
+
+        # 从多模态内容类型获取对应的描述提示词
+        prompt = _get_description_prompt(result)
+
+        # 创建临时 session 用于调用多模态模型
+        from uniclaw.tools.session.session import Session
+
+        temp_session = Session()
+        temp_session.add_user_message(
+            content=[
+                {"type": "text", "text": prompt},
+                *result,
+            ]
+        )
+
+        # multimodal_model_name 是列表,achat 支持列表回退
+        response = await achat(
+            system_prompt="你是一个媒体内容描述助手,请详细描述用户发送的媒体文件内容。",
+            session=temp_session,
+            model_name=config.multimodal_model_name,
+            config=config,
+        )
+        return response.content or f"{TOOL_ERROR}: 多模态模型返回为空"
+    except Exception as e:
+        return f"{TOOL_ERROR}: 转换文字描述失败: {e}"
 
 
 @tool
 async def GenerateImage(
     prompt: str,
-    path: str | None = None,
+    save_path: str | None = None,
     size: str = "1024x768",
     config=None,
 ) -> list | str:
@@ -282,11 +334,11 @@ async def GenerateImage(
 
     Args:
         prompt: 图片描述提示词
-        path: 保存路径(如 "output.png"),为空时返回多模态数据供 AI 直接分析
+        save_path: 保存路径(如 "output.png"),为空时返回多模态数据供 AI 直接分析
         size: 图片尺寸,如 "2K", "1024x1024", "1024x768"
 
     Returns:
-        path 非空时返回保存路径字符串;path 为空时返回多模态内容块列表(可直接用于视觉分析)
+        save_path 非空时返回保存路径字符串;save_path 为空时返回多模态内容块列表(可直接用于视觉分析)
     """
     from uniclaw.provider.openai_provider import agenerate_image
 
@@ -309,8 +361,8 @@ async def GenerateImage(
     is_url = result.startswith("http://") or result.startswith("https://")
 
     # 保存到文件
-    if path:
-        p = Path(path)
+    if save_path:
+        p = Path(save_path)
         p.parent.mkdir(parents=True, exist_ok=True)
         if is_url:
             import urllib.request

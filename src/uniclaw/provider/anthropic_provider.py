@@ -246,7 +246,8 @@ def stream(
     anthropic_tools = (
         [
             t.to_anthropic_schema(
-                explain=should_explain(t.name, config.explain_mode, config.is_sub)
+                explain=should_explain(t.name, config.explain_mode, config.is_sub),
+                model_name=p["model_name"],
             )
             for t in tools
         ]
@@ -409,7 +410,8 @@ async def astream(
     anthropic_tools = (
         [
             t.to_anthropic_schema(
-                explain=should_explain(t.name, config.explain_mode, config.is_sub)
+                explain=should_explain(t.name, config.explain_mode, config.is_sub),
+                model_name=p["model_name"],
             )
             for t in tools
         ]
@@ -538,7 +540,7 @@ def chat(
 
     client = _build_anthropic_client(base_url, api_key, p["proxy_url"])
     anthropic_messages = messages
-    anthropic_tools = [t.to_anthropic_schema() for t in tools] if tools else None
+    anthropic_tools = [t.to_anthropic_schema(model_name=p["model_name"]) for t in tools] if tools else None
 
     resolved_max_tokens = p["max_tokens"]
     kwargs = dict(
@@ -618,7 +620,7 @@ async def achat(
 
     client = _build_async_anthropic_client(base_url, api_key, p["proxy_url"])
     anthropic_messages = messages
-    anthropic_tools = [t.to_anthropic_schema() for t in tools] if tools else None
+    anthropic_tools = [t.to_anthropic_schema(model_name=p["model_name"]) for t in tools] if tools else None
 
     resolved_max_tokens = p["max_tokens"]
     kwargs = dict(

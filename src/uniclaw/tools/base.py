@@ -272,11 +272,59 @@ class Tool:
             params.setdefault("required", []).append("_explain")
         return params
 
-    def to_openai_schema(self, explain: bool = False) -> dict:
+    def _apply_vision_constraints(self, parameters: dict, has_vision: bool) -> dict:
+        """根据视觉能力调整工具参数约束。"""
+        import copy
+
+        params = copy.deepcopy(parameters)
+        properties = params.get("properties", {})
+        required = params.get("required", [])
+
+        if has_vision:
+            # 多模态模型:移除 as_text 参数
+            if self.name == "ReadMedia" and "as_text" in properties:
+                del properties["as_text"]
+                if "as_text" in required:
+                    required.remove("as_text")
+        else:
+            # 非多模态模型: as_text 强制必填
+            if self.name == "ReadMedia" and "as_text" in properties:
+                properties["as_text"]["description"] = "必须传 true"
+                if "as_text" not in required:
+                    required.append("as_text")
+
+            # 截图/生成图片工具: save_path 改为必填
+            if self.name in ("GenerateImage", "browser_screenshot", "cu_screenshot"):
+                if "save_path" in properties and "save_path" not in required:
+                    required.append("save_path")
+
+        return params
+
+    def _check_vision_support(self, model_name: str = "") -> bool:
+        """检查模型是否支持视觉。"""
+        if not model_name:
+            return True
+        try:
+            from uniclaw.utils.model_info import get_model_info_provider
+
+            provider = get_model_info_provider()
+            # 尝试从缓存获取(同步方式)
+            resolved_id = provider._resolve_model_id(model_name)
+            if resolved_id and resolved_id in provider._cache:
+                info = provider._cache[resolved_id]
+                return info.supports_vision
+            # 缓存未命中时默认返回 True(由系统提示词处理)
+            return True
+        except Exception:
+            return True
+
+    def to_openai_schema(self, explain: bool = False, model_name: str = "") -> dict:
         """转换为 OpenAI function calling 格式。"""
         parameters = (
             self._maybe_inject_explain(self.parameters) if explain else self.parameters
         )
+        has_vision = self._check_vision_support(model_name)
+        parameters = self._apply_vision_constraints(parameters, has_vision)
         return {
             "type": "function",
             "function": {
@@ -287,11 +335,13 @@ class Tool:
             },
         }
 
-    def to_anthropic_schema(self, explain: bool = False) -> dict:
+    def to_anthropic_schema(self, explain: bool = False, model_name: str = "") -> dict:
         """转换为 Anthropic tool 格式。"""
         parameters = (
             self._maybe_inject_explain(self.parameters) if explain else self.parameters
         )
+        has_vision = self._check_vision_support(model_name)
+        parameters = self._apply_vision_constraints(parameters, has_vision)
         return {
             "name": self.name,
             "description": self.description,

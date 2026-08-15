@@ -221,7 +221,8 @@ def stream(
     openai_tools = (
         [
             t.to_openai_schema(
-                explain=should_explain(t.name, config.explain_mode, config.is_sub)
+                explain=should_explain(t.name, config.explain_mode, config.is_sub),
+                model_name=p["model_name"],
             )
             for t in tools
         ]
@@ -384,7 +385,8 @@ async def astream(
     openai_tools = (
         [
             t.to_openai_schema(
-                explain=should_explain(t.name, config.explain_mode, config.is_sub)
+                explain=should_explain(t.name, config.explain_mode, config.is_sub),
+                model_name=p["model_name"],
             )
             for t in tools
         ]
@@ -535,7 +537,7 @@ def chat(
     )
     if asr_options:
         extra_body["asr_options"] = asr_options
-    openai_tools = [t.to_openai_schema() for t in tools] if tools else None
+    openai_tools = [t.to_openai_schema(model_name=p["model_name"]) for t in tools] if tools else None
 
     # 清理消息中的孤立代理码点,避免 OpenAI SDK JSON 序列化失败
     messages = _sanitize_surrogates(messages)
@@ -616,7 +618,7 @@ async def achat(
     )
     if asr_options:
         extra_body["asr_options"] = asr_options
-    openai_tools = [t.to_openai_schema() for t in tools] if tools else None
+    openai_tools = [t.to_openai_schema(model_name=p["model_name"]) for t in tools] if tools else None
 
     # 清理消息中的孤立代理码点,避免 OpenAI SDK JSON 序列化失败
     messages = _sanitize_surrogates(messages)
