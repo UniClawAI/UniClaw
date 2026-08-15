@@ -310,10 +310,10 @@ def _build_user_message(text: str):
     return merged
 
 
-def token_usage_rate(task: AgentTask, config: AppConfig) -> float:
+async def token_usage_rate(task: AgentTask, config: AppConfig) -> float:
     model = config.model_name[0] if config.model_name else ""
     used = task.session.estimate_tokens(model)
-    limit = get_context_limit(model)
+    limit = await get_context_limit(model)
     pct = used / limit * 100 if limit else 0
     return pct
 
@@ -1354,7 +1354,7 @@ class TUIApp:
                     self.current_task = None
 
                 self.print("")
-                self._token_pct = token_usage_rate(task, self.config)
+                self._token_pct = await token_usage_rate(task, self.config)
                 self.app.invalidate()
         finally:
             if not app_task.done():

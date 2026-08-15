@@ -6,63 +6,126 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from uniclaw.compaction import get_context_limit, get_pressure_level, PRESSURE_LEVELS
+from uniclaw.compaction import get_context_limit, get_pressure_level, PRESSURE_LEVELS, DEFAULT_CONTEXT_LIMIT
 
 # ── get_context_limit 测试 ──────────────────────────────────
 
 
-def test_get_context_limit_known_models():
-    """验证已知模型的 context limit。"""
-    assert get_context_limit("gpt-4o") == 128000
-    assert get_context_limit("gpt-4.1") == 1000000
-    assert get_context_limit(None) == 128000
-    assert get_context_limit("openai/gpt-4o") == 128000
+@pytest.mark.asyncio
+async def test_get_context_limit_default():
+    """验证默认值。"""
+    assert await get_context_limit(None) == DEFAULT_CONTEXT_LIMIT
 
 
-def test_get_context_limit_prefix_match():
-    """前缀匹配应生效。"""
-    assert get_context_limit("gpt-4o-mini-custom") == 128000
+@pytest.mark.asyncio
+async def test_get_context_limit_with_mock_api():
+    """验证通过 API 获取上下文长度。"""
+    mock_info = MagicMock()
+    mock_info.context_length = 128000
+
+    with patch("uniclaw.utils.model_info.get_model_info_provider") as mock_get_provider:
+        mock_provider = MagicMock()
+        mock_provider.get_model_info = AsyncMock(return_value=mock_info)
+        mock_get_provider.return_value = mock_provider
+
+        assert await get_context_limit("gpt-4o") == 128000
 
 
-def test_get_context_limit_unknown_defaults():
+@pytest.mark.asyncio
+async def test_get_context_limit_unknown_defaults():
     """未知模型返回默认值。"""
-    assert get_context_limit("totally-unknown-model") == 128000
+    assert await get_context_limit("totally-unknown-model") == DEFAULT_CONTEXT_LIMIT
 
 
 # ── get_pressure_level 测试 ─────────────────────────────────
 
 
-def test_pressure_level_below_50():
+@pytest.mark.asyncio
+async def test_pressure_level_below_50():
     """40% → level -1 (不需要压缩)。"""
-    assert get_pressure_level(51200, "gpt-4o") == -1
+    # 使用 mock 确保上下文长度为 128000
+    mock_info = MagicMock()
+    mock_info.context_length = 128000
+
+    with patch("uniclaw.utils.model_info.get_model_info_provider") as mock_get_provider:
+        mock_provider = MagicMock()
+        mock_provider.get_model_info = AsyncMock(return_value=mock_info)
+        mock_get_provider.return_value = mock_provider
+
+        assert await get_pressure_level(51200, "gpt-4o") == -1
 
 
-def test_pressure_level_at_50():
+@pytest.mark.asyncio
+async def test_pressure_level_at_50():
     """55% → level 0 (轻度压缩)。"""
-    assert get_pressure_level(70400, "gpt-4o") == 0
+    mock_info = MagicMock()
+    mock_info.context_length = 128000
+
+    with patch("uniclaw.utils.model_info.get_model_info_provider") as mock_get_provider:
+        mock_provider = MagicMock()
+        mock_provider.get_model_info = AsyncMock(return_value=mock_info)
+        mock_get_provider.return_value = mock_provider
+
+        assert await get_pressure_level(70400, "gpt-4o") == 0
 
 
-def test_pressure_level_at_70():
+@pytest.mark.asyncio
+async def test_pressure_level_at_70():
     """75% → level 1 (中度压缩)。"""
-    assert get_pressure_level(96000, "gpt-4o") == 1
+    mock_info = MagicMock()
+    mock_info.context_length = 128000
+
+    with patch("uniclaw.utils.model_info.get_model_info_provider") as mock_get_provider:
+        mock_provider = MagicMock()
+        mock_provider.get_model_info = AsyncMock(return_value=mock_info)
+        mock_get_provider.return_value = mock_provider
+
+        assert await get_pressure_level(96000, "gpt-4o") == 1
 
 
-def test_pressure_level_at_85():
+@pytest.mark.asyncio
+async def test_pressure_level_at_85():
     """90% → level 2 (重度压缩)。"""
-    assert get_pressure_level(115200, "gpt-4o") == 2
+    mock_info = MagicMock()
+    mock_info.context_length = 128000
+
+    with patch("uniclaw.utils.model_info.get_model_info_provider") as mock_get_provider:
+        mock_provider = MagicMock()
+        mock_provider.get_model_info = AsyncMock(return_value=mock_info)
+        mock_get_provider.return_value = mock_provider
+
+        assert await get_pressure_level(115200, "gpt-4o") == 2
 
 
-def test_pressure_level_exact_threshold():
+@pytest.mark.asyncio
+async def test_pressure_level_exact_threshold():
     """恰好在阈值上应触发对应等级。"""
-    limit = get_context_limit("gpt-4o")
-    assert get_pressure_level(int(limit * 0.50), "gpt-4o") == 0
-    assert get_pressure_level(int(limit * 0.70), "gpt-4o") == 1
-    assert get_pressure_level(int(limit * 0.85), "gpt-4o") == 2
+    mock_info = MagicMock()
+    mock_info.context_length = 128000
+
+    with patch("uniclaw.utils.model_info.get_model_info_provider") as mock_get_provider:
+        mock_provider = MagicMock()
+        mock_provider.get_model_info = AsyncMock(return_value=mock_info)
+        mock_get_provider.return_value = mock_provider
+
+        limit = await get_context_limit("gpt-4o")
+        assert await get_pressure_level(int(limit * 0.50), "gpt-4o") == 0
+        assert await get_pressure_level(int(limit * 0.70), "gpt-4o") == 1
+        assert await get_pressure_level(int(limit * 0.85), "gpt-4o") == 2
 
 
-def test_pressure_level_zero_tokens():
+@pytest.mark.asyncio
+async def test_pressure_level_zero_tokens():
     """0 token → level -1。"""
-    assert get_pressure_level(0, "gpt-4o") == -1
+    mock_info = MagicMock()
+    mock_info.context_length = 128000
+
+    with patch("uniclaw.utils.model_info.get_model_info_provider") as mock_get_provider:
+        mock_provider = MagicMock()
+        mock_provider.get_model_info = AsyncMock(return_value=mock_info)
+        mock_get_provider.return_value = mock_provider
+
+        assert await get_pressure_level(0, "gpt-4o") == -1
 
 
 # ── Session.maybe_compact 测试 ──────────────────────────────

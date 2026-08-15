@@ -49,7 +49,7 @@ def parse_frontmatter(content: str) -> Tuple[Dict[str, Any], str]:
         # 如果没有找到 frontmatter,返回空字典和原文本
         return {}, content
 
-    prefix = match.group(1)      # --- 之前的内容（可能为空）
+    prefix = match.group(1)      # --- 之前的内容(可能为空)
     yaml_content = match.group(2)
     body_content = match.group(3)
 
@@ -69,7 +69,7 @@ def parse_frontmatter(content: str) -> Tuple[Dict[str, Any], str]:
         except yaml.YAMLError:
             metadata = {}
 
-    # 将 --- 之前的内容拼回正文，避免丢失
+    # 将 --- 之前的内容拼回正文,避免丢失
     if prefix:
         body_content = prefix + "---\n" + body_content if body_content else prefix
 
