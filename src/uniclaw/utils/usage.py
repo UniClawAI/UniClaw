@@ -1,6 +1,8 @@
-"""用量统计模块 — 跟踪 token 消耗和 API 调用次数,持久化到磁盘"""
+"""用量统计模块 — 跟踪 token 消耗和 API 调用次数,持久化到磁盘。
 
-import asyncio
+价格信息通过 model_info 模块从 OpenRouter API 获取。
+"""
+
 import json
 import logging
 import threading
@@ -11,84 +13,77 @@ from uniclaw.context import get_app_dir, Scope
 
 logger = logging.getLogger("usage")
 
-# ── 价格缓存,内存级(重启失效)─────────────────────────────
-# 结构: {model_name: {"input": float, "output": float}}
-# 全量缓存,一次 API 请求拿到所有模型价格
-_price_cache: dict[str, dict] = {}
-_PRICE_CACHE_DATE: str = ""
-
-
-async def _fetch_all_prices() -> dict[str, dict]:
-    """从 OpenRouter API 一次性获取所有模型价格。
-    返回 {model_id: {"input": float, "output": float}}。
-    价格单位: 美元/token。
-    同时建立短名称索引(如 gpt-4o -> openai/gpt-4o)。
-    """
-    import httpx
-
-    result: dict[str, dict] = {}
-    try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(
-                "https://openrouter.ai/api/v1/models",
-                timeout=15,
-            )
-        resp.raise_for_status()
-        for m in resp.json().get("data", []):
-            mid = m.get("id", "")
-            pricing = m.get("pricing", {})
-            price = {
-                "input": float(pricing.get("prompt", 0)),
-                "output": float(pricing.get("completion", 0)),
-            }
-            # 完整 ID(如 openai/gpt-4o)
-            result[mid] = price
-            # 短名称索引(如 gpt-4o)
-            if "/" in mid:
-                short = mid.split("/", 1)[1]
-                if short not in result:
-                    result[short] = price
-    except Exception as e:
-        logger.debug("获取 OpenRouter 价格失败: %s", e)
-    return result
-
-
-async def _ensure_price_cache():
-    """确保价格缓存有效。当天有效,重启失效。"""
-    global _PRICE_CACHE_DATE, _price_cache
-    today = datetime.now().strftime("%Y-%m-%d")
-    if _PRICE_CACHE_DATE != today or not _price_cache:
-        _price_cache = await _fetch_all_prices()
-        _PRICE_CACHE_DATE = today
-
 
 async def _get_model_price(model: str) -> dict:
-    """获取模型价格。返回 {"input": float, "output": float}。
-    未找到时返回 {"input": 0, "output": 0}。
+    """获取模型价格。返回 {"input": float, "output": float, "cache_read": float, "cache_write": float}。
+    未找到时返回全零字典。
+    价格单位: 美元/token。
     """
-    await _ensure_price_cache()
-    model_lower = (model or "").lower()
-    # 精确匹配
-    if model_lower in _price_cache:
-        return _price_cache[model_lower]
-    # 模糊匹配:遍历缓存查找后缀
-    for mid, price in _price_cache.items():
-        if mid.endswith("/" + model_lower):
-            return price
-    return {"input": 0, "output": 0}
+    try:
+        from uniclaw.utils.model_info import get_model_info_provider
+
+        provider = get_model_info_provider()
+        info = await provider.get_model_info(model)
+        if info and info.pricing:
+            return {
+                "input": info.pricing.get("prompt", 0.0),
+                "output": info.pricing.get("completion", 0.0),
+                "cache_read": info.pricing.get("input_cache_read", 0.0),
+                "cache_write": info.pricing.get("input_cache_write", 0.0),
+            }
+    except Exception as e:
+        logger.debug("获取模型价格失败: %s", e)
+
+    return {"input": 0.0, "output": 0.0, "cache_read": 0.0, "cache_write": 0.0}
 
 
 def _estimate_cost_from_price(
-    input_tokens: int, output_tokens: int, price: dict, cache_discount: float = 0.0
+    input_tokens: int,
+    output_tokens: int,
+    price: dict,
+    cached_tokens: int = 0,
+    cache_write_tokens: int = 0,
+    cache_discount: float = 0.0,
 ) -> float:
     """用价格字典计算费用(美元)。
 
-    cache_discount 来自响应体:缓存命中为正(折扣,省钱),缓存写入为负(溢价)。
-    基础费用按全价输入计算后减去此折扣,得到实际费用。
-    无缓存字段的提供商传入 0,不影响计算。
+    计算逻辑:
+    1. 基础费用 = input_tokens * input_price + output_tokens * output_price
+    2. 如果有 cache_discount (来自 API 响应),直接使用
+    3. 如果没有 cache_discount,但有缓存价格,手动计算:
+       - 缓存读取节省 = cached_tokens * (input_price - cache_read_price)
+       - 缓存写入额外 = cache_write_tokens * (cache_write_price - input_price)
+       - 费用修正 = 缓存写入额外 - 缓存读取节省
+
+    Args:
+        input_tokens: 输入 token 数。
+        output_tokens: 输出 token 数。
+        price: 价格字典 {"input": float, "output": float, "cache_read": float, "cache_write": float}。
+        cached_tokens: 缓存命中 token 数。
+        cache_write_tokens: 缓存写入 token 数。
+        cache_discount: 缓存折扣金额(美元,来自 API 响应,正数表示省钱)。
     """
     base = (input_tokens * price["input"]) + (output_tokens * price["output"])
-    return base - cache_discount
+
+    # 优先使用 API 返回的 cache_discount
+    if cache_discount != 0:
+        return base - cache_discount
+
+    # 如果没有 cache_discount,但有缓存价格信息,手动计算
+    cache_read_price = price.get("cache_read", 0)
+    cache_write_price = price.get("cache_write", 0)
+
+    if cached_tokens > 0 and cache_read_price > 0:
+        # 缓存读取通常比输入价格低,节省的费用
+        savings = cached_tokens * (price["input"] - cache_read_price)
+        base -= savings
+
+    if cache_write_tokens > 0 and cache_write_price > 0:
+        # 缓存写入可能比输入价格高,额外费用
+        extra = cache_write_tokens * (cache_write_price - price["input"])
+        base += extra
+
+    return base
 
 
 class UsageField(StrEnum):
@@ -190,7 +185,9 @@ async def record_usage(
 
     # 查询价格并计算本次费用
     price = await _get_model_price(model_key)
-    cost = _estimate_cost_from_price(input_tokens, output_tokens, price, cache_discount)
+    cost = _estimate_cost_from_price(
+        input_tokens, output_tokens, price, cached_tokens, cache_write_tokens, cache_discount
+    )
 
     with _lock:
         data = _load()

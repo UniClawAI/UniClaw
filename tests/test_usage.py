@@ -120,36 +120,54 @@ class TestRecordUsageCache:
         """cache_discount 修正费用:基础费用 - 折扣 = 实际费用"""
         from uniclaw.utils.usage import _estimate_cost_from_price
 
-        price = {"input": 2.5e-6, "output": 1e-5}
+        price = {"input": 2.5e-6, "output": 1e-5, "cache_read": 0.0, "cache_write": 0.0}
         # 10000 input + 500 output,无折扣
-        base = _estimate_cost_from_price(10000, 500, price, 0)
+        base = _estimate_cost_from_price(10000, 500, price, 0, 0, 0)
         assert base == pytest.approx(0.03)
 
         # 缓存命中 8000 tokens,cache_discount 为正(省钱)
-        discounted = _estimate_cost_from_price(10000, 500, price, 0.012)
+        discounted = _estimate_cost_from_price(10000, 500, price, 8000, 0, 0.012)
         assert discounted == pytest.approx(0.018)  # 0.03 - 0.012
 
         # 缓存写入,cache_discount 为负(多花钱)
-        expensive = _estimate_cost_from_price(10000, 500, price, -0.005)
+        expensive = _estimate_cost_from_price(10000, 500, price, 0, 1000, -0.005)
         assert expensive == pytest.approx(0.035)  # 0.03 + 0.005
 
     @pytest.mark.asyncio
-    async def test_cache_discount_affects_cost(self, tmp_path):
-        """cache_discount 修正费用:基础费用 - 折扣 = 实际费用"""
+    async def test_cache_prices_manual_calculation(self, tmp_path):
+        """当没有 cache_discount 时,使用缓存价格手动计算"""
         from uniclaw.utils.usage import _estimate_cost_from_price
 
-        price = {"input": 2.5e-6, "output": 1e-5}
-        # 10000 input + 500 output,无折扣
-        base = _estimate_cost_from_price(10000, 500, price, 0)
-        assert base == pytest.approx(0.03)
+        # 价格: input=$2.5/M, output=$10/M, cache_read=$0.25/M, cache_write=$3.125/M
+        price = {
+            "input": 2.5e-6,
+            "output": 1e-5,
+            "cache_read": 0.25e-6,
+            "cache_write": 3.125e-6,
+        }
 
-        # 缓存命中 8000 tokens,cache_discount 为正(省钱)
-        discounted = _estimate_cost_from_price(10000, 500, price, 0.012)
-        assert discounted == pytest.approx(0.018)  # 0.03 - 0.012
+        # 无缓存: 10000 * 2.5e-6 + 500 * 1e-5 = 0.025 + 0.005 = 0.03
+        cost_no_cache = _estimate_cost_from_price(10000, 500, price, 0, 0, 0)
+        assert cost_no_cache == pytest.approx(0.03)
 
-        # 缓存写入,cache_discount 为负(多花钱)
-        expensive = _estimate_cost_from_price(10000, 500, price, -0.005)
-        assert expensive == pytest.approx(0.035)  # 0.03 + 0.005
+        # 缓存读取 8000 tokens:
+        # 节省 = 8000 * (2.5e-6 - 0.25e-6) = 8000 * 2.25e-6 = 0.018
+        # 费用 = 0.03 - 0.018 = 0.012
+        cost_cache_read = _estimate_cost_from_price(10000, 500, price, 8000, 0, 0)
+        assert cost_cache_read == pytest.approx(0.012)
+
+        # 缓存写入 2000 tokens:
+        # 额外 = 2000 * (3.125e-6 - 2.5e-6) = 2000 * 0.625e-6 = 0.00125
+        # 费用 = 0.03 + 0.00125 = 0.03125
+        cost_cache_write = _estimate_cost_from_price(10000, 500, price, 0, 2000, 0)
+        assert cost_cache_write == pytest.approx(0.03125)
+
+        # 同时有缓存读取和写入:
+        # 节省 = 8000 * (2.5e-6 - 0.25e-6) = 0.018
+        # 额外 = 2000 * (3.125e-6 - 2.5e-6) = 0.00125
+        # 费用 = 0.03 - 0.018 + 0.00125 = 0.01325
+        cost_both = _estimate_cost_from_price(10000, 500, price, 8000, 2000, 0)
+        assert cost_both == pytest.approx(0.01325)
 
     @pytest.mark.asyncio
     async def test_migrate_old_file(self, tmp_stats):
