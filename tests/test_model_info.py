@@ -80,8 +80,18 @@ SAMPLE_REASONING_MODEL_DATA = {
     "reasoning": {
         "mandatory": False,
         "default_enabled": False,
+        "supported_efforts": ["low", "medium", "high"],
+        "default_effort": "medium",
     },
-    "benchmarks": {},
+    "benchmarks": {
+        "design_arena": [
+            {"name": "overall", "rank": 5, "score": 85.2},
+            {"name": "coding", "rank": 3, "score": 88.1},
+        ]
+    },
+    "hugging_face_id": "anthropic/claude-3.5-sonnet",
+    "canonical_slug": "claude-3.5-sonnet",
+    "default_parameters": {"temperature": 0.7, "max_tokens": 4096},
     "created": 1700000000,
 }
 
@@ -160,6 +170,28 @@ class TestModelInfo:
         d = info.to_dict()
         assert d["detailed_info_fetched"] is True
 
+    def test_to_dict_new_fields(self):
+        """测试新字段在 to_dict 中的输出。"""
+        info = ModelInfo(
+            id="openai/gpt-4o",
+            name="GPT-4o",
+            hugging_face_id="openai/gpt-4o",
+            canonical_slug="gpt-4o",
+            default_parameters={"temperature": 0.7},
+            supported_efforts=["low", "high"],
+            default_effort="low",
+            reasoning_mandatory=False,
+            design_arena_scores=[{"name": "overall", "rank": 1}],
+        )
+        d = info.to_dict()
+        assert d["hugging_face_id"] == "openai/gpt-4o"
+        assert d["canonical_slug"] == "gpt-4o"
+        assert d["default_parameters"] == {"temperature": 0.7}
+        assert d["supported_efforts"] == ["low", "high"]
+        assert d["default_effort"] == "low"
+        assert d["reasoning_mandatory"] is False
+        assert len(d["design_arena_scores"]) == 1
+
 
 # ── ModelInfoProvider 测试 ────────────────────────────────
 
@@ -237,6 +269,32 @@ class TestModelInfoProvider:
         info = provider._parse_model_data(SAMPLE_REASONING_MODEL_DATA)
         assert info.supports_reasoning is True
         assert info.reasoning_info is not None
+
+    async def test_parse_model_new_fields(self, provider):
+        """测试解析新增字段。"""
+        info = provider._parse_model_data(SAMPLE_REASONING_MODEL_DATA)
+        assert info is not None
+        assert info.hugging_face_id == "anthropic/claude-3.5-sonnet"
+        assert info.canonical_slug == "claude-3.5-sonnet"
+        assert info.default_parameters == {"temperature": 0.7, "max_tokens": 4096}
+        assert info.supported_efforts == ["low", "medium", "high"]
+        assert info.default_effort == "medium"
+        assert info.reasoning_mandatory is False
+        assert len(info.design_arena_scores) == 2
+        assert info.design_arena_scores[0]["name"] == "overall"
+        assert info.design_arena_scores[0]["rank"] == 5
+
+    async def test_parse_model_defaults(self, provider):
+        """测试新增字段默认值。"""
+        info = provider._parse_model_data(SAMPLE_MODEL_DATA)
+        assert info is not None
+        assert info.hugging_face_id is None
+        assert info.canonical_slug == ""
+        assert info.default_parameters == {}
+        assert info.supported_efforts == []
+        assert info.default_effort is None
+        assert info.reasoning_mandatory is False
+        assert info.design_arena_scores == []
 
     async def test_parse_video_model(self, provider):
         """测试解析支持视频的模型。"""

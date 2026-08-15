@@ -46,10 +46,21 @@ class ModelInfo:
     reasoning_info: dict | None = None  # 推理能力详情
     knowledge_cutoff: str | None = None  # 知识截止日期
     created: int = 0  # 创建时间戳
+    # Hugging Face 信息
+    hugging_face_id: str | None = None  # Hugging Face 模型 ID
+    canonical_slug: str = ""  # 规范化的 slug
+    # 默认参数
+    default_parameters: dict = field(default_factory=dict)  # 默认参数 (temperature, top_p, top_k)
     # Artificial Analysis 指数
     intelligence_index: float | None = None  # 综合智能指数
     coding_index: float | None = None  # 编码能力指数
     agentic_index: float | None = None  # 代理能力指数
+    # Design Arena 评分
+    design_arena_scores: list[dict] = field(default_factory=list)  # Design Arena ELO 评分和排名
+    # 推理能力详情
+    supported_efforts: list[str] = field(default_factory=list)  # 支持的推理努力级别
+    default_effort: str | None = None  # 默认推理努力级别
+    reasoning_mandatory: bool = False  # 推理是否必须启用
     # 详细信息获取状态
     detailed_info_fetched: bool = False  # 是否已获取页面详细信息
     # 原始数据(用于调试和扩展)
@@ -90,9 +101,16 @@ class ModelInfo:
             "reasoning_info": self.reasoning_info,
             "knowledge_cutoff": self.knowledge_cutoff,
             "created": self.created,
+            "hugging_face_id": self.hugging_face_id,
+            "canonical_slug": self.canonical_slug,
+            "default_parameters": self.default_parameters,
             "intelligence_index": self.intelligence_index,
             "coding_index": self.coding_index,
             "agentic_index": self.agentic_index,
+            "design_arena_scores": self.design_arena_scores,
+            "supported_efforts": self.supported_efforts,
+            "default_effort": self.default_effort,
+            "reasoning_mandatory": self.reasoning_mandatory,
             "detailed_info_fetched": self.detailed_info_fetched,
             "page_url": self.page_url,
         }
@@ -189,12 +207,16 @@ class ModelInfoProvider:
             max_completion_tokens = top_provider.get("max_completion_tokens")
 
             # 解析推理信息
-            reasoning_data = data.get("reasoning", {})
+            reasoning_data = data.get("reasoning") or {}
             supports_reasoning = bool(reasoning_data) or "reasoning" in supported_parameters
+            supported_efforts = reasoning_data.get("supported_efforts", [])
+            default_effort = reasoning_data.get("default_effort")
+            reasoning_mandatory = reasoning_data.get("mandatory", False)
 
             # 解析 benchmarks 信息
             benchmarks = data.get("benchmarks", {})
             artificial_analysis = benchmarks.get("artificial_analysis", {})
+            design_arena = benchmarks.get("design_arena", [])
 
             return ModelInfo(
                 id=model_id,
@@ -214,9 +236,16 @@ class ModelInfoProvider:
                 reasoning_info=reasoning_data if reasoning_data else None,
                 knowledge_cutoff=data.get("knowledge_cutoff"),
                 created=data.get("created", 0),
+                hugging_face_id=data.get("hugging_face_id"),
+                canonical_slug=data.get("canonical_slug", ""),
+                default_parameters=data.get("default_parameters", {}),
                 intelligence_index=artificial_analysis.get("intelligence_index"),
                 coding_index=artificial_analysis.get("coding_index"),
                 agentic_index=artificial_analysis.get("agentic_index"),
+                design_arena_scores=design_arena,
+                supported_efforts=supported_efforts,
+                default_effort=default_effort,
+                reasoning_mandatory=reasoning_mandatory,
                 raw_data=data,
             )
         except Exception as e:
