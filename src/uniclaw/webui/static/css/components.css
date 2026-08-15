@@ -982,7 +982,7 @@ textarea.input {
    Settings Modal (设置弹窗)
    ============================================================ */
 .settings-modal-content {
-    max-width: 720px;
+    max-width: 790px;
     max-height: 90vh;
 }
 
@@ -1313,6 +1313,76 @@ textarea.input {
 
 .combo-item.selected .combo-item-provider {
     display: none;
+}
+
+.combo-item .capability-icons {
+    display: inline-flex;
+    gap: 2px;
+    margin-left: 6px;
+    font-size: 11px;
+}
+
+.combo-item .capability-icon {
+    opacity: 0.7;
+}
+
+.combo-item .capability-icon.vision {
+    color: var(--accent);
+}
+
+.combo-item .capability-icon.video {
+    color: #9c27b0;
+}
+
+.combo-item .capability-icon.audio {
+    color: #ff9800;
+}
+
+.combo-item .capability-icon.tools {
+    color: var(--success, #4caf50);
+}
+
+.combo-item .capability-icon.no-vision,
+.combo-item .capability-icon.no-video,
+.combo-item .capability-icon.no-audio,
+.combo-item .capability-icon.no-tools {
+    opacity: 0.25;
+    text-decoration: line-through;
+}
+
+.combo-item.selected .capability-icons {
+    opacity: 0.5;
+}
+
+.combo-item .model-price {
+    font-size: 10px;
+    color: var(--text-3);
+    margin-left: 6px;
+    padding: 1px 4px;
+    background: var(--bg-3);
+    border-radius: 3px;
+    white-space: nowrap;
+}
+
+.combo-item.selected .model-price {
+    opacity: 0.5;
+}
+
+.settings-model-price-hint {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: var(--text-xs);
+    color: var(--text-3);
+    margin-bottom: 12px;
+    padding: 6px 10px;
+    background: var(--bg-2);
+    border-radius: var(--radius);
+    border-left: 3px solid var(--accent);
+}
+
+.settings-model-price-hint .hint-icon {
+    font-size: 14px;
 }
 
 .combo-empty {

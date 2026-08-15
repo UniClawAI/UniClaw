@@ -191,9 +191,11 @@ const Settings = {
         const selected = this._getComboValues(container);
         const selectedSet = new Set(selected);
         const isTtsAsr = ['settings-tts-model', 'settings-asr-model', 'settings-image-model', 'settings-embedding-model'].includes(container.id);
+        const isMultimodal = container.id === 'settings-multimodal-model';
         const filterLower = filter.toLowerCase();
 
         // TTS/ASR/图片生成/Embedding: 只显示 OpenAI 协议的模型
+        // 多模态模型: 只显示支持视觉的模型
         let availableModels = this._models;
         if (container.id === 'settings-embedding-model') {
             availableModels = this._embeddingModels || [];
@@ -202,6 +204,9 @@ const Settings = {
                 const info = this._providersInfo[m.provider];
                 return info && !info.allow_custom;
             });
+        } else if (isMultimodal) {
+            // 只过滤明确不支持视觉的模型，未知的保留
+            availableModels = this._models.filter(m => m.supports_vision !== false);
         }
 
         // 过滤
@@ -229,8 +234,46 @@ const Settings = {
             for (const m of models) {
                 const fullId = provider + '/' + m.id;
                 const isSelected = selectedSet.has(fullId);
+                // 三种状态: true=支持, false=不支持, null/undefined=未知(不显示)
+                const visionIcon = m.supports_vision === true ? '<span class="capability-icon vision" title="支持视觉">👁</span>'
+                                 : m.supports_vision === false ? '<span class="capability-icon no-vision" title="不支持视觉">👁</span>' : '';
+                const videoIcon = m.supports_video === true ? '<span class="capability-icon video" title="支持视频">🎬</span>'
+                                : m.supports_video === false ? '<span class="capability-icon no-video" title="不支持视频">🎬</span>' : '';
+                const audioIcon = m.supports_audio === true ? '<span class="capability-icon audio" title="支持音频">🎵</span>'
+                                : m.supports_audio === false ? '<span class="capability-icon no-audio" title="不支持音频">🎵</span>' : '';
+                const toolsIcon = m.supports_tools === true ? '<span class="capability-icon tools" title="支持工具调用">🔧</span>'
+                                : m.supports_tools === false ? '<span class="capability-icon no-tools" title="不支持工具调用">🔧</span>' : '';
+                const icons = [visionIcon, videoIcon, audioIcon, toolsIcon].filter(Boolean).join('');
+                // 价格信息 (转换为每百万token,保留3位有效数字)
+                const formatPrice3 = (v) => {
+                    if (v == null || v === 0) return '?';
+                    const n = v * 1000000;
+                    if (n >= 100) return n.toFixed(0);
+                    if (n >= 10) return n.toFixed(1);
+                    if (n >= 1) return n.toFixed(2);
+                    return n.toPrecision(3);
+                };
+                let priceHtml = '';
+                if (m.price) {
+                    const p = m.price;
+                    const promptStr = formatPrice3(p.prompt);
+                    const completionStr = formatPrice3(p.completion);
+                    const cacheReadStr = p.input_cache_read ? formatPrice3(p.input_cache_read) : null;
+                    const cacheWriteStr = p.input_cache_write ? formatPrice3(p.input_cache_write) : null;
+                    let tip = `输入: $${promptStr}/M\n输出: $${completionStr}/M`;
+                    if (cacheReadStr) tip += `\n缓存读取: $${cacheReadStr}/M`;
+                    if (cacheWriteStr) tip += `\n缓存写入: $${cacheWriteStr}/M`;
+                    tip += '\n价格仅供参考，不同提供商可能不同';
+                    priceHtml = `<span class="model-price" title="${tip}">$${promptStr}/$${completionStr}</span>`;
+                }
                 html += `<div class="combo-item${isSelected ? ' selected' : ''}" data-value="${this._esc(fullId)}">`;
                 html += `<span>${this._esc(m.id)}</span>`;
+                if (icons) {
+                    html += `<span class="capability-icons">${icons}</span>`;
+                }
+                if (priceHtml) {
+                    html += priceHtml;
+                }
                 if (!isSelected) {
                     html += `<span class="combo-item-provider">${this._esc(provider)}</span>`;
                 }

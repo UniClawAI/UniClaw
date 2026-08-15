@@ -301,7 +301,7 @@ class ModelInfoProvider:
 
         return None
 
-    async def get_model_info(self, model_name: str) -> ModelInfo | None:
+    async def get_model_info(self, model_name: str, fetch_details: bool = True) -> ModelInfo | None:
         """通过模型名获取模型信息,支持短名称模糊匹配。
 
         首次获取时会自动抓取页面获取详细信息(描述、缓存价格等),
@@ -309,6 +309,7 @@ class ModelInfoProvider:
 
         Args:
             model_name: 模型名称,支持完整 ID ("openai/gpt-4o") 或短名称 ("gpt-4o")
+            fetch_details: 是否自动获取页面详细信息,默认 True
 
         Returns:
             ModelInfo 对象,未找到返回 None
@@ -319,7 +320,7 @@ class ModelInfoProvider:
             return None
 
         info = self._cache.get(model_id)
-        if info and not info.detailed_info_fetched:
+        if info and fetch_details and not info.detailed_info_fetched:
             # 自动获取页面详细信息
             await self._fetch_and_update_details(info)
 

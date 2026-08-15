@@ -705,6 +705,7 @@ async def list_models(body: dict):
     """
     import asyncio
     from uniclaw.commands.model import fetch_openai_models, fetch_anthropic_models
+    from uniclaw.utils.model_info import get_model_info_provider
 
     _, original = _read_settings_raw()
     original_providers = original.get("providers", {})
@@ -771,6 +772,26 @@ async def list_models(body: dict):
     fetched_providers = {m["provider"] for m in all_models}
     for name in providers:
         providers_info[name] = {"allow_custom": name not in fetched_providers}
+
+    # 获取模型视觉能力信息
+    model_info_provider = get_model_info_provider()
+
+    # 为每个模型添加视觉能力标记 (True/False/None 表示未知)
+    for m in all_models:
+        full_id = f"{m['provider']}/{m['id']}"
+        info = await model_info_provider.get_model_info(full_id, fetch_details=False)
+        if info:
+            m["supports_vision"] = info.supports_vision
+            m["supports_video"] = info.supports_video
+            m["supports_audio"] = info.supports_audio
+            m["supports_tools"] = info.supports_tools
+            m["price"] = info.pricing if info.pricing else None
+        else:
+            m["supports_vision"] = None
+            m["supports_video"] = None
+            m["supports_audio"] = None
+            m["supports_tools"] = None
+            m["price"] = None
 
     return {
         "models": all_models,
