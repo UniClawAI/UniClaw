@@ -3,6 +3,20 @@ from uniclaw.config import AppConfig, ProviderProfile, save_config
 from uniclaw.console.ui import info, ok, warn, err
 
 
+def _format_price(price_per_token: float | None) -> str:
+    """格式化价格为每百万token显示,保留3位有效数字。"""
+    if not price_per_token:
+        return ""
+    n = price_per_token * 1_000_000
+    if n >= 100:
+        return f"${n:.0f}"
+    if n >= 10:
+        return f"${n:.1f}"
+    if n >= 1:
+        return f"${n:.2f}"
+    return f"${n:.3g}"
+
+
 def fetch_openai_models_sync(
     base_url: str,
     api_key: str,
@@ -130,7 +144,12 @@ def _move_to_first(lst: list[str], item: str) -> list[str]:
 
 
 async def _apply_model(model_ref: str, config: AppConfig) -> None:
-    """选择模型后提示设置角色(主模型/mini/多模态)。"""
+    """选择模型后提示设置角色(主模型/mini/多模态)。
+
+    Args:
+        model_ref: 模型引用 (provider/model_name)
+        config: 配置对象
+    """
 
     async def _notify_webui():
         """通知 WebUI 配置已变更。"""
@@ -142,6 +161,11 @@ async def _apply_model(model_ref: str, config: AppConfig) -> None:
         except Exception as e:
             await warn(f"通知 WebUI 配置变更失败: {e}", config)
 
+    # 检查模型视觉能力
+    from uniclaw.utils.model_info import get_model_info_provider
+    model_info = await get_model_info_provider().get_model_info(model_ref, fetch_details=False)
+    supports_vision = model_info.supports_vision if model_info else False
+
     if config.is_wechat:
         config.model_name = _move_to_first(config.model_name, model_ref)
         save_config(config)
@@ -150,71 +174,89 @@ async def _apply_model(model_ref: str, config: AppConfig) -> None:
 
     from uniclaw.console.ui import get_input
 
-    choice = await get_input(
-        f"\n已选择: {model_ref}\n"
-        "  [1] 设为主模型\n"
-        "  [2] 设为 mini 模型\n"
-        "  [3] 设为多模态模型\n"
-        "  [4] 设为顾问模型\n"
-        "  [5] 设为 TTS 模型\n"
-        "  [6] 设为 ASR 模型\n"
-        "  [7] 设为图片生成模型\n"
-        "  [8] 设为 Embedding 模型\n"
-        "选择 (1-8, 回车取消): ",
-        config=config,
-    )
+    # 构建菜单选项
+    menu_lines = [f"\n已选择: {model_ref}"]
+    next_num = 1
+    option_map = {}
+
+    menu_lines.append(f"  [{next_num}] 设为主模型")
+    option_map[str(next_num)] = "main"
+    next_num += 1
+    menu_lines.append(f"  [{next_num}] 设为 mini 模型")
+    option_map[str(next_num)] = "mini"
+    next_num += 1
+
+    if supports_vision:
+        menu_lines.append(f"  [{next_num}] 设为多模态模型")
+        option_map[str(next_num)] = "multimodal"
+        next_num += 1
+
+    menu_lines.append(f"  [{next_num}] 设为顾问模型")
+    option_map[str(next_num)] = "large"
+    next_num += 1
+    menu_lines.append(f"  [{next_num}] 设为 TTS 模型")
+    option_map[str(next_num)] = "tts"
+    next_num += 1
+    menu_lines.append(f"  [{next_num}] 设为 ASR 模型")
+    option_map[str(next_num)] = "asr"
+    next_num += 1
+    menu_lines.append(f"  [{next_num}] 设为图片生成模型")
+    option_map[str(next_num)] = "image"
+    next_num += 1
+    menu_lines.append(f"  [{next_num}] 设为 Embedding 模型")
+    option_map[str(next_num)] = "embedding"
+    next_num += 1
+
+    menu_lines.append(f"选择 (1-{next_num - 1}, 回车取消): ")
+
+    choice = await get_input("\n".join(menu_lines), config=config)
     choice = choice.strip()
     if not choice:
         return
 
-    if choice == "1":
-        config.model_name = _move_to_first(config.model_name, model_ref)
-        save_config(config)
-        await ok(f"✓ 已设为主模型: {model_ref}", config)
-        await _notify_webui()
-    elif choice == "2":
-        config.mini_model_name = _move_to_first(config.mini_model_name, model_ref)
-        save_config(config)
-        await ok(f"✓ 已设为 mini 模型: {model_ref}", config)
-        await _notify_webui()
-    elif choice == "3":
-        config.multimodal_model_name = _move_to_first(
-            config.multimodal_model_name, model_ref
-        )
-        save_config(config)
-        await ok(f"✓ 已设为多模态模型: {model_ref}", config)
-        await _notify_webui()
-    elif choice == "4":
-        config.large_model_name = _move_to_first(config.large_model_name, model_ref)
-        save_config(config)
-        await ok(f"✓ 已设为顾问模型: {model_ref}", config)
-        await _notify_webui()
-    elif choice == "5":
-        config.tts_model = model_ref
-        voice = await get_input("请输入语音名称 (回车跳过): ", config=config)
-        if voice.strip():
-            config.audio = {"voice": voice.strip()}
-        save_config(config)
-        await ok(
-            f"✓ 已设为 TTS 模型: {model_ref}"
-            + (f", 语音: {voice.strip()}" if voice.strip() else ""),
-            config,
-        )
-        await _notify_webui()
-    elif choice == "6":
-        config.asr_model = model_ref
-        save_config(config)
-        await ok(f"✓ 已设为 ASR 模型: {model_ref}", config)
-        await _notify_webui()
-    elif choice == "7":
-        config.image_model = model_ref
-        save_config(config)
-        await ok(f"✓ 已设为图片生成模型: {model_ref}", config)
-        await _notify_webui()
-    elif choice == "8":
-        config.embedding_model = model_ref
-        save_config(config)
-        await ok(f"✓ 已设为 Embedding 模型: {model_ref}", config)
+    if choice in option_map:
+        role = option_map[choice]
+        if role == "main":
+            config.model_name = _move_to_first(config.model_name, model_ref)
+            save_config(config)
+            await ok(f"✓ 已设为主模型: {model_ref}", config)
+        elif role == "mini":
+            config.mini_model_name = _move_to_first(config.mini_model_name, model_ref)
+            save_config(config)
+            await ok(f"✓ 已设为 mini 模型: {model_ref}", config)
+        elif role == "multimodal":
+            config.multimodal_model_name = _move_to_first(
+                config.multimodal_model_name, model_ref
+            )
+            save_config(config)
+            await ok(f"✓ 已设为多模态模型: {model_ref}", config)
+        elif role == "large":
+            config.large_model_name = _move_to_first(config.large_model_name, model_ref)
+            save_config(config)
+            await ok(f"✓ 已设为顾问模型: {model_ref}", config)
+        elif role == "tts":
+            config.tts_model = model_ref
+            voice = await get_input("请输入语音名称 (回车跳过): ", config=config)
+            if voice.strip():
+                config.audio = {"voice": voice.strip()}
+            save_config(config)
+            await ok(
+                f"✓ 已设为 TTS 模型: {model_ref}"
+                + (f", 语音: {voice.strip()}" if voice.strip() else ""),
+                config,
+            )
+        elif role == "asr":
+            config.asr_model = model_ref
+            save_config(config)
+            await ok(f"✓ 已设为 ASR 模型: {model_ref}", config)
+        elif role == "image":
+            config.image_model = model_ref
+            save_config(config)
+            await ok(f"✓ 已设为图片生成模型: {model_ref}", config)
+        elif role == "embedding":
+            config.embedding_model = model_ref
+            save_config(config)
+            await ok(f"✓ 已设为 Embedding 模型: {model_ref}", config)
         await _notify_webui()
 
 
@@ -333,6 +375,11 @@ async def cmd_model(args: str, config: AppConfig) -> bool:
         prompt_list.append(f"  当前图片生成: {current_image}")
     if current_embedding:
         prompt_list.append(f"  当前 Embedding: {current_embedding}")
+
+    # 获取模型能力信息
+    from uniclaw.utils.model_info import get_model_info_provider
+    model_info_provider = get_model_info_provider()
+
     for i, m in enumerate(all_models, 1):
         tags = []
         if m == current_main:
@@ -351,8 +398,32 @@ async def cmd_model(args: str, config: AppConfig) -> bool:
             tags.append("图片生成")
         if m == current_embedding:
             tags.append("embedding")
+
+        # 获取模型能力信息
+        info = await model_info_provider.get_model_info(m, fetch_details=False)
+        caps = []
+        if info:
+            if info.supports_vision:
+                caps.append("👁")
+            if info.supports_video:
+                caps.append("🎬")
+            if info.supports_audio:
+                caps.append("🎵")
+            if info.supports_tools:
+                caps.append("🔧")
+            # 价格: 输入/输出
+            if info.pricing:
+                prompt_price = _format_price(info.pricing.get("prompt"))
+                completion_price = _format_price(info.pricing.get("completion"))
+                if prompt_price or completion_price:
+                    caps.append(f"{prompt_price or '?'}/{completion_price or '?'}")
+        else:
+            # OpenRouter 里没有的模型,信息未知
+            caps.append("?")
+
+        cap_str = f" [{' '.join(caps)}]" if caps else ""
         marker = f" ← {', '.join(tags)}" if tags else ""
-        prompt_list.append(f"  [{i}] {m}{marker}")
+        prompt_list.append(f"  [{i}] {m}{cap_str}{marker}")
 
     if config.is_wechat:
         await info("\n".join(prompt_list), config)
