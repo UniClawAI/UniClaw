@@ -87,7 +87,10 @@ def _python_type_to_schema(tp: Any, multi_type: bool = False) -> dict:
     if origin is list:
         args = getattr(tp, "__args__", None)
         if args:
-            return {"type": "array", "items": _python_type_to_schema(args[0], multi_type)}
+            return {
+                "type": "array",
+                "items": _python_type_to_schema(args[0], multi_type),
+            }
         return {"type": "array"}
 
     # Dict[str, X] / dict[str, X]
@@ -256,11 +259,6 @@ class Tool:
     func: Callable
     parameters: dict = field(default_factory=dict)
 
-    @property
-    def args(self) -> dict:
-        """参数属性字典(兼容旧接口)。"""
-        return self.parameters.get("properties", {})
-
     def _maybe_inject_explain(self, parameters: dict) -> dict:
         """在 parameters schema 中注入 _explain 参数(explain 模式)。"""
         params = copy.deepcopy(parameters)
@@ -393,7 +391,9 @@ class Tool:
         return await self.func(**kwargs)
 
 
-def tool(func: Callable = None, *, name: str | None = None, multi_type: bool = False) -> Tool:
+def tool(
+    func: Callable = None, *, name: str | None = None, multi_type: bool = False
+) -> Tool:
     """装饰器:将函数包装为 Tool 对象,自动生成 OpenAI function calling schema。
 
     用法:
