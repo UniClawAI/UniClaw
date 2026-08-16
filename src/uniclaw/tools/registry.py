@@ -17,6 +17,9 @@ from .base import Tool, tool
 
 # ── 工具分类定义 ──────────────────────────────────────────────
 
+# 插件工具分类(与 tools/plugins 保持一致的常量,避免魔法字符串)
+PLUGIN_CATEGORY = "插件"
+
 
 def _build_core_tools() -> list:
     """从核心工具对象动态构建核心工具列表(避免硬编码字符串)。"""
@@ -336,9 +339,21 @@ def _build_extended_keywords() -> dict[str, list[str]]:
         a2a_get_task.name: ["a2a", "task status", "任务状态", "查询远程任务"],
         a2a_cancel_task.name: ["a2a", "cancel task", "取消远程任务"],
         ConvertToMarkdown.name: [
-            "pdf", "PDF", "文档", "docx", "word", "pptx", "xlsx", "excel",
-            "read document", "parse pdf", "read pdf", "markdown", "convert",
-            "阅读文档", "文档转换",
+            "pdf",
+            "PDF",
+            "文档",
+            "docx",
+            "word",
+            "pptx",
+            "xlsx",
+            "excel",
+            "read document",
+            "parse pdf",
+            "read pdf",
+            "markdown",
+            "convert",
+            "阅读文档",
+            "文档转换",
         ],
         search_files_with_everything.name: [
             "everything",
@@ -1738,6 +1753,14 @@ class ToolRegistry:
         return set(self._core_names)
 
 
+# ── 内置工具名查询(供插件加载时的重名检测) ──────────────────
+
+
+def get_builtin_tool_names() -> set[str]:
+    """返回内置工具名集合(核心 + 扩展),用于插件与内置工具的重名冲突检测。"""
+    return set(CORE_TOOL_NAMES) | set(_build_extended_keywords().keys())
+
+
 # ── search_tools 元工具 ──────────────────────────────────────
 
 MAX_LOADED_EXTENDED = 25  # 扩展工具最大加载数量
@@ -1941,12 +1964,18 @@ async def get_registry_system_prompt(config=None) -> str:
 
     await _ensure_registry()
     registry = ToolRegistry.get_instance()
+    # 用户级插件由 PluginManager.refresh() 统一注册进注册表(分类"插件"),
+    # 因此刷新后 entries 自然包含插件工具,无需额外合并。
+    from uniclaw.tools.plugins import PluginManager
+
+    await PluginManager.get_instance().refresh()
+    entries = registry.get_all_entries()
     # 子代理只展示可用的扩展工具
     allowed = None
     if config and config.is_sub:
         allowed = config.current_agent.allowed_tools_set
     categories: dict[str, list[tuple[str, str]]] = {}
-    for name, entry in registry.get_all_entries().items():
+    for name, entry in entries.items():
         if name not in registry.get_core_names():
             if allowed is not None and name not in allowed:
                 continue
@@ -1981,7 +2010,13 @@ def init_registry(all_tools: list[Tool]):
     registry = ToolRegistry.get_instance()
     keywords_map = _build_extended_keywords()
     categories_map = _build_tool_categories()
+    existing = registry.get_all_entries()
     for t in all_tools:
+        # 插件工具已由 PluginManager 注册为 PLUGIN_CATEGORY,这里跳过重注,
+        # 避免被默认分类 "mcp" 覆盖(否则扩展工具列表会把插件归到 mcp 类)。
+        entry = existing.get(t.name)
+        if entry is not None and entry.category == PLUGIN_CATEGORY:
+            continue
         is_core = t.name in CORE_TOOL_NAMES
         keywords = keywords_map.get(t.name, [])
         category = categories_map.get(t.name, "mcp")

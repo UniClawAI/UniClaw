@@ -183,6 +183,9 @@ async def get_tools(config) -> list:
                 sleep_timer,  # sleep_timer 仅主 agent 可用
             ]
         )
+        from uniclaw.tools.plugins import PluginManager
+
+        tools.extend(await PluginManager.get_instance().refresh())
     return tools
 
 
@@ -190,6 +193,9 @@ async def get_all_tools() -> list:
     """获取所有内置工具"""
     mcp_manager = MCPManager.get_instance()
     mcp_tools = await mcp_manager.get_mcp_tools()
+    from uniclaw.tools.plugins import PluginManager
+
+    plugin_tools = await PluginManager.get_instance().refresh()
     return [
         *fs_get_all_tools(),
         *multi_agent_get_all_tools(),
@@ -225,4 +231,5 @@ async def get_all_tools() -> list:
         *a2a_get_all_tools(),
         *ipython_get_all_tools(),
         *mcp_tools,
+        *plugin_tools,
     ]
