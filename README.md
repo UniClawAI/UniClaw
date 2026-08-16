@@ -127,6 +127,7 @@ uv tool install .
   "image_model": "",
   "tts_model": "",
   "asr_model": "",
+  "embedding_model": "",
   "temperature": 0.7,
   "max_tokens": null,
   "top_p": null,
@@ -283,7 +284,7 @@ UniClaw 的斜杠命令支持子命令自动补全,输入命令后按空格会�
 | `/mcp` | `list`, `add`, `remove`, `show`, `edit`, `enable`, `disable`, `tools`, `refresh` |
 | `/permissions` | `list`, `add`, `remove`, `mode` |
 | `/resume` | `list`, `del`, `search`, `fork` |
-| `/model` | `list`, `set` |
+| `/model` | (无子命令,支持关键词搜索和直接切换) |
 | `/task` | `list`, `output`, `stop`, `matched` |
 | `/overseer` | `start`, `stop` |
 | `/checkpoint` | `create`, `pop`, `apply`, `delete`, `diff` |
@@ -336,6 +337,7 @@ UniClaw 使用工作空间概念管理文件访问范围：
 | `image_model` | 图片生成模型(文生图,留空禁用) | `""` | `"default/dall-e-3"` |
 | `tts_model` | TTS 语音合成模型(留空禁用) | `""` | `"default/tts-1"` |
 | `asr_model` | ASR 语音识别模型(留空禁用) | `""` | `"default/whisper-1"` |
+| `embedding_model` | Embedding 向量模型(用于 RAG 语义检索,留空禁用) | `""` | `"default/text-embedding-3-small"` |
 | `temperature` | 生成温度(创造性) | `0.7` | `0.0`-`2.0` |
 | `max_tokens` | 最大输出 token 数 | `null`(不限制) | `512`, `2048` |
 | `top_p` | 核采样概率 | `null`(不限制) | `0.9` |
@@ -557,7 +559,11 @@ UniClaw 提供了丰富的斜杠命令(`/command`),用于管理系统功能和�
 
 | 命令 | 说明 | 示例 |
 |------|------|------|
-| `/model` | 查看或切换当前使用的模型(含图片生成模型) | `/model gpt-4o` |
+| `/model` | 查看或切换模型,显示能力标签和价格,支持设置为不同角色 | `/model gpt-4o` |
+| `/model <关键词>` | 模糊搜索模型(支持 provider 前缀过滤) | `/model gpt-4o` |
+| `/model <provider>/<模型>` | 直接切换到指定模型 | `/model default/gpt-4o` |
+
+> 💡 `/model` 列表会显示每个模型的能力标签: 👁 图片输入、🎬 视频输入、🎵 音频输入、🔧 工具调用,以及输入/输出价格(每百万 token)。选择模型后,系统会根据模型能力动态显示可用角色选项(主模型/mini/多模态/顾问/TTS/ASR/图片生成/Embedding)。
 
 #### 工作目录命令
 
@@ -2300,7 +2306,7 @@ A:
 
 A: 在 REPL 中输入 `/` 开头的命令即可：
 - `/clear` - 清空对话历史
-- `/model gpt-4o` - 切换模型(含图片生成模型选项)
+- `/model gpt-4o` - 切换模型(显示能力标签和价格,动态角色菜单)
 - `/cd /path/to/dir` - 切换工作目录
 - `/skills` - 查看可用技能
 - `/memory list` - 查看记忆列表
@@ -2349,7 +2355,6 @@ A: 在 REPL 中输入斜杠命令后按空格,会自动显示该命令的子命�
 - `/mcp` - `list`, `add`, `remove`, `show`, `edit`, `enable`, `disable`, `tools`, `refresh`
 - `/permissions` - `list`, `add`, `remove`, `mode`
 - `/resume` - `list`, `del`, `search`, `fork`
-- `/model` - `list`, `set`
 - `/task` - `list`, `output`, `stop`, `matched`
 - `/overseer` - `start`, `stop`
 - `/checkpoint` - `create`, `pop`, `apply`, `delete`, `diff`
@@ -2389,7 +2394,7 @@ A: 图片生成功能需要配置支持图片生成的模型(如 DALL-E)：
 3. **保存文件**: AI 可指定 `path` 参数将图片保存到本地
 4. **直接分析**: 不指定路径时,图片以多模态数据返回供 AI 直接分析
 
-> 💡 配置 `image_model` 后,`GenerateImage` 工具自动可用。`/model` 命令中选择选项 7 可设置图片生成模型。
+> 💡 配置 `image_model` 后,`GenerateImage` 工具自动可用。`/model` 命令选择模型后,从动态菜单中选择"设为图片生成模型"即可。
 
 ### Q: 如何配置可信 IP 免登录？
 
