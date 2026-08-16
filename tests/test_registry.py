@@ -4,6 +4,8 @@
 因此搜索类测试至少注册 3 个工具,且目标关键词为唯一 token。
 """
 
+from pathlib import Path
+
 import pytest
 from unittest.mock import MagicMock, patch
 
@@ -350,7 +352,9 @@ class TestInitRegistry:
         mock_kw.return_value = {"t1": ["kw1"]}
         mock_cat.return_value = {"t1": "类别"}
         registry = ToolRegistry()
-        with patch("uniclaw.tools.registry.ToolRegistry.get_instance", return_value=registry):
+        with patch(
+            "uniclaw.tools.registry.ToolRegistry.get_instance", return_value=registry
+        ):
             tools = [_make_tool("t1")]
             init_registry(tools)
         entry = registry.get_all_entries()["t1"]
@@ -364,8 +368,12 @@ class TestInitRegistry:
         mock_kw.return_value = {}
         mock_cat.return_value = {}
         registry = ToolRegistry()
-        with patch("uniclaw.tools.registry.ToolRegistry.get_instance", return_value=registry), patch(
-            "uniclaw.tools.registry.CORE_TOOL_NAMES", {"Read"}
+        with (
+            patch(
+                "uniclaw.tools.registry.ToolRegistry.get_instance",
+                return_value=registry,
+            ),
+            patch("uniclaw.tools.registry.CORE_TOOL_NAMES", {"Read"}),
         ):
             init_registry([_make_tool("Read")])
         assert "Read" in registry.get_core_names()
@@ -377,7 +385,9 @@ class TestInitRegistry:
         mock_kw.return_value = {}
         mock_cat.return_value = {}
         registry = ToolRegistry()
-        with patch("uniclaw.tools.registry.ToolRegistry.get_instance", return_value=registry):
+        with patch(
+            "uniclaw.tools.registry.ToolRegistry.get_instance", return_value=registry
+        ):
             init_registry([_make_tool("t1")])
         assert registry.get_all_entries()["t1"].category == "mcp"
 
@@ -401,7 +411,9 @@ class TestKeywordsCategories:
         assert categories["ipython_execute"] == "IPython"
 
 
-def _make_search_config(registry: ToolRegistry, allowed: set, loaded: list[str] | None = None):
+def _make_search_config(
+    registry: ToolRegistry, allowed: set, loaded: list[str] | None = None
+):
     """构造 search_tools 需要的 config。"""
     from uniclaw.tools.registry import ExtendedToolManager
 
@@ -412,7 +424,9 @@ def _make_search_config(registry: ToolRegistry, allowed: set, loaded: list[str] 
         agent.extended_mgr.touch(name)
     config = MagicMock()
     config.current_agent = agent
-    patch_get = patch("uniclaw.tools.registry.ToolRegistry.get_instance", return_value=registry)
+    patch_get = patch(
+        "uniclaw.tools.registry.ToolRegistry.get_instance", return_value=registry
+    )
     return config, patch_get
 
 
@@ -431,8 +445,12 @@ class TestSearchToolsTool:
     async def test_loads_new_tool(self):
         """搜索到新工具并加载。"""
         registry = _make_search_registry()
-        registry.register(_make_tool("kg_search", "搜索知识图谱"), ["kgquery"], "知识图谱")
-        config, p = _make_search_config(registry, {"kg_search", "tool_alpha", "tool_beta", "tool_gamma"})
+        registry.register(
+            _make_tool("kg_search", "搜索知识图谱"), ["kgquery"], "知识图谱"
+        )
+        config, p = _make_search_config(
+            registry, {"kg_search", "tool_alpha", "tool_beta", "tool_gamma"}
+        )
         with p:
             result = await search_tools("kgquery", config=config)
         assert "kg_search" in result
@@ -443,7 +461,9 @@ class TestSearchToolsTool:
         """工具存在但不可用。"""
         registry = _make_search_registry()
         registry.register(_make_tool("kg_search", "desc"), ["kgquery"], "知识图谱")
-        config, p = _make_search_config(registry, {"tool_alpha", "tool_beta", "tool_gamma"})
+        config, p = _make_search_config(
+            registry, {"tool_alpha", "tool_beta", "tool_gamma"}
+        )
         with p:
             result = await search_tools("kgquery", config=config)
         assert "当前不可用" in result
@@ -455,7 +475,9 @@ class TestSearchToolsTool:
         registry = _make_search_registry()
         registry.register(_make_tool("kg_search", "desc"), ["kgquery"], "知识图谱")
         config, p = _make_search_config(
-            registry, {"kg_search", "tool_alpha", "tool_beta", "tool_gamma"}, loaded=["kg_search"]
+            registry,
+            {"kg_search", "tool_alpha", "tool_beta", "tool_gamma"},
+            loaded=["kg_search"],
         )
         with p:
             result = await search_tools("kgquery", config=config)
@@ -485,8 +507,12 @@ class TestRegistrySystemPrompt:
     async def test_prompt_generated(self, mock_ensure):
         """生成系统提示词。"""
         registry = _make_search_registry()
-        registry.register(_make_tool("kg_search", "搜索知识图谱。更多说明"), ["kgquery"], "知识图谱")
-        with patch("uniclaw.tools.registry.ToolRegistry.get_instance", return_value=registry):
+        registry.register(
+            _make_tool("kg_search", "搜索知识图谱。更多说明"), ["kgquery"], "知识图谱"
+        )
+        with patch(
+            "uniclaw.tools.registry.ToolRegistry.get_instance", return_value=registry
+        ):
             result = await get_registry_system_prompt()
         assert "# 扩展工具" in result
         assert "kg_search" in result
@@ -504,15 +530,51 @@ class TestRegistrySystemPrompt:
         agent = MagicMock()
         agent.allowed_tools_set = {"allowed_tool"}
         config.current_agent = agent
-        with patch("uniclaw.tools.registry.ToolRegistry.get_instance", return_value=registry):
+        with patch(
+            "uniclaw.tools.registry.ToolRegistry.get_instance", return_value=registry
+        ):
             result = await get_registry_system_prompt(config)
         assert "allowed_tool" in result
         assert "blocked_tool" not in result
 
     @pytest.mark.asyncio
     @patch("uniclaw.tools._ensure_registry")
-    async def test_empty_registry(self, mock_ensure):
+    async def test_empty_registry(self, mock_ensure, tmp_path, monkeypatch):
         """空注册表返回空。"""
-        with patch("uniclaw.tools.registry.ToolRegistry.get_instance", return_value=ToolRegistry()):
+        # 隔离真实用户主目录,避免 ~/.UniClaw/plugins/ 下的插件污染测试
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+        with patch(
+            "uniclaw.tools.registry.ToolRegistry.get_instance",
+            return_value=ToolRegistry(),
+        ):
             result = await get_registry_system_prompt()
         assert result == ""
+
+    @pytest.mark.asyncio
+    @patch("uniclaw.tools._ensure_registry")
+    async def test_plugin_tools_in_prompt(self, mock_ensure, tmp_path, monkeypatch):
+        """用户级插件工具应通过注册表出现在系统提示词中(分类"插件")。"""
+        plugin_dir = tmp_path / "home" / ".UniClaw" / "plugins" / "tools"
+        plugin_dir.mkdir(parents=True)
+        plugin_dir.joinpath("note.py").write_text(
+            "from uniclaw.tools.base import tool\n"
+            "\n"
+            "@tool\n"
+            "def note() -> str:\n"
+            '    """写笔记"""\n'
+            '    return "ok"\n'
+            "\n"
+            "def get_tools():\n"
+            "    return [note]\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path / "home"))
+
+        registry = ToolRegistry()
+        with patch(
+            "uniclaw.tools.registry.ToolRegistry.get_instance", return_value=registry
+        ):
+            result = await get_registry_system_prompt()
+        assert "note" in result
+        assert "插件" in result
+        assert "note" in registry.get_all_entries()

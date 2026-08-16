@@ -221,7 +221,7 @@ class TestGenerateImage:
     async def test_save_url(self, mock_retrieve, mock_gen, tmp_path):
         """URL 结果保存到文件。"""
         target = str(tmp_path / "out.png")
-        result = await GenerateImage("一只猫", path=target, config=self._config())
+        result = await GenerateImage("一只猫", save_path=target, config=self._config())
         assert result == f"已保存到: {(tmp_path / 'out.png').resolve()}"
         mock_retrieve.assert_called_once()
 
@@ -230,7 +230,7 @@ class TestGenerateImage:
     async def test_save_base64(self, mock_gen, tmp_path):
         """base64 结果保存到文件。"""
         target = str(tmp_path / "out.png")
-        result = await GenerateImage("一只猫", path=target, config=self._config())
+        result = await GenerateImage("一只猫", save_path=target, config=self._config())
         assert (tmp_path / "out.png").read_bytes() == b"hello"
 
     @pytest.mark.asyncio

@@ -16,7 +16,6 @@ from uniclaw.tools.base import (
     tool,
 )
 
-
 # ── _python_type_to_schema ───────────────────────────────────────
 
 
@@ -386,8 +385,9 @@ class TestToolSchema:
 
     def test_args_property(self):
         t = self._make_tool()
-        assert "a" in t.args
-        assert "b" in t.args
+        props = t.parameters.get("properties", {})
+        assert "a" in props
+        assert "b" in props
 
 
 # ── @tool 装饰器 ─────────────────────────────────────────────────
