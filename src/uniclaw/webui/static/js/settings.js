@@ -205,7 +205,7 @@ const Settings = {
                 return info && !info.allow_custom;
             });
         } else if (isMultimodal) {
-            // 只过滤明确不支持视觉的模型，未知的保留
+            // 只过滤明确不支持视觉的模型,未知的保留
             availableModels = this._models.filter(m => m.supports_vision !== false);
         }
 
@@ -263,7 +263,7 @@ const Settings = {
                     let tip = `输入: $${promptStr}/M\n输出: $${completionStr}/M`;
                     if (cacheReadStr) tip += `\n缓存读取: $${cacheReadStr}/M`;
                     if (cacheWriteStr) tip += `\n缓存写入: $${cacheWriteStr}/M`;
-                    tip += '\n价格仅供参考，不同提供商可能不同';
+                    tip += '\n价格仅供参考,不同提供商可能不同';
                     priceHtml = `<span class="model-price" title="${tip}">$${promptStr}/$${completionStr}</span>`;
                 }
                 html += `<div class="combo-item${isSelected ? ' selected' : ''}" data-value="${this._esc(fullId)}">`;

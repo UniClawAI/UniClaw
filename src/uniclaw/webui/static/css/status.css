@@ -211,6 +211,16 @@
 #permission-modal:not(.floating-modal) .modal-content {
     max-width: 480px;
 }
+#permission-modal .modal-content {
+    display: flex;
+    flex-direction: column;
+    resize: none;
+    width: fit-content !important;
+    height: fit-content !important;
+}
+#permission-modal .modal-body {
+    overflow-y: auto;
+}
 .perm-tool-name {
     font-family: var(--font-mono);
     color: var(--accent-bright);
@@ -228,6 +238,7 @@
     color: var(--text-1);
     overflow-x: auto;
     max-height: 200px;
+    max-width: 600px;
     overflow-y: auto;
 }
 .perm-explanation {
@@ -272,6 +283,135 @@
 .perm-cancel-btn:hover {
     color: var(--orange);
     border-color: var(--orange);
+}
+
+/* ---- 权限选择区域 ---- */
+.perm-choice-section {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 12px 0;
+    padding: 12px;
+    background: var(--bg-inset);
+    border-radius: var(--r-md);
+    border: 1px solid var(--border);
+}
+.perm-choice-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+.perm-choice-group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.perm-choice-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-radius: var(--r-sm);
+    cursor: pointer;
+    transition: background var(--duration-fast) var(--ease);
+    user-select: none;
+}
+.perm-choice-item:hover {
+    background: var(--bg-3);
+}
+.perm-choice-item input[type="radio"] {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+}
+.perm-choice-radio {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    border: 2px solid var(--border);
+    flex-shrink: 0;
+    transition: border-color var(--duration-fast) var(--ease),
+                box-shadow var(--duration-fast) var(--ease);
+    position: relative;
+}
+.perm-choice-radio::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%) scale(0);
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    transition: transform var(--duration-fast) var(--ease),
+                background var(--duration-fast) var(--ease);
+}
+/* Allow radio */
+.perm-choice-allow-radio {
+    border-color: var(--green);
+}
+input[type="radio"]:checked ~ .perm-choice-allow-radio {
+    border-color: var(--green);
+    box-shadow: 0 0 8px rgba(34, 197, 94, 0.3);
+}
+input[type="radio"]:checked ~ .perm-choice-allow-radio::after {
+    background: var(--green);
+    transform: translate(-50%, -50%) scale(1);
+}
+/* Deny radio */
+.perm-choice-deny-radio {
+    border-color: var(--red);
+}
+input[type="radio"]:checked ~ .perm-choice-deny-radio {
+    border-color: var(--red);
+    box-shadow: 0 0 8px rgba(239, 68, 68, 0.3);
+}
+input[type="radio"]:checked ~ .perm-choice-deny-radio::after {
+    background: var(--red);
+    transform: translate(-50%, -50%) scale(1);
+}
+.perm-choice-text {
+    font-size: var(--text-base);
+    font-weight: 500;
+    color: var(--text-1);
+}
+/* 始终允许选项位置 */
+.perm-always-label {
+    font-size: var(--text-sm);
+    color: var(--text-2);
+}
+/* 拒绝理由区域 */
+.perm-reason-wrap {
+    margin-left: 26px;
+}
+.perm-reason-wrap textarea {
+    width: 100%;
+    min-height: 48px;
+}
+/* 操作栏 */
+.perm-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+}
+/* 确认按钮 */
+.perm-confirm-btn {
+    min-width: 80px;
+    transition: background var(--duration-fast) var(--ease),
+                box-shadow var(--duration-fast) var(--ease);
+}
+.perm-confirm-btn.perm-deny-mode {
+    background: var(--gradient-danger);
+    border: none;
+}
+.perm-confirm-btn.perm-deny-mode:hover {
+    box-shadow: 0 0 16px rgba(255, 56, 96, 0.3);
+}
+/* 对话框边框警示 */
+.modal-content.perm-alert-deny {
+    border-color: rgba(239, 68, 68, 0.3);
+    box-shadow: 0 0 20px rgba(239, 68, 68, 0.1);
 }
 
 /* ---- Edit 工具 diff 视图 ---- */

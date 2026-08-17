@@ -204,15 +204,31 @@
                         <p style="font-size:var(--text-sm);color:var(--text-2);margin:8px 0 4px"><strong>文件:</strong> <span id="perm-file-path" style="font-family:var(--font-mono);font-size:var(--text-xs);color:var(--text-accent)"></span></p>
                     </div>
                     <p id="perm-explanation" class="perm-explanation" style="display:none"><strong>说明:</strong> <span id="perm-explanation-text"></span></p>
-                    <label style="font-size:var(--text-sm);color:var(--text-2);display:block;margin:8px 0 4px">拒绝理由 (可选):</label>
-                    <textarea id="perm-reason" class="input" rows="2" placeholder="输入拒绝理由..."></textarea>
-                    <label class="checkbox-label" style="margin-top:8px"><input type="checkbox" id="perm-always" /> 始终允许此操作</label>
+                    <div class="perm-choice-section">
+                        <div class="perm-choice-row">
+                            <label class="perm-choice-item" id="perm-choice-allow-label">
+                                <input type="radio" name="perm-choice" id="perm-choice-allow" value="allow" checked />
+                                <span class="perm-choice-radio perm-choice-allow-radio"></span>
+                                <span class="perm-choice-text">接受</span>
+                            </label>
+                            <label class="checkbox-label perm-always-label"><input type="checkbox" id="perm-always" /> 始终允许</label>
+                        </div>
+                        <div class="perm-choice-group">
+                            <label class="perm-choice-item" id="perm-choice-deny-label">
+                                <input type="radio" name="perm-choice" id="perm-choice-deny" value="deny" />
+                                <span class="perm-choice-radio perm-choice-deny-radio"></span>
+                                <span class="perm-choice-text">拒绝</span>
+                            </label>
+                            <div class="perm-reason-wrap">
+                                <textarea id="perm-reason" class="input" rows="2" placeholder="输入拒绝理由... (选填)"></textarea>
+                            </div>
+                        </div>
+                    </div>
                 </div>
-                <div class="modal-actions">
+                <div class="modal-actions perm-actions">
                     <span id="perm-countdown" class="perm-countdown">5:00</span>
                     <button id="perm-cancel-countdown" class="perm-cancel-btn" title="取消倒计时">✕</button>
-                    <button id="perm-deny" class="btn btn-danger">拒绝</button>
-                    <button id="perm-allow" class="btn btn-primary">允许</button>
+                    <button id="perm-confirm" class="btn btn-primary perm-confirm-btn">接受</button>
                 </div>
             </div>
         </div>
@@ -339,7 +355,7 @@
                         </div>
                         <div class="settings-model-price-hint">
                             <span class="hint-icon">💡</span>
-                            <span>模型价格仅供参考，实际价格可能因提供商不同而异 (数据来源: OpenRouter)</span>
+                            <span>模型价格仅供参考,实际价格可能因提供商不同而异 (数据来源: OpenRouter)</span>
                         </div>
                         <div class="settings-grid">
                             <div class="form-group">

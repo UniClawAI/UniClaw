@@ -18,8 +18,14 @@ const Permission = {
                 if (el) { el.classList.add('attention-pulse'); setTimeout(() => el.classList.remove('attention-pulse'), 3000); }
             }
         });
-        document.getElementById('perm-allow').onclick = () => this._respond(true);
-        document.getElementById('perm-deny').onclick = () => this._respond(false);
+        // 新的交互: radio + 确认按钮
+        document.getElementById('perm-confirm').onclick = () => this._onConfirm();
+        document.getElementById('perm-choice-allow').onchange = () => this._updateChoiceUI();
+        document.getElementById('perm-choice-deny').onchange = () => this._updateChoiceUI();
+        document.getElementById('perm-reason').onfocus = () => {
+            document.getElementById('perm-choice-deny').checked = true;
+            this._updateChoiceUI();
+        };
         document.getElementById('perm-cancel-countdown').onclick = () => this._cancelCountdown();
         document.getElementById('status-permission').onclick = e => { e.stopPropagation(); this.showModeMenu(); };
     },
@@ -64,11 +70,13 @@ const Permission = {
             if (modal) {
                 modal.style.width = '';
                 modal.style.maxWidth = '680px';
+                modal.style.height = '';
             }
         } else {
             argsEl.style.display = '';
             diffWrap.style.display = 'none';
-            argsEl.textContent = JSON.stringify(msg.args || {}, null, 2);
+            const argsStr = JSON.stringify(msg.args || {}, null, 2);
+            argsEl.textContent = argsStr.replace(/\\n/g, '\n');
             this._resizeDialog(argsEl.textContent);
         }
 
@@ -90,6 +98,9 @@ const Permission = {
         }
         document.getElementById('perm-reason').value = '';
         document.getElementById('perm-always').checked = false;
+        // 重置选择状态为"接受"
+        document.getElementById('perm-choice-allow').checked = true;
+        this._updateChoiceUI();
 
         const countdownEl = document.getElementById('perm-countdown');
         const cancelBtn = document.getElementById('perm-cancel-countdown');
@@ -113,22 +124,7 @@ const Permission = {
     },
 
     _resizeDialog(argsText) {
-        const modal = document.querySelector('#permission-modal .modal-content');
-        const argsEl = document.getElementById('perm-args');
-        if (!modal || !argsEl) return;
-
-        // Match the dialog width to its longest argument line, while keeping it
-        // usable on narrow viewports. Long lines remain horizontally scrollable.
-        const canvas = document.createElement('canvas');
-        const context = canvas.getContext('2d');
-        context.font = getComputedStyle(argsEl).font;
-        const longestLine = Math.max(...argsText.split('\n').map(line => context.measureText(line).width), 0);
-        const chromeWidth = 48 + 24 + 2 + 32; // dialog padding, args padding/border, buffer
-        const maxWidth = Math.max(320, Math.floor(window.innerWidth * 0.9));
-        const idealWidth = Math.min(Math.max(320, Math.ceil(longestLine + chromeWidth)), maxWidth);
-
-        modal.style.maxWidth = '';
-        modal.style.width = `${idealWidth}px`;
+        // 大小由内容自然撑开,不需要手动计算
     },
 
     closeIfSessionMismatch(targetSid) {
@@ -136,6 +132,27 @@ const Permission = {
             this._stopCountdown();
             FloatingWindow.hide('permission-modal');
             this.currentRequest = null;
+        }
+    },
+
+    _onConfirm() {
+        const isDeny = document.getElementById('perm-choice-deny').checked;
+        this._respond(!isDeny);
+    },
+
+    _updateChoiceUI() {
+        const isDeny = document.getElementById('perm-choice-deny').checked;
+        const confirmBtn = document.getElementById('perm-confirm');
+        const modalContent = document.querySelector('#permission-modal .modal-content');
+
+        if (isDeny) {
+            confirmBtn.textContent = '拒绝';
+            confirmBtn.classList.add('perm-deny-mode');
+            if (modalContent) modalContent.classList.add('perm-alert-deny');
+        } else {
+            confirmBtn.textContent = '接受';
+            confirmBtn.classList.remove('perm-deny-mode');
+            if (modalContent) modalContent.classList.remove('perm-alert-deny');
         }
     },
 
@@ -153,6 +170,9 @@ const Permission = {
         });
         FloatingWindow.hide('permission-modal');
         this.currentRequest = null;
+        // 清理视觉状态
+        const modalContent = document.querySelector('#permission-modal .modal-content');
+        if (modalContent) modalContent.classList.remove('perm-alert-deny');
         // 检查同一会话是否有下一个缓存的权限请求
         const pending = this._pendingBySession[req.session_id];
         if (pending && pending.length > 0) {
