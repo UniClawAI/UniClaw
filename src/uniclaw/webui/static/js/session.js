@@ -6,7 +6,6 @@ const SessionPanel = {
     activeProjectDir: null,
     runningSessions: new Set(),
     attentionSessions: new Set(),
-    _contextTimer: null,
     wechatBots: [],
     categoryExpanded: { projects: true, sessions: true, wechat: true },
 
@@ -689,7 +688,7 @@ const SessionPanel = {
         if (sel) sel.textContent = sessionId || '新会话';
         if (!sessionId || skipFetch) {
             const mel = document.getElementById('status-model'); if (mel) mel.textContent = '-';
-            this._clearContextTimer(); this._updateContextDisplay(null);
+            this._updateContextDisplay(null);
             if (typeof VoiceMode !== 'undefined') VoiceMode.reset();
             return;
         }
@@ -734,7 +733,6 @@ const SessionPanel = {
             }
         }).catch(() => {});
         this._fetchContextUsage(sessionId);
-        this._startContextTimer(sessionId);
     },
 
     async _toggleComputerUse(enabled) {
@@ -803,8 +801,6 @@ const SessionPanel = {
         }
     },
 
-    _startContextTimer(sid) { this._clearContextTimer(); this._contextTimer = setInterval(() => { if (this.activeSessionId === sid) this._fetchContextUsage(sid); }, 30000); },
-    _clearContextTimer() { if (this._contextTimer) { clearInterval(this._contextTimer); this._contextTimer = null; } },
 
     showMenu(sessionId, rootDir) {
         this._hideMenu();

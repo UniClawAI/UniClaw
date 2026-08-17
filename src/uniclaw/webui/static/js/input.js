@@ -341,6 +341,8 @@ const Input = {
             WS.send(msg);
             // 添加到等待区——收到后端 UserEvent 确认后会移除
             PendingMessages.add(text);
+            // 发送后刷新上下文用量
+            SessionPanel._fetchContextUsage(sid);
         }
         if (text && (!this._history.length || this._history[this._history.length - 1] !== text)) this._history.push(text);
         this._historyIdx = -1;

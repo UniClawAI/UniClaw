@@ -1125,6 +1125,8 @@ _showLightbox(url) {
                 }
             }
         }
+        // 工具结果已进入模型上下文,刷新上下文用量
+        SessionPanel._fetchContextUsage(this.currentSessionId);
     },
 
     _onConfigChanged(msg) {
@@ -1208,6 +1210,7 @@ _showLightbox(url) {
         if (!msg || !this.currentSessionId || msg.session_id !== this.currentSessionId) return;
         this._resetStreamingState();
         SessionPanel._refreshSessions();
+        SessionPanel._fetchContextUsage(this.currentSessionId);
     },
 
     _onSubagentEnd(msg) {
@@ -1374,6 +1377,9 @@ _showLightbox(url) {
                     this._renderCurrentView();
                 }
             } catch (_) { /* 刷新失败不影响删除结果 */ }
+
+            // 删除消息后刷新上下文用量
+            SessionPanel._fetchContextUsage(sid);
 
             // 将内容放入输入框
             const input = document.getElementById('chat-input');
