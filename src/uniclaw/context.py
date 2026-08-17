@@ -12,12 +12,14 @@ APP_NAME = "UniClaw"
 
 
 def get_env_system_prompt(config: AppConfig, is_a2a: bool = False) -> str:
-    """构建动态环境信息段(日期/目录/PID 等)。
+    """构建动态环境信息段(日期/目录/Python/运行模式/PID 等)。
 
     单独提取并追加到系统提示词末尾:日期/PID/root_dir 等高频变化内容
     若放在提示词中部,会打断稳定前缀,使前缀缓存命中范围仅剩开头一小段。
     统一后移到末尾后,稳定部分(行为准则/工具提示/CLAUDE.md 等)可完整命中缓存。
     """
+    import uniclaw
+
     task = config.current_agent
     session = task.session
     root_dir = session.root_dir
@@ -38,6 +40,15 @@ def get_env_system_prompt(config: AppConfig, is_a2a: bool = False) -> str:
     if root_dir:
         env_lines.append(f"- {'工作目录' if is_a2a else '当前目录'}:{root_dir}")
     env_lines.append(f"- 平台:{platform.system()}")
+    # Python 版本 + 解释器路径:模型常误判语言特性(依赖/语法/版本),需显式告知
+    env_lines.append(f"- Python:{platform.python_version()} ({sys.executable})")
+    # 运行模式:console / webui;A2A 已是独立提示词,这里不再重复会话类型
+    env_lines.append(f"- 运行模式:{config.run_mode}")
+    try:
+        uniclaw_root = Path(uniclaw.__file__).resolve().parent
+        env_lines.append(f"- UniClaw 安装目录:{uniclaw_root}")
+    except Exception:
+        pass
     if not is_a2a:
         env_lines.append(f"- 进程:{sys.argv[0]} (PID:{os.getpid()})")
     env_text = "\n".join(env_lines)
@@ -245,7 +256,11 @@ async def build_system_prompt(config: AppConfig):
 
     is_a2a = config.current_agent.session.session_type == SessionType.A2A
 
-    system_prompt = _get_a2a_base_system_prompt(config) if is_a2a else get_base_system_prompt(config)
+    system_prompt = (
+        _get_a2a_base_system_prompt(config)
+        if is_a2a
+        else get_base_system_prompt(config)
+    )
 
     # === 稳定内容(低频变化,最大化缓存前缀命中) ===
 

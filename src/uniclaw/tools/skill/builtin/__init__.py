@@ -3,7 +3,7 @@
 每个内置技能定义在单独的文件中,通过 register() 函数注册。
 """
 
-from . import code_review, commit, pr_create, memory_organize, skill_forge, theme
+from . import code_review, commit, pr_create, memory_organize, skill_forge, theme, plugin_forge
 
 
 def register_all():
@@ -14,6 +14,7 @@ def register_all():
     memory_organize.register()
     skill_forge.register()
     theme.register()
+    plugin_forge.register()
 
 
 # 模块加载时自动注册

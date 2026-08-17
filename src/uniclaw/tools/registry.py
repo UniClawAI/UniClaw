@@ -1871,7 +1871,7 @@ class ExtendedToolManager:
 
 
 @tool
-def search_tools(query: str, config=None) -> str:
+async def search_tools(query: str, config=None) -> str:
     """搜索可用的扩展工具。当你需要使用非常用工具时,先搜索再使用。
     搜索结果会自动加载到可用工具集中,下一轮即可调用。支持中英文关键词。
     优先使用工具名搜索(如 "screenshot"、"mouse_click")比用功能描述搜索更精准。
@@ -1879,6 +1879,11 @@ def search_tools(query: str, config=None) -> str:
     Args:
         query: 搜索关键词,优先传入工具名,其次用功能描述(如 "screenshot"、"截图"、"定时任务")
     """
+    # 搜索前自动刷新插件,确保新写入的插件文件能被搜到
+    from uniclaw.tools.plugins import PluginManager
+
+    await PluginManager.get_instance().refresh()
+
     registry = ToolRegistry.get_instance()
     results = registry.search(query)
     if not results:
@@ -1886,8 +1891,15 @@ def search_tools(query: str, config=None) -> str:
     # 只保留当前允许的工具(由 run() 在启动时计算,包含模块启用状态和子代理白名单)
     task = config.current_agent
     mgr: ExtendedToolManager = task.extended_mgr
-    available = [e for e in results if e.tool.name in task.allowed_tools_set]
-    blocked = [e for e in results if e.tool.name not in task.allowed_tools_set]
+    _allowed = task.allowed_tools_set
+    # 用户级插件是用户显式添加并已热加载的工具,始终可用。allowed_tools_set 在会话
+    # 启动时冻结,不含会话中途新加的插件工具,因此插件工具不参与该集合的过滤。
+    available = [
+        e
+        for e in results
+        if e.tool.name in _allowed or e.category == PLUGIN_CATEGORY
+    ]
+    blocked = [e for e in results if e not in available]
     # 为本次搜索命中的已加载工具恢复能量
     matched_names = {e.tool.name for e in available}
     for name in list(mgr.loaded):
