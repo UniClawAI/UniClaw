@@ -1852,18 +1852,19 @@ class ExtendedToolManager:
 
     def apply(self, tools: list, name2tool: dict):
         """加载待发现工具,清理被淘汰的工具。由 agent 循环调用。"""
-        if self.pending_tools:
-            for t in self.pending_tools:
-                if t.name not in name2tool:
-                    tools.append(t)
-                    name2tool[t.name] = t
-            self.pending_tools.clear()
+        # 先清理被淘汰的工具,再加载新工具,避免新工具被误删
         if self.pending_evicted:
             evicted = self.pending_evicted.copy()
             tools[:] = [t for t in tools if t.name not in evicted]
             for name in evicted:
                 name2tool.pop(name, None)
             self.pending_evicted.clear()
+        if self.pending_tools:
+            for t in self.pending_tools:
+                if t.name not in name2tool:
+                    tools.append(t)
+                    name2tool[t.name] = t
+            self.pending_tools.clear()
 
     def restore_session(
         self,
@@ -1918,6 +1919,23 @@ async def search_tools(query: str, config=None) -> str:
         if name in matched_names:
             mgr.touch(name)
     # 过滤掉已加载的扩展工具
+    # 插件工具可能被重新加载(文件编辑后),需要强制更新工具对象
+    # 对于已加载的插件工具,检查 ToolRegistry 中的对象是否已更新
+    plugin_entries = {e.tool.name: e for e in available if e.category == PLUGIN_CATEGORY}
+    needs_update = []
+    for name, entry in plugin_entries.items():
+        if name in mgr.loaded_names:
+            # 从注册表获取最新工具对象,与搜索结果比较
+            registry_entry = registry._entries.get(name)
+            if registry_entry and registry_entry.tool is not entry.tool:
+                needs_update.append(name)
+    if needs_update:
+        mgr.evict(needs_update)
+        # 直接同步更新:重新加载工具到 pending_tools
+        for name in needs_update:
+            entry = plugin_entries.get(name)
+            if entry:
+                mgr.touch(entry.tool)
     new_available = [e for e in available if e.tool.name not in mgr.loaded_names]
     if not new_available:
         if not available:
