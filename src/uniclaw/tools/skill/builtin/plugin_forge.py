@@ -4,16 +4,33 @@ from uniclaw.tools.skill.loader import SkillDef, register_builtin
 
 _PLUGIN_FORGE_PROMPT = """## 工具插件锻造(UniClaw 外部工具插件)
 
-UniClaw 的两个关键系统你需要先理解,才能写出能真正加载的插件：
+UniClaw 的两个关键系统你需要先理解,才能写出能真正加载的插件:
 
 ### 认识 PluginManager(插件管理器)
 
-`uniclaw.tools.plugins.loader.PluginManager` 是**用户级工具插件系统**。它：
+`uniclaw.tools.plugins.loader.PluginManager` 是**用户级工具插件系统**。它:
 - 扫描 `~/.UniClaw/plugins/tools/` 目录下的 `.py` 文件,动态 import 并自动把里面定义的工具注册进 UniClaw 的工具注册表,**无需重启**,改文件即热加载。
 - 每个插件文件必须有且仅需一个 `get_tools()` 函数,返回 `@tool` 装饰的工具**列表或元组**。
 - 文件名下划线开头的会被跳过；插件可以 `import` 同目录的辅助模块(PluginManager 已把该目录加入 `sys.path`)。
 - 工具名冲突的会被跳过并记录 warning 日志(不抛异常、不加载),所以重名=整个工具白写。
 - 你生成的插件被识别后,会像内置工具一样被 LLM 在后续会话里调用。
+
+**热重载机制**:
+- 编辑插件后,需重新调用 `search_tools` 才能生效
+- 删除插件后,需重新调用 `search_tools` 才能生效
+- `search_tools` 会自动检测文件变化并重新加载
+
+**文件名限制**:
+- 下划线开头的文件会被跳过(如 `_private.py`)
+- 辅助模块文件名不要以下划线开头
+
+**冲突处理**:
+- 同名工具会被跳过并记录 warning 日志
+- 后加载的插件会覆盖先加载的同名插件
+
+**错误处理**:
+- 语法错误的插件会被跳过,不影响其他插件
+- 运行时错误会返回 `ToolError`
 
 你(作为执行者)在本技能里的任务: 捕获意图 → 检查重名 → 写插件 → 真实加载验证 → 报告。
 
