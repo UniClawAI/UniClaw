@@ -9,7 +9,7 @@ pytestmark = pytest.mark.asyncio
 
 from uniclaw.tools.base import tool
 from uniclaw.tools.plugins.loader import PluginManager
-from uniclaw.tools.registry import ToolRegistry
+from uniclaw.tools.registry import ToolRegistry, ExtendedToolManager
 
 
 def _write_plugin(path: Path, name: str, value: str = "ok", shutdown: bool = False):
@@ -456,3 +456,5 @@ async def test_unload_evicts_loaded_plugin_from_sessions(tmp_path, monkeypatch):
     assert [t.name for t in tool_list] == []
     assert "sample_tool" not in name2tool
     await PluginManager.clear_instance()
+
+
