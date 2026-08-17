@@ -189,7 +189,7 @@ def _build_extended_keywords() -> dict[str, list[str]]:
         browser_get_box,
         browser_get_styles,
     )
-    from .help import list_slash_commands, get_command_help
+    from .help import list_slash_commands, get_command_help, list_builtin_tools
     from .send_file import send_file
     from .wechat import (
         wechat_list_contacts,
@@ -997,6 +997,17 @@ def _build_extended_keywords() -> dict[str, list[str]]:
             "怎么用",
             "用法",
         ],
+        list_builtin_tools.name: [
+            "内置工具",
+            "工具列表",
+            "工具名",
+            "builtin tools",
+            "tool names",
+            "all tools",
+            "所有工具",
+            "插件重名",
+            "重名检测",
+        ],
         # TTS 工具
         text_to_speech.name: [
             "tts",
@@ -1418,7 +1429,7 @@ def _build_tool_categories() -> dict[str, str]:
         browser_get_box,
         browser_get_styles,
     )
-    from .help import list_slash_commands, get_command_help
+    from .help import list_slash_commands, get_command_help, list_builtin_tools
     from .send_file import send_file
     from .wechat import (
         wechat_list_contacts,
@@ -1598,6 +1609,7 @@ def _build_tool_categories() -> dict[str, str]:
         # 帮助工具
         list_slash_commands.name: "帮助",
         get_command_help.name: "帮助",
+        list_builtin_tools.name: "帮助",
         # TTS 工具
         text_to_speech.name: "TTS",
         send_file.name: "文件发送",

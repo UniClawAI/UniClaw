@@ -2,20 +2,20 @@
 
 from uniclaw.tools.skill.loader import SkillDef, register_builtin
 
-_PLUGIN_FORGE_PROMPT = """## 工具插件锻造（UniClaw 外部工具插件）
+_PLUGIN_FORGE_PROMPT = """## 工具插件锻造(UniClaw 外部工具插件)
 
-UniClaw 的两个关键系统你需要先理解，才能写出能真正加载的插件：
+UniClaw 的两个关键系统你需要先理解,才能写出能真正加载的插件：
 
-### 认识 PluginManager（插件管理器）
+### 认识 PluginManager(插件管理器)
 
 `uniclaw.tools.plugins.loader.PluginManager` 是**用户级工具插件系统**。它：
-- 扫描 `~/.UniClaw/plugins/tools/` 目录下的 `.py` 文件，动态 import 并自动把里面定义的工具注册进 UniClaw 的工具注册表，**无需重启**，改文件即热加载。
-- 每个插件文件必须有且仅需一个 `get_tools()` 函数，返回 `@tool` 装饰的工具**列表或元组**。
-- 文件名下划线开头的会被跳过；插件可以 `import` 同目录的辅助模块（PluginManager 已把该目录加入 `sys.path`）。
-- 工具名冲突的会被**静默跳过**（不报错、不加载），所以重名=整个工具白写。
-- 你生成的插件被识别后，会像内置工具一样被 LLM 在后续会话里调用。
+- 扫描 `~/.UniClaw/plugins/tools/` 目录下的 `.py` 文件,动态 import 并自动把里面定义的工具注册进 UniClaw 的工具注册表,**无需重启**,改文件即热加载。
+- 每个插件文件必须有且仅需一个 `get_tools()` 函数,返回 `@tool` 装饰的工具**列表或元组**。
+- 文件名下划线开头的会被跳过；插件可以 `import` 同目录的辅助模块(PluginManager 已把该目录加入 `sys.path`)。
+- 工具名冲突的会被跳过并记录 warning 日志(不抛异常、不加载),所以重名=整个工具白写。
+- 你生成的插件被识别后,会像内置工具一样被 LLM 在后续会话里调用。
 
-你（作为执行者）在本技能里的任务: 捕获意图 → 检查重名 → 写插件 → 真实加载验证 → 报告。
+你(作为执行者)在本技能里的任务: 捕获意图 → 检查重名 → 写插件 → 真实加载验证 → 报告。
 
 ### 操作边界
 
@@ -42,8 +42,8 @@ UniClaw 的两个关键系统你需要先理解，才能写出能真正加载的
 
 1. 用 `Bash` 确认 `~/.UniClaw/plugins/tools/` 存在,不存在则 `mkdir -p` 创建。
 2. 用 `Glob` + `Read` 查看目录下已有的插件文件,读一遍: 了解已有能力,避免重复。
-3. **重名检测**: 工具名不能与内置工具或现有插件工具重名(重名的会被 PluginManager 静默跳过,整个插件等于白写)。
-   获取内置工具名: `python -c "from uniclaw.tools.registry import get_builtin_tool_names; print(get_builtin_tool_names())"`。
+3. **重名检测**: 工具名不能与内置工具或现有插件工具重名(重名的会被 PluginManager 跳过并记录 warning 日志,整个插件等于白写)。
+   获取内置工具名: 调用 `list_builtin_tools` 工具即可拿到完整的内置工具名列表。
    从已有插件文件里提取出口工具名。做差集,冲突时给工具另取名字。
 
 ### Step 3: 设计插件
@@ -201,8 +201,9 @@ async def shutdown():
 ### 验证结果: 通过(真实加载 + 会话内实际调用)
 
 ### 生效方式
-插件已被 PluginManager 自动发现并热加载;我已在当前会话用 search_tools 搜索加载并通过 <工具名>
-实际调用测试成功。现在可直接使用 `<工具名>`;也可以输入 `!` 直接测试。
+插件已写入插件目录,PluginManager 会在下次刷新时检测到文件变化并加载。
+我已在当前会话通过 search_tools 主动触发刷新并加载了该工具,随后用 `<工具名>` 实际调用测试成功。
+现在可直接使用 `<工具名>`;也可以输入 `!` 直接测试。
 ```
 
 如果验证失败,报告失败原因与已做的修正。"""
@@ -226,7 +227,7 @@ def register():
                 "生成工具插件",
                 "新增工具",
             ],
-            tools=["Bash", "Read", "Write", "Glob", "Grep"],
+            tools=["Bash", "Read", "Write", "Edit", "Glob", "Grep", "search_tools", "list_builtin_tools"],
             prompt=_PLUGIN_FORGE_PROMPT,
             file_path=__file__,
             source="builtin",

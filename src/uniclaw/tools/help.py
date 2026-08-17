@@ -95,9 +95,22 @@ async def get_command_help(command_name: str) -> str:
     return "\n".join(lines)
 
 
+@tool
+async def list_builtin_tools() -> str:
+    """列出所有内置工具名称,用于插件开发时的重名冲突检测。
+    返回核心工具和扩展工具的完整名称列表。
+    """
+    from uniclaw.tools.registry import get_builtin_tool_names
+
+    names = sorted(get_builtin_tool_names())
+    lines = [f"内置工具共 {len(names)} 个:\n"]
+    lines.append(", ".join(names))
+    return "\n".join(lines)
+
+
 def get_tools() -> list:
     """获取帮助工具列表"""
-    return [list_slash_commands, get_command_help]
+    return [list_slash_commands, get_command_help, list_builtin_tools]
 
 
 def get_all_tools() -> list:
