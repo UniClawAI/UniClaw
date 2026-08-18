@@ -46,6 +46,8 @@
 - 🔎 **智能搜索**: webSearch 自动切换 Exa 语义搜索 → Bing → DuckDuckGo,内置 Exa MCP 服务器
 - 🌍 **浏览器自动化**: 基于 Playwright 的浏览器控制,支持导航/点击/输入/截图/JS 执行等操作
 - ⬇️ **HTTP 下载**: 多协程并发下载、断点续传、代理支持、自动重试和文件校验,支持同步/异步两种模式
+- 🔌 **插件系统**: 用户级外部工具插件动态加载,`~/.UniClaw/plugins/tools/` 目录放置 `.py` 文件即可热加载,支持多文件拆分、生命周期钩子、内置工具重名检测
+- 🔨 **工具插件锻造**: `/tool-plugin-forge` 技能一键生成工具插件,自动捕获意图 → 检查重名 → 生成代码 → 真实加载验证,支持耗时任务异步唤醒模式
 - 🎯 **技能系统**: 可扩展的技能机制,支持自定义任务模板和工作流
 - 🎨 **主题定制**: 内置 uniclaw-theme 技能,支持自定义 WebUI 主题颜色、字体和样式
 - 🔌 **MCP 集成**: 支持 Model Context Protocol,异步命令管理,可连接多种外部工具服务
@@ -70,6 +72,7 @@
 - [WebUI 模式](#-webui-模式)
 - [微信机器人集成](#-微信机器人集成)
 - [工具系统](#-工具系统)
+- [插件系统](#-插件系统)
 - [知识图谱系统](#-知识图谱系统)
 - [RAG 检索增强系统](#-rag-检索增强系统)
 - [MCP 集成](#-mcp-集成)
@@ -888,7 +891,7 @@ uv run uniclaw --mode webui
 
 ## 🛠️ 工具系统
 
-UniClaw 提供了丰富的内置工具,AI 助手可以自动调用这些工具完成任务。工具分为**核心工具**(始终加载)和**扩展工具**(通过 `search_tools` 按需发现),详见 [工具注册表系统](#工具注册表系统)。
+UniClaw 提供了丰富的内置工具,AI 助手可以自动调用这些工具完成任务。工具分为**核心工具**(始终加载)和**扩展工具**(通过 `search_tools` 按需发现),详见 [工具注册表系统](#工具注册表系统)。此外,用户可通过 [插件系统](#-插件系统) 自定义外部工具插件。
 
 工具基础设施：
 - **`base.py`** — 自定义 `@tool` 装饰器,自动生成 OpenAI function calling schema,自动排除 `config` 注入参数
@@ -1113,6 +1116,7 @@ http_download(
 - `pr-create` (`/pr-create`, `/pr`) — AI 生成 PR 标题和描述,调用 gh CLI 创建 GitHub PR
 - `memory-organize` (`/memory-organize`, `/organize-memory`, `/memory-clean`) — 记忆管家:整理记忆系统,从会话中提取有价值内容
 - `skill-forge` (`/skill-forge`, `/forge-skill`, `技能锻造`) — 技能锻造:创建新 Skill 和优化已有的自定义 Skill(只操作自建 Skill)
+- `tool-plugin-forge` (`/tool-plugin-forge`, `/forge-tool-plugin`, `+tool-plugin`) — 工具插件锻造:按用户需求自动生成 UniClaw 外部工具插件,写入 `~/.UniClaw/plugins/tools/`,支持多文件拆分、生命周期钩子、耗时任务 async + wake_agent 唤醒,生成后即时验证可加载
 - `uniclaw-theme` (`/uniclaw-theme`, `/theme`) — 主题定制:自定义 WebUI 主题颜色、字体和样式
 
 **技能文件搜索路径**:
@@ -1325,6 +1329,7 @@ http_download(
 
 - **list_slash_commands** - 列出所有可用的斜杠命令及其简要说明
 - **get_command_help** - 获取指定斜杠命令的详细帮助信息(参数、用法示例等)
+- **list_builtin_tools** - 列出所有内置工具名称(核心 + 扩展),用于插件开发时的重名冲突检测
 
 #### 计划模式工具 📝
 
@@ -1366,6 +1371,132 @@ http_download(
 - **schedule_toggle** - 启用或禁用定时任务
 
 > 💡 **提示**: 定时任务可用于自动化运维、定期代码检查、定时报告生成等场景。
+
+---
+
+## 🔌 插件系统
+
+UniClaw 支持用户级外部工具插件动态加载,无需修改源码即可扩展 AI 的能力。
+
+### 核心特性
+
+- **热加载**: 将 `.py` 插件文件放入 `~/.UniClaw/plugins/tools/` 目录即可自动加载,无需重启
+- **热重载**: 编辑插件文件后,调用 `search_tools` 即可检测变化并重新加载
+- **重名检测**: 自动检测与内置工具和其他插件的名称冲突,冲突的工具会被跳过并记录 warning
+- **多文件拆分**: 主文件定义 `@tool` 工具 + `get_tools()`,复杂逻辑可拆到同目录辅助模块
+- **生命周期钩子**: 可选的 `PLUGIN_META` 元数据和 `shutdown()/close()` 清理钩子
+- **会话通知**: 插件卸载时自动通知所有活跃会话移除旧工具
+
+### 快速开始
+
+#### 方式一: 让 AI 自动生成(推荐)
+
+直接告诉 AI 需要什么工具,AI 会通过 `/tool-plugin-forge` 技能自动完成全部流程:
+
+```
+帮我写一个天气查询工具,输入城市名返回天气信息
+```
+
+AI 会自动: 捕获意图 → 检查重名 → 生成插件代码 → 真实加载验证 → 交付报告。
+
+#### 方式二: 手动编写插件
+
+在 `~/.UniClaw/plugins/tools/` 下创建 `.py` 文件:
+
+```python
+from uniclaw.tools.base import tool
+
+
+@tool
+def my_tool(arg1: str, arg2: int = 10) -> str:
+    """
+    工具的简要描述。
+
+    Args:
+        arg1: 参数1的描述。
+        arg2: 参数2的描述。默认为 10。
+
+    Returns:
+        str: 返回值的描述。
+    """
+    return f"result: {arg1}, {arg2}"
+
+
+def get_tools():
+    return [my_tool]
+```
+
+### 插件规范
+
+**必须遵守的规则:**
+
+- 每个插件文件必须有 `get_tools()` 函数,返回 `@tool` 装饰的工具列表或元组
+- 必须使用 `@tool` 装饰器(`from uniclaw.tools.base import tool`)
+- 工具函数必须使用 Google style docstring(包含 `Args:` 和 `Returns:` 段)
+- 工具名只含 `[A-Za-z0-9_-]`,不能与内置工具或其他插件重名
+- 文件名不能以下划线开头(会被跳过)
+
+**耗时任务模式:**
+
+如果插件需要执行耗时操作(HTTP 请求、文件扫描等),必须使用异步唤醒模式,否则会阻塞整个 agent:
+
+```python
+import asyncio
+from uniclaw.config import AppConfig
+from uniclaw.tools.base import tool
+from uniclaw.utils.wakeup import wake_agent
+from uniclaw.utils.constants import SYSTEM_PREFIX
+
+
+@tool
+def long_task(name: str, config: AppConfig = None) -> str:
+    """
+    执行耗时的长任务(立即返回,后台完成后自动唤醒)。
+
+    Args:
+        name: 要处理的对象名。
+
+    Returns:
+        str: 确认任务已启动。
+    """
+    async def _run():
+        try:
+            result = await asyncio.to_thread(_do_heavy_work, name)
+            await wake_agent(f"{SYSTEM_PREFIX}(long_task) 完成: {result}", config)
+        except Exception as e:
+            await wake_agent(f"{SYSTEM_PREFIX}(long_task) 失败: {e}", config)
+
+    asyncio.create_task(_run())
+    return f"已启动 {name} 的处理,完成后会自动唤醒通知。"
+```
+
+**可选的生命周期钩子:**
+
+```python
+PLUGIN_META = {"author": "user", "version": "1.0.0"}
+
+
+async def shutdown():
+    """插件卸载时的清理逻辑(释放连接、临时文件等)。"""
+    await _client.close()
+```
+
+### 管理命令
+
+| 操作 | 方式 |
+|------|------|
+| 创建插件 | `/tool-plugin-forge <功能描述>` 或直接告诉 AI |
+| 查看内置工具名 | AI 调用 `list_builtin_tools` 工具(用于重名检测) |
+| 刷新插件 | AI 调用 `search_tools` 自动检测变化并重载 |
+| 删除插件 | 删除 `~/.UniClaw/plugins/tools/` 下的对应文件 |
+
+### 存储位置
+
+- **插件目录**: `~/.UniClaw/plugins/tools/` (用户级,所有项目共享)
+
+> ⚠️ **安全提示**: 插件是可执行 Python 代码,加载前请确认文件来源可信。不要运行不明来源的插件。
+
+---
 
 ## 🏗️ 架构设计
 
@@ -1484,6 +1615,9 @@ UniClaw/
     │   ├── session/        # 会话持久化 + 历史消息检索 + 自动保存 💬
     │   ├── hooks/          # Hook 系统 🪝
     │   ├── tts/            # 语音合成(TTS) 🔊
+    │   ├── plugins/        # 插件系统(用户级外部工具动态加载) 🔌
+    │   │   ├── __init__.py
+    │   │   └── loader.py   # PluginManager(热重载/重名检测/生命周期管理)
     │   ├── advisor.py      # 顾问模型工具(ask_advisor 多模型并发咨询) 🎓
     │   ├── wechat.py       # 微信工具(联系人/发送文本/图片/文件)
     │   ├── help.py         # AI 自助帮助工具 📖
@@ -1543,6 +1677,8 @@ UniClaw/
   - 按类别组织: 计算机操作、多智能体、任务清单、进程监控、会话管理、定时任务、MCP 管理、安全管理、Hook 管理、沙箱、媒体、知识图谱等
 
 **工作流程**: AI 需要使用非常用工具时 → 调用 `search_tools(query)` → BM25 匹配 → 工具自动加载(若超过上限则淘汰 LRU 端能量最低的工具) → 下一轮即可调用。已加载工具每轮能量-1,被调用/搜索命中恢复满,归零自动卸载。
+
+- **插件工具**: 用户级外部工具插件,通过 `PluginManager` 从 `~/.UniClaw/plugins/tools/` 动态加载,支持热重载。插件工具注册到扩展工具类别中,与内置扩展工具统一管理。详见 [插件系统](#-插件系统)。
 
 ### LLM 层
 
@@ -2617,6 +2753,48 @@ A: A2A 服务使用 Bearer Token 认证：
 - A2A 任务使用独立的 `AppConfig`,与主会话隔离
 
 > ⚠️ 建议仅在可信网络环境中使用 A2A 服务,不要将 Token 泄露给不可信的第三方。
+
+### Q: 如何使用插件系统？
+
+A: 插件系统允许你在不修改 UniClaw 源码的情况下扩展 AI 的工具能力:
+
+**快速开始(推荐):**
+直接告诉 AI 你需要什么工具:
+```
+帮我写一个天气查询工具,输入城市名返回天气信息
+```
+AI 会通过 `/tool-plugin-forge` 技能自动完成: 捕获意图 → 检查重名 → 生成代码 → 验证加载。
+
+**手动编写:**
+1. 在 `~/.UniClaw/plugins/tools/` 下创建 `.py` 文件
+2. 使用 `@tool` 装饰器定义工具函数
+3. 实现 `get_tools()` 函数返回工具列表
+4. 调用 `search_tools` 触发加载
+
+**注意事项:**
+- 工具名不能与内置工具重名(可用 `list_builtin_tools` 查看)
+- 文件名不能以下划线开头
+- 耗时任务必须用 async + wake_agent 模式
+
+详细规范请参考 [插件系统](#-插件系统) 章节。
+
+### Q: 插件工具与内置工具有什么区别？
+
+A:
+- **内置工具**: 随 UniClaw 一起安装,始终可用,由开发者维护
+- **插件工具**: 用户自定义,放在 `~/.UniClaw/plugins/tools/` 目录,支持热加载和热重载
+- **加载方式**: 内置工具有核心(始终加载)和扩展(按需发现)之分;插件工具通过 PluginManager 统一管理
+- **命名冲突**: 插件工具名不能与内置工具重名,否则会被跳过
+
+### Q: 插件加载失败怎么办？
+
+A: 常见排查步骤:
+1. 检查文件路径是否在 `~/.UniClaw/plugins/tools/` 下
+2. 检查文件名是否以下划线开头(会被跳过)
+3. 检查是否有 `get_tools()` 函数且返回非空列表
+4. 检查工具名是否与内置工具重名(调用 `list_builtin_tools` 查看)
+5. 检查 Python 语法是否正确
+6. 查看日志中的 warning 信息获取具体错误原因
 
 ## 📄 许可证
 
