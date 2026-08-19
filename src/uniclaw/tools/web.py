@@ -130,7 +130,7 @@ async def _search_ddg(
 
 
 @tool
-async def webFetch(url: str, max_length: int = 25000, config: AppConfig = None) -> str:
+async def webFetch(url: str, max_length: int = 25000, raw: bool = False, config: AppConfig = None) -> str:
     """
     从指定的URL获取网页内容并提取纯文本。
 
@@ -144,9 +144,10 @@ async def webFetch(url: str, max_length: int = 25000, config: AppConfig = None) 
     Args:
         url (str): 要获取内容的网页URL地址
         max_length (int): 返回文本的最大长度,默认为25000字符
+        raw (bool): 为True时返回完整HTML源码(不清理标签),默认为False返回纯文本
 
     Returns:
-        str: 提取的纯文本内容(最多max_length个字符),如果发生错误则返回错误信息字符串
+        str: 提取的纯文本内容或完整HTML(最多max_length个字符),如果发生错误则返回错误信息字符串
     """
     try:
         proxy = _get_proxy(config)
@@ -168,7 +169,8 @@ async def webFetch(url: str, max_length: int = 25000, config: AppConfig = None) 
         if "json" in ct:
             return text[:max_length]
 
-        if "html" in ct:
+        if "html" in ct and not raw:
+            # 返回纯文本：清理HTML标签
             text = re.sub(
                 r"<script[^>]*>.*?</script>",
                 "",
