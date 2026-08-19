@@ -117,14 +117,22 @@ const Permission = {
             if (cancelBtn) cancelBtn.style.display = '';
         }
         FloatingWindow.show('permission-modal');
-        requestAnimationFrame(() => FloatingWindow.center('permission-modal'));
+        requestAnimationFrame(() => {
+            FloatingWindow.center('permission-modal');
+            // 用 perm-args 的实际宽度驱动弹窗宽度
+            const argsW = argsEl.offsetWidth;
+            if (argsW > 0) {
+                const modal = document.querySelector('#permission-modal .modal-content');
+                if (modal) modal.style.setProperty('--perm-args-width', argsW + 'px');
+            }
+        });
         if (!msg.countdown_cancelled) {
             this._startCountdown(msg.created_at, msg.timeout);
         }
     },
 
-    _resizeDialog(argsText) {
-        // 大小由内容自然撑开,不需要手动计算
+    _resizeDialog() {
+        // 弹窗宽度由 perm-args 内容驱动,见 _showRequest
     },
 
     closeIfSessionMismatch(targetSid) {

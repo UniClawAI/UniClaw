@@ -209,7 +209,7 @@
 
 /* ---- 权限弹窗样式覆盖 ---- */
 #permission-modal:not(.floating-modal) .modal-content {
-    max-width: 480px;
+    max-width: 90vw;
 }
 #permission-modal .modal-content {
     display: flex;
@@ -238,7 +238,7 @@
     color: var(--text-1);
     overflow-x: auto;
     max-height: 200px;
-    max-width: 600px;
+    width: max-content;
     overflow-y: auto;
 }
 .perm-explanation {
@@ -252,6 +252,7 @@
     white-space: normal;
     overflow-wrap: anywhere;
     word-break: break-word;
+    max-width: var(--perm-args-width, 100%);
 }
 .perm-countdown {
     font-family: var(--font-mono);
