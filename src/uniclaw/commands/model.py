@@ -400,21 +400,21 @@ async def cmd_model(args: str, config: AppConfig) -> bool:
             tags.append("embedding")
 
         # 获取模型能力信息
-        info = await model_info_provider.get_model_info(m, fetch_details=False)
+        model_info = await model_info_provider.get_model_info(m, fetch_details=False)
         caps = []
-        if info:
-            if info.supports_vision:
+        if model_info:
+            if model_info.supports_vision:
                 caps.append("👁")
-            if info.supports_video:
+            if model_info.supports_video:
                 caps.append("🎬")
-            if info.supports_audio:
+            if model_info.supports_audio:
                 caps.append("🎵")
-            if info.supports_tools:
+            if model_info.supports_tools:
                 caps.append("🔧")
             # 价格: 输入/输出
-            if info.pricing:
-                prompt_price = _format_price(info.pricing.get("prompt"))
-                completion_price = _format_price(info.pricing.get("completion"))
+            if model_info.pricing:
+                prompt_price = _format_price(model_info.pricing.get("prompt"))
+                completion_price = _format_price(model_info.pricing.get("completion"))
                 if prompt_price or completion_price:
                     caps.append(f"{prompt_price or '?'}/{completion_price or '?'}")
         else:
