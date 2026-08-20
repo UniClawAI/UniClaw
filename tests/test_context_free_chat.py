@@ -17,6 +17,7 @@ def _make_free_chat_config(
         current_agent=task,
         is_free_chat=True,
         workspace=set(),
+        run_mode="console",
     )
 
 

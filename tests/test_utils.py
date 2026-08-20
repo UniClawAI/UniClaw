@@ -2,8 +2,15 @@
 truncation 模块的单元测试
 """
 
+import re
+
 import pytest
-from uniclaw.utils.truncation import truncate_text, truncate_text_by_lines
+from uniclaw.utils.tokens import count_tokens
+from uniclaw.utils.truncation import (
+    truncate_text,
+    truncate_text_by_lines,
+    truncate_text_by_tokens,
+)
 
 
 class TestTruncateText:
@@ -323,6 +330,74 @@ class TestTruncateTextByLines:
         matches = re.findall(line_pattern, result)
         for match in matches:
             assert len(match) == len("This is line number 000 with enough content")
+
+
+class TestTruncateTextByTokens:
+    """truncate_text_by_tokens 函数的测试类"""
+
+    def test_empty_text(self):
+        assert truncate_text_by_tokens("") == ""
+
+    def test_none_text(self):
+        assert truncate_text_by_tokens(None) is None
+
+    def test_short_text_no_truncation(self):
+        text = "short text"
+        result = truncate_text_by_tokens(text, max_tokens=1000)
+        assert result == text
+        assert "已截断" not in result
+
+    def test_exact_limit_no_truncation(self):
+        text = "a" * 10  # token 数远小于 10,不应截断
+        result = truncate_text_by_tokens(text, max_tokens=10)
+        assert result == text
+        assert "已截断" not in result
+
+    def test_basic_truncation(self):
+        text = "hello world " * 200  # 约 200+ tokens
+        result = truncate_text_by_tokens(text, max_tokens=50)
+        # 保留开头部分 + 截断提示
+        assert result.startswith("hello world")
+        assert "[已截断 " in result
+        assert " 个tokens]" in result
+
+    def test_truncation_info_reports_correct_count(self):
+        text = "hello world " * 500  # 约 500+ tokens
+        result = truncate_text_by_tokens(text, max_tokens=100)
+        m = re.search(r"\[已截断 (\d+) 个tokens\]", result)
+        assert m, f"缺少截断 token 数提示,实际输出: {result[:200]}"
+        assert int(m.group(1)) > 0
+
+    def test_truncation_count_consistent(self):
+        """报告的截断数应与 count_tokens 计算结果一致"""
+        text = "hello world " * 500
+        result = truncate_text_by_tokens(text, max_tokens=100)
+        m = re.search(r"\[已截断 (\d+) 个tokens\]", result)
+        assert m
+        reported = int(m.group(1))
+        # 正文保留部分 = 截断提示之前的内容(分隔符为 "\n\n...[")
+        body = result[: result.find("\n\n...[")].rstrip("\n")
+        assert reported == count_tokens(text) - count_tokens(body)
+
+    def test_zero_max_tokens(self):
+        text = "hello"
+        result = truncate_text_by_tokens(text, max_tokens=0)
+        assert "[已截断 " in result
+        assert " 个tokens]" in result
+
+    def test_negative_max_tokens(self):
+        text = "hello"
+        result = truncate_text_by_tokens(text, max_tokens=-10)
+        assert "[已截断 " in result
+        assert " 个tokens]" in result
+
+    def test_multiline_text(self):
+        text = "line1\nline2\nline3"
+        result = truncate_text_by_tokens(text, max_tokens=2)
+        # 保留开头部分
+        assert result.startswith("line")
+        assert "[已截断 " in result
+        assert " 个tokens]" in result
 
 
 if __name__ == "__main__":

@@ -105,3 +105,32 @@ def truncate_text_by_lines(
     result = front_text.rstrip() + truncation_info + back_text
 
     return result
+
+
+def truncate_text_by_tokens(text: str, max_tokens: int = 12000) -> str:
+    """
+    按 token 数截断文本,若发生截断则在末尾标注被截断的 token 数。
+
+    与 truncate_text 不同,本函数只保留开头部分,并在末尾追加
+    "...[已截断 N 个tokens]..." 提示,让调用方知道还有多少内容没读到。
+    适合工具返回内容受上下文窗口约束的场景(如 webFetch 的 max_tokens)。
+
+    Args:
+        text (str): 需要截断的原始文本内容
+        max_tokens (int): 允许保留的最大 token 数,默认为 12000
+
+    Returns:
+        str: 截断后的文本,末尾追加 "...[已截断 N 个tokens]..." 提示。
+             若文本为空返回原文本;若未超过 max_tokens 返回原文本。
+    """
+    from .tokens import count_tokens, slice_by_tokens
+
+    if not text:
+        return text
+    if max_tokens <= 0:
+        return f"[已截断 {count_tokens(text)} 个tokens]"
+    if count_tokens(text) <= max_tokens:
+        return text
+    body = slice_by_tokens(text, max_tokens, from_end=False)
+    cut = count_tokens(text) - count_tokens(body)
+    return f"{body}\n\n...[已截断 {cut} 个tokens]..."
