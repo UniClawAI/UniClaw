@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Any, Callable, Awaitable
 import httpx
 
+from uniclaw.utils.downloader import BaseDownloader
+
 logger = logging.getLogger(__name__)
 
 # 默认配置
@@ -65,6 +67,10 @@ class DownloadStatus(StrEnum):
     COMPLETED = "completed"
     CANCELLED = "cancelled"
     FAILED = "failed"
+
+
+class _RangeNotSupported(IOError):
+    """服务器忽略 Range 请求(返回 200 而非 206),需降级为全量下载。"""
 
 
 def _stable_id(url: str, save_path: Path) -> str:
@@ -189,6 +195,7 @@ class DownloadChunkInfo:
     downloaded: int  # 已下载总字节数
     total: int  # 文件总大小
     speed: float  # 当前速度(bytes/s)
+    error: str | None = None  # 非空时表示错误通知(如分片返回 HTML),而非进度更新
 
 
 @dataclass
@@ -264,7 +271,7 @@ class DownloadProgress:
         return "\n".join(lines)
 
 
-class HttpDownloader:
+class HttpDownloader(BaseDownloader):
     """HTTP 下载引擎,支持多协程并发、断点续传、代理、重试。"""
 
     def __init__(
@@ -330,15 +337,32 @@ class HttpDownloader:
             resp = await client.head(self.url, headers=headers)
             resp.raise_for_status()
         except (httpx.HTTPStatusError, httpx.RequestError):
-            # HEAD 请求失败时回退到 GET
-            resp = await client.get(self.url, headers=headers)
-            resp.raise_for_status()
-        content_length = resp.headers.get("content-length")
+            # HEAD 请求失败时回退到 GET, 但用流式请求只读响应头,
+            # 避免把整个文件缓冲进内存(部分服务器不支持 HEAD, 会返回整个 body)
+            async with client.stream("GET", self.url, headers=headers) as resp:
+                resp.raise_for_status()
+                return self._parse_info_headers(resp.headers)
+        return self._parse_info_headers(resp.headers)
+
+    def _parse_info_headers(self, headers) -> tuple[int, bool]:
+        """从响应头解析 (文件大小, 是否支持 Range)。"""
+        content_length = headers.get("content-length")
         if content_length is None:
             raise ValueError("服务器未返回 Content-Length,无法确定文件大小")
-        accept_ranges = resp.headers.get("accept-ranges", "")
+        accept_ranges = headers.get("accept-ranges", "")
         supports_range = "bytes" in accept_ranges.lower()
         return int(content_length), supports_range
+
+    def _verify_checksum(self) -> None:
+        """校验已下载文件的完整性,失败时删除临时文件与记录并抛异常。"""
+        if not (self.checksum_algorithm and self.checksum_value):
+            return
+        actual = calculate_checksum(self._tmp_file, self.checksum_algorithm)
+        if actual.lower() != self.checksum_value.lower():
+            # 文件损坏: 删除临时文件与记录,避免被断点续传误用
+            self._tmp_file.unlink(missing_ok=True)
+            self._record.clear()
+            raise ValueError(f"校验失败: 期望 {self.checksum_value}, 实际 {actual}")
 
     async def _download_range(
         self,
@@ -369,6 +393,12 @@ class HttpDownloader:
                 buf = bytearray()
                 async with client.stream("GET", self.url, headers=headers) as resp:
                     resp.raise_for_status()
+                    # 服务器忽略 Range 时返回 200 + 完整文件: 立即抛错交由 start() 降级,
+                    # 避免把整个文件缓冲进内存(潜在 OOM)
+                    if resp.status_code != 206:
+                        raise _RangeNotSupported(
+                            f"服务器未按 Range 请求返回 206(实际状态码 {resp.status_code})"
+                        )
                     aiter = resp.aiter_bytes(8192).__aiter__()
                     while True:
                         if self._cancelled:
@@ -420,6 +450,9 @@ class HttpDownloader:
                         callback(info)
                 return downloaded
 
+            except _RangeNotSupported:
+                # 服务器忽略 Range: 不重试,交由 start() 降级为全量下载
+                raise
             except (
                 httpx.HTTPStatusError,
                 httpx.RequestError,
@@ -459,7 +492,8 @@ class HttpDownloader:
                 self._session_downloaded = 0
 
             try:
-                async with client.stream("GET", self.url) as resp:
+                headers = {**self.headers, "Accept-Encoding": "identity"}
+                async with client.stream("GET", self.url, headers=headers) as resp:
                     resp.raise_for_status()
                     with open(self._tmp_file, "wb") as f:
                         aiter = resp.aiter_bytes(8192).__aiter__()
@@ -504,6 +538,9 @@ class HttpDownloader:
                     raise IOError(
                         f"下载不完整: 期望 {self.progress.total_size} 字节, 实际 {actual_size} 字节"
                     )
+
+                # 校验完整性(可选)
+                self._verify_checksum()
 
                 # 完成: 重命名 + 清理(临时文件与目标同目录, rename() 恒为原子操作)
                 self.save_path.unlink(missing_ok=True)
@@ -595,6 +632,13 @@ class HttpDownloader:
                     tasks = [_limited_download(s, e) for s, e in ranges_to_download]
                     # return_exceptions=True 让所有任务完成,不提前取消
                     results = await asyncio.gather(*tasks, return_exceptions=True)
+                    # 服务器忽略 Range(返回 200 而非 206): 降级为单连接全量下载
+                    if any(isinstance(r, _RangeNotSupported) for r in results):
+                        self.progress.downloaded_size = 0
+                        self._session_downloaded = 0
+                        self._record.clear()
+                        await self._download_full(client, callback)
+                        return self.progress
                     # 检查是否有失败的任务
                     for result in results:
                         if isinstance(result, Exception):
@@ -611,15 +655,7 @@ class HttpDownloader:
                     return self.progress
 
                 # 校验(所有分片已完成)
-                if self.checksum_algorithm and self.checksum_value:
-                    actual = calculate_checksum(self._tmp_file, self.checksum_algorithm)
-                    if actual.lower() != self.checksum_value.lower():
-                        # 文件损坏: 删除记录
-                        self._tmp_file.unlink(missing_ok=True)
-                        self._record.clear()
-                        raise ValueError(
-                            f"校验失败: 期望 {self.checksum_value}, 实际 {actual}"
-                        )
+                self._verify_checksum()
 
                 # 下载完成: 重命名 .tmp → 最终文件(临时文件与目标同目录, rename() 恒为原子操作)
                 self.save_path.unlink(missing_ok=True)

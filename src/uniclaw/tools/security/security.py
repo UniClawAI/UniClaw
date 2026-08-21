@@ -277,6 +277,9 @@ def is_safe_tool(name: str) -> bool:
         http_download,
         http_download_status,
         http_download_remove,
+        m3u8_download,
+        m3u8_download_status,
+        m3u8_download_remove,
     )
     from uniclaw.tools.help import list_slash_commands, get_command_help
     from uniclaw.tools.tts.tools import text_to_speech
@@ -421,10 +424,13 @@ def is_safe_tool(name: str) -> bool:
         rag_search.name,
         rag_list_collections.name,
         rag_set_desc.name,
-        # ── HTTP 下载 ──
+        # ── 下载(HTTP + M3U8,全部安全) ──
         http_download.name,
         http_download_status.name,
         http_download_remove.name,
+        m3u8_download.name,
+        m3u8_download_status.name,
+        m3u8_download_remove.name,
         # ── Web Browse 只读 ──
         browser_screenshot.name,
         browser_get_text.name,

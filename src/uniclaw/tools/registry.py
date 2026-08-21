@@ -220,6 +220,9 @@ def _build_extended_keywords() -> dict[str, list[str]]:
         http_download,
         http_download_status,
         http_download_remove,
+        m3u8_download,
+        m3u8_download_status,
+        m3u8_download_remove,
     )
     from .rag.tools import (
         rag_ingest,
@@ -1246,6 +1249,42 @@ def _build_extended_keywords() -> dict[str, list[str]]:
             "移除下载任务",
             "清除下载记录",
         ],
+        # M3U8 下载工具
+        m3u8_download.name: [
+            "M3U8",
+            "m3u8",
+            "HLS",
+            "hls",
+            "m3u8下载",
+            "视频流下载",
+            "流媒体下载",
+            "TS下载",
+            "ts下载",
+            "视频下载",
+            "m3u8 download",
+            "hls download",
+            "stream download",
+            "分片下载",
+            "流视频",
+            "m3u8 视频",
+        ],
+        m3u8_download_status.name: [
+            "M3U8状态",
+            "m3u8状态",
+            "m3u8下载进度",
+            "m3u8 download status",
+            "查看m3u8",
+            "暂停m3u8",
+            "恢复m3u8",
+            "取消m3u8",
+        ],
+        m3u8_download_remove.name: [
+            "删除m3u8",
+            "清理m3u8",
+            "m3u8 remove",
+            "移除m3u8任务",
+            "清除m3u8记录",
+        ],
         # RAG 工具
         rag_ingest.name: [
             "RAG",
@@ -1460,6 +1499,9 @@ def _build_tool_categories() -> dict[str, str]:
         http_download,
         http_download_status,
         http_download_remove,
+        m3u8_download,
+        m3u8_download_status,
+        m3u8_download_remove,
     )
     from .rag.tools import (
         rag_ingest,
@@ -1642,6 +1684,9 @@ def _build_tool_categories() -> dict[str, str]:
         http_download.name: "下载",
         http_download_status.name: "下载",
         http_download_remove.name: "下载",
+        m3u8_download.name: "下载",
+        m3u8_download_status.name: "下载",
+        m3u8_download_remove.name: "下载",
         # RAG 工具
         rag_ingest.name: "RAG",
         rag_search.name: "RAG",
