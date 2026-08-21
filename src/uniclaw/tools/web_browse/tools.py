@@ -157,7 +157,7 @@ async def browser_screenshot(
     full_page: bool = False,
     save_path: Optional[str] = None,
     page_id: Optional[int] = None,
-) -> list:
+) -> list | str:
     """截取页面或指定元素的截图(仅用于查看页面效果,不要用于定位元素)。
 
     ⚠️ 如需点击、输入等操作,必须使用 browser_get_elements 获取精确选择器,不要通过截图猜测坐标。
