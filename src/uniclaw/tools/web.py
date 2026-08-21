@@ -203,7 +203,7 @@ async def webFetch(
             text = re.sub(
                 r"<style[^>]*>.*?</style>", "", text, flags=re.DOTALL | re.IGNORECASE
             )
-            # 块级标签和换行标签转成换行，保留段落分割
+            # 块级标签和换行标签转成换行,保留段落分割
             text = re.sub(r"<br\s*/?>", "\n", text, flags=re.IGNORECASE)
             text = re.sub(
                 r"</?(?:p|div|section|article|h[1-6]|li|tr|td|th|blockquote|pre|ol|ul)[^>]*>",

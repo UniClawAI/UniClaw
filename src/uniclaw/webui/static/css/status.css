@@ -217,6 +217,9 @@
     resize: none;
     width: fit-content !important;
     height: fit-content !important;
+    /* 弹窗尺寸上限:不超过浏览器视口的 2/3 */
+    max-width: 66.67vw;
+    max-height: 66.67vh;
 }
 #permission-modal .modal-body {
     overflow-y: auto;

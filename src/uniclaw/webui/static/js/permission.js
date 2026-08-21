@@ -69,7 +69,7 @@ const Permission = {
             this._bindDiffToggle(msg.args.old_string, msg.args.new_string || '');
             if (modal) {
                 modal.style.width = '';
-                modal.style.maxWidth = '680px';
+                modal.style.maxWidth = 'min(680px, 66.67vw)';
                 modal.style.height = '';
             }
         } else {
