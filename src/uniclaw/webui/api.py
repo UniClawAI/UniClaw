@@ -1488,9 +1488,9 @@ async def download_file(file_id: str):
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="文件不存在")
 
-    # 限制文件大小 (100MB)
-    if file_path.stat().st_size > 100 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="文件过大(>100MB)")
+    # 限制文件大小 (1GB)
+    if file_path.stat().st_size > 1024 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="文件过大(>1GB)")
 
     return FileResponse(
         path=str(file_path),
