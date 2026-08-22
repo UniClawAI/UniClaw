@@ -1238,8 +1238,6 @@ class Session:
                 config=config,
                 max_tokens=budget,
                 temperature=0.2,
-                enable_thinking=False,
-                thinking=False,
             )
         except Exception as e:
             logger.warning("对话压缩失败,保留原消息: %s", e)
