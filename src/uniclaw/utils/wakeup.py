@@ -47,9 +47,14 @@ async def wake_agent(message: str, config: AppConfig) -> bool:
         from uniclaw.agent import AgentStatus, MultiAgent
 
         status = task.status
+        # future 存活才代表 agent 真的在运行:PENDING 且无存活 future 的任务
+        # 是从磁盘加载后尚未启动的(如进程重启恢复),应走 start_agent 分支
+        future_alive = task.future is not None and not task.future.done()
 
         # Agent 正在处理中 → 注入到队列
-        if status in (AgentStatus.RUNNING, AgentStatus.WAITING):
+        if status in (AgentStatus.RUNNING, AgentStatus.WAITING) or (
+            status == AgentStatus.PENDING and future_alive
+        ):
             task.user_queue.put_nowait(message)
             return True
 

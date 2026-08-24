@@ -1298,6 +1298,16 @@ async def notify_session_switched(session_id: str, old_session_id: str = ""):
     )
 
 
+async def notify_server_restarting(session_id: str):
+    """通知前端服务器即将重启(前端显示提示,断开后自动重连)。"""
+    await _broadcast(
+        {
+            "event": "server_restarting",
+            "session_id": session_id,
+        }
+    )
+
+
 async def notify_session_deleted(session_id: str, root_dir=None):
     """通知前端会话已删除。如果删除的是当前活跃会话,前端应进入新建会话状态。"""
     await _broadcast(

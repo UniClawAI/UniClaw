@@ -151,6 +151,9 @@ const App = {
             if (dot) dot.className = 'connection-dot disconnected';
             Utils.showError('连接断开,正在重连...');
         });
+        WS.on('server_restarting', () => {
+            Utils.showToast('服务器正在重启,完成后会自动恢复会话并继续任务...', 8000);
+        });
 
         // 用户菜单下拉
         const menuBtn = document.getElementById('user-menu-btn');

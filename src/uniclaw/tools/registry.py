@@ -248,9 +248,22 @@ def _build_extended_keywords() -> dict[str, list[str]]:
         ipython_stop,
         ipython_list_kernels,
     )
+    from .restart.tools import restart_agent
 
     # tool.name → 关键词列表(中英文+语义同义词)
     return {
+        # ── 系统管理 ──
+        restart_agent.name: [
+            "重启",
+            "重启进程",
+            "重启服务",
+            "重新启动",
+            "restart",
+            "reboot",
+            "热重载",
+            "应用配置生效",
+            "进程管理",
+        ],
         # ── IPython ──
         ipython_start.name: [
             "ipython",
@@ -1519,9 +1532,12 @@ def _build_tool_categories() -> dict[str, str]:
         ipython_stop,
         ipython_list_kernels,
     )
+    from .restart.tools import restart_agent
 
     # tool.name → 类别
     return {
+        # ── 系统管理 ──
+        restart_agent.name: "系统管理",
         # ── IPython ──
         ipython_start.name: "IPython",
         ipython_execute.name: "IPython",
@@ -1953,9 +1969,7 @@ async def search_tools(query: str, config=None) -> str:
     # 用户级插件是用户显式添加并已热加载的工具,始终可用。allowed_tools_set 在会话
     # 启动时冻结,不含会话中途新加的插件工具,因此插件工具不参与该集合的过滤。
     available = [
-        e
-        for e in results
-        if e.tool.name in _allowed or e.category == PLUGIN_CATEGORY
+        e for e in results if e.tool.name in _allowed or e.category == PLUGIN_CATEGORY
     ]
     blocked = [e for e in results if e not in available]
     # 为本次搜索命中的已加载工具恢复能量
@@ -1966,7 +1980,9 @@ async def search_tools(query: str, config=None) -> str:
     # 过滤掉已加载的扩展工具
     # 插件工具可能被重新加载(文件编辑后),需要强制更新工具对象
     # 对于已加载的插件工具,检查 ToolRegistry 中的对象是否已更新
-    plugin_entries = {e.tool.name: e for e in available if e.category == PLUGIN_CATEGORY}
+    plugin_entries = {
+        e.tool.name: e for e in available if e.category == PLUGIN_CATEGORY
+    }
     needs_update = []
     for name, entry in plugin_entries.items():
         if name in mgr.loaded_names:

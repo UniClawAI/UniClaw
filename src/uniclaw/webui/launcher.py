@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 from pathlib import Path
 
 import uvicorn
@@ -12,6 +13,60 @@ import ipaddress
 import socket
 
 logger = get_logger("webui", Path.cwd())
+
+
+def _make_streams_encoding_safe() -> None:
+    """Windows 控制台默认 GBK 编码,print 含 emoji 等增补平面字符时会抛
+    UnicodeEncodeError 并中断流程(如重启路径)。统一改为替换模式。"""
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(errors="replace")
+            except Exception:
+                pass
+
+
+_make_streams_encoding_safe()
+
+# 当前 uvicorn server 实例与启动参数(restart_agent 工具用于优雅关闭和重建进程)
+_server_instance: uvicorn.Server | None = None
+_LAUNCH_KWARGS: dict = {}
+# serve() 是否已返回(True 表示关闭流程已完成,看门狗据此放行)
+_serve_done = True
+
+# 优雅关闭宽限期(秒):超过后强制退出,防止个别连接卡死关闭流程
+_SHUTDOWN_GRACE_SECONDS = 15.0
+
+
+def request_shutdown() -> None:
+    """请求 uvicorn 优雅关闭。
+
+    serve() 返回后由 launch() 检查重启标志并拉起新进程。
+    供 tools/restart.py 等外部模块触发进程重启。
+    同时启动看门狗:宽限期内未完成关闭则强制退出,防止个别
+    WebSocket 连接或收尾任务把关闭流程无限期挂住。
+    """
+    global _serve_done
+
+    if _server_instance is None:
+        return
+    _server_instance.should_exit = True
+    _serve_done = False
+    asyncio.create_task(_force_exit_watchdog())
+
+
+async def _force_exit_watchdog() -> None:
+    """优雅关闭看门狗:宽限期后仍未完成则置 force_exit 强制退出。"""
+    await asyncio.sleep(_SHUTDOWN_GRACE_SECONDS)
+    if _serve_done or _server_instance is None:
+        return
+    logger.warning("[restart] 优雅关闭超时,强制退出服务")
+    print("\n  [restart] 优雅关闭超时,强制退出服务...")
+    try:
+        sys.stdout.flush()
+    except Exception:
+        pass
+    _server_instance.force_exit = True
 
 
 async def launch(
@@ -28,6 +83,8 @@ async def launch(
         ssl: 是否启用 HTTPS(自动生成自签名证书)
         domain: 可选的域名,如 "uniclaw.example.com"
     """
+    global _server_instance, _LAUNCH_KWARGS
+
     from uniclaw.tools.scheduler.scheduler import Scheduler
 
     await Scheduler.get_instance().start()
@@ -90,9 +147,27 @@ async def launch(
         ssl_certfile=ssl_certfile,
         ws_ping_interval=30,  # 每 30 秒发送 ping,及时检测死连接
         ws_ping_timeout=10,  # 10 秒无 pong 响应则关闭连接
+        timeout_graceful_shutdown=10,  # 关闭时等待连接的最长时间(秒),防止个别连接拖住重启
     )
+    global _serve_done
+
+    # 重启恢复:检测到旧进程留下的重启标志时,服务就绪后恢复会话并唤醒 agent
+    from uniclaw.tools.restart import resumer
+
+    resumer.schedule_pending_restart_resume(host, port)
+
     server = uvicorn.Server(config)
-    await server.serve()
+    _server_instance = server
+    _LAUNCH_KWARGS = {"host": host, "port": port, "ssl": ssl, "domain": domain}
+    try:
+        await server.serve()
+    finally:
+        _serve_done = True
+
+    # serve() 结束(优雅关闭完成,端口已释放):若存在重启标志则以相同参数拉起新进程
+    from uniclaw.tools.restart import relauncher
+
+    await relauncher.relaunch_if_pending(_LAUNCH_KWARGS)
 
 
 def _ensure_ssl_certs(domain: str = "") -> tuple[str, str]:

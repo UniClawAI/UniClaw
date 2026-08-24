@@ -88,6 +88,10 @@ from .download.tools import (
     get_tools as download_get_tools,
     get_all_tools as download_get_all_tools,
 )
+from .restart import (
+    get_tools as restart_get_tools,
+    get_all_tools as restart_get_all_tools,
+)
 from uniclaw.tools.a2a.tools import (
     get_tools as a2a_get_tools,
     get_all_tools as a2a_get_all_tools,
@@ -181,6 +185,9 @@ async def get_tools(config) -> list:
                 *hooks_get_tools(),
                 *computer_use_get_tools(config),
                 sleep_timer,  # sleep_timer 仅主 agent 可用
+                *restart_get_tools(
+                    config
+                ),  # restart_agent 仅 WebUI 模式的主 agent 可用
             ]
         )
         from uniclaw.tools.plugins import PluginManager
@@ -230,6 +237,7 @@ async def get_all_tools() -> list:
         *rag_get_all_tools(),
         *a2a_get_all_tools(),
         *ipython_get_all_tools(),
+        *restart_get_all_tools(),
         *mcp_tools,
         *plugin_tools,
     ]
