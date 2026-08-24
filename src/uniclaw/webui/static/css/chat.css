@@ -518,12 +518,14 @@ pre:hover .code-copy-btn {
 .tool-result pre {
     margin: 0;
     font-size: var(--text-xs);
+    max-height: 1000px;
+    overflow-y: auto;
 }
 
 /* 工具流式输出(实时显示,工具完成后被最终结果覆盖) */
 .tool-stream-output {
     margin-top: 4px;
-    max-height: 400px;
+    max-height: 1000px;
     overflow-y: auto;
 }
 .tool-stream-content {
