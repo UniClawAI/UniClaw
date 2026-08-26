@@ -10,6 +10,7 @@ async def monitor_start(
     watch_pattern: str = "",
     notify_on_match: bool = True,
     timeout: int = 0,
+    visible: bool = False,
     config: AppConfig = None,
 ) -> str:
     """
@@ -27,6 +28,11 @@ async def monitor_start(
             确保命令结束时一定触发通知,不会无限制等待。
         notify_on_match: 匹配时是否通知模型(默认 True)
         timeout: 超时时间(秒),0 表示不限制,默认 0
+        visible: 可视模式(默认 False)。True 时弹出一个真实控制台窗口,
+            进程输出实时显示在窗口中,用户可直接在窗口里键入内容与进程交互;
+            同时 AI 仍可通过 monitor_output 查看、monitor_input 发送输入。
+            适合人机配合场景,如需要用户登录账号、输入验证码、
+            确认交互式安装提示等 AI 无法独立完成的步骤。
 
     Returns:
         str: 启动结果,包含进程 ID
@@ -47,6 +53,7 @@ async def monitor_start(
         notify_on_match,
         root_dir,
         config=config,
+        visible=visible,
     )
 
 
@@ -97,6 +104,27 @@ async def monitor_output(monitor_id: str, lines: int = 50) -> str:
 
     manager = MonitorManager.get_instance()
     return await manager.get_output(monitor_id, lines)
+
+
+@tool
+async def monitor_screen(monitor_id: str) -> str:
+    """
+    获取控制台当前屏幕上显示的全部内容(整屏快照,类似 tmux capture-pane)。
+    与 monitor_output 返回滚动输出历史不同,本工具返回此刻的画面,
+    包含提示符同行内容、尚未回车的键入内容以及 vim/htop 等全屏程序界面。
+    仅可视模式启动的 shell 类进程(ConPTY 会话)拥有真实屏幕;
+    其他进程没有独立控制台,退化为返回全部输出历史。
+
+    Args:
+        monitor_id: 进程 ID,通过 monitor_start 返回值或 monitor_list 获取
+
+    Returns:
+        str: 控制台当前屏幕内容
+    """
+    from .manager import MonitorManager
+
+    manager = MonitorManager.get_instance()
+    return await manager.get_screen(monitor_id)
 
 
 @tool
@@ -153,6 +181,23 @@ async def monitor_update_pattern(monitor_id: str, new_pattern: str) -> str:
     return await manager.update_pattern(monitor_id, new_pattern.strip())
 
 
+@tool
+async def monitor_clear() -> str:
+    """
+    批量清理所有已结束的监控条目(运行中的进程保留)。
+
+    用于历史进程累积时手动清理: 自然退出/超时/异常/匹配态等
+    非运行条目会从列表中移除。已清理条目的历史输出将不可再查询。
+
+    Returns:
+        str: 清理结果
+    """
+    from .manager import MonitorManager
+
+    manager = MonitorManager.get_instance()
+    return await manager.clear_monitors()
+
+
 def get_tools() -> list:
     """获取监控工具列表"""
     return [
@@ -160,9 +205,11 @@ def get_tools() -> list:
         monitor_stop,
         monitor_list,
         monitor_output,
+        monitor_screen,
         monitor_input,
         monitor_get_matched,
         monitor_update_pattern,
+        monitor_clear,
     ]
 
 

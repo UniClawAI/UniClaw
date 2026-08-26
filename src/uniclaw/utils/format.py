@@ -84,10 +84,15 @@ def sanitize_progress_line(line: str) -> str:
     parts = line.split("\n")
     cleaned = []
     for part in parts:
-        # 剩余的独立 \r 是进度条回车,取最后一帧
+        # 剩余的 \r 分两种:
+        #  1. 进度条刷新帧("0%\r50%\r100%") -> 取最后一帧
+        #  2. 被 0.5s 超时 flush 截断的 \r\n 前半段("LINE-C\r" 等)
+        #     过滤空帧后取最后一非空帧, 避免整行被误判清空
         if "\r" in part:
-            part = part.rsplit("\r", maxsplit=1)[-1]
-        cleaned.append(part.strip())
+            frames = [f for f in part.split("\r") if f]
+            part = frames[-1] if frames else ""
+        # 只清理尾部空白, 保留前导缩进(traceback/tree 等结构化输出依赖缩进)
+        cleaned.append(part.rstrip())
     return "\n".join(cleaned)
 
 
