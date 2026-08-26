@@ -56,7 +56,10 @@ async def todolist_update(
         return await _overseer_update(step, todo_status, reason, config)
     if todo.is_empty():
         return f"{TOOL_ERROR}: 当前没有任务清单,请先使用 {todolist_create.name} 创建"
-    return todo.update_status(step, todo_status)
+    result = todo.update_status(step, todo_status)
+    if not result.startswith(TOOL_ERROR):
+        result += _all_completed_hint(todo)
+    return result
 
 
 @tool
@@ -85,6 +88,20 @@ def todolist_list(config: AppConfig = None) -> str:
     if todo.is_empty():
         return "当前没有任务清单"
     return todo.get_list()
+
+
+# ── 内部辅助 ────────────────────────────────────────────────
+
+
+def _all_completed_hint(todo: TodoList) -> str:
+    """所有步骤均为 completed 时返回详细提示引导调用 todolist_clear,否则返回空串"""
+    if any(item.status != TodoStatus.COMPLETED for item in todo.items):
+        return ""
+    return (
+        f"\n\n🎉 全部 {len(todo.items)} 个步骤均已完成,整个任务已结束!\n"
+        f"请立即调用 {todolist_clear.name} 工具清空任务清单,"
+        f"然后向用户汇报整体完成情况。"
+    )
 
 
 # ── 监工模式内部函数(由 todolist_create/todolist_update 分派)──
@@ -148,6 +165,8 @@ async def _overseer_update(
             )
 
     result = todo.update_status(step, status)
+    if not result.startswith(TOOL_ERROR):
+        result += _all_completed_hint(todo)
     if status == TodoStatus.COMPLETED:
         return f"✅ 审核通过,步骤 {step} 已标记为完成:\n{result}"
     return f"已更新步骤 {step} 状态为 {status}:\n{result}"
