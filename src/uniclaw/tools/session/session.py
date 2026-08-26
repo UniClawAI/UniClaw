@@ -357,6 +357,8 @@ class AIMessage(BaseMessage):
         }
         if self.reasoning_content:
             msg["reasoning_content"] = self.reasoning_content
+        else:
+            msg["reasoning_content"] = " "
         if self.tool_calls:
             msg["tool_calls"] = self.tool_calls
         return msg
@@ -365,6 +367,8 @@ class AIMessage(BaseMessage):
         blocks = []
         if self.reasoning_content:
             blocks.append({"type": "thinking", "thinking": self.reasoning_content})
+        else:
+            blocks.append({"type": "thinking", "thinking": " "})
         content = self.content
         if isinstance(content, list):
             blocks.extend(b.to_anthropic_message() for b in content)
@@ -373,7 +377,6 @@ class AIMessage(BaseMessage):
         if self.tool_calls:
             for tc in self.tool_calls:
                 func = tc.get("function", {})
-                import json as _json
 
                 blocks.append(
                     {
@@ -381,7 +384,7 @@ class AIMessage(BaseMessage):
                         "id": tc.get("id", ""),
                         "name": func.get("name", ""),
                         "input": (
-                            _json.loads(func.get("arguments", "{}"))
+                            json.loads(func.get("arguments", "{}"))
                             if isinstance(func.get("arguments"), str)
                             else func.get("arguments", {})
                         ),
@@ -652,6 +655,7 @@ class Session:
         browser_get_attribute,
         browser_get_elements,
         browser_get_url,
+        
         browser_get_title,
         browser_get_value,
         browser_get_count,

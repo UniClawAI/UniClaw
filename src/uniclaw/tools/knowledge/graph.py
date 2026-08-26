@@ -773,7 +773,6 @@ class KnowledgeGraph:
         self, output_path: Path, highlight_entities: list[str] | None = None
     ) -> Path:
         """生成交互式 HTML 知识图谱可视化(ECharts 力导向图)。"""
-        import json as _json
         import hashlib
         from collections import defaultdict
 
@@ -955,9 +954,9 @@ class KnowledgeGraph:
         ]
 
         # 生成 HTML
-        nodes_json = _json.dumps(nodes, ensure_ascii=False, indent=2)
-        links_json = _json.dumps(links, ensure_ascii=False, indent=2)
-        categories_json = _json.dumps(categories, ensure_ascii=False, indent=2)
+        nodes_json = json.dumps(nodes, ensure_ascii=False, indent=2)
+        links_json = json.dumps(links, ensure_ascii=False, indent=2)
+        categories_json = json.dumps(categories, ensure_ascii=False, indent=2)
 
         # 构建图例 HTML
         legend_items = []
