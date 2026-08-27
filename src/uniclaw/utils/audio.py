@@ -120,7 +120,7 @@ async def asr(
     """
     from uniclaw.provider.openai_provider import achat
 
-    asr_model = getattr(config, "asr_model", "")
+    asr_model = config.asr_model if config else ""
     if not asr_model:
         raise ValueError("asr_model 未配置,请通过 /model 命令设置 ASR 模型")
 

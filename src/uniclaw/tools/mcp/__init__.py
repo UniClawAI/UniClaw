@@ -1,6 +1,7 @@
 from __future__ import annotations
 import asyncio
 import json
+import httpx
 import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -51,26 +52,27 @@ async def _connect_mcp(connection: dict):
 
         timeout = connection.get("timeout", 10)
         headers = connection.get("headers")
+        proxy = connection.get("proxy")
+
+        client_kwargs = {"timeout": timeout}
         if headers:
-            import httpx
-
-            async with httpx.AsyncClient(
-                headers=headers, timeout=timeout
-            ) as http_client:
+            client_kwargs["headers"] = headers
+        if proxy:
+            client_kwargs["proxy"] = proxy
+        async with httpx.AsyncClient(**client_kwargs) as http_client:
+            try:
                 async with streamable_http_client(
                     url=connection["url"],
                     http_client=http_client,
                 ) as (read, write, _get_session_id):
                     yield read, write
-        else:
-            import httpx
-
-            async with httpx.AsyncClient(timeout=timeout) as http_client:
-                async with streamable_http_client(
-                    url=connection["url"],
-                    http_client=http_client,
-                ) as (read, write, _get_session_id):
-                    yield read, write
+            except RuntimeError as e:
+                # asyncio.run() 关闭期间, 存活的 async generator 会被强制 aclose,
+                # streamable_http_client 内部的 anyio cancel scope 跨任务退出会抛该异常;
+                # 此时进程即将结束, 连接由 OS 回收, 静默返回即可。
+                if "cancel scope in a different task" in str(e):
+                    return
+                raise
 
     elif transport == "websocket":
         from mcp.client.websocket import websocket_client
@@ -106,6 +108,21 @@ def _make_mcp_caller(server_name: str, tool_name: str, connection: dict):
     _call.__name__ = f"{server_name}_{tool_name}"
     _call.__qualname__ = _call.__name__
     return _call
+
+
+def _ensure_exa_api_key(mcp_config: dict, config: AppConfig | None) -> None:
+    """确保 mcp 配置中 exa 服务器的 URL 带上最新的 EXA_API_KEY。
+
+    mcp.json 可能是早期创建的(或用户手动编辑过), URL 上不一定有
+    exaApiKey 参数; 而 load_config 的首次创建拼接只在文件不存在时执行。
+    此函数在每次加载后调用, 幂等补齐, 不重复追加。
+    """
+    if not config or not config.EXA_API_KEY:
+        return
+    exa = mcp_config.get("servers", {}).get("exa")
+    if exa and "exaApiKey=" not in exa.get("url", ""):
+        sep = "&" if "?" in exa["url"] else "?"
+        exa["url"] = f"{exa['url']}{sep}exaApiKey={config.EXA_API_KEY}"
 
 
 async def _discover_tools_async(server_name: str, connection: dict) -> list[Tool]:
@@ -162,20 +179,19 @@ class MCPManager:
             from .builtin import BUILTIN_MCP_SERVERS
 
             servers = {name: {**srv} for name, srv in BUILTIN_MCP_SERVERS.items()}
-            # exa: 有 API Key 就拼接查询参数
-            if "exa" in servers and config and config.EXA_API_KEY:
-                servers["exa"]["url"] += f"?exaApiKey={config.EXA_API_KEY}"
             self._config = {"servers": servers}
             await self.save_config()
-            return self._config
-        try:
-            with open(self._config_path, "r", encoding="utf-8") as f:
-                self._config = json.load(f)
-            if "servers" not in self._config:
-                self._config["servers"] = {}
-        except (json.JSONDecodeError, IOError) as e:
-            await err(f"加载 MCP 配置失败: {e}", config)
-            self._config = {"servers": {}}
+        else:
+            try:
+                with open(self._config_path, "r", encoding="utf-8") as f:
+                    self._config = json.load(f)
+                if "servers" not in self._config:
+                    self._config["servers"] = {}
+            except (json.JSONDecodeError, IOError) as e:
+                await err(f"加载 MCP 配置失败: {e}", config)
+                self._config = {"servers": {}}
+        # exa: 无论文件是首次创建还是已存在, 都确保 URL 带上最新的 API Key
+        _ensure_exa_api_key(self._config, config)
         return self._config
 
     async def save_config(self):

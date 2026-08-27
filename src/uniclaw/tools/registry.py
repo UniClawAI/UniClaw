@@ -25,8 +25,8 @@ def _build_core_tools() -> list:
     """从核心工具对象动态构建核心工具列表(避免硬编码字符串)。"""
     from .fs import Read, Write, Edit, Glob
     from .shell import Bash, Grep
-    from .web import webFetch, webSearch
-    from .search import platform_search
+    from .web import webFetch
+    from .search import webSearch
     from .memory.tools import memory_save, memory_delete, memory_list, memory_search
     from .plan import enter_plan_mode, exit_plan_mode
     from .skill.tools import skill_suggest, skill_read
@@ -40,7 +40,6 @@ def _build_core_tools() -> list:
         Grep,
         webFetch,
         webSearch,
-        platform_search,
         memory_save,
         memory_delete,
         memory_list,

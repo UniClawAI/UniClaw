@@ -83,6 +83,12 @@ class AppConfig:
     proxy_url: str = ""
     GITHUB_TOKEN: str = ""
     EXA_API_KEY: str = ""
+    SEMANTIC_SCHOLAR_API_KEY: str = ""  # Semantic Scholar 搜索 API key
+    hf_token: str = ""  # HuggingFace API token
+    research_email: str = ""  # 学术 API 联系邮箱 (OpenAlex / SEC EDGAR)
+    google_news_hl: str = ""  # Google News 语言 (如 zh-CN)
+    google_news_gl: str = ""  # Google News 地区 (如 CN)
+    google_news_ceid: str = ""  # Google News ceid (如 CN:zh)
     max_agent_depth: int = 2
     permission_timeout: int = 300
     trusted_ips: list[str] = field(default_factory=list)  # 可信 IP 列表,跳过登录认证
@@ -396,6 +402,21 @@ async def run_setup_wizard() -> AppConfig:
     return config
 
 
+def _normalize_proxy_url(proxy_url: str) -> str:
+    """归一化代理地址: 补上缺失的 http:// 前缀。
+
+    用户常写成 "127.0.0.1:7890" 这种 host:port 形式, 而所有消费方
+    (get_proxy / create_http_client / MCP 连接) 都要求以 "http" 开头,
+    缺前缀会导致代理配置被静默忽略。
+    """
+    if not proxy_url:
+        return ""
+    proxy_url = proxy_url.strip()
+    if proxy_url.startswith(("http://", "https://", "socks5://")):
+        return proxy_url
+    return f"http://{proxy_url}"
+
+
 def _create_config_from_data(data: dict[str, Any]) -> AppConfig:
     """从原始数据字典创建 AppConfig。"""
     providers = {}
@@ -405,7 +426,7 @@ def _create_config_from_data(data: dict[str, Any]) -> AppConfig:
             protocol=p.get("protocol", "openai"),
             api_key=p.get("api_key", ""),
             base_url=p.get("base_url", ""),
-            proxy_url=p.get("proxy_url", ""),
+            proxy_url=_normalize_proxy_url(p.get("proxy_url", "")),
         )
     return AppConfig(
         model_name=data.get("model_name", []),
@@ -421,9 +442,15 @@ def _create_config_from_data(data: dict[str, Any]) -> AppConfig:
         temperature=data.get("temperature"),
         max_tokens=data.get("max_tokens"),
         top_p=data.get("top_p"),
-        proxy_url=data.get("proxy_url", ""),
+        proxy_url=_normalize_proxy_url(data.get("proxy_url", "")),
         GITHUB_TOKEN=data.get("GITHUB_TOKEN", ""),
         EXA_API_KEY=data.get("EXA_API_KEY", ""),
+        SEMANTIC_SCHOLAR_API_KEY=data.get("SEMANTIC_SCHOLAR_API_KEY", ""),
+        hf_token=data.get("hf_token", ""),
+        research_email=data.get("research_email", ""),
+        google_news_hl=data.get("google_news_hl", ""),
+        google_news_gl=data.get("google_news_gl", ""),
+        google_news_ceid=data.get("google_news_ceid", ""),
         max_agent_depth=data.get("max_agent_depth", 2),
         permission_timeout=data.get("permission_timeout", 300),
         permission_mode=data.get("permission_mode", Permissions.AUTO),
@@ -561,7 +588,7 @@ def load_config(
             protocol=p.get("protocol", "openai"),
             api_key=p.get("api_key", ""),
             base_url=p.get("base_url", ""),
-            proxy_url=p.get("proxy_url", ""),
+            proxy_url=_normalize_proxy_url(p.get("proxy_url", "")),
         )
 
     return AppConfig(
@@ -581,9 +608,15 @@ def load_config(
         temperature=data.get("temperature"),
         max_tokens=data.get("max_tokens"),
         top_p=data.get("top_p"),
-        proxy_url=data.get("proxy_url", ""),
+        proxy_url=_normalize_proxy_url(data.get("proxy_url", "")),
         GITHUB_TOKEN=data.get("GITHUB_TOKEN", ""),
         EXA_API_KEY=data.get("EXA_API_KEY", ""),
+        SEMANTIC_SCHOLAR_API_KEY=data.get("SEMANTIC_SCHOLAR_API_KEY", ""),
+        hf_token=data.get("hf_token", ""),
+        research_email=data.get("research_email", ""),
+        google_news_hl=data.get("google_news_hl", ""),
+        google_news_gl=data.get("google_news_gl", ""),
+        google_news_ceid=data.get("google_news_ceid", ""),
         max_agent_depth=data.get("max_agent_depth", 2),
         permission_timeout=data.get("permission_timeout", 300),
         permission_mode=data.get("permission_mode", Permissions.AUTO),
@@ -629,6 +662,12 @@ def save_config(config: AppConfig) -> None:
         "proxy_url": config.proxy_url,
         "GITHUB_TOKEN": config.GITHUB_TOKEN,
         "EXA_API_KEY": config.EXA_API_KEY,
+        "SEMANTIC_SCHOLAR_API_KEY": config.SEMANTIC_SCHOLAR_API_KEY,
+        "hf_token": config.hf_token,
+        "research_email": config.research_email,
+        "google_news_hl": config.google_news_hl,
+        "google_news_gl": config.google_news_gl,
+        "google_news_ceid": config.google_news_ceid,
         "max_agent_depth": config.max_agent_depth,
         "permission_timeout": config.permission_timeout,
         "permission_mode": config.permission_mode,

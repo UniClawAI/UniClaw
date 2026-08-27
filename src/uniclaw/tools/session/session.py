@@ -646,9 +646,9 @@ class Session:
     )  # _messages 开头的压缩摘要消息数 (0 或 2)
     dedup_cache: set = field(default_factory=set, repr=False)  # 只读工具结果去重缓存
     from uniclaw.tools.fs import Glob, Read
-    from uniclaw.tools.search import platform_search
+    from uniclaw.tools.search import webSearch
     from uniclaw.tools.shell import Grep
-    from uniclaw.tools.web import webFetch, webSearch
+    from uniclaw.tools.web import webFetch
     from uniclaw.tools.web_browse.tools import (
         browser_get_text,
         browser_get_html,
@@ -692,9 +692,8 @@ class Session:
             Grep.name,
             # web
             webFetch.name,
-            webSearch.name,
             # search
-            platform_search.name,
+            webSearch.name,
             # web_browse (只读 getter)
             browser_list_pages.name,
             browser_get_text.name,
@@ -750,7 +749,6 @@ class Session:
             Grep.name,
             Glob.name,
             webFetch.name,
-            webSearch.name,
         }
     )
 

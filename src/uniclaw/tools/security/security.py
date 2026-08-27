@@ -194,8 +194,8 @@ def is_safe_tool(name: str) -> bool:
         DockerRemoveImage,
         DockerBuild,
     )
-    from uniclaw.tools.web import webFetch, webSearch
-    from uniclaw.tools.search import platform_search
+    from uniclaw.tools.web import webFetch
+    from uniclaw.tools.search import webSearch
     from uniclaw.tools.memory.tools import (
         memory_save,
         memory_delete,
@@ -335,7 +335,6 @@ def is_safe_tool(name: str) -> bool:
         # ── Web / 搜索 ──
         webFetch.name,
         webSearch.name,
-        platform_search.name,
         search_tools.name,
         # ── 记忆 ──
         memory_save.name,

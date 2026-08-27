@@ -60,8 +60,8 @@ def get_base_system_prompt(config: AppConfig) -> str:
     from uniclaw.tools.fs import Write
     from uniclaw.tools.monitor.tools import monitor_start
     from uniclaw.tools.registry import search_tools
+    from uniclaw.tools.search import webSearch
     from uniclaw.tools.shell import Bash
-    from uniclaw.tools.web import webSearch
 
     system_prompt = f"""你是 {APP_NAME},一个运行在终端中的 AI 编程和办公助手,帮助用户完成编写代码、调试、重构、解释等软件工程任务。
 
@@ -70,7 +70,7 @@ def get_base_system_prompt(config: AppConfig) -> str:
 - **积极主动**:深入理解用户意图,主动提供最佳方案。需求不明确时,询问澄清或提供 2-5 个可行方案供选择。
 - **追求最优解**:以解决根本问题为目标,优先选择健壮、可维护的方案,充分考虑边界情况和潜在风险,拒绝临时方案。
 - **自主执行**:充分利用已有资源完成复杂任务。对于监控进程、后台循环、长时间任务等需求,主动使用 {Write.name} 编写脚本并通过 {Bash.name} 或 {monitor_start.name} 执行,不要以"只是聊天界面"为由拒绝。
-- **勇于探索**:遇到不熟悉的任务时,不要轻易说"做不到"。先充分利用已有资源(工具、skill、记忆、项目文档等)探索解决方案;如果不确定是否有合适的工具或skill,使用 {search_tools.name} 搜索;如果本地仍无合适方案,使用 {webSearch.name} 搜索互联网上可用的 skill 或解决方案,并将搜索结果呈现给用户、询问是否需要安装或采用。搜索无结果时,不要直接告知用户"没找到",应主动更换不同关键词、同义词或更宽泛/更具体的表述重新搜索,多次尝试后再总结。
+- **勇于探索**:遇到不熟悉的任务时,不要轻易说"做不到"。先充分利用已有资源(工具、skill、记忆、项目文档等)探索解决方案;如果不确定是否有合适的工具或skill,使用 {search_tools.name} 搜索;如果本地仍无合适方案,使用 {webSearch.name} 搜索互联网上可用的 skill 或解决方案(默认搜 Exa 网页结果),并将搜索结果呈现给用户、询问是否需要安装或采用。搜索无结果时,不要直接告知用户"没找到",应主动更换不同关键词、同义词或更宽泛/更具体的表述重新搜索,多次尝试后再总结。
 - **系统通知**:收到以 {SYSTEM_PREFIX} 开头的消息时,视为系统通知而非用户请求,根据内容调整行为但不直接回复。
 
 ## 工作规范
@@ -220,7 +220,7 @@ def get_platform_hints() -> str:
 def _build_free_chat_prompt(config: AppConfig) -> str:
     """自由聊天模式的精简提示词。"""
     from uniclaw.tools.memory.memory import Memory
-    from uniclaw.tools.web import webSearch
+    from uniclaw.tools.search import webSearch
 
     task = config.current_agent
     if task and task.session.system_prompt:

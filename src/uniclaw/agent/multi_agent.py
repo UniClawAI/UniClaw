@@ -62,7 +62,7 @@ from uniclaw.utils.wrapper import error_catch
 from uniclaw.console.ui import info
 
 # 只读工具去重:相同 (name, args) 且结果相同时省略重复内容
-DEDUP_TOOLS = frozenset({"Read", "Glob", "Grep", "webFetch", "webSearch"})
+DEDUP_TOOLS = frozenset({"Read", "Glob", "Grep", "webFetch"})
 DEDUP_MIN_CHARS = 500  # 结果超过此长度才去重
 
 
