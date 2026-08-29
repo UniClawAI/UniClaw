@@ -345,10 +345,13 @@ class HttpDownloader(BaseDownloader):
         return self._parse_info_headers(resp.headers)
 
     def _parse_info_headers(self, headers) -> tuple[int, bool]:
-        """从响应头解析 (文件大小, 是否支持 Range)。"""
+        """从响应头解析 (文件大小, 是否支持 Range)。
+
+        无 Content-Length 时(如 chunked 编码),返回 (0, False) 降级为流式下载。
+        """
         content_length = headers.get("content-length")
         if content_length is None:
-            raise ValueError("服务器未返回 Content-Length,无法确定文件大小")
+            return 0, False
         accept_ranges = headers.get("accept-ranges", "")
         supports_range = "bytes" in accept_ranges.lower()
         return int(content_length), supports_range
@@ -532,9 +535,9 @@ class HttpDownloader(BaseDownloader):
                                 else:
                                     callback(info)
 
-                # 校验大小
+                # 校验大小(仅当已知文件大小时,避免 chunked 无 Content-Length 误判)
                 actual_size = self._tmp_file.stat().st_size
-                if actual_size != self.progress.total_size:
+                if self.progress.total_size > 0 and actual_size != self.progress.total_size:
                     raise IOError(
                         f"下载不完整: 期望 {self.progress.total_size} 字节, 实际 {actual_size} 字节"
                     )
