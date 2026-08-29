@@ -27,6 +27,8 @@ class KernelInfo:
     created_at: float = field(default_factory=time.time)
     execution_count: int = 0
     history: list[str] = field(default_factory=list)
+    # 同一内核的代码执行必须串行,否则并发读取 iopub 队列会错乱
+    exec_lock: Any = field(default_factory=asyncio.Lock)
 
 
 @dataclass
@@ -151,7 +153,47 @@ class IPythonKernelManager:
             km.start_kernel()
             kc = km.client()
             kc.start_channels()
-            kc.wait_for_ready(timeout=60)
+            try:
+                kc.wait_for_ready(timeout=60)
+            except Exception as e:
+                # 诊断:检查内核进程是否真的死了
+                alive = False
+                ret = None
+                try:
+                    if km.provisioner and km.provisioner.process is not None:
+                        ret = km.provisioner.process.poll()
+                        alive = ret is None
+                except Exception:
+                    pass
+                logger.error(
+                    "内核 ready 等待失败: %s (alive=%s, returncode=%s, "
+                    "has_kernel=%s)",
+                    e,
+                    alive,
+                    ret,
+                    km.has_kernel,
+                )
+                # 写入诊断文件,便于排查
+                try:
+                    import os
+
+                    diag_path = os.path.join(
+                        os.environ.get("TEMP", "/tmp"), "uniclaw_ipython_diag.txt"
+                    )
+                    with open(diag_path, "a", encoding="utf-8") as f:
+                        f.write(
+                            f"[{time.strftime('%H:%M:%S')}] {e} "
+                            f"(alive={alive}, returncode={ret}, "
+                            f"has_kernel={km.has_kernel}, pid={km.pid if hasattr(km, 'pid') else None})\n"
+                        )
+                except Exception as diag_e:
+                    logger.error("写入诊断文件失败: %s", diag_e)
+                # 进程仍存活(如内核响应慢)则重试一次
+                if alive:
+                    logger.warning("内核进程仍存活,重试 wait_for_ready...")
+                    kc.wait_for_ready(timeout=60)
+                else:
+                    raise
             return km, kc
 
         try:
@@ -236,77 +278,84 @@ class IPythonKernelManager:
         info.history.append(code)
         info.execution_count += 1
 
-        msg_id = info.client.execute(code)
+        # 同一内核串行执行,避免并发读取 iopub 队列导致消息错乱
+        async with info.exec_lock:
+            msg_id = info.client.execute(code)
 
-        def _collect():
-            stdout_parts = []
-            stderr_parts = []
-            rich_outputs = []
-            error_info = None
+            def _collect():
+                stdout_parts = []
+                stderr_parts = []
+                rich_outputs = []
+                error_info = None
 
-            while True:
-                try:
-                    msg = info.client.get_iopub_msg(timeout=timeout)
-                except Exception:
-                    break
+                while True:
+                    try:
+                        msg = info.client.get_iopub_msg(timeout=timeout)
+                    except Exception:
+                        break
 
-                msg_type = msg["header"]["msg_type"]
-                content = msg["content"]
+                    # 只处理属于本次执行的消息,跳过残留的其他执行消息
+                    parent = msg.get("parent_header", {})
+                    parent_id = parent.get("msg_id")
+                    if parent_id is not None and parent_id != msg_id:
+                        continue
 
-                if msg_type == "stream":
-                    text = content.get("text", "")
-                    if content.get("name") == "stdout":
-                        stdout_parts.append(text)
-                    else:
-                        stderr_parts.append(text)
+                    msg_type = msg["header"]["msg_type"]
+                    content = msg["content"]
 
-                elif msg_type == "execute_result":
-                    data = content.get("data", {})
-                    for mime, val in data.items():
-                        if mime == "text/plain":
-                            stdout_parts.append(val)
+                    if msg_type == "stream":
+                        text = content.get("text", "")
+                        if content.get("name") == "stdout":
+                            stdout_parts.append(text)
                         else:
+                            stderr_parts.append(text)
+
+                    elif msg_type == "execute_result":
+                        data = content.get("data", {})
+                        for mime, val in data.items():
+                            if mime == "text/plain":
+                                stdout_parts.append(val)
+                            else:
+                                rich_outputs.append({"type": mime, "data": val})
+
+                    elif msg_type == "display_data":
+                        data = content.get("data", {})
+                        for mime, val in data.items():
                             rich_outputs.append({"type": mime, "data": val})
 
-                elif msg_type == "display_data":
-                    data = content.get("data", {})
-                    for mime, val in data.items():
-                        rich_outputs.append({"type": mime, "data": val})
+                    elif msg_type == "error":
+                        ename = content.get("ename", "Error")
+                        evalue = content.get("evalue", "")
+                        traceback = content.get("traceback", [])
+                        import re
 
-                elif msg_type == "error":
-                    ename = content.get("ename", "Error")
-                    evalue = content.get("evalue", "")
-                    traceback = content.get("traceback", [])
-                    import re
+                        ansi_escape = re.compile(r"\x1b\[[0-9;]*m")
+                        clean_tb = [ansi_escape.sub("", line) for line in traceback]
+                        error_info = {
+                            "ename": ename,
+                            "evalue": evalue,
+                            "traceback": clean_tb,
+                        }
 
-                    ansi_escape = re.compile(r"\x1b\[[0-9;]*m")
-                    clean_tb = [ansi_escape.sub("", line) for line in traceback]
-                    error_info = {
-                        "ename": ename,
-                        "evalue": evalue,
-                        "traceback": clean_tb,
-                    }
+                    elif msg_type == "status":
+                        if content.get("execution_state") == "idle":
+                            if parent.get("msg_id") == msg_id:
+                                break
 
-                elif msg_type == "status":
-                    if content.get("execution_state") == "idle":
-                        parent = msg.get("parent_header", {})
-                        if parent.get("msg_id") == msg_id:
-                            break
+                return stdout_parts, stderr_parts, rich_outputs, error_info
 
-            return stdout_parts, stderr_parts, rich_outputs, error_info
-
-        try:
-            stdout_parts, stderr_parts, rich_outputs, error_info = (
-                await asyncio.to_thread(_collect)
-            )
-        except Exception as e:
-            return ExecutionResult(
-                success=False,
-                output="",
-                error=f"执行超时或通信失败: {e}",
-                rich_outputs=[],
-                execution_count=info.execution_count,
-            )
+            try:
+                stdout_parts, stderr_parts, rich_outputs, error_info = (
+                    await asyncio.to_thread(_collect)
+                )
+            except Exception as e:
+                return ExecutionResult(
+                    success=False,
+                    output="",
+                    error=f"执行超时或通信失败: {e}",
+                    rich_outputs=[],
+                    execution_count=info.execution_count,
+                )
 
         stdout = "".join(stdout_parts).rstrip()
         stderr = "".join(stderr_parts).rstrip()
@@ -342,11 +391,15 @@ class IPythonKernelManager:
         Returns:
             VariableInfo: 变量信息。
         """
+        import json
+
+        # 用 json.dumps 安全嵌入 name 字符串字面量,避免表达式含引号时语法错误
+        name_literal = json.dumps(name, ensure_ascii=False)
         code = f"""
 import json as _json
 _obj = {name}
 _info = {{
-    "name": "{name}",
+    "name": {name_literal},
     "type": type(_obj).__name__,
     "repr": repr(_obj),
     "str": str(_obj),
@@ -371,9 +424,11 @@ print(_json.dumps(_info, ensure_ascii=False, default=str))
 """
         result = await self.execute(code, kernel_id, timeout=10)
         if not result.success:
-            raise RuntimeError(f"检查变量失败: {result.error}")
-
-        import json
+            error = (result.error or "").strip()
+            # 变量未定义: 内核报 NameError,单独抛出明确提示,避免误导为内核问题
+            if "NameError" in error:
+                raise RuntimeError(f"变量 '{name}' 未定义")
+            raise RuntimeError(f"检查变量失败: {error}")
 
         try:
             data = json.loads(result.output)
