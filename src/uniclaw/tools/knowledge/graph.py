@@ -480,22 +480,61 @@ class KnowledgeGraph:
     def search_entities(
         self, keyword: str, entity_type: str = "", limit: int = 20
     ) -> list[dict]:
-        """FTS5 模糊搜索实体。"""
+        """FTS5 模糊搜索实体,FTS5 无结果时回退到 LIKE 子串匹配。"""
+        # 1. 先尝试 FTS5 MATCH(前缀匹配,处理子串在开头/完整词命中)
+        fts_keyword = self._fts_escape(keyword)
+        rows = []
+        if fts_keyword is not None:
+            try:
+                if entity_type:
+                    rows = self.conn.execute(
+                        """SELECT e.* FROM entities_fts f
+                           JOIN entities e ON f.rowid = e.id
+                           WHERE entities_fts MATCH ? AND e.type = ?
+                           ORDER BY rank LIMIT ?""",
+                        (fts_keyword, entity_type, limit),
+                    ).fetchall()
+                else:
+                    rows = self.conn.execute(
+                        """SELECT e.* FROM entities_fts f
+                           JOIN entities e ON f.rowid = e.id
+                           WHERE entities_fts MATCH ?
+                           ORDER BY rank LIMIT ?""",
+                        (fts_keyword, limit),
+                    ).fetchall()
+            except sqlite3.OperationalError:
+                rows = []
+
+        if rows:
+            results = []
+            for row in rows:
+                d = dict(row)
+                if d.get("properties"):
+                    d["properties"] = json.loads(d["properties"])
+                d["aliases"] = [
+                    r["alias"]
+                    for r in self.conn.execute(
+                        "SELECT alias FROM entity_aliases WHERE entity_id=?", (d["id"],)
+                    ).fetchall()
+                ]
+                results.append(d)
+            return results
+
+        # 2. FTS5 无结果 → LIKE 子串匹配(解决中文部分匹配问题)
+        like_pattern = f"%{keyword}%"
         if entity_type:
             rows = self.conn.execute(
-                """SELECT e.* FROM entities_fts f
-                   JOIN entities e ON f.rowid = e.id
-                   WHERE entities_fts MATCH ? AND e.type = ?
-                   ORDER BY rank LIMIT ?""",
-                (keyword, entity_type, limit),
+                "SELECT * FROM entities WHERE name LIKE ? AND type=? ORDER BY updated_at DESC LIMIT ?",
+                (like_pattern, entity_type, limit),
             ).fetchall()
         else:
+            # 也匹配别名(FTS5 不索引别名)
             rows = self.conn.execute(
-                """SELECT e.* FROM entities_fts f
-                   JOIN entities e ON f.rowid = e.id
-                   WHERE entities_fts MATCH ?
-                   ORDER BY rank LIMIT ?""",
-                (keyword, limit),
+                """SELECT DISTINCT e.* FROM entities e
+                   LEFT JOIN entity_aliases a ON a.entity_id = e.id
+                   WHERE e.name LIKE ? OR e.description LIKE ? OR a.alias LIKE ?
+                   ORDER BY e.updated_at DESC LIMIT ?""",
+                (like_pattern, like_pattern, like_pattern, limit),
             ).fetchall()
 
         results = []
@@ -511,6 +550,34 @@ class KnowledgeGraph:
             ]
             results.append(d)
         return results
+
+    @staticmethod
+    def _fts_escape(keyword: str) -> str | None:
+        """将关键词转为 FTS5 可接受的查询字符串。
+
+        对中文(非 ASCII 非空格字符),每个字符后加 * 做前缀匹配;
+        对英文单词,原样传递(FTS5 默认做前缀匹配);
+        无法安全转义的返回 None,调用方回退到 LIKE 子串匹配。
+        """
+        # 去掉首尾空格
+        keyword = keyword.strip()
+        if not keyword:
+            return None
+
+        # 包含特殊字符(FTS5 运算符)时,统一走 LIKE 回退
+        if any(c in keyword for c in '()"*^:-'):
+            return None
+
+        # 包含非 ASCII 字符(中文等)：每个字符后加 * 做前缀匹配
+        if any(ord(c) > 127 for c in keyword):
+            tokens = [f"{ch}*" for ch in keyword if not ch.isspace()]
+            return " ".join(tokens)
+
+        # 英文：单token 加 * 做前缀匹配,多 token 用 AND 连接
+        tokens = keyword.split()
+        if len(tokens) == 1:
+            return f"{tokens[0]}*"
+        return " ".join(f"{t}*" for t in tokens)
 
     def get_neighbors(
         self, name: str, depth: int = 1, entity_type: str = "", relation_type: str = ""
