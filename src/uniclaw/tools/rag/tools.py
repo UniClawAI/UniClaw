@@ -128,6 +128,7 @@ async def rag_search(
     min_score: float = 0.1,
     rerank: bool = True,
     use_bm25: bool = True,
+    intent: str = "",
     config: AppConfig = None,
 ) -> str:
     """
@@ -142,6 +143,9 @@ async def rag_search(
         min_score: 最低相关性分数,低于此值的结果将被过滤。默认为 0.1。
         rerank: 是否启用 LLM 重排序。默认为 True。
         use_bm25: 是否启用 BM25 关键词检索实现多路召回。默认为 True。关闭后仅使用向量语义检索。
+        intent: 搜索意图描述,描述当前想要搜索什么样的数据,供 LLM 重排序时判断相关性参考。
+            传入非空 intent 时自动启用重排序(即使 rerank=False),避免意图描述被忽略。
+            可为空字符串。
 
     Returns:
         str: 格式化的检索结果,包含相关文档块内容、来源和相似度分数。
@@ -159,7 +163,7 @@ async def rag_search(
             try:
                 manager = _get_manager(config, scope)
                 results = await manager.search(
-                    collection, query, top_k, rerank, use_bm25
+                    collection, query, top_k, rerank, use_bm25, intent
                 )
                 for r in results:
                     # 按内容去重

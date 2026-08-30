@@ -470,6 +470,7 @@ class RAGManager:
         top_k: int = 5,
         rerank: bool = True,
         use_bm25: bool = True,
+        intent: str = "",
     ) -> list[dict]:
         """多路召回检索 + 重排序。
 
@@ -481,6 +482,9 @@ class RAGManager:
             top_k: 返回结果数
             rerank: 是否启用重排序
             use_bm25: 是否启用 BM25 多路召回。默认为 True。
+            intent: 搜索意图描述,描述当前想要搜索什么样的数据,供 LLM 重排序时
+                判断相关性参考。传入非空 intent 时自动启用重排序(即使 rerank=False),
+                避免意图描述被忽略。可为空字符串。
 
         Returns:
             检索结果列表
@@ -544,14 +548,18 @@ class RAGManager:
         if not candidates:
             return []
 
+        # 提供 intent 时自动启用重排序,避免意图描述被静默忽略
+        if intent and not rerank:
+            rerank = True
+
         # 重排序
         if rerank:
-            candidates = await self._rerank(query, candidates, top_k)
+            candidates = await self._rerank(query, candidates, top_k, intent)
 
         return candidates[:top_k]
 
     async def _rerank(
-        self, query: str, candidates: list[dict], top_k: int
+        self, query: str, candidates: list[dict], top_k: int, intent: str = ""
     ) -> list[dict]:
         """重排序:LLM 评分 + 余弦距离混合排序。
 
@@ -559,6 +567,8 @@ class RAGManager:
             query: 查询文本
             candidates: 候选文档列表
             top_k: 返回结果数
+            intent: 搜索意图描述,描述当前想要搜索什么样的数据,供 LLM 判断
+                相关性参考。可为空字符串。
 
         Returns:
             重排序后的文档列表
@@ -581,7 +591,11 @@ class RAGManager:
             '只返回一个 JSON 对象,格式: {"scores": [{"index": 序号, "chunk_index": 块索引, "score": 分数}, ...]},'
             "不要返回其他内容。如果没有 chunk_index 则填 null。"
         )
-        user_message = f"查询: {query}\n\n候选文档:\n{docs_text}\n请为每个文档打分。"
+        parts = [f"查询: {query}"]
+        if intent:
+            parts.append(f"搜索意图: {intent}")
+        parts.append(f"候选文档:\n{docs_text}\n请为每个文档打分。")
+        user_message = "\n\n".join(parts)
 
         session = Session()
         session.add_user_message(content=user_message)
