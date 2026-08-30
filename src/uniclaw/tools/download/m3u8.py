@@ -211,7 +211,7 @@ class M3u8Progress:
         lines = ["发现多个分辨率选项,请选择:", ""]
         for v in self.variants:
             desc = f"{v.resolution}" if v.resolution else "未知分辨率"
-            lines.append(f"  [{v.index}] {desc} ({v.bandwidth // 1000}kbps)")
+            lines.append(f"  [{v.index}] {desc} ({int(v.bandwidth) // 1000}kbps)")
         lines.append("")
         lines.append("使用 m3u8_download 重新调用并传入 variant=序号 即可选择。")
         return "\n".join(lines)
@@ -438,7 +438,7 @@ class M3u8Downloader(BaseDownloader):
                     selected = self._variants[self._selected_index]
                     self.progress.resolution = selected.resolution
                     self.progress.selected_variant = (
-                        f"{selected.resolution} ({selected.bandwidth // 1000}kbps)"
+                        f"{selected.resolution} ({int(selected.bandwidth) // 1000}kbps)"
                     )
                     await self._parse_media(own_client, selected.url)
                 elif len(self._variants) > 1:
@@ -450,7 +450,7 @@ class M3u8Downloader(BaseDownloader):
                     selected = self._variants[0]
                     self.progress.resolution = selected.resolution
                     self.progress.selected_variant = (
-                        f"{selected.resolution} ({selected.bandwidth // 1000}kbps)"
+                        f"{selected.resolution} ({int(selected.bandwidth) // 1000}kbps)"
                     )
                     await self._parse_media(own_client, selected.url)
             else:

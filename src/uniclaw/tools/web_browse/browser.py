@@ -889,11 +889,24 @@ class WebBrowser:
         except Exception as e:
             return f"{TOOL_ERROR}: {e}"
 
-    async def insert_text(self, text: str, page_id: Optional[int] = None) -> str:
-        """插入文本(不触发按键事件)。适用于 input/textarea 的快速填充。"""
+    async def insert_text(
+        self,
+        text: str,
+        selector: Optional[str] = None,
+        page_id: Optional[int] = None,
+    ) -> str:
+        """插入文本(不触发按键事件)。适用于 input/textarea 的快速填充。
+
+        不提供 selector 时向当前聚焦元素插入文本;提供时先聚焦到指定元素再插入。
+        """
         page = self._get_page(page_id)
         try:
+            if selector:
+                locator = self._to_locator(page, selector)
+                await locator.focus()
             await page.keyboard.insert_text(text)
+            if selector:
+                return f"已向元素 {selector} 插入文本: {text}"
             return f"已插入文本: {text}"
         except Exception as e:
             return f"{TOOL_ERROR}: {e}"

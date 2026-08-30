@@ -44,6 +44,9 @@ def kg_add_entity(
     """
     graph = _get_graph(config, scope)
     try:
+        if not name.strip():
+            raise ValueError("实体名称 name 不能为空")
+
         result = graph.add_entity(
             name=name,
             entity_type=type,
@@ -60,6 +63,13 @@ def kg_add_entity(
 
         if "error" in result:
             return f"错误: {result['error']}"
+
+        # 重复添加时,如果实体已存在,只显示警告不显示"已添加"
+        already_exists = result.get("duplicate_warning", "") and "已存在" in result.get("duplicate_warning", "")
+        if already_exists:
+            entity_id = result.get("id", "?")
+            # 检查是否有实际的新内容需要更新 (type, description 等与原实体不同时可使用 update_entity)
+            return f"⚠ 实体 '{name}' (type={type}) 已存在,已跳过 (ID={entity_id}, 如需更新请使用 kg_update_entity)"
 
         lines.append(f"实体 '{name}' (type={type}) 已添加, ID={result['id']}")
         return "\n".join(lines)

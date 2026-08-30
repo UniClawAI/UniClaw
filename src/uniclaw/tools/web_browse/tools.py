@@ -589,17 +589,21 @@ async def browser_keyboard_type(text: str, page_id: Optional[int] = None) -> str
 
 
 @tool
-async def browser_insert_text(text: str, page_id: Optional[int] = None) -> str:
+async def browser_insert_text(
+    text: str, selector: Optional[str] = None, page_id: Optional[int] = None
+) -> str:
     """插入文本(不触发按键事件)。适用于 input/textarea 的快速填充。
 
     Args:
         text: 要插入的文本内容。
+        selector: 可选,CSS 选择器或 XPath 表达式。提供时先聚焦到该元素再插入,
+                  不提供则向当前聚焦元素插入。
         page_id: 可选,指定操作的页面 ID。不提供则使用当前活动页面。
 
     Returns:
         操作结果消息。
     """
-    return await _browser.insert_text(text, page_id)
+    return await _browser.insert_text(text, selector, page_id)
 
 
 @tool

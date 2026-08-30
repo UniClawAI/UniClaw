@@ -9,11 +9,17 @@ ConPTY(Windows 伪控制台)让程序以为连接了真实终端:
 本模块用读线程把 PTY 输出拆为两路:
 - raw: 原始字节写入 log 文件, 供查看器窗口透传渲染(完整终端体验)
 - clean: 剥离 VT 序列后的纯文本行, 供 AI 的 monitor_output / pattern 匹配
+
+命令拆分: pywinpty PtyProcess.spawn 对字符串入参内部会做 shlex.split(posix=False),
+保留双引号为字面字符导致引号丢失(可见 UNICLAW-BUG-20260830-03)。
+``_split_conpty_command`` 按 shell 家族分流: POSIX shell 用 posix=True 剥离引号,
+Windows shell 保留字符串以保护反斜杠路径。
 """
 
 import asyncio
 import queue
 import re
+import shlex
 import threading
 import unicodedata
 from datetime import datetime
@@ -418,6 +424,47 @@ class ScreenBuffer:
             self._linefeed()
 
 
+# pywinpty PtyProcess.spawn 对字符串入参内部调用 shlex.split(posix=False),
+# 保留双引号为字面字符 → 后续 list2cmdline 转义为 \" 导致引号丢失。
+# 此处按 shell 家族分流: POSIX shell 用 posix=True 剥离引号,
+# Windows shell 保留字符串走 pywinpty 内部 posix=False 路径以保护反斜杠路径。
+_POSIX_SHELL_NAMES = {"bash", "sh", "zsh", "wsl", "dash", "ksh", "fish", "tcsh"}
+
+
+def _split_conpty_command(command: str) -> str | list[str]:
+    r"""按 shell 家族选择 ConPTY 命令拆分策略。
+
+    POSIX shell (bash/sh/zsh/...): 用 ``shlex.split(posix=True)`` 剥离引号标记,
+        返回 list, 从而绕过 pywinpty 内部的 ``posix=False`` 引号保留 bug。
+    Windows shell (cmd/powershell/...): 保留原字符串, 走 pywinpty 内部的
+        ``posix=False`` 路径, 避免 ``posix=True`` 把 ``C:\Windows`` 中的
+        ``\W`` 当作转义序列破坏反斜杠。
+
+    Args:
+        command: 原始命令字符串, 如 ``bash -c "echo test"`` 或
+            ``cmd /c type C:\Windows\win.ini``
+
+    Returns:
+        str | list[str]: Windows shell 返回原字符串; POSIX shell 返回拆分后的列表
+    """
+    if not command.strip():
+        return command
+    # 用 posix=True 取首个 token 判断 shell 家族: 能正确处理带引号且含空格的
+    # 路径 (如 "C:\Program Files\Git\bin\bash.exe")。此处只用其做检测,
+    # 不参与最终拆分, 因此 cmd 命令中的反斜杠路径被吃掉也不影响结果。
+    try:
+        first_token = shlex.split(command, posix=True)[0]
+    except (ValueError, IndexError):
+        return command
+    # 取最后一个路径组件作为 shell 名, 去掉 .exe 后缀
+    shell_name = Path(first_token).stem.lower()
+
+    if shell_name in _POSIX_SHELL_NAMES:
+        return shlex.split(command, posix=True)
+    # Windows shell / 其他: 保留原字符串, 走 pywinpty 内部 posix=False 流程
+    return command
+
+
 class PtySession:
     """单个 ConPTY 会话: spawn 进程 + 读线程 + 双路输出分发"""
 
@@ -438,8 +485,18 @@ class PtySession:
         self.monitor = monitor
         self.loop = loop
         self.on_notify = on_notify  # async (monitor, line) -> None
+
+        # pywinpty PtyProcess.spawn 对字符串入参会做 shlex.split(posix=False),
+        # 此时双引号被保留为字面字符, 经 list2cmdline 重新拼接后转义成 \",
+        # 导致 bash -c "echo test" 变成 bash -c "\"echo test\"" 而报 command not found。
+        # 这里按 shell 家族分策略拆分, 与管道模式(create_subprocess_shell)保持一致:
+        # - bash/sh/zsh 等 POSIX shell: 用 posix=True 拆分, 正确剥掉引号标记后传 list
+        # - cmd/powershell 等 Windows shell: 保留原字符串交给 spawn 内部处理,
+        #   避免 posix=True 把 C:\Windows 里的 \W 当转义序列破坏路径反斜杠
+        # 详见 UNICLAW-BUG-20260830-03
+        argv = _split_conpty_command(command)
         self.proc: PtyProcess = PtyProcess.spawn(
-            command,
+            argv,
             cwd=str(monitor.cwd) if monitor.cwd else None,
             dimensions=(
                 self.PTY_ROWS,

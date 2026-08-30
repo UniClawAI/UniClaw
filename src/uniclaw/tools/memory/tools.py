@@ -75,6 +75,11 @@ def memory_save(
         记忆 '用户偏好' 已保存。
     """
     # user scope 不需要 root_dir；project scope 需要 root_dir(无 root_dir 时 fallback 到用户级)
+    if not name.strip():
+        raise ValueError("记忆名称 name 不能为空")
+    if not content.strip():
+        raise ValueError("记忆内容 content 不能为空")
+
     memory_scope: Scope | Path = (
         config.root_dir if scope == Scope.PROJECT and config.root_dir else Scope.USER
     )

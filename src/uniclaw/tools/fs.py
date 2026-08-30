@@ -233,6 +233,47 @@ def Glob(pattern: str, path: str) -> str:
 
 # ── ConvertToMarkdown ───────────────────────────────────────────────────
 
+
+def _allocate_md_output(p: Path) -> Path:
+    """原子分配输出 .md 文件路径,避免并发转换同名文件互相覆盖。
+
+    以 O_CREAT|O_EXCL 创建空占位文件:若目标已存在(含并发任务的占位),
+    则自动递增数字后缀,直到创建成功。返回实际分配到的路径。
+
+    Args:
+        p: 源文件路径,输出基于其同目录、同名(替换扩展名为 .md)。
+
+    Returns:
+        Path: 已成功占位的输出路径。
+    """
+    import os
+
+    p.parent.mkdir(parents=True, exist_ok=True)
+    out = p.with_suffix(".md")
+    stem = out.stem
+    counter = 1
+    while True:
+        try:
+            fd = os.open(out, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.close(fd)
+            return out
+        except FileExistsError:
+            out = p.parent / f"{stem}_{counter}.md"
+            counter += 1
+
+
+def _cleanup_placeholder(out: Path) -> None:
+    """转换失败或无内容时,删除转换前创建的占位空文件。
+
+    仅删除空文件:若占位已被真实内容覆盖(非空),说明转换成功,不误删。
+    """
+    try:
+        if out.exists() and out.stat().st_size == 0:
+            out.unlink()
+    except OSError:
+        pass
+
+
 _DOCUMENT_EXTENSIONS = {
     ".pdf",
     ".docx",
@@ -314,13 +355,9 @@ async def ConvertToMarkdown(file_path: str, output_path: str = "", config: AppCo
     if output_path:
         out = Path(output_path)
     else:
-        out = p.with_suffix(".md")
-        if out.exists():
-            stem = out.stem
-            counter = 1
-            while out.exists():
-                out = p.parent / f"{stem}_{counter}.md"
-                counter += 1
+        # 原子分配:并发转换同名不同扩展名的文件(如 a.csv + a.html)时,
+        # 以 O_CREAT|O_EXCL 占位,后者自动获得 _1/_2... 后缀,互不覆盖
+        out = _allocate_md_output(p)
 
     def _do_convert() -> tuple[str, float]:
         """在线程池中执行同步转换(避免阻塞事件循环)"""
@@ -345,9 +382,9 @@ async def ConvertToMarkdown(file_path: str, output_path: str = "", config: AppCo
         text = result.text_content.strip() if result.text_content else ""
 
         if not text:
+            _cleanup_placeholder(out)
             return "", elapsed
 
-        out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(text, encoding="utf-8")
         return text, elapsed
 

@@ -16,8 +16,11 @@ def _validate_action(action: str) -> str | None:
     atype = data["type"]
     if atype not in ("shell", "agent", "py", "monitor"):
         return f"{TOOL_ERROR}: 未知的 type: '{atype}',可选: shell, agent, py, monitor"
-    if atype == "shell" and "command" not in data:
-        return f"{TOOL_ERROR}: shell 类型缺少 'command' 字段"
+    if atype == "shell":
+        if "command" not in data:
+            return f"{TOOL_ERROR}: shell 类型缺少 'command' 字段"
+        if not str(data["command"]).strip():
+            return f"{TOOL_ERROR}: shell 类型的 'command' 不能为空"
     if atype == "agent" and "message" not in data:
         return f"{TOOL_ERROR}: agent 类型缺少 'message' 字段"
     if atype == "py" and "code" not in data:
@@ -25,6 +28,8 @@ def _validate_action(action: str) -> str | None:
     if atype == "monitor":
         if "command" not in data:
             return f"{TOOL_ERROR}: monitor 类型缺少 'command' 字段"
+        if not str(data["command"]).strip():
+            return f"{TOOL_ERROR}: monitor 类型的 'command' 不能为空"
         if "agent" not in data or not isinstance(data["agent"], dict):
             return f'{TOOL_ERROR}: monitor 类型缺少 "agent" 字段(对象)。示例: {{"agent": {{"message": "处理异常"}}}}'
         if "message" not in data["agent"]:

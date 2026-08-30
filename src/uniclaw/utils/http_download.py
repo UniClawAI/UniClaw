@@ -41,12 +41,12 @@ def time_format(seconds: float) -> str:
         return f"{seconds}s"
     minutes, secs = divmod(seconds, 60)
     if minutes < 60:
-        return f"{minutes:02d}:{secs:02d}"
+        return f"{int(minutes):02d}:{int(secs):02d}"
     hours, minutes = divmod(minutes, 60)
     if hours < 24:
-        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+        return f"{int(hours):02d}:{int(minutes):02d}:{int(secs):02d}"
     days, hours = divmod(hours, 24)
-    return f"{days}d{hours:02d}:{minutes:02d}:{secs:02d}"
+    return f"{days}d{int(hours):02d}:{int(minutes):02d}:{int(secs):02d}"
 
 
 def calculate_checksum(path: Path, algorithm: str = "sha256") -> str:
@@ -541,6 +541,10 @@ class HttpDownloader(BaseDownloader):
                     raise IOError(
                         f"下载不完整: 期望 {self.progress.total_size} 字节, 实际 {actual_size} 字节"
                     )
+                # 无 Content-Length(chunked)时用磁盘实际大小回填 total_size,
+                # 让完成摘要显示真实大小而非 0.00B
+                if self.progress.total_size <= 0:
+                    self.progress.total_size = actual_size
 
                 # 校验完整性(可选)
                 self._verify_checksum()

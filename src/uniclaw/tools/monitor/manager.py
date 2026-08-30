@@ -148,6 +148,12 @@ class MonitorManager:
                         self._notify_match,
                     )
                     monitor.pty = session
+                except ModuleNotFoundError:
+                    return (
+                        f"{TOOL_ERROR}: ConPTY 启动失败 - pywinpty 未安装。\n"
+                        "Windows ConPTY 可视模式需要 pywinpty 库。\n"
+                        "请执行: uv add pywinpty"
+                    )
                 except Exception as e:
                     return f"{TOOL_ERROR}: ConPTY 启动失败 - {e}"
                 if visible:

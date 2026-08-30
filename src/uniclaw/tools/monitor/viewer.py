@@ -506,7 +506,7 @@ if raw_term:
                         i += 1
                     continue
                 # DCS / APC / PM 与 OSC 一样以 BEL 或 ST(ESC \\) 结束。
-                # WSL 退出时会发送 ST；未处理时会残留一个反斜杠,
+                # WSL 退出时会发送 ST;未处理时会残留一个反斜杠,
                 # 随后所有输入都会在错误的屏幕状态上绘制。
                 if i + 1 < n and text[i + 1] in "P^_":
                     i += 2
