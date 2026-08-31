@@ -11,6 +11,7 @@
 
 - 🤖 **智能代理**: 基于 OpenAI SDK 和 Anthropic SDK 的全异步对话式 AI 助手,多 provider 自动路由,支持 reasoning_content 和思考标签流式解析,内置死循环检测防止工具调用陷入无限循环
 - 🔄 **多模型 Fallback**: 主模型失败时自动切换到备用模型,支持 `model_name` 列表配置多个模型,提高可用性
+- 🩺 **错误分类重试**: 内置错误分类器将 LLM 调用错误分为六类(RATE_LIMIT/CONTEXT_OVERFLOW/AUTH/SERVER_ERROR/TIMEOUT/UNKNOWN),按分类采用差异化重试与退避策略(CONTEXT_OVERFLOW 先压缩会话再重试,指数/线性退避)
 - 🎓 **顾问模型**: 配置 `large_model_name` 作为顾问模型,遇到难题时可同时咨询多个更强力模型获取第二意见
 - 🔍 **工具注册表**: BM25 智能工具搜索,核心工具常驻加载 + 扩展工具按需发现(search_tools 元工具),LRU + 能量机制(每工具 30 点能量,每轮-1,调用/搜索恢复满,归零淘汰)自动管理已加载工具,优化 prompt 缓存
 - 🌐 **WebUI 界面**: 基于 WebSocket 的 Web 用户界面,支持浏览器中与 AI 对话,可局域网共享,支持移动端响应式设计和触摸手势,支持 HTTPS 和 IPv6
@@ -43,9 +44,14 @@
 - 📊 **上下文管理**: 自动监控和管理对话上下文长度,三级压力策略自动压缩(50%/70%/85%)
 - 🎯 **目标模式**: 设置目标停止条件,agent 停止时用独立 judge 模型评估是否达成,未达标则自动继续工作
 - 🌐 **平台搜索**: 支持 GitHub/arXiv/Stack Overflow/Hacker News/B站等多平台并发搜索
-- 🔎 **智能搜索**: webSearch 自动切换 Exa 语义搜索 → Bing → DuckDuckGo,内置 Exa MCP 服务器
+- 📚 **扩展搜索平台**: 新增 OpenAlex/Google News/Reddit/Polymarket/SEC EDGAR/HuggingFace(models/datasets)/alphaXiv 等学术与数据搜索平台,OpenAlex 支持 429 重试,HuggingFace 支持 models/datasets 两种类型
+- 🔎 **智能搜索**: webSearch 自动切换 Exa 语义搜索 → Bing → DuckDuckGo,内置 Exa MCP 服务器,支持时间范围过滤(time_range)和 LLM 智能重排
 - 🌍 **浏览器自动化**: 基于 Playwright 的浏览器控制,支持导航/点击/输入/截图/JS 执行等操作
 - ⬇️ **HTTP 下载**: 多协程并发下载、断点续传、代理支持、自动重试和文件校验,支持同步/异步两种模式
+- 🎞️ **M3U8/HLS 流下载**: 支持 M3U8/HLS 流媒体下载,自动解析主/子流,支持自定义请求头、重试、代理和断点续传,与 HTTP 下载管理器分离
+- 🔄 **可视终端监控**: 后台进程支持 `visible` 参数弹出真实控制台窗口(基于 ConPTY 伪终端),用户可直接交互,支持屏幕快照、窗口尺寸同步、输入转发和多行命令检测
+- 🔁 **进程重启**: WebUI 模式支持 `restart_agent` 工具自动重启自身进程,优雅保存会话后热更新代码,重启后自动恢复会话并唤醒 agent
+- 📋 **知识图谱混合搜索**: 实体搜索支持 FTS5 前缀匹配 + LIKE 子串回退的混合查询,中英文混合查询均可用,并覆盖实体别名表
 - 🔌 **插件系统**: 用户级外部工具插件动态加载,`~/.UniClaw/plugins/tools/` 目录放置 `.py` 文件即可热加载,支持多文件拆分、生命周期钩子、内置工具重名检测
 - 🔨 **工具插件锻造**: `/tool-plugin-forge` 技能一键生成工具插件,自动捕获意图 → 检查重名 → 生成代码 → 真实加载验证,支持耗时任务异步唤醒模式
 - 🎯 **技能系统**: 可扩展的技能机制,支持自定义任务模板和工作流
@@ -786,6 +792,7 @@ uniclaw --mode webui
 - ✅ **多媒体附件** — 支持图片、音频、视频等多媒体文件作为附件发送给 AI 分析
 - ✅ **文件大小限制** — 自动限制上传文件大小,防止过大的文件影响性能
 - ✅ **登录自动跳转** — 已登录用户打开页面时自动跳转到聊天界面
+- ✅ **进程热更新重启** — AI 可调用 `restart_agent` 工具重启自身进程,优雅保存会话后拉起新进程,重启后自动恢复会话并唤醒 agent;前端实时提示服务器重启状态
 - ✅ **跨会话通知** — 非活跃会话的消息触发注意力指示器和 toast 通知
 - ✅ **移动端响应式设计** — 完美适配手机和平板设备,支持触摸手势操作
 - ✅ **侧边栏树形分类** — 会话列表按项目分组显示,支持折叠/展开,便于管理多项目会话
@@ -960,28 +967,28 @@ UniClaw 提供了丰富的内置工具,AI 助手可以自动调用这些工具�
 提供持久化 Python 交互式执行环境,变量在多次调用间保持,支持 IPython 魔术命令：
 
 - **ipython_start** - 启动 IPython 内核(支持多内核并行,通过 kernel_id 区分)
-- **ipython_execute** - 在内核中执行 Python 代码(支持魔术命令如 `%timeit`、`%matplotlib`、`%pip` 等,自动启动默认内核)
-- **ipython_inspect** - 检查变量详细信息(类型、值、长度、形状、文档字符串)
+- **ipython_execute** - 在内核中执行 Python 代码(支持魔术命令如 `%timeit`、`%matplotlib`、`%pip` 等,自动启动默认内核;内核执行串行化,同一时间只执行一个代码块,避免并发读取 iopub 队列导致消息错乱)
+- **ipython_inspect** - 检查变量详细信息(类型、值、长度、形状、文档字符串,对 NameError 给出更明确的未定义变量提示)
 - **ipython_vars** - 列出当前所有用户变量(支持按类型过滤)
 - **ipython_history** - 获取代码执行历史
 - **ipython_stop** - 停止内核并释放资源
 - **ipython_list_kernels** - 列出所有运行中的内核
 
-> 💡 **使用场景**：IPython 工具提供持久化执行环境,适合需要跨多次调用保持状态的场景,如数据分析、变量调试、包管理等。
+> 💡 **使用场景**：IPython 工具提供持久化执行环境,适合需要跨多次调用保持状态的场景,如数据分析、变量调试、包管理等。内核启动失败时会自动输出详细的进程状态和诊断信息(写入诊断文件),便于排查问题。
 
 > ⚠️ **资源管理**：IPython 内核会持续占用系统资源,用完后请调用 `ipython_stop` 关闭。
 
 #### Web 工具
 
 - **webFetch** - 抓取网页内容并提取纯文本(自动清理 HTML 标签)
-- **webSearch** - 多引擎自动切换网络搜索(Exa 语义搜索 → Bing → DuckDuckGo)
-  - 配置 `EXA_API_KEY` 后优先使用 Exa AI 语义搜索引擎,结果质量更高
-  - 未配置或 Exa 失败时自动降级到 Bing(国内直连,无需代理)
-  - Bing 失败时再降级到 DuckDuckGo(需代理)
-  - 自动缓存搜索结果(64条,10分钟过期)
-  - 返回格式化的搜索结果(标题、链接、摘要)
-- **platform_search** - 在指定平台搜索内容,支持 GitHub/arXiv/Stack Overflow/Hacker News/B站
-  - 支持多平台并发搜索(platform 参数用逗号分隔,或 "all" 搜索全部)
+  - 基于 token 数截断(`max_tokens` 参数),返回统一的元数据头部(HTTP 状态码、内容类型、页面标题)
+  - 支持 `raw=True` 返回完整 HTML 源码(不清理标签),保留段落结构
+- **webSearch** - 并发搜索多个平台并合并结果,默认只搜 Exa(通用网页搜索),支持按需指定平台:GitHub/arXiv/Stack Overflow/Hacker News/B站/Reddit/Google News/OpenAlex/Polymarket/SEC EDGAR/HuggingFace/alphaXiv/Exa/Bing/DuckDuckGo(`platforms="all"` 全平台)
+  - 各平台独立并发搜索,失败平台的错误信息附在末尾,不影响其他平台结果
+  - Exa 需配置 `EXA_API_KEY`,Bing 国内直连(无需代理),DuckDuckGo 需代理
+  - 结果超过阈值自动用 LLM 重排,失败平台的错误信息会附在末尾
+  - 支持 `time_range` 时间范围过滤(预设如 "7d"/"1y" 或 ISO 区间)
+  - 支持 `intent` 搜索意图描述,供 LLM 重排时判断相关度参考
   - 自动缓存搜索结果(128条,10分钟过期)
   - GitHub 支持 repositories/code/issues/users 类型和 stars/forks/updated 排序
   - 支持 `GITHUB_TOKEN` 环境变量提高 GitHub API 速率限制
@@ -1005,6 +1012,21 @@ HTTP/HTTPS 文件下载引擎,支持多协程并发、断点续传、代理、�
   - 暂停/恢复/取消下载任务
   - 列出所有下载任务
 - **http_download_remove** - 删除指定的下载任务记录(清理已完成或已取消的任务)
+
+#### M3U8/HLS 流下载 🎞️
+
+M3U8/HLS 流媒体下载引擎,与 HTTP 下载管理器分离,独立管理异步任务：
+
+- **m3u8_download** - 下载 M3U8/HLS 视频流
+  - **多分辨率选择**: 播放列表为主播放列表(含多个 `#EXT-X-STREAM-INF`)时自动列出可用分辨率,通过 `variant` 参数指定清晰度(序号或分辨率);媒体播放列表(直接含 TS 分片)无需 variant 直接下载
+  - **多协程并发**: 默认 8 个协程并发下载分片,大幅提速
+  - **AES-128 解密**: 自动解析并解密加密分片
+  - **断点续传**: 已下载分片自动跳过,中断后可继续
+  - **自定义请求头**: 支持代理、Cookie 等登录场景
+  - **异步模式**: `async_mode=True` 时后台下载并立即返回任务 ID
+  - **自动合并**: 下载完成后自动合并为单个 TS 文件
+- **m3u8_download_status** - 查看或管理 m3u8 异步下载任务(暂停/恢复/取消,或列出所有任务)
+- **m3u8_download_remove** - 删除已完成的 M3U8 下载任务,释放内存
 
 **使用示例**:
 ```
@@ -1194,7 +1216,7 @@ http_download(
 #### 任务清单工具 📋
 
 - **todolist_create** - 创建任务清单(支持任务分解和状态管理)
-- **todolist_update** - 更新任务状态(pending → in_progress → completed)
+- **todolist_update** - 更新任务状态(pending → in_progress → completed,全部完成后自动提示清理清单并汇报完成情况)
 - **todolist_clear** - 清空任务清单
 - **todolist_list** - 列出当前任务清单
 - **todolist_cancel** - 取消任务清单
@@ -1204,12 +1226,15 @@ http_download(
 #### 监控工具 🔄
 
 - **monitor_start** - 启动后台进程(异步实现,支持可选的 watch_pattern 监控匹配)
+  - **可视模式**: `visible=True` 时弹出真实控制台窗口(基于 ConPTY 伪终端),进程输出实时显示,用户可直接在窗口内输入与进程交互,适合需要登录账号、输入验证码、确认交互式安装提示等 AI 无法独立完成的步骤
 - **monitor_stop** - 停止指定进程
-- **monitor_list** - 列出所有后台进程
+- **monitor_list** - 列出所有后台进程(运行中的进程实时跟踪,已结束条目保留可查询)
 - **monitor_output** - 获取进程输出
+- **monitor_screen** - 获取控制台当前屏幕快照(类似 tmux capture-pane,含提示符同行、未回车键入内容、vim/htop 全屏界面;非可视模式退化为返回全部输出历史)
 - **monitor_input** - 向进程发送输入
 - **monitor_get_matched** - 获取监控匹配结果
 - **monitor_update_pattern** - 动态修改监控匹配模式
+- **monitor_clear** - 批量清理所有已结束的监控条目(运行中的进程保留)
 
 #### Hook 系统工具 🪝
 
@@ -1275,7 +1300,7 @@ http_download(
 
 **查询工具：**
 - **kg_get_entity** - 获取实体详细信息(含关系)
-- **kg_search** - FTS5 全文搜索实体
+- **kg_search** - 智能搜索实体(FTS5 前缀匹配 + LIKE 子串回退的混合查询,支持中英文,覆盖实体别名表)
 - **kg_neighbors** - 获取实体邻居(支持多跳遍历)
 - **kg_path** - 查找两个实体之间的路径
 - **kg_list** - 列出实体(支持类型过滤)
@@ -1303,6 +1328,8 @@ http_download(
 - **rag_search** - 在指定集合中语义检索,返回最相关的文档片段
   - 支持 `score_threshold` 过滤低相关度结果
   - 支持 `top_k` 控制返回数量
+  - 多路召回(向量语义 + BM25 关键词)+ RRF 融合 + LLM 重排序
+  - 支持 `intent` 搜索意图参数:传入非空意图描述时自动启用 LLM 重排序,提升相关性判断
 - **rag_list_collections** - 列出所有 RAG 集合及其统计信息(文档数量、描述等)
 - **rag_delete_collection** - 删除指定集合及其所有文档
 - **rag_set_desc** - 设置或更新集合描述,便于后续检索时识别
@@ -1524,10 +1551,11 @@ UniClaw/
     │   ├── openai_provider.py
     │   ├── anthropic_provider.py
     │   ├── thought_parser.py   # 流式解析 <thought>/<think> 标签
+    │   ├── error_classifier.py  # 错误分类器:六类错误分类 + 差异化重试策略
     │   ├── types.py        # Provider/Effort 枚举,StreamChunk,AIMessage
     │   └── common.py       # get_provider(),compare_urls()
     │
-    ├── commands/           # 斜杠命令系统 📝 (31 个命令 + 8 个别名)
+    ├── commands/           # 斜杠命令系统 📝 (31 个命令 + 7 个别名)
     │   ├── __init__.py     # 命令注册中心(COMMANDS dict)
     │   ├── session.py      # 会话管理(clear/compact/export)
     │   ├── resume.py       # 会话恢复(list/del/search/fork) 💬
@@ -1581,12 +1609,36 @@ UniClaw/
     │   ├── fs.py           # 文件系统(Read/Write/Edit/Glob)
     │   ├── shell.py        # Shell(Bash/Grep/Everything)
     │   ├── web.py          # Web(webFetch/webSearch)
-    │   ├── search.py       # 平台搜索(GitHub/arXiv/Stack Overflow 等)
-    │   ├── download/       # HTTP 下载(多协程并发 + 断点续传) ⬇️
-    │   │   ├── tools.py    # 工具定义(http_download/status/remove)
-    │   │   └── manager.py  # 异步下载任务管理器
+    │   ├── search/         # 多平台搜索(GitHub/arXiv/Stack Overflow/B站等)
+    │   │   ├── tools.py    # 搜索入口 + 工具定义(webSearch 多平台并发)
+    │   │   ├── base.py     # 基础搜索类(带重试的 HTTP 请求)
+    │   │   ├── exa.py      # Exa 语义搜索(优先引擎)
+    │   │   ├── bing.py     # Bing 搜索(国内直连,无需代理)
+    │   │   ├── duckduckgo.py # DuckDuckGo 搜索降级
+    │   │   ├── github.py   # GitHub 搜索(repos/code/issues/users)
+    │   │   ├── huggingface.py # HuggingFace 搜索(models/datasets)
+    │   │   ├── openalex.py # OpenAlex 学术搜索(429 重试)
+    │   │   ├── arxiv.py    # arXiv 论文搜索
+    │   │   ├── alphaxiv.py # alphaXiv 论文讨论搜索
+    │   │   ├── stackoverflow.py # Stack Overflow 搜索
+    │   │   ├── hackernews.py # Hacker News 搜索
+    │   │   ├── bilibili.py # B站视频搜索
+    │   │   ├── google_news.py # Google News 搜索
+    │   │   ├── reddit.py   # Reddit 搜索
+    │   │   ├── polymarket.py # Polymarket 预测市场搜索
+    │   │   ├── sec_edgar.py # SEC EDGAR 金融搜索
+    │   │   └── time_range.py # 时间范围过滤
+    │   ├── download/       # HTTP + M3U8 下载引擎 ⬇️
+    │   │   ├── tools.py    # 工具聚合入口(统一导出 HTTP 与 M3U8 工具)
+    │   │   ├── manager.py  # 下载任务管理器(HTTP/M3U8 独立管理)
+    │   │   ├── http_tools.py # HTTP/HTTPS 下载工具(多协程并发 + 断点续传)
+    │   │   ├── m3u8.py     # M3U8/HLS 核心解析引擎(AES-128 解密 + 合并)
+    │   │   └── m3u8_tools.py # M3U8 下载工具定义
     │   ├── media.py        # 多媒体(ReadMedia 多模态 + GenerateImage 文生图)
-    │   ├── sandbox.py      # 代码沙箱(Docker 隔离执行)
+    │   ├── sandbox/        # 代码沙箱(Docker 容器/镜像管理)
+    │   │   ├── tools.py    # 工具定义(DockerCreate/Exec/Pull/Build 等)
+    │   │   ├── manager.py  # 沙箱管理器(容器生命周期跟踪)
+    │   │   └── models.py   # 数据模型
     │   ├── plan.py         # 计划模式(enter/exit)
     │   ├── sleep.py        # 异步等待
     │   ├── ask.py          # 用户交互(AskUserQuestion)
@@ -1604,14 +1656,23 @@ UniClaw/
     │   ├── multi_agent/    # 多智能体(全异步 + worktree 隔离)
     │   ├── mcp/            # MCP 集成 🔌
     │   ├── memory/         # 记忆系统(FTS5 检索 + 自动整合 + 自动保存) 🧠
-    │   ├── session/        # 会话持久化 + 历史消息检索 + 自动保存 💬
     │   ├── knowledge/      # 知识图谱(实体/关系管理 + 自动提取 + 可视化) 🗺️
     │   │   ├── __init__.py
     │   │   ├── graph.py    # 核心图谱类(SQLite + FTS5)
     │   │   ├── tools.py    # 工具定义(16 个工具)
     │   │   └── context.py  # 上下文注入
     │   ├── todolist/       # 任务清单 + 监工 + 目标系统 📋
-    │   ├── monitor/        # 后台进程管理(异步) 🔄
+    │   ├── monitor/        # 后台进程管理(异步 + ConPTY 可视终端) 🔄
+    │   │   ├── tools.py    # 工具定义(monitor_start/stop/screen/clear 等)
+    │   │   ├── manager.py  # 监控管理器(运行/已结束条目管理)
+    │   │   ├── models.py   # 数据模型
+    │   │   ├── pty_session.py # ConPTY 伪终端会话
+    │   │   └── viewer.py   # 可视终端窗口(跨平台终端查找)
+    │   ├── restart/        # 进程重启(WebUI 热更新) 🔁
+    │   │   ├── tools.py    # restart_agent 工具定义
+    │   │   ├── manager.py  # 重启编排(保存会话/关闭服务)
+    │   │   ├── relauncher.py # 重启执行与进程拉起
+    │   │   └── resumer.py  # 新进程侧会话恢复
     │   ├── session/        # 会话持久化 + 历史消息检索 + 自动保存 💬
     │   ├── hooks/          # Hook 系统 🪝
     │   ├── tts/            # 语音合成(TTS) 🔊
@@ -1640,6 +1701,7 @@ UniClaw/
     │
     ├── utils/              # 实用工具
     │   ├── checkpoint.py   # 文件快照检查点系统
+    │   ├── downloader.py   # 下载器抽象基类(HttpDownloader/M3u8Downloader 公共接口)
     │   ├── http_download.py # HTTP 下载引擎(多协程并发 + 断点续传)
     │   ├── usage.py        # Token 用量统计 + OpenRouter 定价
     │   ├── tokenize.py     # 分词(BM25 索引用)
@@ -1662,15 +1724,15 @@ UniClaw/
 
 采用核心/扩展工具分层架构,对齐 Anthropic 的 `defer_loading` 模式：
 
-- **核心工具** (17 个 + 1 个元工具 `search_tools`): 始终加载完整 schema,是 prompt 缓存的稳定前缀
+- **核心工具** (16 个 + 1 个元工具 `search_tools`): 始终加载完整 schema,是 prompt 缓存的稳定前缀
   - 文件系统: `Read`, `Write`, `Edit`, `Glob`
   - Shell: `Bash`, `Grep`
-  - Web: `webFetch`, `webSearch`, `platform_search`
+  - Web: `webFetch`(抓取网页), `webSearch`(多平台搜索, 默认 Exa)
   - 记忆: `memory_save/delete/list/search`
   - 计划: `enter/exit_plan_mode`
   - 技能: `skill_suggest/read`
   - 元工具: `search_tools`（按需发现和加载扩展工具）
-- **扩展工具** (145 个): 初始不加载,通过 `search_tools` 元工具按需发现
+- **扩展工具** (170 个): 初始不加载,通过 `search_tools` 元工具按需发现
   - 基于 BM25 算法搜索,支持中英文关键词 + 语义同义词
   - **LRU + 能量机制**: 每个扩展工具初始 30 点能量,每轮对话 -1,被调用或搜索命中恢复满能量,归零自动卸载;最多同时加载 25 个扩展工具,超出时按 LRU 顺序淘汰能量最低者
   - 搜索结果自动注入到当前任务的可用工具集
@@ -1686,6 +1748,7 @@ UniClaw/
 
 - **ProviderProfile**: 每个 provider 独立配置 protocol/api_key/base_url,支持 OpenAI 和 Anthropic 两种协议
 - **Fallback 机制**: `model_name` 列表支持多模型 fallback,主模型失败时自动切换下一个;`provider/fallback.py` 提供 `chat()`/`achat()` 包装,支持 model_name 为 list 时按顺序回退
+- **错误分类器**: `provider/error_classifier.py` 将 LLM 调用错误分为六类(RATE_LIMIT/CONTEXT_OVERFLOW/AUTH/SERVER_ERROR/TIMEOUT/UNKNOWN),每类采用不同的重试策略——AUTH/UNKNOWN 不重试立即回退下一模型,CONTEXT_OVERFLOW 先压缩会话再重试,RATE_LIMIT 指数退避,SERVER_ERROR 线性退避
 - **顾问模型**: `large_model_name` 配置顾问模型列表,AI 遇到难题时可通过 `ask_advisor` 工具并发咨询多个更强力模型
 - **OpenAI SDK**: 流式 + 异步,支持 `reasoning_content` 和思考模型
 - **Anthropic SDK**: 等价接口,自动路由
@@ -1765,7 +1828,7 @@ UniClaw 内置基于 SQLite 的知识图谱系统,支持实体和关系的管理
 ### 核心特性
 
 - **双层管理**: 用户级(跨项目共享)和项目级独立管理
-- **全文搜索**: 基于 SQLite FTS5 的高效搜索
+- **智能搜索**: 基于 SQLite FTS5 前缀匹配 + LIKE 子串回退的混合查询,支持中英文混合搜索(中文自动添加 `*` 前缀通配),并覆盖实体别名表扩展搜索范围
 - **智能提取**: AI 自动从文本或文件中提取实体和关系
 - **路径发现**: 查找实体间的关联路径(多跳遍历)
 - **实体合并**: 去重操作,自动转移关系和别名
