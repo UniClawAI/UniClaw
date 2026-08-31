@@ -503,6 +503,7 @@ const Chat = {
         if (name === 'Edit' && content) {
             body.innerHTML += `<div class="tool-result">${this._renderEditDiff(args, content)}</div>`;
         } else if (name === 'send_file' && content) {
+            // send_file: 文本文件渲染 Markdown,其他文件显示下载图标
             const fileHtml = this._renderFileDownload(content);
             if (fileHtml) {
                 body.innerHTML += `<div class="tool-result"><div class="tool-result-label">输出</div>${fileHtml}</div>`;
@@ -1110,7 +1111,7 @@ _showLightbox(url) {
             } else {
                 body.innerHTML = '';
                 if (msg.args && Object.keys(msg.args).length) body.innerHTML += `<div class="tool-args"><div class="tool-args-label">参数</div><pre>${Utils.escapeHtml(this._formatJson(msg.args))}</pre></div>`;
-                // send_file 工具: 显示下载图标
+                // send_file 工具: 文本文件渲染 Markdown,其他文件显示下载图标
                 if (msg.name === 'send_file' && msg.content) {
                     const fileHtml = this._renderFileDownload(msg.content);
                     if (fileHtml) {
@@ -1189,8 +1190,16 @@ _showLightbox(url) {
         }).catch(() => { const a = document.getElementById('todolist-area'); if (a) a.style.display = 'none'; });
     },
 
-    /** 解析 send_file 工具返回的文件下载标记,生成 HTML */
+    /** 解析 send_file 工具返回的标记:
+     *  [show_doc:...] → 文本文件,异步拉取内容并渲染为 Markdown
+     *  [file_download:...] → 其他文件,显示下载图标
+     */
     _renderFileDownload(content) {
+        // 文本文件预览标记
+        const docMatch = content.match(/^\[show_doc:([a-f0-9]+):(.+?):(\d+)\]/);
+        if (docMatch) return this._renderShowDoc(docMatch[1], docMatch[2], parseInt(docMatch[3]));
+
+        // 普通下载标记
         const match = content.match(/\[file_download:([a-f0-9]+):(.+?):(\d+)\]/);
         if (!match) return null;
         const fileId = match[1];
@@ -1204,6 +1213,42 @@ _showLightbox(url) {
             return `<div class="file-download expired"><span class="file-download-icon">📄</span><span class="file-download-name">${Utils.escapeHtml(fileName)}</span></div>`;
         }
         return `<div class="file-download" onclick="window.open('/api/files/download?file_id=${fileId}', '_blank')" title="点击下载\n有效期至: ${formattedTime}"><span class="file-download-icon">📄</span><span class="file-download-name">${Utils.escapeHtml(fileName)}</span></div>`;
+    },
+
+    /** 渲染文本文件预览(fileId, fileName, expiresAt),异步拉取内容并渲染为 Markdown */
+    _renderShowDoc(fileId, fileName, expiresAt) {
+        const now = Math.floor(Date.now() / 1000);
+        const expired = now > expiresAt;
+        const uid = `showdoc-${fileId}-${Date.now()}`;
+
+        let html = `<div class="show-doc" id="${uid}">`;
+        html += `<div class="show-doc-header">📄 ${Utils.escapeHtml(fileName)}${expired ? '<span class="show-doc-expired">(链接已过期)</span>' : ''}</div>`;
+        if (expired) {
+            html += `<div class="show-doc-body"><div class="show-doc-error">链接已过期,无法显示内容</div></div>`;
+        } else {
+            html += `<div class="show-doc-body"><div class="show-doc-loading">加载中...</div></div>`;
+        }
+        html += `</div>`;
+
+        if (!expired) {
+            const token = localStorage.getItem('uniclaw_token');
+            const headers = token ? { 'Authorization': 'Bearer ' + token } : {};
+            fetch(`/api/files/download?file_id=${fileId}`, { headers })
+                .then(r => { if (!r.ok) throw new Error('load failed'); return r.text(); })
+                .then(text => {
+                    const body = document.getElementById(uid)?.querySelector('.show-doc-body');
+                    if (!body) return;
+                    const rendered = Utils.renderMarkdown(text || '');
+                    body.innerHTML = rendered || '<div class="show-doc-error">(空文件)</div>';
+                    Utils.addCopyButtons(body);
+                })
+                .catch(() => {
+                    const body = document.getElementById(uid)?.querySelector('.show-doc-body');
+                    if (body) body.innerHTML = '<div class="show-doc-error">内容加载失败</div>';
+                });
+        }
+
+        return html;
     },
 
     _onEnd(msg) {

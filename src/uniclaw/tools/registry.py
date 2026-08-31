@@ -1052,6 +1052,16 @@ def _build_extended_keywords() -> dict[str, list[str]]:
             "download file",
             "提供文件",
             "文件下载",
+            "显示文件",
+            "展示文件",
+            "显示文档",
+            "show file",
+            "show document",
+            "展示内容",
+            "直接显示",
+            "预览文件",
+            "文档显示",
+            "显示计划书",
         ],
         # 微信工具
         wechat_list_contacts.name: [
@@ -1679,7 +1689,7 @@ def _build_tool_categories() -> dict[str, str]:
         list_builtin_tools.name: "帮助",
         # TTS 工具
         text_to_speech.name: "TTS",
-        send_file.name: "文件发送",
+        send_file.name: "文件",
         # 微信工具
         wechat_list_contacts.name: "微信",
         wechat_send_text.name: "微信",

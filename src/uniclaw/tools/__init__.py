@@ -164,7 +164,7 @@ async def get_tools(config) -> list:
         *search_get_tools(),
         *help_get_tools(),
         *tts_get_tools(config),
-        *send_file_get_tools(),
+        *send_file_get_tools(config),
         *wechat_get_tools(),
         *knowledge_get_tools(),
         *advisor_get_tools(config),

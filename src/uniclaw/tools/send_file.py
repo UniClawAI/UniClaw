@@ -1,4 +1,9 @@
-"""文件发送工具 — 将文件发送给用户。"""
+"""文件发送工具 — 将文件发送给用户。
+
+WebUI 模式下:
+- 文本文件: 返回 [show_doc:...] 标记,前端直接渲染 Markdown(内容不进入模型上下文)
+- 其他文件: 返回 [file_download:...] 标记,前端显示下载图标
+"""
 
 import time
 import uuid
@@ -13,6 +18,9 @@ _file_downloads: dict[str, dict] = {}
 
 # 默认下载链接有效期(分钟)
 DEFAULT_EXPIRE_MINUTES = 30
+
+# 文本预览大小上限(超过则只提供下载)
+MAX_PREVIEW_SIZE = 5 * 1024 * 1024
 
 
 def _cleanup_expired():
@@ -44,6 +52,21 @@ def get_download(file_id: str) -> dict | None:
     return _file_downloads.get(file_id)
 
 
+def _is_text_file(p: Path) -> bool:
+    """判断文件是否为可预览的文本文件(UTF-8 可解码且无 NUL 字节)。"""
+    if p.stat().st_size > MAX_PREVIEW_SIZE:
+        return False
+    try:
+        with p.open("rb") as f:
+            head = f.read(MAX_PREVIEW_SIZE)
+        if b"\x00" in head:
+            return False
+        head.decode("utf-8")
+        return True
+    except (UnicodeDecodeError, OSError):
+        return False
+
+
 @tool
 async def send_file(
     file_path: str,
@@ -53,7 +76,8 @@ async def send_file(
 ) -> str:
     """发送文件给用户。
 
-    WebUI 模式下前端会收到下载链接,WeChat 模式下直接发送文件,Console 模式下忽略。
+    WebUI 模式下: 文本文件直接在前端渲染 Markdown 显示,其他文件提供下载链接。
+    WeChat 模式下直接发送文件,Console 模式下忽略。
 
     Args:
         file_path: 文件的绝对路径或相对于工作目录的路径
@@ -84,8 +108,10 @@ async def send_file(
     # 根据当前模式直接发送
     if config.is_webui:
         # WebUI: 生成临时下载 ID,返回包含 file_id 和过期时间的标记
-        # 前端解析 [file_download:id:name:expires_at] 后显示下载图标
+        # 前端解析标记后: 文本文件直接渲染 Markdown,其他文件显示下载图标
         file_id, expires_at = register_download(p, name, expire_minutes)
+        if _is_text_file(p):
+            return f"[show_doc:{file_id}:{name}:{expires_at}]"
         return f"[file_download:{file_id}:{name}:{expires_at}]"
     else:
         # 微信模式: 通过 bot 直接发送
@@ -101,7 +127,10 @@ async def send_file(
             return f"文件发送不支持当前模式: {name}"
 
 
-def get_tools() -> list:
+def get_tools(config=None) -> list:
+    """获取运行工具列表,Console 模式下不注册 send_file。"""
+    if config is not None and config.is_console:
+        return []
     return [send_file]
 
 
