@@ -1,23 +1,44 @@
 """LLM 调用回退支持 — 当主模型失败时自动尝试备用模型。
 
 提供 chat/achat 的包装版本,支持 model_name 为 list 时按顺序回退。
+每个模型内按错误分类(ErrorCategory)执行差异化重试与退避。
 """
 
 from __future__ import annotations
 
+import asyncio
+import time
 from typing import TYPE_CHECKING
 
 from uniclaw.provider import router
-from uniclaw.utils.logger import get_logger
+from uniclaw.provider.error_classifier import (
+    ErrorCategory,
+    classify_error,
+    get_backoff_delay,
+    get_max_retries,
+)
 from uniclaw.console.ui import warn
 
 if TYPE_CHECKING:
-    from uniclaw.tools.session.session import AIMessage
+    from uniclaw.tools.session.session import AIMessage, Session
+
+
+def _run_async(coro):
+    """在当前线程安全地运行一个协程。
+
+    若当前已有运行中的事件循环(如被流式循环内调用),返回 None 跳过,
+    避免 asyncio.run 在嵌套 loop 中抛 RuntimeError。
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    return None
 
 
 def chat(
     system_prompt: str,
-    session,
+    session: Session,
     *,
     model_name: str | list[str] = "",
     multimodal_model_name: str | None = None,
@@ -30,43 +51,57 @@ def chat(
     response_format: dict | None = None,
     config=None,
 ) -> AIMessage:
-    """同步调用 LLM,支持模型列表回退。
+    """同步调用 LLM,支持模型列表回退与分类重试。
 
     - model_name 为 str 时转为 [model_name] 统一处理
-    - model_name 为 list 时按顺序尝试,出错自动回退下一个模型,成功返回 AIMessage
+    - model_name 为 list 时按顺序尝试,每个模型内按错误分类重试,
+      重试耗尽才回退下一个模型,成功返回 AIMessage
+    - AUTH/UNKNOWN 类错误不重试,立即回退下一个模型
+    - CONTEXT_OVERFLOW 时先尝试压缩会话再重试
     """
     if isinstance(model_name, str):
         model_name = [model_name]
 
     last_error = None
     for model in model_name:
-        try:
-            return router.chat(
-                system_prompt=system_prompt,
-                session=session,
-                model_name=model,
-                multimodal_model_name=multimodal_model_name,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                top_p=top_p,
-                tools=tools,
-                enable_thinking=enable_thinking,
-                thinking=thinking,
-                response_format=response_format,
-                config=config,
-            )
-        except Exception as e:
-            get_logger(
-                "provider.fallback", config.root_dir if config else None
-            ).warning("模型 %s 调用失败: %s, 回退下一个模型", model, e)
-            last_error = e
+        attempt = 0
+        while True:
+            try:
+                return router.chat(
+                    system_prompt=system_prompt,
+                    session=session,
+                    model_name=model,
+                    multimodal_model_name=multimodal_model_name,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    top_p=top_p,
+                    tools=tools,
+                    enable_thinking=enable_thinking,
+                    thinking=thinking,
+                    response_format=response_format,
+                    config=config,
+                )
+            except Exception as e:
+                cat = classify_error(e)
+                _run_async(warn(f"模型 {model} 第 {attempt + 1} 次调用失败: {e} ({cat})", config))
+                max_retries = get_max_retries(cat)
+                if attempt >= max_retries:
+                    _run_async(warn(f"模型 {model} 重试耗尽({cat}),回退下一个模型", config))
+                    last_error = e
+                    break
+                if cat == ErrorCategory.CONTEXT_OVERFLOW:
+                    _run_async(session.maybe_compact(config))
+                delay = get_backoff_delay(cat, attempt + 1)
+                if delay > 0:
+                    time.sleep(delay)
+                attempt += 1
 
     raise last_error or RuntimeError("所有模型调用失败")
 
 
 async def achat(
     system_prompt: str,
-    session,
+    session: Session,
     *,
     model_name: str | list[str] = "",
     multimodal_model_name: str | None = None,
@@ -79,33 +114,49 @@ async def achat(
     response_format: dict | None = None,
     config=None,
 ) -> AIMessage:
-    """异步调用 LLM,支持模型列表回退。
+    """异步调用 LLM,支持模型列表回退与分类重试。
 
     - model_name 为 str 时转为 [model_name] 统一处理
-    - model_name 为 list 时按顺序尝试,出错自动回退下一个模型,成功返回 AIMessage
+    - model_name 为 list 时按顺序尝试,每个模型内按错误分类重试,
+      重试耗尽才回退下一个模型,成功返回 AIMessage
+    - AUTH/UNKNOWN 类错误不重试,立即回退下一个模型
+    - CONTEXT_OVERFLOW 时先尝试压缩会话再重试
     """
     if isinstance(model_name, str):
         model_name = [model_name]
 
     last_error = None
     for model in model_name:
-        try:
-            return await router.achat(
-                system_prompt=system_prompt,
-                session=session,
-                model_name=model,
-                multimodal_model_name=multimodal_model_name,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                top_p=top_p,
-                tools=tools,
-                enable_thinking=enable_thinking,
-                thinking=thinking,
-                response_format=response_format,
-                config=config,
-            )
-        except Exception as e:
-            await warn(f"模型 {model} 调用失败: {e}, 回退下一个模型", config)
-            last_error = e
+        attempt = 0
+        while True:
+            try:
+                return await router.achat(
+                    system_prompt=system_prompt,
+                    session=session,
+                    model_name=model,
+                    multimodal_model_name=multimodal_model_name,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    top_p=top_p,
+                    tools=tools,
+                    enable_thinking=enable_thinking,
+                    thinking=thinking,
+                    response_format=response_format,
+                    config=config,
+                )
+            except Exception as e:
+                cat = classify_error(e)
+                await warn(f"模型 {model} 第 {attempt + 1} 次调用失败: {e} ({cat})", config)
+                max_retries = get_max_retries(cat)
+                if attempt >= max_retries:
+                    await warn(f"模型 {model} 重试耗尽({cat}),回退下一个模型", config)
+                    last_error = e
+                    break
+                if cat == ErrorCategory.CONTEXT_OVERFLOW:
+                    await session.maybe_compact(config)
+                delay = get_backoff_delay(cat, attempt + 1)
+                if delay > 0:
+                    await asyncio.sleep(delay)
+                attempt += 1
 
     raise last_error or RuntimeError("所有模型调用失败")

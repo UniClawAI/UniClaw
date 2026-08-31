@@ -13,12 +13,12 @@ from collections.abc import AsyncIterator, Iterator
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from uniclaw.tools.session.session import AIMessage, StreamChunk
+    from uniclaw.tools.session.session import AIMessage, Session, StreamChunk
 
 
 def stream(
     system_prompt: str,
-    session,
+    session: Session,
     *,
     model_name: str = "",
     multimodal_model_name: str | None = None,
@@ -73,7 +73,7 @@ def stream(
 
 async def astream(
     system_prompt: str,
-    session,
+    session: Session,
     *,
     model_name: str = "",
     multimodal_model_name: str | None = None,
@@ -130,7 +130,7 @@ async def astream(
 
 def chat(
     system_prompt: str,
-    session,
+    session: Session,
     *,
     model_name: str = "",
     multimodal_model_name: str | None = None,
@@ -185,7 +185,7 @@ def chat(
 
 async def achat(
     system_prompt: str,
-    session,
+    session: Session,
     *,
     model_name: str = "",
     multimodal_model_name: str | None = None,
