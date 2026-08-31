@@ -30,7 +30,7 @@ async def search(
         params={"q": query, "limit_per_type": max(limit * 3, 10)},
         headers={"User-Agent": DEFAULT_UA},
         config=config,
-        use_proxy=False,
+        use_proxy=True,
     )
     data = r.json()
     events = data.get("events") or []

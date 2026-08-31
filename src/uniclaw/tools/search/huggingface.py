@@ -1,4 +1,4 @@
-"""HuggingFace Papers 搜索实现。"""
+"""HuggingFace 搜索实现: 支持每日论文(papers/默认)、模型(models)、数据集(datasets)搜索。"""
 
 import os
 from datetime import date
@@ -11,7 +11,18 @@ from .time_range import parse_time_range
 NAME = "huggingface"
 LABEL = "HuggingFace"
 
-_ENDPOINT = "https://huggingface.co/api/daily_papers"
+_ENDPOINT_DAILY_PAPERS = "https://huggingface.co/api/daily_papers"
+_ENDPOINT_MODELS = "https://huggingface.co/api/models"
+_ENDPOINT_DATASETS = "https://huggingface.co/api/datasets"
+
+
+def _fmt_count(n: int) -> str:
+    """格式化下载量/点赞数: 1.2K, 3.4M 等。"""
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M"
+    elif n >= 1_000:
+        return f"{n / 1_000:.1f}K"
+    return str(n)
 
 
 @safe_search
@@ -20,6 +31,158 @@ async def search(
     limit: int,
     sort: str,
     search_type: str,
+    config: AppConfig | None,
+    time_range: str = "",
+) -> str:
+    """HuggingFace 搜索调度: 支持 papers(默认)/models/datasets。
+
+    search_type 参数:
+      - "papers" 或空: 每日论文搜索 (原有逻辑)
+      - "models": 模型搜索
+      - "datasets": 数据集搜索
+    """
+    st = (search_type or "").strip().lower()
+    if st == "models":
+        return await _search_models(query, limit, sort, config)
+    elif st == "datasets":
+        return await _search_datasets(query, limit, sort, config)
+    else:
+        return await _search_papers(query, limit, sort, config, time_range)
+
+
+async def _search_models(
+    query: str,
+    limit: int,
+    sort: str,
+    config: AppConfig | None,
+) -> str:
+    """HuggingFace 模型搜索 (公开 API, 无需认证)。
+
+    支持 sort: downloads(默认), likes, trendingScore, createdAt, lastModified, name
+    """
+    if not query or not query.strip():
+        return "HuggingFace: 无搜索结果"
+
+    sort_val = (sort or "downloads").strip().lower()
+    valid_sorts = {"downloads", "likes", "trendingscore", "createdat", "lastmodified", "name"}
+    if sort_val not in valid_sorts:
+        sort_val = "downloads"
+
+    params = {"search": query, "sort": sort_val, "direction": "-1", "limit": limit}
+    headers = {"User-Agent": DEFAULT_UA}
+
+    r = await http_get(_ENDPOINT_MODELS, params=params, headers=headers, config=config, use_proxy=True)
+    data = r.json()
+    if not isinstance(data, list) or not data:
+        return "HuggingFace: 无搜索结果"
+
+    lines = []
+    count = 0
+    for item in data[:limit]:
+        model_id = item.get("id") or ""
+        if not model_id:
+            continue
+        count += 1
+        author = item.get("author") or ""
+        downloads = int(item.get("downloads") or 0)
+        likes = int(item.get("likes") or 0)
+        pipeline_tag = item.get("pipeline_tag") or ""
+        library_name = item.get("library_name") or ""
+        tags = [t for t in (item.get("tags") or []) if not t.startswith("_")]
+        tag_str = ", ".join(tags[:5]) if tags else ""
+
+        line = f"**{model_id}**"
+        if author:
+            line += f" (by {author})"
+        lines.append(line)
+
+        meta_parts = []
+        if downloads:
+            meta_parts.append(f"📥 {_fmt_count(downloads)} downloads")
+        if likes:
+            meta_parts.append(f"👍 {_fmt_count(likes)} likes")
+        if pipeline_tag:
+            meta_parts.append(f"🏷️ {pipeline_tag}")
+        if meta_parts:
+            lines.append(f"  {' | '.join(meta_parts)}")
+        if library_name:
+            lines.append(f"  📚 {library_name}")
+        if tag_str:
+            lines.append(f"  标签: {tag_str}")
+        lines.append(f"  https://huggingface.co/{model_id}\n")
+
+    if count == 0:
+        return "HuggingFace: 无搜索结果"
+    return f"**HuggingFace 模型搜索结果** ({count} 个):\n\n" + "\n".join(lines)
+
+
+async def _search_datasets(
+    query: str,
+    limit: int,
+    sort: str,
+    config: AppConfig | None,
+) -> str:
+    """HuggingFace 数据集搜索 (公开 API, 无需认证)。
+
+    支持 sort: downloads(默认), likes, trendingScore, createdAt, lastModified, name
+    """
+    if not query or not query.strip():
+        return "HuggingFace: 无搜索结果"
+
+    sort_val = (sort or "downloads").strip().lower()
+    valid_sorts = {"downloads", "likes", "trendingscore", "createdat", "lastmodified", "name"}
+    if sort_val not in valid_sorts:
+        sort_val = "downloads"
+
+    params = {"search": query, "sort": sort_val, "direction": "-1", "limit": limit}
+    headers = {"User-Agent": DEFAULT_UA}
+
+    r = await http_get(_ENDPOINT_DATASETS, params=params, headers=headers, config=config, use_proxy=True)
+    data = r.json()
+    if not isinstance(data, list) or not data:
+        return "HuggingFace: 无搜索结果"
+
+    lines = []
+    count = 0
+    for item in data[:limit]:
+        dataset_id = item.get("id") or ""
+        if not dataset_id:
+            continue
+        count += 1
+        author = item.get("author") or ""
+        downloads = int(item.get("downloads") or 0)
+        likes = int(item.get("likes") or 0)
+        pipeline_tag = item.get("pipeline_tag") or ""
+        tags = [t for t in (item.get("tags") or []) if not t.startswith("_")]
+        tag_str = ", ".join(tags[:5]) if tags else ""
+
+        line = f"**{dataset_id}**"
+        if author:
+            line += f" (by {author})"
+        lines.append(line)
+
+        meta_parts = []
+        if downloads:
+            meta_parts.append(f"📥 {_fmt_count(downloads)} downloads")
+        if likes:
+            meta_parts.append(f"👍 {_fmt_count(likes)} likes")
+        if pipeline_tag:
+            meta_parts.append(f"🏷️ {pipeline_tag}")
+        if meta_parts:
+            lines.append(f"  {' | '.join(meta_parts)}")
+        if tag_str:
+            lines.append(f"  标签: {tag_str}")
+        lines.append(f"  https://huggingface.co/datasets/{dataset_id}\n")
+
+    if count == 0:
+        return "HuggingFace: 无搜索结果"
+    return f"**HuggingFace 数据集搜索结果** ({count} 个):\n\n" + "\n".join(lines)
+
+
+async def _search_papers(
+    query: str,
+    limit: int,
+    sort: str,
     config: AppConfig | None,
     time_range: str = "",
 ) -> str:
@@ -32,7 +195,7 @@ async def search(
     )
     if token:
         headers["Authorization"] = f"Bearer {token}"
-    r = await http_get(_ENDPOINT, headers=headers, config=config, use_proxy=False)
+    r = await http_get(_ENDPOINT_DAILY_PAPERS, headers=headers, config=config, use_proxy=True)
     data = r.json()
     if not isinstance(data, list):
         return "HuggingFace: 无搜索结果"

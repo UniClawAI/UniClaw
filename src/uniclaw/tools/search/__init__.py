@@ -13,6 +13,7 @@ from .base import (
     get_proxy,
     http_get,
     http_get_json,
+    http_get_with_retry,
     safe_search,
     search_cache,
     search_with_timeout,

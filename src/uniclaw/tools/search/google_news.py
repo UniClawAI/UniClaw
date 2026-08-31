@@ -43,6 +43,7 @@ async def search(
         params={"q": q_param, "hl": hl, "gl": gl, "ceid": ceid},
         headers={"User-Agent": DEFAULT_UA},
         config=config,
+        use_proxy=True,
     )
     root = ET.fromstring(r.text)
     channel = root.find("channel")

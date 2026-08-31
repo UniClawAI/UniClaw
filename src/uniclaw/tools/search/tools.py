@@ -1,4 +1,4 @@
-"""平台搜索工具 — 支持 GitHub / arXiv / Stack Overflow / Hacker News / B站 / Reddit / Google News / Semantic Scholar / OpenAlex / Polymarket / SEC EDGAR / HuggingFace / alphaXiv / Exa / Bing / DuckDuckGo。"""
+"""平台搜索工具 — 支持 GitHub / arXiv / Stack Overflow / Hacker News / B站 / Reddit / Google News / OpenAlex / Polymarket / SEC EDGAR / HuggingFace / alphaXiv / Exa / Bing / DuckDuckGo。"""
 
 import asyncio
 import re
@@ -26,7 +26,6 @@ from . import (
     polymarket,
     reddit,
     sec_edgar,
-    semantic_scholar,
     stackoverflow,
 )
 
@@ -39,7 +38,6 @@ PLATFORM_SEARCHERS = {
     "bilibili": bilibili.search,
     "reddit": reddit.search,
     "google_news": google_news.search,
-    "semantic_scholar": semantic_scholar.search,
     "openalex": openalex.search,
     "polymarket": polymarket.search,
     "sec_edgar": sec_edgar.search,
@@ -210,15 +208,16 @@ async def webSearch(
         sort: 排序方式(平台特有), 如 github: stars/forks/updated,
             arxiv: relevance/lastUpdatedDate
         search_type: 搜索类型(平台特有), 如 github: repositories/code/issues,
-            bilibili: video/bangumi
+            bilibili: video/bangumi, huggingface: papers(默认)/models/datasets
         timeout: 单个平台搜索超时秒数(默认 15), 超时返回错误信息
         intent: 搜索意图 (要找什么内容), 供 LLM 重排时判断相关度参考, 可为空
         platforms: 要搜索的平台, 逗号分隔 (如 "github,arxiv"), 默认 "exa"
             只做通用网页搜索。可选平台: github / arxiv / stackoverflow /
-            hackernews / bilibili / reddit / google_news / semantic_scholar /
-            openalex / polymarket / sec_edgar / huggingface / alphaxiv / exa /
+            hackernews / bilibili / reddit / google_news / openalex /
+            polymarket / sec_edgar / huggingface / alphaxiv / exa /
             bing / duckduckgo。按查询内容针对性选择(找代码选 github,
-            查论文选 arxiv/semantic_scholar/openalex, 找视频选 bilibili),
+            查论文选 arxiv/openalex, 找视频选 bilibili,
+            搜模型/数据集选 huggingface + search_type=models/datasets),
             全部平台太耗时, 仅确需全面调研时传 "all"
         time_range: 时间范围过滤, 查询近期内容时使用。支持预设
             ("1d"/"7d"/"30d"/"90d"/"180d"/"1y"/"all") 或 ISO 区间

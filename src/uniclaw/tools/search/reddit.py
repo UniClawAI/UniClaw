@@ -49,7 +49,6 @@ async def search(
     t_val = reddit_t(parse_time_range(time_range)) if time_range.strip() else "month"
     # 使用用户传入的 sort, 无效值回退 relevance (此前硬编码为 relevance 导致用户传入的 sort 被忽略)
     s = sort if sort in _VALID_SORTS else "relevance"
-    # RSS 端点未被墙, 强制直连: 代理出口 IP 是机房地址, 更容易被 Cloudflare 拦
     r = await http_get(
         "https://www.reddit.com/search.rss",
         params={
@@ -60,7 +59,7 @@ async def search(
         },
         headers={"User-Agent": DEFAULT_UA},
         config=config,
-        use_proxy=False,
+        use_proxy=True,
     )
     root = ET.fromstring(r.text)
     entries = root.findall(f"{_ATOM}entry")

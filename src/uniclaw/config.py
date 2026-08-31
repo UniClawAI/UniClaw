@@ -83,7 +83,6 @@ class AppConfig:
     proxy_url: str = ""
     GITHUB_TOKEN: str = ""
     EXA_API_KEY: str = ""
-    SEMANTIC_SCHOLAR_API_KEY: str = ""  # Semantic Scholar 搜索 API key
     hf_token: str = ""  # HuggingFace API token
     research_email: str = ""  # 学术 API 联系邮箱 (OpenAlex / SEC EDGAR)
     google_news_hl: str = ""  # Google News 语言 (如 zh-CN)
@@ -445,7 +444,6 @@ def _create_config_from_data(data: dict[str, Any]) -> AppConfig:
         proxy_url=_normalize_proxy_url(data.get("proxy_url", "")),
         GITHUB_TOKEN=data.get("GITHUB_TOKEN", ""),
         EXA_API_KEY=data.get("EXA_API_KEY", ""),
-        SEMANTIC_SCHOLAR_API_KEY=data.get("SEMANTIC_SCHOLAR_API_KEY", ""),
         hf_token=data.get("hf_token", ""),
         research_email=data.get("research_email", ""),
         google_news_hl=data.get("google_news_hl", ""),
@@ -611,7 +609,6 @@ def load_config(
         proxy_url=_normalize_proxy_url(data.get("proxy_url", "")),
         GITHUB_TOKEN=data.get("GITHUB_TOKEN", ""),
         EXA_API_KEY=data.get("EXA_API_KEY", ""),
-        SEMANTIC_SCHOLAR_API_KEY=data.get("SEMANTIC_SCHOLAR_API_KEY", ""),
         hf_token=data.get("hf_token", ""),
         research_email=data.get("research_email", ""),
         google_news_hl=data.get("google_news_hl", ""),
@@ -662,7 +659,6 @@ def save_config(config: AppConfig) -> None:
         "proxy_url": config.proxy_url,
         "GITHUB_TOKEN": config.GITHUB_TOKEN,
         "EXA_API_KEY": config.EXA_API_KEY,
-        "SEMANTIC_SCHOLAR_API_KEY": config.SEMANTIC_SCHOLAR_API_KEY,
         "hf_token": config.hf_token,
         "research_email": config.research_email,
         "google_news_hl": config.google_news_hl,

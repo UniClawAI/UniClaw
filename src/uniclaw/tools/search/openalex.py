@@ -2,9 +2,16 @@
 
 import os
 
+import httpx
+
 from uniclaw.config import AppConfig
 
-from .base import DEFAULT_UA, http_get, safe_search
+from .base import (
+    DEFAULT_UA,
+    PLATFORM_ERROR,
+    http_get_with_retry,
+    safe_search,
+)
 from .time_range import iso_date, parse_time_range
 
 NAME = "openalex"
@@ -41,13 +48,25 @@ async def search(
     )
     if email:
         params["mailto"] = email
-    r = await http_get(
-        _ENDPOINT,
-        params=params,
-        headers={"User-Agent": DEFAULT_UA},
-        config=config,
-        use_proxy=False,
-    )
+    # OpenAlex 匿名请求偶发 429, 内部指数退避重试 (2s → 4s)
+    try:
+        r = await http_get_with_retry(
+            _ENDPOINT,
+            params=params,
+            headers={"User-Agent": DEFAULT_UA},
+            config=config,
+            use_proxy=False,
+            retries=2,
+            backoff=2.0,
+        )
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 429:
+            return (
+                f"{PLATFORM_ERROR}: OpenAlex 请求限流 (429)。"
+                f"匿名配额当前拥挤, 已自动重试仍失败, 可稍后重试; "
+                f"配置 research_email 或 OPENALEX_EMAIL 可提升配额"
+            )
+        raise
     data = r.json()
     works = data.get("results") or []
     if not works:

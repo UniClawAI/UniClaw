@@ -99,6 +99,46 @@ async def http_get_json(
     return r.json()
 
 
+async def http_get_with_retry(
+    url: str,
+    *,
+    params: dict | None = None,
+    headers: dict | None = None,
+    config: AppConfig | None = None,
+    timeout: int = 15,
+    follow_redirects: bool = True,
+    use_proxy: bool = True,
+    retries: int = 2,
+    backoff: float = 2.0,
+) -> httpx.Response:
+    """带代理与超时的 GET, 并对 429 做指数退避重试。
+
+    某些平台 (如 OpenAlex) 的匿名共享配额会间歇性返回 429,
+    短等待后重试即可恢复, 不应直接判为失败。非 429 错误直接透传。
+
+    Args:
+        retries: 额外重试次数 (总请求数 = retries + 1)
+        backoff: 首次重试等待秒数, 之后每次翻倍并封顶 8s
+    """
+    delay = backoff
+    for attempt in range(retries + 1):
+        try:
+            return await http_get(
+                url,
+                params=params,
+                headers=headers,
+                config=config,
+                timeout=timeout,
+                follow_redirects=follow_redirects,
+                use_proxy=use_proxy,
+            )
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code != 429 or attempt == retries:
+                raise
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, 8.0)
+
+
 def safe_search(func):
     """将平台搜索函数包装为异常安全: 任何失败都返回 PLATFORM_ERROR 信息, 而非抛异常或假装无结果。"""
 
