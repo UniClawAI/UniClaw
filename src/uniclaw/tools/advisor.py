@@ -190,7 +190,15 @@ def get_tools(config=None) -> list:
     仅当配置了顾问模型时才返回工具。
     """
     if not config or not config.large_model_name:
+        if config:
+            config.record_unavailable_tools(
+                [advisor_list.name, ask_advisor.name, investigate.name],
+                "未配置 large_model_name(顾问模型),顾问工具不可用",
+            )
         return []
+    config.clear_unavailable_tools(
+        [advisor_list.name, ask_advisor.name, investigate.name]
+    )
     return [advisor_list, ask_advisor, investigate]
 
 

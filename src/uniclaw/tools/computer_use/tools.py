@@ -489,7 +489,12 @@ WRITE_TOOLS = [
 def get_tools(config) -> list:
     """获取 computer use 工具列表(根据启用状态返回)"""
     if config.computer_use_enabled:
+        config.clear_unavailable_tools([t.name for t in WRITE_TOOLS])
         return READONLY_TOOLS + WRITE_TOOLS
+    config.record_unavailable_tools(
+        [t.name for t in WRITE_TOOLS],
+        "未启用 Computer Use 写入模式",
+    )
     return READONLY_TOOLS
 
 

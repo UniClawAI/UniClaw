@@ -635,17 +635,18 @@ async def get_tools(config=None) -> list:
     ):
         return _tools_cache["result"]
 
-    from uniclaw.console.ui import warn
-
     tools = [Bash, Grep]
 
     _es_err = await _check_es()
     if _es_err:
-        await warn(
-            f"[shell] Everything 不可用: {_es_err},search_files_with_everything 工具已禁用。",
-            config,
-        )
+        if config:
+            config.record_unavailable_tools(
+                [search_files_with_everything.name],
+                f"Everything 不可用: {_es_err}",
+            )
     else:
+        if config:
+            config.clear_unavailable_tools([search_files_with_everything.name])
         tools.append(search_files_with_everything)
 
     _tools_cache["result"] = tools

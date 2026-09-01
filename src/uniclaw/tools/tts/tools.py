@@ -48,7 +48,13 @@ def get_tools(config):
     仅当配置了 tts_model 和 audio 时才返回工具。
     """
     if not config or not config.tts_model or not config.audio:
+        if config:
+            config.record_unavailable_tools(
+                [text_to_speech.name],
+                "未配置 tts_model 或 audio,TTS 工具不可用",
+            )
         return []
+    config.clear_unavailable_tools([text_to_speech.name])
     return [text_to_speech]
 
 

@@ -424,6 +424,7 @@ def _make_search_config(
         agent.extended_mgr.touch(name)
     config = MagicMock()
     config.current_agent = agent
+    config.unavailable_tool_reasons = {}
     patch_get = patch(
         "uniclaw.tools.registry.ToolRegistry.get_instance", return_value=registry
     )

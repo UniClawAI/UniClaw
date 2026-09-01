@@ -75,7 +75,13 @@ def get_tools(config: AppConfig = None) -> list:
     (工具内部仍有 run_mode 校验作为兜底)。
     """
     if config is None or config.run_mode != RunMode.WEBUI:
+        if config:
+            config.record_unavailable_tools(
+                [restart_agent.name],
+                "仅 WebUI 模式下可用",
+            )
         return []
+    config.clear_unavailable_tools([restart_agent.name])
     return [restart_agent]
 
 

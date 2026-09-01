@@ -130,7 +130,13 @@ async def send_file(
 def get_tools(config=None) -> list:
     """获取运行工具列表,Console 模式下不注册 send_file。"""
     if config is not None and config.is_console:
+        config.record_unavailable_tools(
+            [send_file.name],
+            "Console 模式下不提供文件发送",
+        )
         return []
+    if config:
+        config.clear_unavailable_tools([send_file.name])
     return [send_file]
 
 

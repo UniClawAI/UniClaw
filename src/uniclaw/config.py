@@ -108,11 +108,40 @@ class AppConfig:
     explain_mode: bool | set[str] = (
         False  # 工具解释模式(运行时状态,不持久化): False=关|True=全部|set=指定工具
     )
+    unavailable_tool_reasons: dict[str, str] = field(
+        default_factory=dict, repr=False
+    )  # 不可用扩展工具的原因记录(运行时状态,不持久化),由各模块 get_tools 写入,供 search_tools 提示
 
     @property
     def is_sub(self) -> bool:
         """是否为子代理(depth > 0)"""
         return self.depth > 0
+
+    def record_unavailable_tools(self, tool_names: list[str], reason: str) -> None:
+        """记录不可用的扩展工具及原因(运行时状态)。
+
+        由各模块 get_tools(config) 在判断工具不可用时调用,
+        search_tools 搜索到这些工具时会读取并提示原因。
+
+        Args:
+            tool_names: 不可用的工具名列表。
+            reason: 不可用原因说明(如"未配置 embedding_model")。
+        """
+        for name in tool_names:
+            self.unavailable_tool_reasons[name] = reason
+
+    def clear_unavailable_tools(self, tool_names: list[str]) -> None:
+        """清除不可用工具的原因记录(工具恢复可用时调用)。
+
+        由各模块 get_tools(config) 在判断工具可用时调用,与
+        record_unavailable_tools 配合,确保原因记录始终反映当前状态
+        (工具可用则无原因)。
+
+        Args:
+            tool_names: 已恢复可用的工具名列表。
+        """
+        for name in tool_names:
+            self.unavailable_tool_reasons.pop(name, None)
 
     # === Agent 引用 (必填,session 通过 current_agent.session 访问) ===
     current_agent: AgentTask = field(default=None)  # type: ignore[assignment]

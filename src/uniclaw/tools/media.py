@@ -388,7 +388,13 @@ async def GenerateImage(
 def get_tools(config=None) -> list:
     tools = [ReadMedia]
     if config and config.image_model:
+        config.clear_unavailable_tools([GenerateImage.name])
         tools.append(GenerateImage)
+    elif config:
+        config.record_unavailable_tools(
+            [GenerateImage.name],
+            "未配置 image_model,图片生成工具不可用",
+        )
     return tools
 
 

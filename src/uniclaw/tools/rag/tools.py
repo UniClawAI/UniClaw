@@ -572,7 +572,18 @@ async def rag_evaluate(
 def get_tools(config=None) -> list:
     """获取 RAG 工具列表。仅当配置了 embedding_model 时才返回工具。"""
     if not config or not config.embedding_model:
+        if config:
+            config.record_unavailable_tools(
+                [rag_ingest.name, rag_search.name, rag_list_collections.name,
+                 rag_set_desc.name, rag_delete_collection.name, rag_evaluate.name],
+                "未配置 embedding_model,在 settings.json 中配置后可启用 RAG 工具",
+            )
         return []
+    if config:
+        config.clear_unavailable_tools(
+            [rag_ingest.name, rag_search.name, rag_list_collections.name,
+             rag_set_desc.name, rag_delete_collection.name, rag_evaluate.name],
+        )
     return [
         rag_ingest,
         rag_search,

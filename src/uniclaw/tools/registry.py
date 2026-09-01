@@ -14,6 +14,7 @@ from rank_bm25 import BM25Okapi
 from uniclaw.utils.tokenize import tokenize as _tokenize
 
 from .base import Tool, tool
+from uniclaw.config import AppConfig
 
 # ── 工具分类定义 ──────────────────────────────────────────────
 
@@ -1980,7 +1981,7 @@ class ExtendedToolManager:
 
 
 @tool
-async def search_tools(query: str, config=None) -> str:
+async def search_tools(query: str, config: AppConfig = None) -> str:
     """搜索可用的扩展工具。当你需要使用非常用工具时,先搜索再使用。
     搜索结果会自动加载到可用工具集中,下一轮即可调用。支持中英文关键词。
     优先使用工具名搜索(如 "screenshot"、"mouse_click")比用功能描述搜索更精准。
@@ -2007,6 +2008,15 @@ async def search_tools(query: str, config=None) -> str:
         e for e in results if e.tool.name in _allowed or e.category == PLUGIN_CATEGORY
     ]
     blocked = [e for e in results if e not in available]
+    # 搜索命中但不可用的工具,附加各模块 get_tools 记录的原因(如未配置 embedding_model)
+    unavailable_reasons = config.unavailable_tool_reasons or {}
+
+    def _format_blocked(entry) -> str:
+        """格式化不可用工具行:工具名 + 原因(若有)。"""
+        reason = unavailable_reasons.get(entry.tool.name)
+        if reason:
+            return f"- {entry.tool.name}: {reason}"
+        return f"- {entry.tool.name}"
     # 为本次搜索命中的已加载工具恢复能量
     matched_names = {e.tool.name for e in available}
     for name in list(mgr.loaded):
@@ -2041,7 +2051,7 @@ async def search_tools(query: str, config=None) -> str:
                     f"以下 {len(blocked)} 个工具存在但当前不可用(未启用或无权限):"
                 )
                 for entry in blocked:
-                    lines.append(f"- {entry.tool.name}")
+                    lines.append(_format_blocked(entry))
             lines.append("尝试其他关键词。")
             return "\n".join(lines)
         # 所有匹配的工具都已加载
@@ -2083,7 +2093,7 @@ async def search_tools(query: str, config=None) -> str:
     if blocked:
         lines.append(f"\n以下 {len(blocked)} 个工具当前不可用(未启用或无权限):")
         for entry in blocked:
-            lines.append(f"- {entry.tool.name}")
+            lines.append(_format_blocked(entry))
     return "\n".join(lines)
 
 

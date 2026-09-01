@@ -331,19 +331,20 @@ async def get_tools(config: AppConfig = None) -> list:
     ):
         return _docker_cache["result"]
 
-    from uniclaw.console.ui import warn
-
     from .manager import SandboxManager
 
     manager = SandboxManager.get_instance()
     docker_err = await manager.check_docker()
     if docker_err:
-        await warn(
-            f"[sandbox] Docker 不可用: {docker_err},沙箱工具已禁用。",
-            config,
-        )
+        if config:
+            config.record_unavailable_tools(
+                [t.name for t in _ALL_TOOLS],
+                f"Docker 不可用: {docker_err}",
+            )
         result = []
     else:
+        if config:
+            config.clear_unavailable_tools([t.name for t in _ALL_TOOLS])
         result = list(_ALL_TOOLS)
 
     _docker_cache["result"] = result
