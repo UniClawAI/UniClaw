@@ -223,11 +223,15 @@ const MultiInputDialog = {
     },
 
     _submit() {
+        this._stopCountdown();
         if (!this.currentRequest) return;
         const allSelected = this._questions.every((_, i) => this._selections[i] !== undefined);
-        if (!allSelected) return;
+        if (!allSelected) {
+            FloatingWindow.hide('multi-input-modal');
+            this.currentRequest = null;
+            return;
+        }
 
-        this._stopCountdown();
         const answers = {};
         this._questions.forEach((q, i) => {
             const sel = this._selections[i];
@@ -252,6 +256,16 @@ const MultiInputDialog = {
         this.currentRequest = null;
     },
 
+    _timeoutSubmit() {
+        // 超时直接提交原始请求,不检查是否全部选择,确保后端 Future 能被唤醒
+        this._stopCountdown();
+        if (!this.currentRequest) return;
+        const req = this.currentRequest;
+        WS.send({ type: 'input_response', session_id: req.session_id, id: req.id, value: '' });
+        FloatingWindow.hide('multi-input-modal');
+        this.currentRequest = null;
+    },
+
     _startCountdown(createdAt, timeout) {
         this._stopCountdown();
         const T = timeout || 300;
@@ -265,7 +279,7 @@ const MultiInputDialog = {
         if (!el) return;
         el.textContent = this._fmtTime(this._countdownSeconds);
         if (this._countdownSeconds <= 0) {
-            this._submit();
+            this._timeoutSubmit();
             Utils.showToast('多问题输入已超时');
             return;
         }
@@ -274,7 +288,7 @@ const MultiInputDialog = {
             this._countdownSeconds--;
             el.textContent = this._fmtTime(this._countdownSeconds);
             if (this._countdownSeconds <= 0) {
-                this._submit();
+                this._timeoutSubmit();
                 Utils.showToast('多问题输入已超时');
             }
         }, 1000);

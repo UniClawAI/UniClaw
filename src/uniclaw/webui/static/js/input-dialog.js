@@ -58,8 +58,8 @@ const InputDialog = {
     },
 
     _respond(value) {
-        if (!this.currentRequest) return;
         this._stopCountdown();
+        if (!this.currentRequest) return;
         if (value === undefined) value = document.getElementById('input-dialog-text').value;
         WS.send({ type: 'input_response', session_id: this.currentRequest.session_id, id: this.currentRequest.id, value });
         FloatingWindow.hide('input-dialog-modal');

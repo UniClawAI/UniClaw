@@ -165,8 +165,8 @@ const Permission = {
     },
 
     _respond(approved) {
-        if (!this.currentRequest) return;
         this._stopCountdown();
+        if (!this.currentRequest) return;
         const req = this.currentRequest;
         WS.send({
             type: 'permission_response',

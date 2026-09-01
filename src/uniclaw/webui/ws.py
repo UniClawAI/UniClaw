@@ -1360,7 +1360,7 @@ async def web_input(prompt: str, title: str = "输入", config=None) -> str:
             result = await new_future
         return result
     except asyncio.TimeoutError:
-        return ""
+        return "已经超时,用户这会可能不在"
     finally:
         async with _inputs_lock:
             pending_inputs.pop(req_id, None)
@@ -1410,7 +1410,7 @@ async def web_multi_input(
             result = await new_future
         return result
     except asyncio.TimeoutError:
-        return ""
+        return "已经超时,用户这会可能不在"
     finally:
         async with _inputs_lock:
             pending_inputs.pop(req_id, None)

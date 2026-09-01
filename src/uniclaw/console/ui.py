@@ -437,7 +437,7 @@ async def get_multi_input(
         config: 配置对象
 
     Returns:
-        JSON 格式的答案字符串,取消则返回空字符串。
+        JSON 格式的答案字符串,取消或超时则返回提示文本。
     """
     import json
 
@@ -448,17 +448,21 @@ async def get_multi_input(
     if mode == DisplayMode.WECHAT:
         from uniclaw.wechat.run import wechat_multi_input
 
-        return await wechat_multi_input(questions=questions, title=title, config=config)
+        result = await wechat_multi_input(
+            questions=questions, title=title, config=config
+        )
+        return result or "已经超时,用户这会可能不在"
 
     if mode == DisplayMode.WEBUI:
         from uniclaw.webui.ws import web_multi_input
 
-        return await web_multi_input(questions=questions, title=title, config=config)
+        result = await web_multi_input(questions=questions, title=title, config=config)
+        return result or "已经超时,用户这会可能不在"
 
     # console 模式:优先 TUI
     tui = _get_tui()
     if tui:
-        return await tui.tui_multi_input(questions, title=title)
+        return (await tui.tui_multi_input(questions, title=title)) or "已经超时,用户这会可能不在"
 
     # stdin 降级:逐题提问
     print(f"\n💬 {title}\n")

@@ -566,7 +566,7 @@ class DialogManager:
             else:
                 await dialog_event.wait()
         except TimeoutError:
-            pass
+            self.result = "已经超时,用户这会可能不在"
         countdown_stopped.set()
         countdown_done.set()
 
