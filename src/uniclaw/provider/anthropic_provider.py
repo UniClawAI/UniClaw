@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from typing import TYPE_CHECKING
 
 import anthropic
 
@@ -24,6 +25,9 @@ from uniclaw.provider.common import (
 from collections.abc import AsyncIterator, Iterator
 from uniclaw.provider.types import Usage
 from uniclaw.tools.session.session import AIMessage, StreamChunk
+
+if TYPE_CHECKING:
+    from uniclaw.config import AppConfig
 
 # ── 客户端构建 ─────────────────────────────────────────────────
 
@@ -174,7 +178,7 @@ def _extract_anthropic_media_url(block: dict) -> tuple[str, str]:
     return "", ""
 
 
-async def _describe_multimodal(messages, mm_model: str | None = None, config=None):
+async def _describe_multimodal(messages, mm_model: str | None = None, config: AppConfig | None = None):
     """将 Anthropic 消息中的多模态内容块替换为描述文本。"""
     cleaned = []
     for m in messages:
@@ -222,7 +226,7 @@ def stream(
     tools: list | None = None,
     enable_thinking=True,
     thinking=True,
-    config=None,
+    config: AppConfig | None = None,
 ) -> Iterator[StreamChunk]:
     """流式调用 Anthropic LLM,每次 yield StreamChunk (delta)。"""
     p = resolve_params(
@@ -387,7 +391,7 @@ async def astream(
     tools: list | None = None,
     enable_thinking=True,
     thinking=True,
-    config=None,
+    config: AppConfig | None = None,
 ) -> AsyncIterator[StreamChunk]:
     """异步流式调用 Anthropic LLM,每次 yield StreamChunk (delta)。"""
     p = resolve_params(
@@ -522,9 +526,28 @@ def chat(
     tools: list | None = None,
     enable_thinking=True,
     thinking=True,
-    config=None,
+    timeout: float | None = None,
+    config: AppConfig | None = None,
 ) -> AIMessage:
-    """同步调用 Anthropic LLM,返回 AIMessage。"""
+    """同步调用 Anthropic LLM,返回 AIMessage。
+
+    Args:
+        system_prompt: 系统提示词。
+        messages: Anthropic 格式消息列表。
+        model_name: 模型名称(含提供商前缀),为空时使用配置中的模型。
+        multimodal_model_name: 多模态降级模型名称。
+        temperature: 采样温度。
+        max_tokens: 最大生成 token 数。
+        top_p: 核采样参数。
+        tools: 工具列表。
+        enable_thinking: 是否启用思考。
+        thinking: 是否启用思考模式。
+        timeout: 单次请求超时秒数,覆盖客户端默认值。为 None 时使用默认超时。
+        config: 应用配置。
+
+    Returns:
+        AIMessage: 转换后的 AI 回复消息。
+    """
     p = resolve_params(
         config,
         model_name=model_name,
@@ -564,6 +587,8 @@ def chat(
     session_extra = _openrouter_session_extra(base_url, system_prompt)
     if session_extra:
         kwargs["extra_body"] = session_extra
+    if timeout is not None:
+        kwargs["timeout"] = timeout
 
     try:
         response = client.messages.create(**kwargs)
@@ -602,9 +627,28 @@ async def achat(
     tools: list | None = None,
     enable_thinking=True,
     thinking=True,
-    config=None,
+    timeout: float | None = None,
+    config: AppConfig | None = None,
 ) -> AIMessage:
-    """异步调用 Anthropic LLM,返回 AIMessage。"""
+    """异步调用 Anthropic LLM,返回 AIMessage。
+
+    Args:
+        system_prompt: 系统提示词。
+        messages: Anthropic 格式消息列表。
+        model_name: 模型名称(含提供商前缀),为空时使用配置中的模型。
+        multimodal_model_name: 多模态降级模型名称。
+        temperature: 采样温度。
+        max_tokens: 最大生成 token 数。
+        top_p: 核采样参数。
+        tools: 工具列表。
+        enable_thinking: 是否启用思考。
+        thinking: 是否启用思考模式。
+        timeout: 单次请求超时秒数,覆盖客户端默认值。为 None 时使用默认超时。
+        config: 应用配置。
+
+    Returns:
+        AIMessage: 转换后的 AI 回复消息。
+    """
     p = resolve_params(
         config,
         model_name=model_name,
@@ -644,6 +688,8 @@ async def achat(
     session_extra = _openrouter_session_extra(base_url, system_prompt)
     if session_extra:
         kwargs["extra_body"] = session_extra
+    if timeout is not None:
+        kwargs["timeout"] = timeout
 
     try:
         response = await client.messages.create(**kwargs)

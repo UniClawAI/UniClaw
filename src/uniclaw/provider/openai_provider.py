@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import TYPE_CHECKING
 
 from openai import AsyncOpenAI, OpenAI
 
@@ -24,6 +25,9 @@ from collections.abc import AsyncIterator, Iterator
 from uniclaw.provider.thought_parser import ThoughtParser
 from uniclaw.provider.types import Usage
 from uniclaw.tools.session.session import AIMessage, StreamChunk
+
+if TYPE_CHECKING:
+    from uniclaw.config import AppConfig
 
 
 def _sanitize_surrogates(obj):
@@ -116,7 +120,7 @@ def _extract_media_url(block: dict) -> tuple[str, str]:
     return "", ""
 
 
-async def _describe_multimodal(messages, mm_model: str | None = None, config=None):
+async def _describe_multimodal(messages, mm_model: str | None = None, config: AppConfig | None = None):
     """将消息中的多模态内容块替换为描述文本。"""
     cleaned = []
     for m in messages:
@@ -197,7 +201,7 @@ def stream(
     audio: dict | None = None,
     asr_options: dict | None = None,
     response_format: dict | None = None,
-    config=None,
+    config: AppConfig | None = None,
 ) -> Iterator[StreamChunk]:
     """流式调用 LLM,每次 yield StreamChunk (delta)。"""
     p = resolve_params(
@@ -361,7 +365,7 @@ async def astream(
     audio: dict | None = None,
     asr_options: dict | None = None,
     response_format: dict | None = None,
-    config=None,
+    config: AppConfig | None = None,
 ) -> AsyncIterator[StreamChunk]:
     """异步流式调用 LLM,每次 yield StreamChunk (delta)。"""
     p = resolve_params(
@@ -518,9 +522,31 @@ def chat(
     audio: dict | None = None,
     asr_options: dict | None = None,
     response_format: dict | None = None,
-    config=None,
+    timeout: float | None = None,
+    config: AppConfig | None = None,
 ) -> AIMessage:
-    """同步调用 LLM,返回 AIMessage。"""
+    """同步调用 LLM,返回 AIMessage。
+
+    Args:
+        messages: OpenAI 格式消息列表。
+        model_name: 模型名称(含提供商前缀),为空时使用配置中的模型。
+        multimodal_model_name: 多模态降级模型名称。
+        temperature: 采样温度。默认为 None(使用配置值)。
+        max_tokens: 最大生成 token 数。默认为 None(使用配置值)。
+        top_p: 核采样参数。默认为 None(使用配置值)。
+        tools: 工具列表。
+        enable_thinking: 是否启用思考(受 thinking 参数约束)。
+        thinking: 是否启用思考模式。
+        audio: 音频生成参数。
+        asr_options: ASR 选项。
+        response_format: 响应格式。
+        timeout: 单次请求超时秒数,覆盖客户端默认值(REQUEST_TIMEOUT_SECONDS)。
+            为 None 时使用客户端默认超时。
+        config: 应用配置。
+
+    Returns:
+        AIMessage: 转换后的 AI 回复消息。
+    """
     p = resolve_params(
         config,
         model_name=model_name,
@@ -559,6 +585,8 @@ def chat(
         kwargs["audio"] = audio
     if response_format:
         kwargs["response_format"] = response_format
+    if timeout is not None:
+        kwargs["timeout"] = timeout
 
     try:
         response = client.chat.completions.create(**kwargs)
@@ -599,9 +627,31 @@ async def achat(
     audio: dict | None = None,
     asr_options: dict | None = None,
     response_format: dict | None = None,
-    config=None,
+    timeout: float | None = None,
+    config: AppConfig | None = None,
 ) -> AIMessage:
-    """异步调用 LLM,返回 AIMessage。"""
+    """异步调用 LLM,返回 AIMessage。
+
+    Args:
+        messages: OpenAI 格式消息列表。
+        model_name: 模型名称(含提供商前缀),为空时使用配置中的模型。
+        multimodal_model_name: 多模态降级模型名称。
+        temperature: 采样温度。默认为 None(使用配置值)。
+        max_tokens: 最大生成 token 数。默认为 None(使用配置值)。
+        top_p: 核采样参数。默认为 None(使用配置值)。
+        tools: 工具列表。
+        enable_thinking: 是否启用思考(受 thinking 参数约束)。
+        thinking: 是否启用思考模式。
+        audio: 音频生成参数。
+        asr_options: ASR 选项。
+        response_format: 响应格式。
+        timeout: 单次请求超时秒数,覆盖客户端默认值(REQUEST_TIMEOUT_SECONDS)。
+            为 None 时使用客户端默认超时。
+        config: 应用配置。
+
+    Returns:
+        AIMessage: 转换后的 AI 回复消息。
+    """
     p = resolve_params(
         config,
         model_name=model_name,
@@ -640,6 +690,8 @@ async def achat(
         kwargs["audio"] = audio
     if response_format:
         kwargs["response_format"] = response_format
+    if timeout is not None:
+        kwargs["timeout"] = timeout
 
     try:
         response = await client.chat.completions.create(**kwargs)
@@ -722,7 +774,7 @@ def generate_image(
     prompt: str,
     model_name: str,
     size: str = "1024x768",
-    config=None,
+    config: AppConfig | None = None,
 ) -> list[str]:
     """同步图片生成,返回图片 URL 或 base64 列表。
 
@@ -754,7 +806,7 @@ async def agenerate_image(
     prompt: str,
     model_name: str,
     size: str = "1024x768",
-    config=None,
+    config: AppConfig | None = None,
 ) -> list[str]:
     """异步图片生成,返回图片 URL 或 base64 列表。
 

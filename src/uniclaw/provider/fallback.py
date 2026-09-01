@@ -21,6 +21,7 @@ from uniclaw.console.ui import warn
 
 if TYPE_CHECKING:
     from uniclaw.tools.session.session import AIMessage, Session
+    from uniclaw.config import AppConfig
 
 
 def _run_async(coro):
@@ -49,7 +50,8 @@ def chat(
     enable_thinking=True,
     thinking=True,
     response_format: dict | None = None,
-    config=None,
+    timeout: float | None = None,
+    config: AppConfig | None = None,
 ) -> AIMessage:
     """同步调用 LLM,支持模型列表回退与分类重试。
 
@@ -58,6 +60,24 @@ def chat(
       重试耗尽才回退下一个模型,成功返回 AIMessage
     - AUTH/UNKNOWN 类错误不重试,立即回退下一个模型
     - CONTEXT_OVERFLOW 时先尝试压缩会话再重试
+
+    Args:
+        system_prompt: 系统提示词。
+        session: 会话对象。
+        model_name: 模型名称或模型列表。
+        multimodal_model_name: 多模态降级模型名称。
+        temperature: 采样温度。
+        max_tokens: 最大生成 token 数。
+        top_p: 核采样参数。
+        tools: 工具列表。
+        enable_thinking: 是否启用思考。
+        thinking: 是否启用思考模式。
+        response_format: 响应格式。
+        timeout: 单次请求超时秒数,覆盖客户端默认值。为 None 时使用默认超时。
+        config: 应用配置。
+
+    Returns:
+        AIMessage: 转换后的 AI 回复消息。
     """
     if isinstance(model_name, str):
         model_name = [model_name]
@@ -79,6 +99,7 @@ def chat(
                     enable_thinking=enable_thinking,
                     thinking=thinking,
                     response_format=response_format,
+                    timeout=timeout,
                     config=config,
                 )
             except Exception as e:
@@ -112,7 +133,8 @@ async def achat(
     enable_thinking=True,
     thinking=True,
     response_format: dict | None = None,
-    config=None,
+    timeout: float | None = None,
+    config: AppConfig | None = None,
 ) -> AIMessage:
     """异步调用 LLM,支持模型列表回退与分类重试。
 
@@ -121,6 +143,24 @@ async def achat(
       重试耗尽才回退下一个模型,成功返回 AIMessage
     - AUTH/UNKNOWN 类错误不重试,立即回退下一个模型
     - CONTEXT_OVERFLOW 时先尝试压缩会话再重试
+
+    Args:
+        system_prompt: 系统提示词。
+        session: 会话对象。
+        model_name: 模型名称或模型列表。
+        multimodal_model_name: 多模态降级模型名称。
+        temperature: 采样温度。
+        max_tokens: 最大生成 token 数。
+        top_p: 核采样参数。
+        tools: 工具列表。
+        enable_thinking: 是否启用思考。
+        thinking: 是否启用思考模式。
+        response_format: 响应格式。
+        timeout: 单次请求超时秒数,覆盖客户端默认值。为 None 时使用默认超时。
+        config: 应用配置。
+
+    Returns:
+        AIMessage: 转换后的 AI 回复消息。
     """
     if isinstance(model_name, str):
         model_name = [model_name]
@@ -142,6 +182,7 @@ async def achat(
                     enable_thinking=enable_thinking,
                     thinking=thinking,
                     response_format=response_format,
+                    timeout=timeout,
                     config=config,
                 )
             except Exception as e:
