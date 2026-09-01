@@ -14,6 +14,7 @@
 - 🩺 **错误分类重试**: 内置错误分类器将 LLM 调用错误分为六类(RATE_LIMIT/CONTEXT_OVERFLOW/AUTH/SERVER_ERROR/TIMEOUT/UNKNOWN),按分类采用差异化重试与退避策略(CONTEXT_OVERFLOW 先压缩会话再重试,指数/线性退避)
 - 🎓 **顾问模型**: 配置 `large_model_name` 作为顾问模型,遇到难题时可同时咨询多个更强力模型获取第二意见
 - 🔍 **工具注册表**: BM25 智能工具搜索,核心工具常驻加载 + 扩展工具按需发现(search_tools 元工具),LRU + 能量机制(每工具 30 点能量,每轮-1,调用/搜索恢复满,归零淘汰)自动管理已加载工具,优化 prompt 缓存
+- 📡 **工具可用性跟踪**: 环境检测自动记录不可用工具及原因(如 Docker 未安装、未配置 embedding_model),search_tools 搜索时自动提示不可用原因,避免无用调用
 - 🌐 **WebUI 界面**: 基于 WebSocket 的 Web 用户界面,支持浏览器中与 AI 对话,可局域网共享,支持移动端响应式设计和触摸手势,支持 HTTPS 和 IPv6
 - ⚡ **工具流式输出**: 工具执行过程中实时推送输出到前端,无需等待完成即可看到进度
 - 🔐 **可信 IP 免登录**: 配置 `trusted_ips` 后,指定 IP 地址的客户端可跳过 WebUI 登录认证,适合家庭/办公网络环境
@@ -143,7 +144,7 @@ uv tool install .
   "proxy_url": "",
   "GITHUB_TOKEN": "",
   "EXA_API_KEY": "",
-  "max_agent_depth": 3,
+  "max_agent_depth": 2,
   "permission_timeout": 300,
   "trusted_ips": []
 }
@@ -286,21 +287,21 @@ UniClaw 的斜杠命令支持子命令自动补全,输入命令后按空格会�
 
 #### 支持子命令的命令
 
+> 💡 下表反映了 `COMMAND_SUBCOMMANDS` 中实际注册的子命令补全列表。
+
 | 命令 | 子命令 |
 |------|--------|
-| `/memory` | `list`, `search`, `delete`, `consolidate` |
+| `/memory` | `consolidate` |
 | `/schedule` | `list`, `add`, `remove`, `enable`, `disable` |
 | `/mcp` | `list`, `add`, `remove`, `show`, `edit`, `enable`, `disable`, `tools`, `refresh` |
-| `/permissions` | `list`, `add`, `remove`, `mode` |
+| `/permissions` | `list`, `remove` |
 | `/resume` | `list`, `del`, `search`, `fork` |
-| `/model` | (无子命令,支持关键词搜索和直接切换) |
 | `/task` | `list`, `output`, `stop`, `matched` |
 | `/overseer` | `start`, `stop` |
 | `/checkpoint` | `create`, `pop`, `apply`, `delete`, `diff` |
 | `/goal` | `clear`, `status` |
-| `/export` | `markdown`, `json` |
 | `/kg` | `stats`, `search`, `list`, `export`, `clear` |
-| `/explain` | `on`, `off`, 或指定工具名 |
+| `/a2a` | `start`, `stop`, `status`, `list`, `add`, `remove`, `test` |
 
 #### 使用示例
 
@@ -385,6 +386,7 @@ UniClaw 使用工作空间概念管理文件访问范围：
   - SSE: 5 秒
   - Streamable HTTP: 10 秒
   - 工具发现: 15 秒
+- **Provider 请求超时**: LLM API 请求超时默认 180 秒(3 分钟),可通过各 provider 路由方法的 `timeout` 参数覆盖
 
 ### 权限模式说明
 
@@ -414,21 +416,21 @@ UniClaw 支持自定义持久化权限规则,可以记住您的权限偏好：
 **管理命令：**
 ```bash
 /permissions list              # 查看所有权限规则
-/permissions add bash <前缀>   # 添加 Bash 命令规则
-/permissions add tool <工具名> # 添加工具规则
 /permissions remove <类型> <模式>  # 删除规则
 ```
 
+> 💡 **如何添加规则**: `/permissions` 命令本身只支持 `list` 和 `remove`。规则是在权限确认弹窗中按 **`a`**(始终允许)自动保存的——此时系统会自动调用 `add_permission_rule` 写入 `permission_rules.json`,无需手动添加。
+
 **示例：**
 ```bash
-# 允许所有 git commit 命令
-/permissions add bash "git commit"
-
-# 允许 Write 工具自动执行
-/permissions add tool Write
+# 当 AI 请求权限时,在确认弹窗中按 a(始终允许)
+# → 自动保存规则到 permission_rules.json
 
 # 查看当前规则
 /permissions list
+
+# 删除规则
+/permissions remove bash "git commit"
 ```
 
 > 💡 **提示**: 持久化规则在安全检查流程中具有较高优先级,但仍会被危险操作符检测(如 `;`、`&&`、`||`)拦截,确保安全。
@@ -682,7 +684,7 @@ monitor_start("npm run dev", name="开发服务器")
 
 | 命令 | 说明 | 示例 |
 |------|------|------|
-| `/kg` 或 `/kg stats` | 显示知识图谱统计信息(用户级+项目级) | `/kg` |
+| `/kg` 或 `/knowledge` | 知识图谱命令别名,显示统计信息(用户级+项目级) | `/kg` |
 | `/kg search <关键词>` | 搜索实体 | `/kg search Python` |
 | `/kg list [类型]` | 列出实体(可选类型过滤) | `/kg list person` |
 | `/kg export html\|json\|markdown [user\|project]` | 导出图谱 | `/kg export html` |
@@ -712,8 +714,6 @@ monitor_start("npm run dev", name="开发服务器")
 | `/cost` | 查看费用统计(按模型计费,价格来自 OpenRouter) | `/cost` |
 | `/doctor` | 环境诊断(12 项检查) | `/doctor` |
 | `/permissions list` | 查看所有持久化权限规则 | `/permissions list` |
-| `/permissions add bash <前缀>` | 添加 Bash 命令权限规则 | `/permissions add bash "git commit"` |
-| `/permissions add tool <工具名>` | 添加工具权限规则 | `/permissions add tool Write` |
 | `/permissions remove <类型> <模式>` | 删除权限规则 | `/permissions remove bash "git commit"` |
 | `/task` | 管理后台任务(list/output/stop/matched) | `/task`、`/task output abc123` |
 | `/goal` | 设置目标停止条件,agent 停止时用 judge 模型评估是否达成 | `/goal 完成所有单元测试` |
@@ -916,7 +916,10 @@ UniClaw 提供了丰富的内置工具,AI 助手可以自动调用这些工具�
 
 - **Bash** - 执行 Shell 命令(支持超时控制和上限校验,跨平台兼容,支持流式输出)
 - **Grep** - 在文件中搜索文本模式(优先使用 ripgrep,支持正则表达式)
-- **search_files_with_everything** - 使用 Everything 引擎快速搜索文件名(仅 Windows,需安装 Everything)
+- **search_files_with_everything** - 使用 Everything 搜索引擎快速搜索文件名(仅 Windows,需安装 Everything es.exe)
+  - 支持通配符(`*`、`?`)和逻辑运算符(AND/OR/NOT)
+  - `max_results`: 最大返回结果数(0 为不限制)
+  - `path_filter`: 路径过滤器,限定搜索范围到特定目录
 
 > 💡 **流式输出**: Bash 工具执行过程中会实时推送输出到前端(WebUI),无需等待命令完成即可看到进度。
 
@@ -947,6 +950,7 @@ UniClaw 提供了丰富的内置工具,AI 助手可以自动调用这些工具�
 **容器管理：**
 - **DockerCreate** - 创建持久容器,支持 `-v` 目录挂载、`-p` 端口映射、自定义内存/CPU 限制
 - **DockerExec** - 在已有容器中执行命令,容器状态(安装的包、创建的文件)在多次调用间保持
+- **DockerStart** - 启动已停止的容器,容器内文件系统状态保持
 - **DockerStop** - 停止运行中的容器
 - **DockerRemove** - 停止并删除容器,释放资源
 - **DockerList** - 列出所有管理的容器及状态
@@ -1069,9 +1073,8 @@ http_download(
 - **browser_click** - 点击页面元素(支持 CSS/文本/角色选择器)
 - **browser_dblclick** - 双击元素
 - **browser_hover** - 悬停在元素上
-- **browser_type** - 在输入框中输入文本
+- **browser_type** - 在输入框中输入文本(可选 `clear` 参数先清空,默认 True)
 - **browser_insert_text** - 插入文本(触发 input 事件)
-- **browser_clear** - 清空输入框
 - **browser_check** - 勾选/取消勾选复选框
 - **browser_select_option** - 选择下拉框选项
 - **browser_drag** - 拖拽元素
@@ -1272,7 +1275,7 @@ http_download(
 #### 文件发送工具 📤
 
 - **send_file** - 发送文件给用户
-  - WebUI 模式: 生成临时下载链接(默认 30 分钟有效)
+  - WebUI 模式: 文本文件直接在前端渲染 Markdown 预览(内容不进入模型上下文),其他文件生成临时下载链接(默认 30 分钟有效)
   - 微信模式: 通过 Bot 直接发送文件
   - Console 模式: 不支持(忽略)
 
@@ -1333,6 +1336,10 @@ http_download(
 - **rag_list_collections** - 列出所有 RAG 集合及其统计信息(文档数量、描述等)
 - **rag_delete_collection** - 删除指定集合及其所有文档
 - **rag_set_desc** - 设置或更新集合描述,便于后续检索时识别
+- **rag_evaluate** - 评估 RAG 检索效果:对一组测试问题执行检索,输出 LLM Judge 相关性指标
+  - `use_llm_judge=True` 时用 LLM 评估每个检索结果与查询的相关性,无需人工标注
+  - 输出 LLM Judge 平均分和 Context Precision@k
+  - 支持 `rerank`(LLM 重排序)和 `use_bm25`(BM25 多路召回)开关
 
 **作用域：**
 - `user` - 用户级(跨项目共享)
@@ -1539,7 +1546,10 @@ UniClaw/
 │
 └── src/uniclaw/            # 📦 包根目录
     ├── main.py             # 程序入口(argparse --mode → launcher,run_mode 枚举)
-    ├── agent.py            # 核心代理逻辑(全异步消息循环、工具调用、事件流、死循环检测、asyncio.Queue)
+    ├── agent/              # 核心代理(全异步消息循环、工具调用、事件流、死循环检测、asyncio.Queue)
+    │   ├── __init__.py     # 向后兼容的 re-export(MultiAgent, AgentTask, 事件类)
+    │   ├── multi_agent.py  # MultiAgent 单例,事件循环,子代理管理,权限检查
+    │   └── types.py        # AgentStatus, AgentTask, 事件类定义
     ├── config.py           # 配置管理(AppConfig + settings.json + 首次启动向导 + 多模型 fallback)
     ├── context.py          # 上下文管理和提示词构建(root_dir 驱动 + 长任务进展汇报)
     ├── compaction.py       # 上下文压缩(三级压力策略)
@@ -1552,8 +1562,8 @@ UniClaw/
     │   ├── anthropic_provider.py
     │   ├── thought_parser.py   # 流式解析 <thought>/<think> 标签
     │   ├── error_classifier.py  # 错误分类器:六类错误分类 + 差异化重试策略
-    │   ├── types.py        # Provider/Effort 枚举,StreamChunk,AIMessage
-    │   └── common.py       # get_provider(),compare_urls()
+    │   ├── types.py        # Protocol/Effort 枚举,Usage 用量统计
+    │   └── common.py       # get_provider(),compare_urls(),HTTP 客户端缓存
     │
     ├── commands/           # 斜杠命令系统 📝 (31 个命令 + 7 个别名)
     │   ├── __init__.py     # 命令注册中心(COMMANDS dict)
@@ -1580,7 +1590,8 @@ UniClaw/
     │   ├── voice.py        # 语音模式切换 🔊
     │   ├── cu.py           # Computer Use 模式切换 🖥️
     │   ├── explain.py      # 工具解释模式切换 🔧
-    │   └── knowledge.py    # 知识图谱管理 🗺️
+    │   ├── knowledge.py    # 知识图谱管理 🗺️
+    │   └── a2a.py          # A2A 远程代理管理 🌉
     │
     ├── console/            # 控制台交互界面(prompt_toolkit REPL)
     │   ├── launcher.py     # 控制台启动器
@@ -1701,7 +1712,7 @@ UniClaw/
     │
     ├── utils/              # 实用工具
     │   ├── checkpoint.py   # 文件快照检查点系统
-    │   ├── downloader.py   # 下载器抽象基类(HttpDownloader/M3u8Downloader 公共接口)
+    │   ├── downloader.py   # 下载器抽象基类(BaseDownloader 接口,DownloadManager 统一管理)
     │   ├── http_download.py # HTTP 下载引擎(多协程并发 + 断点续传)
     │   ├── usage.py        # Token 用量统计 + OpenRouter 定价
     │   ├── tokenize.py     # 分词(BM25 索引用)
@@ -1732,11 +1743,12 @@ UniClaw/
   - 计划: `enter/exit_plan_mode`
   - 技能: `skill_suggest/read`
   - 元工具: `search_tools`（按需发现和加载扩展工具）
-- **扩展工具** (170 个): 初始不加载,通过 `search_tools` 元工具按需发现
+- **扩展工具** (170+ 个): 初始不加载,通过 `search_tools` 元工具按需发现
   - 基于 BM25 算法搜索,支持中英文关键词 + 语义同义词
   - **LRU + 能量机制**: 每个扩展工具初始 30 点能量,每轮对话 -1,被调用或搜索命中恢复满能量,归零自动卸载;最多同时加载 25 个扩展工具,超出时按 LRU 顺序淘汰能量最低者
   - 搜索结果自动注入到当前任务的可用工具集
-  - 按类别组织: 计算机操作、多智能体、任务清单、进程监控、会话管理、定时任务、MCP 管理、安全管理、Hook 管理、沙箱、媒体、知识图谱等
+  - 按类别组织: 系统管理、计算机操作、多智能体、任务清单、进程监控、会话管理、定时任务、MCP 管理、安全管理、Hook 管理、沙箱、浏览器、知识图谱、顾问、下载、RAG、IPython、微信、文件、帮助、通知等
+  - **可用性跟踪**: 各模块 `get_tools()` 检测依赖(Docker/Everything/embedding_model 等),不可用的工具记录到 `config.unavailable_tool_reasons` 并附带原因;`search_tools` 搜索到不可用工具时自动提示"当前不可用(未启用或无权限)"及原因,避免 AI 做无效调用
 
 **工作流程**: AI 需要使用非常用工具时 → 调用 `search_tools(query)` → BM25 匹配 → 工具自动加载(若超过上限则淘汰 LRU 端能量最低的工具) → 下一轮即可调用。已加载工具每轮能量-1,被调用/搜索命中恢复满,归零自动卸载。
 
@@ -1756,10 +1768,15 @@ UniClaw/
 - **Effort 枚举**: 控制推理深度(xhigh/high/medium/minimal/low/none),用于 OpenRouter 的 `reasoning.effort` 参数
 - **多模态降级**: 主模型不支持多模态时自动使用 `multimodal_model_name` 重试
 - **代理兼容**: 自动检测 Google API / OpenRouter API 并适配 `extra_body` 参数
+- **请求超时**: 所有 LLM 请求默认 180 秒超时,`stream()`/`chat()` 等接口的 `timeout` 参数可覆盖客户端默认值
 
 ### 工作流程
 
-1. **用户输入** → REPL 接收用户消息或斜杠命令
+```
+用户输入 → REPL 接收用户消息或斜杠命令
+    ↓
+LLM 推理(含 thinking 标签解析)→ 权限检查 → 工具执行
+    ↓
 ToolEvent (result)
     ↓
 Update AgentState → auto-compact if pressure > 50%
@@ -2368,10 +2385,15 @@ A:
 - **生产环境**: 使用 `auto` 或 `manual` 保证安全
 - **敏感操作**: 始终使用 `manual` 模式
 
-**提示**: 可以使用持久化权限规则来记住您的偏好,避免重复确认。例如：
+**提示**: 可以使用持久化权限规则来记住您的偏好,避免重复确认。当 AI 请求权限时,在确认弹窗中按 **`a`** 即可自动保存规则(始终允许),之后同类命令/工具将自动放行：
 ```bash
-/permissions add bash "git commit"  # 允许所有 git commit 命令
-/permissions add tool Write         # 允许 Write 工具自动执行
+# 在权限确认弹窗中按 a → 自动保存规则到 permission_rules.json
+
+# 查看已保存的规则
+/permissions list
+
+# 删除规则
+/permissions remove bash "git commit"
 ```
 
 ### Q: 如何使用详细显示模式？
@@ -2549,17 +2571,17 @@ A: 在 REPL 中输入斜杠命令后按空格,会自动显示该命令的子命�
 4. 输入子命令前缀可进行过滤
 
 **支持子命令的命令：**
-- `/memory` - `list`, `search`, `delete`, `consolidate`
+- `/memory` - `consolidate`
 - `/schedule` - `list`, `add`, `remove`, `enable`, `disable`
 - `/mcp` - `list`, `add`, `remove`, `show`, `edit`, `enable`, `disable`, `tools`, `refresh`
-- `/permissions` - `list`, `add`, `remove`, `mode`
+- `/permissions` - `list`, `remove`
 - `/resume` - `list`, `del`, `search`, `fork`
 - `/task` - `list`, `output`, `stop`, `matched`
 - `/overseer` - `start`, `stop`
 - `/checkpoint` - `create`, `pop`, `apply`, `delete`, `diff`
 - `/goal` - `clear`, `status`
-- `/export` - `markdown`, `json`
 - `/kg` - `stats`, `search`, `list`, `export`, `clear`
+- `/a2a` - `start`, `stop`, `status`, `list`, `add`, `remove`, `test`
 
 ### Q: 如何使用工具解释模式？
 
