@@ -43,6 +43,19 @@ def _get_manager(config: AppConfig, scope: Scope) -> RAGManager:
     return _manager_cache[key]
 
 
+def _sort_key(x: dict) -> float:
+    """检索结果排序键:优先 rerank_score,其次 rrf_score,再次余弦相似度。"""
+    if "rerank_score" in x:
+        return x["rerank_score"]
+    if "rrf_score" in x:
+        return x["rrf_score"]
+    if "cosine_similarity" in x:
+        return x["cosine_similarity"]
+    if "distance" in x:
+        return 1 - x["distance"]
+    return -1  # 没有分数的排在最后
+
+
 @tool
 async def rag_ingest(
     path: str,
@@ -78,6 +91,9 @@ async def rag_ingest(
             return f"{TOOL_ERROR}: 路径不存在: {path}"
 
         # 加载文档
+        from uniclaw.tools.stream import tool_stream
+
+        await tool_stream(f"📂 正在加载: {path}\n")
         if target.is_file():
             docs = load_file(target)
         else:
@@ -85,11 +101,14 @@ async def rag_ingest(
 
         if not docs:
             return f"{TOOL_ERROR}: 未在 {path} 中找到可读取的文档"
+        await tool_stream(f"✅ 加载完成,共 {len(docs)} 个文档\n")
 
         # 拆分文档
+        await tool_stream("✂️  正在拆分文档...\n")
         chunks = split_documents(docs, chunk_size, chunk_overlap)
         if not chunks:
             return f"{TOOL_ERROR}: 文档拆分后为空"
+        await tool_stream(f"✅ 拆分完成,共 {len(chunks)} 个文档块\n")
 
         # 存入向量数据库
         manager = _get_manager(config, scope)
@@ -101,8 +120,17 @@ async def rag_ingest(
         deleted = 0
         for source in sources:
             deleted += manager.delete_by_source(collection, source)
+        if deleted:
+            await tool_stream(f"🧹 已清除 {deleted} 个旧文档块\n")
 
-        count = await manager.ingest(collection, chunks)
+        await tool_stream(f"⚙️  正在生成 embedding 并入库(共 {len(chunks)} 个块)...\n")
+
+        async def _progress(done: int, total: int) -> None:
+            pct = done * 100 // total if total else 0
+            await tool_stream(f"\r⏳ 进度: {done}/{total} ({pct}%)")
+
+        count = await manager.ingest(collection, chunks, progress_callback=_progress)
+        await tool_stream("\n")
 
         info = manager.get_collection_info(collection)
         total = info["count"] if info else count
@@ -113,6 +141,7 @@ async def rag_ingest(
         if deleted:
             msg = f"已清除 {deleted} 个旧文档块。" + msg
         msg += f"集合当前共 {total} 个文档块。"
+        await tool_stream(f"✅ {msg}\n")
         return msg
     except ValueError as e:
         return f"{TOOL_ERROR}: {e}"
@@ -182,18 +211,7 @@ async def rag_search(
                 )
             return msg
 
-        # 按分数排序取 top_k (优先使用 rerank_score, 其次 rrf_score, 最后余弦相似度)
-        def _sort_key(x: dict) -> float:
-            if "rerank_score" in x:
-                return x["rerank_score"]
-            if "rrf_score" in x:
-                return x["rrf_score"]
-            if "cosine_similarity" in x:
-                return x["cosine_similarity"]
-            if "distance" in x:
-                return 1 - x["distance"]
-            return -1  # 没有分数的排在最后
-
+        # 按分数排序取 top_k
         all_results.sort(key=_sort_key, reverse=True)
         all_results = [r for r in all_results if _sort_key(r) >= min_score][:top_k]
 
@@ -339,6 +357,218 @@ def rag_delete_collection(
         return f"{TOOL_ERROR}: 删除集合失败: {e}"
 
 
+async def _judge_relevance(
+    query: str, results: list[dict], config: AppConfig
+) -> list[float]:
+    """用 LLM 判断检索结果与查询的相关性(LLM judge,无需人工标注)。
+
+    对应 RAGAS 的 Context Relevancy 思路:批量判断每个 chunk 能否回答查询。
+
+    Args:
+        query: 查询文本。
+        results: 检索结果列表。
+        config: 应用配置。
+
+    Returns:
+        list[float]: 每个结果的 LLM 相关度分数(0-1),调用失败时全为 0。
+    """
+    if not results:
+        return []
+
+    from uniclaw.provider.fallback import achat
+    from uniclaw.tools.session.session import Session
+
+    docs_text = ""
+    for i, c in enumerate(results):
+        content = c["content"]
+        chunk_idx = c.get("metadata", {}).get("chunk_index")
+        idx_tag = f" (chunk_index={chunk_idx})" if chunk_idx is not None else ""
+        docs_text += f"[{i}]{idx_tag} {content}\n\n"
+
+    system_prompt = (
+        "你是一个文档相关性判断助手。根据查询与每个文档的相关性给出分数。"
+        "分数范围 0-100: 0 表示完全无关,100 表示完全相关且能直接回答查询问题。"
+        "请充分利用整个分数区间,避免只给 0 或 100 的极端分数。"
+        '只返回一个 JSON 对象,格式: {"judgments": [{"index": 序号, "score": 分数}, ...]},'
+        "不要返回其他内容。"
+    )
+    user_message = f"查询: {query}\n\n候选文档:\n{docs_text}\n请为每个文档打分。"
+
+    session = Session()
+    session.add_user_message(content=user_message)
+
+    try:
+        from uniclaw.utils.format import parse_json_from_llm
+
+        resp = await achat(
+            system_prompt,
+            session,
+            model_name=config.mini_model_name,
+            enable_thinking=False,
+            thinking=False,
+            config=config,
+            temperature=0.3,
+        )
+        result = parse_json_from_llm(resp.content)
+        judgments = result.get("judgments", []) if result else []
+        scores = [0.0] * len(results)
+        # 只接受 {"index": 序号, "score": 分数} 字典格式,其余视为错误
+        for j in judgments:
+            if not isinstance(j, dict):
+                return [0.0] * len(results)
+            try:
+                idx = int(j.get("index"))
+            except (TypeError, ValueError):
+                return [0.0] * len(results)
+            if 0 <= idx < len(scores):
+                scores[idx] = max(0.0, min(1.0, float(j.get("score", 0)) / 100))
+        return scores
+    except Exception:
+        return [0.0] * len(results)
+
+
+@tool
+async def rag_evaluate(
+    collection: str,
+    queries: list[str],
+    top_k: int = 5,
+    rerank: bool = True,
+    use_bm25: bool = True,
+    use_llm_judge: bool = False,
+    config: AppConfig = None,
+) -> str:
+    """
+    评估 RAG 检索效果:对一组测试问题执行检索,输出 LLM Judge 相关性指标。
+
+    设置 use_llm_judge=True 时,会用 LLM 评估每个检索结果与查询的相关性,
+    无需人工标注。输出 LLM Judge 平均分和 Context Precision@k。
+
+    Args:
+        collection: 要评估的集合名称(必填)。
+        queries: 测试问题列表,每个问题应能对应集合中的某个文档块。
+        top_k: 每个问题返回的结果数。默认为 5。
+        rerank: 是否启用 LLM 重排序。默认为 True。
+        use_bm25: 是否启用 BM25 关键词检索实现多路召回。默认为 True。
+        use_llm_judge: 是否启用 LLM judge 评估检索相关性。默认为 False。
+            启用后计算平均相关性分数和 Context Precision@k,无需人工标注。
+
+    Returns:
+        str: 评估报告,包含总指标和每个问题的检索明细。
+    """
+    if not config:
+        return f"{TOOL_ERROR}: 无法获取配置"
+    if not queries:
+        return f"{TOOL_ERROR}: queries 不能为空"
+    if top_k <= 0:
+        return f"{TOOL_ERROR}: top_k 必须为正整数"
+
+    try:
+        # 为每个问题执行多层级检索,按内容去重
+        all_retrieved: dict[str, list[dict]] = {}
+        errors = []
+        for qi, query in enumerate(queries):
+            retrieved = []
+            seen_contents = set()
+            for s in [Scope.PROJECT, Scope.USER]:
+                try:
+                    manager = _get_manager(config, s)
+                    results = await manager.search(
+                        collection, query, top_k, rerank, use_bm25
+                    )
+                    for r in results:
+                        if r["content"] not in seen_contents:
+                            seen_contents.add(r["content"])
+                            retrieved.append(r)
+                except Exception as e:
+                    errors.append(f"问题 {qi + 1} ({s.value}): {e}")
+            # 按分数排序并截断到 top_k
+            retrieved.sort(key=_sort_key, reverse=True)
+            retrieved = retrieved[:top_k]
+            all_retrieved[query] = retrieved
+
+        # ── LLM judge 相关性评估 ──
+        judge_scores: dict[str, list[float]] = {}
+        if use_llm_judge:
+            for qi, query in enumerate(queries):
+                retrieved = all_retrieved[query]
+                if retrieved:
+                    scores = await _judge_relevance(query, retrieved, config)
+                else:
+                    scores = []
+                judge_scores[query] = scores
+
+        # ── 汇总指标 ──
+        result_counts = []
+        detail_lines = []
+
+        for qi, query in enumerate(queries):
+            retrieved = all_retrieved[query]
+            result_counts.append(len(retrieved))
+
+            # 构建每个问题的明细
+            parts = [f"Q{qi + 1}. {query}"]
+
+            if use_llm_judge and judge_scores.get(query):
+                scores = judge_scores[query]
+                avg_score = sum(scores) / len(scores) if scores else 0.0
+                relevant = sum(1 for s in scores if s >= 0.5)
+                context_precision = relevant / len(scores) if scores else 0.0
+                parts.append(
+                    f"    LLM Judge: 平均分 {avg_score:.3f}, "
+                    f"Context Precision@{top_k}: {relevant}/{len(scores)} = {context_precision * 100:.0f}%"
+                )
+                # 显示每个结果的分数
+                score_details = []
+                for i, s in enumerate(scores):
+                    tag = "✓" if s >= 0.5 else "✗"
+                    score_details.append(f"[{i}]{tag}{s:.2f}")
+                parts.append(f"    Chunk 分数: {' '.join(score_details)}")
+
+            parts.append(f"    返回 {len(retrieved)} 个结果")
+            detail_lines.append("\n".join(parts))
+
+        n = len(queries)
+        avg_results = sum(result_counts) / n
+
+        # 构建报告
+        lines = [
+            f"评估完成:集合 '{collection}', 共 {n} 个问题, "
+            f"top_k={top_k}, rerank={rerank}, BM25={use_bm25}",
+            "=" * 40,
+            "总指标:",
+            f"  平均返回结果数:      {avg_results:.1f}",
+        ]
+
+        # 全局 LLM judge 指标
+        if use_llm_judge and judge_scores:
+            all_scores = [s for scores in judge_scores.values() for s in scores]
+            all_precisions = []
+            for query in queries:
+                scores = judge_scores.get(query, [])
+                if scores:
+                    all_precisions.append(sum(1 for s in scores if s >= 0.5) / len(scores))
+            avg_judge = sum(all_scores) / len(all_scores) if all_scores else 0.0
+            avg_precision = sum(all_precisions) / len(all_precisions) if all_precisions else 0.0
+            lines.append(f"  LLM Judge 平均相关度:  {avg_judge:.3f}")
+            lines.append(f"  LLM Context Precision: {avg_precision * 100:.1f}%")
+
+        if errors:
+            lines.append(f"  搜索错误: {len(errors)} 个")
+        if not use_llm_judge:
+            lines.append("  (未启用 LLM Judge,仅统计检索结果数量)")
+        if detail_lines:
+            lines.append("-" * 40)
+            lines.extend(detail_lines)
+        if errors:
+            lines.append("-" * 40)
+            lines.append("错误明细:")
+            lines.extend(f"  - {e}" for e in errors[:10])
+
+        return "\n".join(lines)
+    except Exception as e:
+        return f"{TOOL_ERROR}: 评估失败: {e}"
+
+
 def get_tools(config=None) -> list:
     """获取 RAG 工具列表。仅当配置了 embedding_model 时才返回工具。"""
     if not config or not config.embedding_model:
@@ -349,6 +579,7 @@ def get_tools(config=None) -> list:
         rag_list_collections,
         rag_set_desc,
         rag_delete_collection,
+        rag_evaluate,
     ]
 
 
@@ -360,4 +591,5 @@ def get_all_tools() -> list:
         rag_list_collections,
         rag_set_desc,
         rag_delete_collection,
+        rag_evaluate,
     ]

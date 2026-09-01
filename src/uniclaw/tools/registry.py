@@ -230,6 +230,7 @@ def _build_extended_keywords() -> dict[str, list[str]]:
         rag_list_collections,
         rag_delete_collection,
         rag_set_desc,
+        rag_evaluate,
     )
     from uniclaw.tools.a2a.tools import (
         a2a_send_task,
@@ -1362,6 +1363,19 @@ def _build_extended_keywords() -> dict[str, list[str]]:
             "collection description",
             "修改描述",
         ],
+        rag_evaluate.name: [
+            "RAG",
+            "评估",
+            "效果评估",
+            "检索评估",
+            "命中率",
+            "MRR",
+            "评测",
+            "evaluate",
+            "eval",
+            "评估检索",
+            "RAG评测",
+        ],
     }
 
 
@@ -1540,6 +1554,7 @@ def _build_tool_categories() -> dict[str, str]:
         rag_list_collections,
         rag_delete_collection,
         rag_set_desc,
+        rag_evaluate,
     )
     from .ipython.tools import (
         ipython_start,
@@ -1728,6 +1743,7 @@ def _build_tool_categories() -> dict[str, str]:
         rag_list_collections.name: "RAG",
         rag_delete_collection.name: "RAG",
         rag_set_desc.name: "RAG",
+        rag_evaluate.name: "RAG",
     }
 
 

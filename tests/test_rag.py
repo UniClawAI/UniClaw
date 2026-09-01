@@ -33,7 +33,9 @@ from uniclaw.tools.rag.splitter import (
 )
 from uniclaw.tools.rag.tools import (
     _get_manager,
+    _judge_relevance,
     rag_delete_collection,
+    rag_evaluate,
     rag_ingest,
     rag_list_collections,
     rag_search,
@@ -1145,3 +1147,244 @@ class TestEdgeCases:
             assert chunk.metadata["source"] == "test.txt"
             assert chunk.metadata["filename"] == "test.txt"
             assert chunk.metadata["custom_field"] == "custom_value"
+
+
+# ── rag_evaluate 工具测试 ─────────────────────────────────
+
+
+def _make_result(
+    content: str, source: str, chunk_index: int | None = None, **score_fields
+) -> dict:
+    """构造一个检索结果字典。"""
+    metadata = {"source": source, "filename": source.split("/")[-1]}
+    if chunk_index is not None:
+        metadata["chunk_index"] = chunk_index
+    result = {"content": content, "metadata": metadata}
+    result.update(score_fields)
+    return result
+
+
+class TestRAGEvaluate:
+    """rag_evaluate 工具测试"""
+
+    @pytest.mark.asyncio
+    async def test_no_config(self):
+        """测试无配置时返回错误"""
+        result = await rag_evaluate.func(
+            collection="test",
+            queries=["query1"],
+            config=None,
+        )
+        assert "无法获取配置" in result
+
+    @pytest.mark.asyncio
+    async def test_empty_queries(self, tmp_path):
+        """测试 queries 为空"""
+        config = _create_mock_config(root_dir=tmp_path)
+        result = await rag_evaluate.func(
+            collection="test",
+            queries=[],
+            config=config,
+        )
+        assert "queries 不能为空" in result
+
+    @pytest.mark.asyncio
+    async def test_invalid_top_k(self, tmp_path):
+        """测试 top_k 无效"""
+        config = _create_mock_config(root_dir=tmp_path)
+        result = await rag_evaluate.func(
+            collection="test",
+            queries=["query1"],
+            top_k=0,
+            config=config,
+        )
+        assert "top_k 必须为正整数" in result
+
+    @pytest.mark.asyncio
+    @patch("uniclaw.tools.rag.tools._get_manager")
+    async def test_evaluate_no_llm_judge(self, mock_get_manager, tmp_path):
+        """测试不启用 LLM judge 时仅统计检索结果数量"""
+        config = _create_mock_config(root_dir=tmp_path)
+        mock_manager = MagicMock()
+        mock_get_manager.return_value = mock_manager
+        mock_manager.search = AsyncMock(
+            return_value=[_make_result("doc1", "a.txt", rerank_score=0.9)]
+        )
+
+        result = await rag_evaluate.func(
+            collection="test",
+            queries=["query1"],
+            config=config,
+        )
+        assert "未启用 LLM Judge" in result
+        assert "评估完成" in result
+
+    @pytest.mark.asyncio
+    @patch("uniclaw.tools.rag.tools._get_manager")
+    async def test_evaluate_errors_collected(self, mock_get_manager, tmp_path):
+        """测试搜索错误被收集但不中断评估"""
+        config = _create_mock_config(root_dir=tmp_path)
+        mock_manager = MagicMock()
+        mock_manager.search = AsyncMock(
+            return_value=[_make_result("doc1", "a.txt", rerank_score=0.9)]
+        )
+
+        # 项目级正常,用户级抛异常
+        def side_effect(config, scope):
+            if scope == Scope.PROJECT:
+                return mock_manager
+            raise RuntimeError("boom")
+
+        mock_get_manager.side_effect = side_effect
+
+        result = await rag_evaluate.func(
+            collection="test",
+            queries=["query1"],
+            config=config,
+        )
+        assert "搜索错误" in result
+
+    @pytest.mark.asyncio
+    @patch("uniclaw.tools.rag.tools._get_manager")
+    async def test_evaluate_deduplication(self, mock_get_manager, tmp_path):
+        """测试跨层级结果去重"""
+        config = _create_mock_config(root_dir=tmp_path)
+
+        # 项目级和用户级返回相同内容
+        def scope_manager(config, scope):
+            m = MagicMock()
+            m.search = AsyncMock(
+                return_value=[_make_result("doc1", "a.txt", rerank_score=0.9)]
+            )
+            return m
+
+        mock_get_manager.side_effect = scope_manager
+
+        result = await rag_evaluate.func(
+            collection="test",
+            queries=["query1"],
+            config=config,
+        )
+        assert "返回 1 个结果" in result
+
+
+class TestJudgeRelevance:
+    """_judge_relevance LLM judge 测试"""
+
+    @pytest.mark.asyncio
+    @patch("uniclaw.provider.fallback.achat")
+    async def test_returns_normalized_scores(self, mock_achat, tmp_path):
+        """测试返回归一化的分数"""
+        from uniclaw.tools.session.session import AIMessage
+
+        config = _create_mock_config(root_dir=tmp_path)
+        mock_achat.return_value = AIMessage(
+            content='{"judgments": [{"index": 0, "score": 80}, {"index": 1, "score": 30}]}'
+        )
+
+        results = [
+            _make_result("doc1 content", "a.txt", rerank_score=0.9),
+            _make_result("doc2 content", "b.txt", rerank_score=0.5),
+        ]
+        scores = await _judge_relevance("query", results, config)
+        assert scores == [0.8, 0.3]
+
+    @pytest.mark.asyncio
+    @patch("uniclaw.provider.fallback.achat")
+    async def test_invalid_format_returns_zeros(self, mock_achat, tmp_path):
+        """测试非法格式(纯数字列表)返回全 0,不兼容"""
+        from uniclaw.tools.session.session import AIMessage
+
+        config = _create_mock_config(root_dir=tmp_path)
+        mock_achat.return_value = AIMessage(content='{"judgments": [100, 0]}')
+
+        results = [
+            _make_result("doc1 content", "a.txt", rerank_score=0.9),
+            _make_result("doc2 content", "b.txt", rerank_score=0.5),
+        ]
+        scores = await _judge_relevance("query", results, config)
+        assert scores == [0.0, 0.0]
+
+    @pytest.mark.asyncio
+    @patch("uniclaw.provider.fallback.achat")
+    async def test_missing_index_returns_zeros(self, mock_achat, tmp_path):
+        """测试缺失 index 字段视为格式错误,返回全 0"""
+        from uniclaw.tools.session.session import AIMessage
+
+        config = _create_mock_config(root_dir=tmp_path)
+        mock_achat.return_value = AIMessage(
+            content='{"judgments": [{"score": 90}]}'
+        )
+
+        results = [_make_result("doc1 content", "a.txt", rerank_score=0.9)]
+        scores = await _judge_relevance("query", results, config)
+        assert scores == [0.0]
+
+    @pytest.mark.asyncio
+    @patch("uniclaw.provider.fallback.achat")
+    async def test_failure_returns_zeros(self, mock_achat, tmp_path):
+        """测试 LLM 调用失败时返回全 0"""
+        config = _create_mock_config(root_dir=tmp_path)
+        mock_achat.side_effect = RuntimeError("LLM down")
+
+        results = [_make_result("doc1 content", "a.txt", rerank_score=0.9)]
+        scores = await _judge_relevance("query", results, config)
+        assert scores == [0.0]
+
+    @pytest.mark.asyncio
+    async def test_empty_results(self, tmp_path):
+        """测试空结果"""
+        config = _create_mock_config(root_dir=tmp_path)
+        scores = await _judge_relevance("query", [], config)
+        assert scores == []
+
+
+class TestRAGEvaluateExtended:
+    """rag_evaluate 扩展功能测试(LLM judge)"""
+
+    @pytest.mark.asyncio
+    @patch("uniclaw.tools.rag.tools._get_manager")
+    @patch("uniclaw.tools.rag.tools._judge_relevance")
+    async def test_llm_judge_report(self, mock_judge, mock_get_manager, tmp_path):
+        """测试启用 LLM judge 时输出相关度指标"""
+        config = _create_mock_config(root_dir=tmp_path)
+        mock_manager = MagicMock()
+        mock_get_manager.return_value = mock_manager
+        mock_manager.search = AsyncMock(
+            return_value=[
+                _make_result("doc1 content", "a.txt", rerank_score=0.9),
+                _make_result("doc2 content", "b.txt", rerank_score=0.5),
+            ]
+        )
+        mock_judge.return_value = [0.9, 0.2]
+
+        result = await rag_evaluate.func(
+            collection="test",
+            queries=["query1"],
+            use_llm_judge=True,
+            config=config,
+        )
+        assert "LLM Judge" in result
+        assert "Context Precision" in result
+        assert "0.9" in result  # judge 平均分
+        # 0.9 ≥ 0.5 算相关,0.2 < 0.5 不算 → precision 1/2 = 50%
+        assert "50%" in result
+
+    @pytest.mark.asyncio
+    @patch("uniclaw.tools.rag.tools._get_manager")
+    async def test_llm_judge_empty_results(self, mock_get_manager, tmp_path):
+        """测试 LLM judge 且某问题无检索结果时不崩溃"""
+        config = _create_mock_config(root_dir=tmp_path)
+        mock_manager = MagicMock()
+        mock_get_manager.return_value = mock_manager
+        mock_manager.search = AsyncMock(return_value=[])
+
+        result = await rag_evaluate.func(
+            collection="test",
+            queries=["query1"],
+            use_llm_judge=True,
+            config=config,
+        )
+        assert "评估完成" in result
+        assert "返回 0 个结果" in result
+

@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import inspect
 import pickle
 import uuid
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -202,12 +204,19 @@ class RAGManager:
         except Exception:
             return None
 
-    async def ingest(self, collection_name: str, chunks: list[Chunk]) -> int:
+    async def ingest(
+        self,
+        collection_name: str,
+        chunks: list[Chunk],
+        progress_callback: Callable[[int, int], Awaitable[None] | None] | None = None,
+    ) -> int:
         """将文档块 embedding 后存入集合。
 
         Args:
             collection_name: 集合名称
             chunks: 文档块列表
+            progress_callback: 可选回调(同步或异步均可),每个批次入库后调用,
+                参数为 (已完成块数, 总块数),用于显示进度条。
 
         Returns:
             存入的文档块数量
@@ -237,6 +246,11 @@ class RAGManager:
                 metadatas=metadatas,
             )
             total += len(batch)
+
+            if progress_callback is not None:
+                result = progress_callback(total, len(chunks))
+                if inspect.isawaitable(result):
+                    await result
 
         self._invalidate_bm25(collection_name)
         return total
