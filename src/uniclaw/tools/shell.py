@@ -601,7 +601,7 @@ async def search_files_with_everything(
     search_cmd = "es"
 
     if path_filter:
-        search_cmd += f' -p "{path_filter}"'
+        search_cmd += f' -path "{path_filter}"'
     if max_results:
         search_cmd += f" -n {max_results}"
     search_cmd += f' "{query}"'
