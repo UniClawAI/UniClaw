@@ -198,3 +198,82 @@ def test_glob_sorted(tmp_path):
 def test_glob_empty_dir(tmp_path):
     result = Glob.func(pattern="*", path=str(tmp_path))
     assert "未找到" in result
+
+
+# ── _allocate_md_output / _cleanup_placeholder (Bug #5 回归) ──
+
+
+def test_allocate_md_output_simple(tmp_path):
+    """正常分配:输出为 同名.md,且占位文件已创建。"""
+    from uniclaw.tools.fs import _allocate_md_output
+
+    src = tmp_path / "report.pdf"
+    src.write_text("pdf", encoding="utf-8")
+    out = _allocate_md_output(src)
+    assert out == tmp_path / "report.md"
+    assert out.exists()  # 原子占位文件已创建
+
+
+def test_allocate_md_output_existing_increments(tmp_path):
+    """目标已存在(如已有 report.md)时自动递增数字后缀。"""
+    from uniclaw.tools.fs import _allocate_md_output
+
+    src = tmp_path / "report.pdf"
+    src.write_text("pdf", encoding="utf-8")
+    (tmp_path / "report.md").write_text("existing", encoding="utf-8")
+
+    out = _allocate_md_output(src)
+    assert out == tmp_path / "report_1.md"
+    # 已存在的文件不受影响
+    assert (tmp_path / "report.md").read_text(encoding="utf-8") == "existing"
+
+
+def test_allocate_md_output_concurrent_same_stem(tmp_path):
+    """同名不同扩展名并发转换时输出路径互不覆盖(Bug #5 核心回归)。"""
+    import asyncio
+    from uniclaw.tools.fs import _allocate_md_output, _cleanup_placeholder
+
+    csv_src = tmp_path / "data.csv"
+    html_src = tmp_path / "data.html"
+    csv_src.write_text("a,b\n1,2", encoding="utf-8")
+    html_src.write_text("<html>hi</html>", encoding="utf-8")
+
+    async def run():
+        # 两个任务几乎同时分配,模拟并发转换
+        t1 = asyncio.create_task(asyncio.to_thread(_allocate_md_output, csv_src))
+        t2 = asyncio.create_task(asyncio.to_thread(_allocate_md_output, html_src))
+        return await asyncio.gather(t1, t2)
+
+    out1, out2 = asyncio.run(run())
+    # 两个输出必须互不相同,且同目录、均为 .md
+    assert out1 != out2
+    assert out1.parent == out2.parent == tmp_path
+    assert out1.suffix == out2.suffix == ".md"
+    assert set(out1.name) | set(out2.name)  # 有实际文件名
+    # 两个占位文件都应存在
+    assert out1.exists() and out2.exists()
+
+    # 清理占位
+    _cleanup_placeholder(out1)
+    _cleanup_placeholder(out2)
+    assert not out1.exists() and not out2.exists()
+
+
+def test_cleanup_placeholder_only_empty(tmp_path):
+    """占位清理只删空文件,不误删已写入内容(如转换成功)的文件。"""
+    from uniclaw.tools.fs import _allocate_md_output, _cleanup_placeholder
+
+    src = tmp_path / "doc.pdf"
+    src.write_text("pdf", encoding="utf-8")
+    out = _allocate_md_output(src)
+
+    # 模拟转换成功写入内容
+    out.write_text("# 转换结果\n", encoding="utf-8")
+    _cleanup_placeholder(out)
+    assert out.exists(), "非空文件不应被清理"
+
+    # 空占位应被清理
+    out2 = _allocate_md_output(src)
+    assert out2 == tmp_path / "doc_1.md"
+    _cleanup_placeholder(out2)
+    assert not out2.exists()

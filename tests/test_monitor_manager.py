@@ -412,18 +412,19 @@ class TestReadOutput:
 
     @pytest.mark.asyncio
     async def test_match(self):
-        """匹配模式时更新状态并通知。"""
+        """匹配模式时记录匹配行并通知; 进程结束后归为 STOPPED。"""
         mgr = MonitorManager()
         m = _make_monitor(pattern="ERROR")
         process = MagicMock()
-        process.stdout.readline = AsyncMock(side_effect=[b"ERROR: boom\n", b""])
+        process.stdout.read = AsyncMock(side_effect=[b"ERROR: boom\n", b""])
         process.returncode = 0
         m.process = process
         with patch.object(mgr, "_notify_match", new=AsyncMock()) as mock_notify:
             await mgr._read_output(m)
-        assert m.status == MonitorStatus.MATCHED
+        # 匹配后进程随即结束: 状态不得卡在 matched, 应归为 stopped
+        assert m.status == MonitorStatus.STOPPED
         assert list(m.output_lines) == ["ERROR: boom"]
-        assert m.matched_lines == ["ERROR: boom"]
+        assert list(m.matched_lines) == ["ERROR: boom"]
         assert m.match_time is not None
         mock_notify.assert_awaited_once_with(m, "ERROR: boom")
 
@@ -433,13 +434,13 @@ class TestReadOutput:
         mgr = MonitorManager()
         m = _make_monitor(pattern="zzz")
         process = MagicMock()
-        process.stdout.readline = AsyncMock(side_effect=[b"hello\n", b""])
+        process.stdout.read = AsyncMock(side_effect=[b"hello\n", b""])
         process.returncode = 0
         m.process = process
         await mgr._read_output(m)
         assert m.status == MonitorStatus.STOPPED
         assert list(m.output_lines) == ["hello"]
-        assert m.matched_lines == []
+        assert list(m.matched_lines) == []
 
     @pytest.mark.asyncio
     async def test_timeout(self):
@@ -447,7 +448,7 @@ class TestReadOutput:
         mgr = MonitorManager()
         m = _make_monitor(timeout=10)
         process = MagicMock()
-        process.stdout.readline = AsyncMock(side_effect=[b"x\n", b""])
+        process.stdout.read = AsyncMock(side_effect=[b"x\n", b""])
         process.returncode = 0
         m.process = process
         mock_loop = MagicMock()
@@ -466,7 +467,7 @@ class TestReadOutput:
         mgr = MonitorManager()
         m = _make_monitor()
         process = MagicMock()
-        process.stdout.readline = AsyncMock(side_effect=OSError("boom"))
+        process.stdout.read = AsyncMock(side_effect=OSError("boom"))
         process.returncode = None
         m.process = process
         await mgr._read_output(m)
@@ -478,8 +479,12 @@ class TestReadOutput:
         mgr = MonitorManager()
         m = _make_monitor()
         gate = asyncio.Event()
+
+        async def hang_forever(*_):
+            await gate.wait()
+
         process = MagicMock()
-        process.stdout.readline = AsyncMock(side_effect=gate.wait)
+        process.stdout.read = AsyncMock(side_effect=hang_forever)
         process.returncode = None
         m.process = process
         task = asyncio.create_task(mgr._read_output(m))

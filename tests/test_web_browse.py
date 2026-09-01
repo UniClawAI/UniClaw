@@ -586,6 +586,33 @@ class TestSinglePageOperations:
         assert "已将" in result
         assert "拖拽到" in result
 
+    @pytest.mark.asyncio
+    async def test_insert_text_no_selector(self, web_browser, mock_page):
+        """不提供 selector 时向当前聚焦元素插入文本。"""
+        web_browser._browser = MagicMock()
+        web_browser._pages = {1: mock_page}
+        web_browser._active_page_id = 1
+        mock_page.keyboard.insert_text = AsyncMock()
+
+        result = await web_browser.insert_text("hello")
+        assert "已插入文本" in result
+        mock_page.keyboard.insert_text.assert_called_once_with("hello")
+        mock_page.locator.assert_not_called()  # 不应调用 locator
+
+    @pytest.mark.asyncio
+    async def test_insert_text_with_selector(self, web_browser, mock_page):
+        """Bug #7 回归:提供 selector 时先聚焦再插入文本。"""
+        web_browser._browser = MagicMock()
+        web_browser._pages = {1: mock_page}
+        web_browser._active_page_id = 1
+        mock_page.keyboard.insert_text = AsyncMock()
+        locator = mock_page.locator("#searchInput")
+
+        result = await web_browser.insert_text("world", selector="#searchInput")
+        assert "已向元素" in result
+        locator.focus.assert_called_once()
+        mock_page.keyboard.insert_text.assert_called_once_with("world")
+
 
 # ── 模式切换测试 ─────────────────────────────────────────────
 
@@ -719,3 +746,21 @@ class TestTools:
         for tool in get_tools():
             assert tool.description
             assert len(tool.description) > 0
+
+    def test_insert_text_tool_schema_has_selector(self):
+        """Bug #7 回归: browser_insert_text 的 schema 必须包含 selector 参数。"""
+        from uniclaw.tools.web_browse.tools import get_tools
+
+        tool = next(t for t in get_tools() if t.name == "browser_insert_text")
+        props = tool.parameters["properties"]
+        assert "selector" in props, "browser_insert_text 缺少 selector 参数"
+        assert "text" in props
+        assert props["selector"]["description"], "selector 缺少参数描述"
+
+    def test_insert_text_tool_accepts_selector_kwarg(self):
+        """Bug #7 回归: 直接以 selector 关键字调用工具函数不应报错。"""
+        from uniclaw.tools.web_browse.tools import get_tools
+
+        tool = next(t for t in get_tools() if t.name == "browser_insert_text")
+        sig = __import__("inspect").signature(tool.func)
+        assert "selector" in sig.parameters

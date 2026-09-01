@@ -9,6 +9,7 @@ from pathlib import Path
 from datetime import datetime, timedelta
 
 from uniclaw.tools.scheduler.scheduler import Scheduler, _parse_cron
+from uniclaw.tools.scheduler.tools import _validate_action
 
 
 @pytest.fixture(autouse=True)
@@ -60,6 +61,45 @@ class TestParseCron:
             _parse_cron("60 * * * *")
         with pytest.raises(ValueError):
             _parse_cron("")
+
+
+class TestValidateAction:
+    """action JSON 校验测试 (Bug #8 回归)"""
+
+    def test_shell_missing_command(self):
+        err = _validate_action('{"type": "shell"}')
+        assert err is not None
+        assert "缺少 'command'" in err
+
+    def test_shell_empty_command(self):
+        """Bug #8 回归:空命令必须被拒绝。"""
+        err = _validate_action('{"type": "shell", "command": ""}')
+        assert err is not None
+        assert "不能为空" in err
+
+    def test_shell_whitespace_command(self):
+        """纯空白命令同样拒绝。"""
+        err = _validate_action('{"type": "shell", "command": "   "}')
+        assert err is not None
+        assert "不能为空" in err
+
+    def test_shell_valid_command(self):
+        assert _validate_action('{"type": "shell", "command": "git status"}') is None
+
+    def test_monitor_empty_command(self):
+        """monitor 类型的 command 空值同样拒绝。"""
+        err = _validate_action(
+            '{"type": "monitor", "command": "", "agent": {"message": "挂了"}}'
+        )
+        assert err is not None
+        assert "不能为空" in err
+
+    def test_monitor_valid(self):
+        action = (
+            '{"type": "monitor", "command": "curl -sf http://localhost:8080", '
+            '"agent": {"message": "挂了"}}'
+        )
+        assert _validate_action(action) is None
 
     def test_get_next_run_time(self):
         cron = _parse_cron("0 9 * * *")

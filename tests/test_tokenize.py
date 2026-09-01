@@ -41,6 +41,28 @@ class TestTokenize:
         assert "hello_world" in result
         assert "test_case" in result
 
+    def test_snake_case_subwords(self):
+        """snake_case 标识符额外拆出子词, 便于按片段检索。"""
+        result = tokenize("exa_web_search")
+        assert result[0] == "exa_web_search"
+        assert "exa" in result
+        assert "web" in result
+        assert "search" in result
+
+    def test_camel_case_subwords(self):
+        """camelCase/PascalCase 标识符额外拆出子词。"""
+        result = tokenize("webFetch DockerCreate HTTPServer")
+        assert "webfetch" in result
+        assert "web" in result
+        assert "fetch" in result
+        assert "dockercreate" in result
+        assert "docker" in result
+        assert "create" in result
+        # 大写缩写词不被拆散
+        assert "httpserver" in result
+        assert "http" in result
+        assert "server" in result
+
     def test_empty_string(self):
         """空字符串返回空列表。"""
         result = tokenize("")

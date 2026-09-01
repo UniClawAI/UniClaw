@@ -206,7 +206,7 @@ async def test_compact_appends_recall_hint_to_summary():
 
 @pytest.mark.asyncio
 async def test_compact_calls_achat_with_summary_params():
-    """achat 以续作导向参数调用: 低温度、关思考、max_tokens 预算。"""
+    """achat 以续作导向参数调用: 低温度、max_tokens 预算。"""
     s = _make_filled_session()
     with (
         patch(
@@ -221,8 +221,8 @@ async def test_compact_calls_achat_with_summary_params():
 
     kwargs = mock_achat.call_args.kwargs
     assert kwargs["temperature"] == 0.2
-    assert kwargs["enable_thinking"] is False
-    assert kwargs["thinking"] is False
+    assert "enable_thinking" not in kwargs  # 思考参数已移除 (aced36c8)
+    assert "thinking" not in kwargs
     assert kwargs["max_tokens"] >= 500
     assert kwargs["max_tokens"] <= 1500
     # 使用 fallback.achat 并传入模型列表,保证主模型失败时能回退备用模型

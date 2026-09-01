@@ -69,7 +69,7 @@ class TestCoreTools:
 
     def test_known_core_tools(self):
         """包含关键核心工具。"""
-        for name in ["Read", "Write", "Bash", "Grep", "webFetch", "webSearch"]:
+        for name in ["Read", "Write", "Bash", "Grep", "webFetch"]:
             assert name in CORE_TOOL_NAMES
 
 

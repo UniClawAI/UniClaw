@@ -15,6 +15,7 @@ from uniclaw.tools.todolist.tools import (
 )
 from uniclaw.tools.todolist.todolist import TodoList, TodoStatus
 from uniclaw.tools.todolist.overseer import OverseerManager
+from uniclaw.utils.constants import TOOL_ERROR
 
 
 def _make_config(todo: TodoList) -> MagicMock:
@@ -123,6 +124,32 @@ class TestUpdate:
         result = await todolist_update(0, "completed", config=config)
         assert "[✓]" in result
         assert todo.items[0].status == TodoStatus.COMPLETED
+
+    @pytest.mark.asyncio
+    async def test_update_all_completed_returns_clear_hint(self):
+        """全部步骤完成时返回 todolist_clear 提示。"""
+        todo = TodoList()
+        todo.add("任务1")
+        todo.add("任务2")
+        config = _make_config(todo)
+        await todolist_update(0, "in_progress", config=config)
+        partial = await todolist_update(0, "completed", config=config)
+        assert "todolist_clear" not in partial
+        await todolist_update(1, "in_progress", config=config)
+        result = await todolist_update(1, "completed", config=config)
+        assert "全部 2 个步骤均已完成" in result
+        assert f"请立即调用 {todolist_clear.name}" in result
+
+    @pytest.mark.asyncio
+    async def test_update_error_no_hint(self):
+        """更新失败时不附加清空提示。"""
+        todo = TodoList()
+        todo.add("任务")
+        config = _make_config(todo)
+        # pending 不能直接改为 completed
+        result = await todolist_update(0, "completed", config=config)
+        assert TOOL_ERROR in result
+        assert "todolist_clear" not in result
 
 
 class TestClear:
@@ -293,7 +320,9 @@ class TestOverseerModeTools:
         todo.overseer.start()
         todo.add("旧任务")
         config = _make_config(todo)
-        result = await todolist_create(["新任务1", "新任务2"], reason="旧清单不合理", config=config)
+        result = await todolist_create(
+            ["新任务1", "新任务2"], reason="旧清单不合理", config=config
+        )
         assert "已重建清单" in result
         mock_reviewer.assert_called_once()
 
@@ -306,9 +335,25 @@ class TestOverseerModeTools:
         todo.add("任务")
         todo.items[0].status = TodoStatus.IN_PROGRESS
         config = _make_config(todo)
-        result = await todolist_update(0, "completed", reason="已完成功能", config=config)
+        result = await todolist_update(
+            0, "completed", reason="已完成功能", config=config
+        )
         assert "已标记为完成" in result
         mock_reviewer.assert_called_once()
+
+    @pytest.mark.asyncio
+    @patch("uniclaw.tools.todolist.overseer._run_reviewer", return_value=(True, ""))
+    async def test_update_overseer_all_completed_hint(self, mock_reviewer):
+        """监工模式下全部完成时同样返回清空提示。"""
+        todo = TodoList()
+        todo.overseer.start()
+        todo.add("任务")
+        todo.items[0].status = TodoStatus.IN_PROGRESS
+        config = _make_config(todo)
+        result = await todolist_update(
+            0, "completed", reason="已完成功能", config=config
+        )
+        assert f"请立即调用 {todolist_clear.name}" in result
 
     @pytest.mark.asyncio
     @patch(
