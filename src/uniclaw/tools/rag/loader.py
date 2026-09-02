@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from uniclaw.utils.read_text import read_text_file
+
 # 支持的文本文件扩展名
 TEXT_EXTENSIONS = {
     ".txt", ".md", ".py", ".json", ".yaml", ".yml", ".csv",
@@ -73,13 +75,9 @@ def load_directory(path: Path, recursive: bool = True) -> list[Document]:
 
 def _load_text(path: Path) -> list[Document]:
     """加载文本文件。"""
-    try:
-        content = path.read_text(encoding="utf-8")
-    except UnicodeDecodeError:
-        try:
-            content = path.read_text(encoding="gbk")
-        except UnicodeDecodeError:
-            content = path.read_text(encoding="latin-1")
+    content = read_text_file(path)
+    if content is None:
+        return []
     return [Document(
         content=content,
         metadata={"source": str(path), "filename": path.name, "suffix": path.suffix},

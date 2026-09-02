@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 from uniclaw.tools.stream import tool_stream
 from uniclaw.utils.constants import TOOL_ERROR
 from uniclaw.utils.format import sanitize_progress_line
+from uniclaw.utils.read_text import read_text_file
 from uniclaw.config import AppConfig
 
 # 标准错误输出标记前缀,用于标识错误信息
@@ -333,6 +334,8 @@ async def _has_rg() -> bool:
 
 async def _has_native_grep() -> bool:
     """检查 rg 或 grep 是否可用"""
+    if sys.platform == "win32":
+        return await _has_rg()
     if await _has_rg():
         return True
     try:
@@ -349,6 +352,15 @@ async def _has_native_grep() -> bool:
         return False
 
 
+def _is_hidden_path(path: Path, root: Path) -> bool:
+    """判断路径相对于搜索根是否为隐藏路径(任一路径段以 . 开头)"""
+    try:
+        rel = path.relative_to(root)
+    except ValueError:
+        return False
+    return any(part.startswith(".") for part in rel.parts)
+
+
 def _python_grep(
     pattern: str,
     path: str,
@@ -357,7 +369,11 @@ def _python_grep(
     case_insensitive: bool = False,
     context: int = 0,
 ) -> str:
-    """纯 Python 实现的 grep,作为 rg/grep 不可用时的回退方案"""
+    """纯 Python 实现的 grep,作为 rg/grep 不可用时的回退方案
+
+    默认忽略以 . 开头的隐藏文件/目录。
+    用户显式指定的文件(单个文件路径)不受此限制。
+    """
     import re
 
     flags = re.IGNORECASE if case_insensitive else 0
@@ -371,7 +387,7 @@ def _python_grep(
         files = [target]
     elif target.is_dir():
         files = sorted(target.rglob(glob or "*"))
-        files = [f for f in files if f.is_file()]
+        files = [f for f in files if f.is_file() and not _is_hidden_path(f, target)]
     else:
         return f"{TOOL_ERROR}: 路径不存在: {path}"
 
@@ -380,7 +396,9 @@ def _python_grep(
 
     for filepath in files:
         try:
-            text = filepath.read_text(encoding="utf-8", errors="replace")
+            text = read_text_file(filepath)
+            if text is None:
+                continue
         except (PermissionError, OSError):
             continue
 
@@ -458,7 +476,7 @@ async def Grep(
         context: 上下文行数,显示匹配行前后指定行数的内容,默认为 0
 
     Returns:
-        str: 搜索结果字符串。如果找到匹配项,返回结果(最多20000字符);
+        str: 搜索结果字符串。如果找到匹配项,返回结果;
              如果没有匹配项,返回 "No matches found";
              如果发生错误,返回 "Error: {错误信息}"
     """
@@ -475,7 +493,7 @@ async def Grep(
         return out
 
     use_rg = await _has_rg()
-    cmd = ["rg" if use_rg else "grep", "--no-heading"]
+    cmd = ["rg" if use_rg else "grep"]
 
     if case_insensitive:
         cmd.append("-i")
@@ -507,7 +525,7 @@ async def Grep(
         )
         stdout = smart_decode(stdout_bytes)
         out = stdout.strip()
-        return out[:20000] if out else "No matches found"
+        return out if out else "No matches found"
     except asyncio.TimeoutError:
         return f"{TOOL_ERROR}: 搜索超时"
     except Exception as e:
@@ -615,7 +633,11 @@ async def search_files_with_everything(
 
     if proc.returncode != 0:
         error_msg = stderr.decode(errors="replace").strip()
-        return f"{STDERR_MARKER} {error_msg}" if error_msg else f"{STDERR_MARKER} 命令执行失败 (退出码: {proc.returncode})"
+        return (
+            f"{STDERR_MARKER} {error_msg}"
+            if error_msg
+            else f"{STDERR_MARKER} 命令执行失败 (退出码: {proc.returncode})"
+        )
 
     output = stdout.decode(errors="replace").strip()
     return output if output else "(没有输出)"
