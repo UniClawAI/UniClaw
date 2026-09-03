@@ -483,7 +483,13 @@ def is_safe_bash(cmd: str, root_dir: Path | None) -> bool:
         return True
 
     # 最后检查系统内置的安全前缀白名单
-    return any(c.startswith(p) for p in _SAFE_PREFIXES)
+    # 首个单词必须完整一致, 避免 "wget" 命中 "w"、"setx" 命中 "set" 这类误放行;
+    # 首词之后的参数/flag 仍按前缀匹配, 保留 "netstat -"、"top -bn" 的续写能力
+    cmd_first = c.split(maxsplit=1)[0] if c else ""
+    return any(
+        cmd_first == p.split(maxsplit=1)[0] and c.startswith(p)
+        for p in _SAFE_PREFIXES
+    )
 
 
 def bash_desc(cmd: str, config: AppConfig) -> str:

@@ -419,7 +419,7 @@ class TestEverything:
         """路径过滤。"""
         mock_shell.return_value = self._make_proc()
         await search_files_with_everything("config", path_filter="D:/Projects")
-        assert mock_shell.await_args.args[0] == 'es -p "D:/Projects" "config"'
+        assert mock_shell.await_args.args[0] == 'es -path "D:/Projects" "config"'
 
     @pytest.mark.asyncio
     @patch("uniclaw.tools.shell.asyncio.create_subprocess_shell", new_callable=AsyncMock)
@@ -471,14 +471,27 @@ class TestGetTools:
         assert any(t.name == "search_files_with_everything" for t in tools)
 
     @pytest.mark.asyncio
-    @patch("uniclaw.console.ui.warn", new_callable=AsyncMock)
-    async def test_get_tools_without_es(self, mock_warn):
-        """es 不可用时禁用搜索工具。"""
+    async def test_get_tools_without_es(self):
+        """es 不可用时禁用搜索工具并记录原因。"""
         self._reset_cache()
+        mock_config = MagicMock()
         with patch("uniclaw.tools.shell._check_es", new_callable=AsyncMock, return_value="not found"):
-            tools = await get_tools()
+            tools = await get_tools(config=mock_config)
         assert len(tools) == 2
-        mock_warn.assert_awaited()
+        mock_config.record_unavailable_tools.assert_called_once()
+        args = mock_config.record_unavailable_tools.call_args.args
+        assert args[0] == [search_files_with_everything.name]
+        assert "not found" in args[1]
+
+    @pytest.mark.asyncio
+    async def test_get_tools_with_es_clears_unavailable(self):
+        """es 恢复可用时清除不可用记录。"""
+        self._reset_cache()
+        mock_config = MagicMock()
+        with patch("uniclaw.tools.shell._check_es", new_callable=AsyncMock, return_value=None):
+            tools = await get_tools(config=mock_config)
+        assert len(tools) == 3
+        mock_config.clear_unavailable_tools.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_get_tools_cache(self):

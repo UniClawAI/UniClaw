@@ -90,7 +90,7 @@ def _find_existing_certs(
             continue
         # 检查证书是否包含该域名
         cert_name = key_path.stem.replace(".key", "")
-        if domain.endswith(cert_name) or cert_name.endswith(clean_domain):
+        if domain.endswith("." + cert_name):
             return key_path, cert_path
 
     return None, None

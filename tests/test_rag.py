@@ -69,9 +69,13 @@ def _create_mock_config(
 
 
 def _create_temp_file(tmp_path: Path, name: str, content: str) -> Path:
-    """创建临时文件。"""
+    """创建临时文件。
+
+    newline="" 禁止 Windows 上 write_text 把 \\n 翻译为 \\r\\n,
+    保证 load_file 读回的内容与写入的逐字节一致。
+    """
     file_path = tmp_path / name
-    file_path.write_text(content, encoding="utf-8")
+    file_path.write_text(content, encoding="utf-8", newline="")
     return file_path
 
 
