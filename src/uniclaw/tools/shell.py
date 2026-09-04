@@ -482,7 +482,9 @@ async def Grep(
     """
 
     if not await _has_native_grep():
-        out = _python_grep(
+        # 纯 Python 回退实现是同步阻塞的,丢到线程池执行,避免冻结事件循环
+        out = await asyncio.to_thread(
+            _python_grep,
             pattern=pattern,
             path=path,
             glob=glob,
