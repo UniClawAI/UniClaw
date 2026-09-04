@@ -8,14 +8,12 @@ import time
 from enum import StrEnum
 from pathlib import Path
 
-from uniclaw.tools.base import tool
+from uniclaw.tools.base import tool, ToolRuntime
 
 logger = logging.getLogger(__name__)
-from uniclaw.tools.stream import tool_stream
 from uniclaw.utils.constants import TOOL_ERROR
 from uniclaw.utils.format import sanitize_progress_line
 from uniclaw.utils.read_text import read_text_file
-from uniclaw.config import AppConfig
 
 # 标准错误输出标记前缀,用于标识错误信息
 STDERR_MARKER = "[stderr]"
@@ -137,7 +135,7 @@ async def _kill_proc_tree(pid: int) -> None:
 
 
 @tool
-async def Bash(command: str, timeout: int = 30, config: AppConfig = None) -> str:
+async def Bash(command: str, timeout: int = 30, tool_runtime: ToolRuntime = None) -> str:
     """
     执行 shell 命令并返回输出结果。
 
@@ -168,6 +166,7 @@ async def Bash(command: str, timeout: int = 30, config: AppConfig = None) -> str
              如果发生异常,返回[stderr]开头的标准错误。
              如果没有输出内容,返回 "(没有输出)"。
     """
+    config = tool_runtime.config
     root_dir = config.root_dir
     cancel_event = config.current_agent.cancel_event
 
@@ -221,7 +220,7 @@ async def Bash(command: str, timeout: int = 30, config: AppConfig = None) -> str
                     break
                 text = smart_decode(chunk)
                 _collected[key].append(text)
-                await tool_stream(text)
+                await tool_runtime.stream(text)
         except (asyncio.CancelledError, Exception):
             pass
 

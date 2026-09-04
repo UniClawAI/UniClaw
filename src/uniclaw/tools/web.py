@@ -1,6 +1,6 @@
 import re
 import httpx
-from uniclaw.tools.base import tool
+from uniclaw.tools.base import tool, ToolRuntime
 from uniclaw.utils.constants import TOOL_ERROR
 from uniclaw.utils.truncation import truncate_text_by_tokens
 from uniclaw.config import AppConfig
@@ -16,7 +16,7 @@ def _get_proxy(config: AppConfig | None) -> str | None:
 
 @tool
 async def webFetch(
-    url: str, max_tokens: int = 12000, raw: bool = False, config: AppConfig = None
+    url: str, max_tokens: int = 12000, raw: bool = False, tool_runtime: ToolRuntime = None
 ) -> str:
     """
     获取网页内容,返回结构化的可读信息。
@@ -37,6 +37,7 @@ async def webFetch(
     Returns:
         str: 包含 HTTP 状态码、页面标题和纯文本内容的综合信息,如果发生错误则返回错误信息字符串
     """
+    config = tool_runtime.config
     try:
         proxy = _get_proxy(config)
         client_kwargs = {"proxy": proxy} if proxy else {}

@@ -3,6 +3,7 @@
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
 
+from uniclaw.tools.base import ToolRuntime
 from uniclaw.tools.sleep import sleep_timer, wait, get_tools, get_all_tools
 
 
@@ -31,19 +32,19 @@ class TestSleepTimer:
     @pytest.mark.asyncio
     async def test_invalid_seconds_zero(self):
         """秒数为 0 返回错误。"""
-        result = await sleep_timer(seconds=0)
+        result = await sleep_timer(seconds=0, tool_runtime=ToolRuntime())
         assert "错误" in result or "1-3600" in result
 
     @pytest.mark.asyncio
     async def test_invalid_seconds_negative(self):
         """秒数为负返回错误。"""
-        result = await sleep_timer(seconds=-1)
+        result = await sleep_timer(seconds=-1, tool_runtime=ToolRuntime())
         assert "错误" in result or "1-3600" in result
 
     @pytest.mark.asyncio
     async def test_invalid_seconds_too_large(self):
         """秒数超过 3600 返回错误。"""
-        result = await sleep_timer(seconds=3601)
+        result = await sleep_timer(seconds=3601, tool_runtime=ToolRuntime())
         assert "错误" in result or "1-3600" in result
 
     @pytest.mark.asyncio
@@ -51,7 +52,7 @@ class TestSleepTimer:
     async def test_valid_seconds(self, mock_asyncio):
         """有效秒数返回确认消息。"""
         mock_asyncio.create_task = _fake_create_task
-        result = await sleep_timer(seconds=30)
+        result = await sleep_timer(seconds=30, tool_runtime=ToolRuntime())
         assert "30" in result
         assert "唤醒" in result
 
@@ -60,7 +61,7 @@ class TestSleepTimer:
     async def test_with_name(self, mock_asyncio):
         """带名称参数。"""
         mock_asyncio.create_task = _fake_create_task
-        result = await sleep_timer(seconds=10, name="等待服务启动")
+        result = await sleep_timer(seconds=10, name="等待服务启动", tool_runtime=ToolRuntime())
         assert "等待服务启动" in result
 
 
@@ -70,17 +71,17 @@ class TestWait:
     @pytest.mark.asyncio
     async def test_invalid_seconds_zero(self):
         """秒数为 0 返回错误。"""
-        result = await wait(seconds=0)
+        result = await wait(seconds=0, tool_runtime=ToolRuntime())
         assert "错误" in result or "1-30" in result
 
     @pytest.mark.asyncio
     async def test_invalid_seconds_too_large(self):
         """秒数超过 30 返回错误。"""
-        result = await wait(seconds=31)
+        result = await wait(seconds=31, tool_runtime=ToolRuntime())
         assert "错误" in result or "1-30" in result
 
     @pytest.mark.asyncio
     async def test_invalid_seconds_negative(self):
         """秒数为负返回错误。"""
-        result = await wait(seconds=-5)
+        result = await wait(seconds=-5, tool_runtime=ToolRuntime())
         assert "错误" in result or "1-30" in result

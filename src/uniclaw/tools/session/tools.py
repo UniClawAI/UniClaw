@@ -6,14 +6,10 @@
 
 from __future__ import annotations
 
-from uniclaw.tools.base import tool
+from uniclaw.tools.base import tool, ToolRuntime
 from uniclaw.utils.constants import TOOL_ERROR
 from uniclaw.tools.session.session_manager import SessionManager
 from uniclaw.console.ui import ok, err, warn
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from uniclaw.config import AppConfig
 
 
 @tool
@@ -120,7 +116,7 @@ def session_detail(
 @tool
 async def session_delete(
     session_id: str,
-    config: AppConfig = None,
+    tool_runtime: ToolRuntime = None,
 ) -> str:
     """
     删除指定的会话历史。
@@ -145,6 +141,8 @@ async def session_delete(
 
     title = session.title or "无标题"
 
+    config = tool_runtime.config
+
     # 执行删除
     success = SessionManager.delete_session(session_id)
 
@@ -168,7 +166,7 @@ async def session_delete(
 async def session_update_title(
     session_id: str,
     title: str,
-    config: AppConfig = None,
+    tool_runtime: ToolRuntime = None,
 ) -> str:
     """
     更新指定会话的标题。
@@ -194,6 +192,8 @@ async def session_update_title(
         return f"{TOOL_ERROR}: 未找到会话ID为 '{session_id}' 的会话"
 
     old_title = session.title or "无标题"
+
+    config = tool_runtime.config
 
     # 执行更新
     success = SessionManager.update_title(session_id, title)

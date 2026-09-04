@@ -1,6 +1,6 @@
 from enum import StrEnum
 
-from uniclaw.tools.base import tool
+from uniclaw.tools.base import tool, ToolRuntime
 from uniclaw.config import AppConfig, Permissions
 from pathlib import Path
 from uniclaw.context import get_app_dir
@@ -65,18 +65,19 @@ def get_plan_system_prompt(config: AppConfig) -> str:
 
 
 @tool
-def enter_plan_mode(config: AppConfig = None) -> str:
+def enter_plan_mode(tool_runtime: ToolRuntime = None) -> str:
     """
     进入计划模式。适用于复杂任务、多文件修改或方案不确定的场景。
     进入后需制定计划并经用户确认,确认后调用 exit_plan_mode 退出并执行。
     """
+    config = tool_runtime.config
     config.permission_mode = Permissions.PLAN
     return f"已进入计划模式。{get_plan_mode_instructions(config)}"
 
 
 @tool
 def exit_plan_mode(
-    permission_mode: ExitPermission = ExitPermission.AUTO, config: AppConfig = None
+    permission_mode: ExitPermission = ExitPermission.AUTO, tool_runtime: ToolRuntime = None
 ) -> str:
     """
     退出计划模式,恢复到指定的权限模式。
@@ -86,6 +87,7 @@ def exit_plan_mode(
     Args:
         permission_mode: 退出计划模式后的权限模式。可选值: "auto"(自动模式) 或 "accept-all"(完全模式)。默认为 "auto"。
     """
+    config = tool_runtime.config
     config.permission_mode = permission_mode
     return f"已退出计划模式。权限模式已切换为 {permission_mode}。现在可以开始执行计划。"
 

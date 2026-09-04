@@ -6,7 +6,7 @@ from pathlib import Path
 import json
 from uniclaw.config import AppConfig
 from uniclaw.context import Scope, get_app_dir
-from uniclaw.tools.base import tool
+from uniclaw.tools.base import tool, ToolRuntime
 
 from .graph import KnowledgeGraph
 
@@ -27,7 +27,7 @@ def kg_add_entity(
     properties: dict = None,
     confidence: float = 1.0,
     scope: Scope = Scope.PROJECT,
-    config: AppConfig = None,
+    tool_runtime: ToolRuntime = None,
 ) -> str:
     """
     添加单个实体到知识图谱。如果发现相似实体会返回重复警告。
@@ -42,6 +42,7 @@ def kg_add_entity(
         confidence: 置信度,0.0~1.0,默认 1.0
         scope: 作用域,"user" 为用户级(跨项目共享),"project" 为项目级(默认)
     """
+    config = tool_runtime.config
     graph = _get_graph(config, scope)
     try:
         if not name.strip():
@@ -86,7 +87,7 @@ def kg_add_relation(
     target_type: str = "",
     weight: float = 1.0,
     scope: Scope = Scope.PROJECT,
-    config: AppConfig = None,
+    tool_runtime: ToolRuntime = None,
 ) -> str:
     """
     在知识图谱中添加单条实体间关系。
@@ -102,6 +103,7 @@ def kg_add_relation(
         weight: 关系权重,默认 1.0
         scope: 作用域,"user" 为用户级(跨项目共享),"project" 为项目级(默认)
     """
+    config = tool_runtime.config
     graph = _get_graph(config, scope)
     try:
         result = graph.add_relation(
@@ -128,7 +130,7 @@ def kg_add_alias(
     alias: str,
     type: str = "",
     scope: Scope = Scope.PROJECT,
-    config: AppConfig = None,
+    tool_runtime: ToolRuntime = None,
 ) -> str:
     """
     为知识图谱中的实体添加别名。用于实体消歧,如将"刘玄德"关联到"刘备"。
@@ -140,6 +142,7 @@ def kg_add_alias(
         type: 实体类型(可选,用于消歧)
         scope: 作用域,"user" 为用户级(跨项目共享),"project" 为项目级(默认)
     """
+    config = tool_runtime.config
     graph = _get_graph(config, scope)
     try:
         result = graph.add_alias(name, type, alias)
@@ -157,7 +160,7 @@ def kg_update_entity(
     description: str = "",
     confidence: float = -1,
     scope: Scope = Scope.PROJECT,
-    config: AppConfig = None,
+    tool_runtime: ToolRuntime = None,
 ) -> str:
     """
     更新知识图谱中实体的属性。
@@ -170,6 +173,7 @@ def kg_update_entity(
         confidence: 新置信度(负数则不更新)
         scope: 作用域,"user" 为用户级(跨项目共享),"project" 为项目级(默认)
     """
+    config = tool_runtime.config
     graph = _get_graph(config, scope)
     try:
         kwargs = {}
@@ -191,7 +195,7 @@ def kg_delete_entity(
     name: str,
     type: str = "",
     scope: Scope = Scope.PROJECT,
-    config: AppConfig = None,
+    tool_runtime: ToolRuntime = None,
 ) -> str:
     """
     删除知识图谱中的实体(级联删除其所有关系和别名)。
@@ -202,6 +206,7 @@ def kg_delete_entity(
         type: 实体类型(可选,用于消歧)
         scope: 作用域,"user" 为用户级(跨项目共享),"project" 为项目级(默认)
     """
+    config = tool_runtime.config
     graph = _get_graph(config, scope)
     try:
         result = graph.delete_entity(name, type)
@@ -218,7 +223,7 @@ def kg_delete_relation(
     target: str,
     relation: str,
     scope: Scope = Scope.PROJECT,
-    config: AppConfig = None,
+    tool_runtime: ToolRuntime = None,
 ) -> str:
     """
     删除知识图谱中的关系。
@@ -230,6 +235,7 @@ def kg_delete_relation(
         relation: 关系类型
         scope: 作用域,"user" 为用户级(跨项目共享),"project" 为项目级(默认)
     """
+    config = tool_runtime.config
     graph = _get_graph(config, scope)
     try:
         result = graph.delete_relation(source, target, relation)
@@ -247,7 +253,7 @@ def kg_merge_entities(
     source_type: str = "",
     target_type: str = "",
     scope: Scope = Scope.PROJECT,
-    config: AppConfig = None,
+    tool_runtime: ToolRuntime = None,
 ) -> str:
     """
     合并两个实体:将 source 的关系、别名、属性转移到 target,然后删除 source。
@@ -262,6 +268,7 @@ def kg_merge_entities(
         target_type: 目标实体类型(可选,用于消歧)
         scope: 作用域,"user" 为用户级(跨项目共享),"project" 为项目级(默认)
     """
+    config = tool_runtime.config
     graph = _get_graph(config, scope)
     try:
         result = graph.merge_entities(source, target, source_type, target_type)
@@ -289,7 +296,7 @@ def kg_get_entity(
     name: str,
     type: str = "",
     scope: Scope = Scope.PROJECT,
-    config: AppConfig = None,
+    tool_runtime: ToolRuntime = None,
 ) -> str:
     """
     获取知识图谱中实体的详细信息,包括别名和关系。
@@ -300,6 +307,7 @@ def kg_get_entity(
         type: 实体类型(可选,用于消歧)
         scope: 作用域,"user" 为用户级(跨项目共享),"project" 为项目级(默认)
     """
+    config = tool_runtime.config
     graph = _get_graph(config, scope)
     try:
         entity = graph.get_entity(name, type)
@@ -343,7 +351,7 @@ def kg_search(
     type: str = "",
     limit: int = 20,
     scope: Scope = Scope.PROJECT,
-    config: AppConfig = None,
+    tool_runtime: ToolRuntime = None,
 ) -> str:
     """
     在知识图谱中搜索实体(FTS5 全文搜索)。
@@ -355,6 +363,7 @@ def kg_search(
         limit: 最大返回数量,默认 20
         scope: 作用域,"user" 为用户级(跨项目共享),"project" 为项目级(默认)
     """
+    config = tool_runtime.config
     graph = _get_graph(config, scope)
     try:
         results = graph.search_entities(keyword, entity_type=type, limit=limit)
@@ -379,7 +388,7 @@ def kg_neighbors(
     type: str = "",
     relation_type: str = "",
     scope: Scope = Scope.PROJECT,
-    config: AppConfig = None,
+    tool_runtime: ToolRuntime = None,
 ) -> str:
     """
     获取知识图谱中实体的邻居(关联实体),支持多跳遍历。
@@ -392,6 +401,7 @@ def kg_neighbors(
         relation_type: 关系类型过滤(可选)
         scope: 作用域,"user" 为用户级(跨项目共享),"project" 为项目级(默认)
     """
+    config = tool_runtime.config
     graph = _get_graph(config, scope)
     try:
         depth = min(depth, 3)
@@ -419,7 +429,7 @@ def kg_path(
     target: str,
     max_depth: int = 5,
     scope: Scope = Scope.PROJECT,
-    config: AppConfig = None,
+    tool_runtime: ToolRuntime = None,
 ) -> str:
     """
     查找知识图谱中两个实体之间的路径。
@@ -431,6 +441,7 @@ def kg_path(
         max_depth: 最大搜索深度,默认 5
         scope: 作用域,"user" 为用户级(跨项目共享),"project" 为项目级(默认)
     """
+    config = tool_runtime.config
     graph = _get_graph(config, scope)
     try:
         paths = graph.find_path(source, target, max_depth=max_depth)
@@ -455,7 +466,7 @@ def kg_path(
 @tool
 def kg_stats(
     scope: Scope = Scope.PROJECT,
-    config: AppConfig = None,
+    tool_runtime: ToolRuntime = None,
 ) -> str:
     """
     获取知识图谱的统计信息。
@@ -464,6 +475,7 @@ def kg_stats(
     Args:
         scope: 作用域,"user" 为用户级(跨项目共享),"project" 为项目级(默认)
     """
+    config = tool_runtime.config
     graph = _get_graph(config, scope)
     try:
         stats = graph.get_stats()
@@ -490,7 +502,7 @@ def kg_stats(
 def kg_export(
     path: str,
     scope: Scope = Scope.PROJECT,
-    config: AppConfig = None,
+    tool_runtime: ToolRuntime = None,
 ) -> str:
     """
     导出知识图谱到文件。根据文件后缀自动选择格式。
@@ -503,6 +515,7 @@ def kg_export(
 
     output = Path(path)
     ext = output.suffix.lower()
+    config = tool_runtime.config
     graph = _get_graph(config, scope)
     try:
         if ext == ".json":
@@ -528,7 +541,7 @@ def kg_list(
     type: str = "",
     limit: int = 50,
     scope: Scope = Scope.PROJECT,
-    config: AppConfig = None,
+    tool_runtime: ToolRuntime = None,
 ) -> str:
     """
     列出知识图谱中的实体。
@@ -539,6 +552,7 @@ def kg_list(
         limit: 最大返回数量,默认 50
         scope: 作用域,"user" 为用户级(跨项目共享),"project" 为项目级(默认)
     """
+    config = tool_runtime.config
     graph = _get_graph(config, scope)
     try:
         entities = graph.list_entities(entity_type=type, limit=limit)
@@ -561,7 +575,7 @@ async def kg_extract(
     text: str = "",
     path: str = "",
     scope: Scope = Scope.PROJECT,
-    config: AppConfig = None,
+    tool_runtime: ToolRuntime = None,
 ) -> str:
     """
     从文本或文件中自动提取实体和关系,并添加到知识图谱。
@@ -583,6 +597,7 @@ async def kg_extract(
     from uniclaw.tools.multi_agent.sub_agent import load_agent_definitions
     from uniclaw.utils.format import parse_json_from_llm
 
+    config = tool_runtime.config
     graph = _get_graph(config, scope)
     try:
         # 获取已有实体列表(用于避免重复)
@@ -703,7 +718,7 @@ async def kg_extract(
 @tool
 def kg_clear(
     scope: Scope = Scope.PROJECT,
-    config: AppConfig = None,
+    tool_runtime: ToolRuntime = None,
 ) -> str:
     """
     清空知识图谱中的所有实体和关系。此操作不可逆!
@@ -712,6 +727,7 @@ def kg_clear(
     Args:
         scope: 作用域,"user" 为用户级(跨项目共享),"project" 为项目级(默认)
     """
+    config = tool_runtime.config
     graph = _get_graph(config, scope)
     try:
         stats = graph.get_stats()

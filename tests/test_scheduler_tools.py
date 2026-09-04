@@ -3,6 +3,7 @@
 import pytest
 from unittest.mock import MagicMock, patch
 
+from uniclaw.tools.base import ToolRuntime
 from uniclaw.tools.scheduler.tools import (
     _validate_action,
     schedule_create,
@@ -132,7 +133,10 @@ class TestScheduleCreate:
         mock_scheduler.add_task.return_value = task
         with _patch_scheduler(mock_scheduler):
             result = await schedule_create(
-                "测试任务", "*/5 * * * *", '{"type": "shell", "command": "ls"}'
+                "测试任务",
+                "*/5 * * * *",
+                '{"type": "shell", "command": "ls"}',
+                tool_runtime=ToolRuntime(config=MagicMock()),
             )
         assert "已创建定时任务" in result
         assert "task-1" in result
@@ -143,7 +147,9 @@ class TestScheduleCreate:
         """非法 action 返回错误。"""
         mock_scheduler = MagicMock()
         with _patch_scheduler(mock_scheduler):
-            result = await schedule_create("任务", "*/5 * * * *", '{"type": "bad"}')
+            result = await schedule_create(
+                "任务", "*/5 * * * *", '{"type": "bad"}', tool_runtime=ToolRuntime(config=MagicMock())
+            )
         assert "未知的 type" in result
         mock_scheduler.add_task.assert_not_called()
 
@@ -154,7 +160,10 @@ class TestScheduleCreate:
         mock_scheduler.add_task.side_effect = ValueError("无效 cron")
         with _patch_scheduler(mock_scheduler):
             result = await schedule_create(
-                "任务", "bad cron", '{"type": "shell", "command": "ls"}'
+                "任务",
+                "bad cron",
+                '{"type": "shell", "command": "ls"}',
+                tool_runtime=ToolRuntime(config=MagicMock()),
             )
         assert "无效 cron" in result
 

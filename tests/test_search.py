@@ -14,6 +14,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
 
+from uniclaw.tools.base import ToolRuntime
 from uniclaw.tools.search import (
     webSearch,
     cache_key,
@@ -1798,7 +1799,7 @@ class TestTimeRangeMulti:
             await _search(
                 query="x",
                 platforms="github",
-                config=mock_config,
+                tool_runtime=ToolRuntime(config=mock_config),
                 time_range="not-a-range",
             )
 
@@ -1806,9 +1807,9 @@ class TestTimeRangeMulti:
     async def test_cache_key_distinguishes_time_range(self, mock_config):
         """同 query 不同 time_range 是独立缓存条目, 不串缓存"""
         with _patch_all_platforms(_empty_mock()):
-            await _search(query="dup", platforms="github", config=mock_config)
+            await _search(query="dup", platforms="github", tool_runtime=ToolRuntime(config=mock_config))
             await _search(
-                query="dup", platforms="github", config=mock_config, time_range="7d"
+                query="dup", platforms="github", tool_runtime=ToolRuntime(config=mock_config), time_range="7d"
             )
         assert len(search_cache) == 2
 
@@ -1819,7 +1820,7 @@ class TestTimeRangeMulti:
             result = await _search(
                 query="hint",
                 platforms="duckduckgo,github",
-                config=mock_config,
+                tool_runtime=ToolRuntime(config=mock_config),
                 time_range="7d",
             )
         assert result.count("[提示]") == 1
@@ -1832,7 +1833,7 @@ class TestTimeRangeMulti:
             result = await _search(
                 query="clean",
                 platforms="bing,duckduckgo",
-                config=mock_config,
+                tool_runtime=ToolRuntime(config=mock_config),
             )
         assert "[提示]" not in result
 
@@ -1865,7 +1866,7 @@ class TestMultiPlatformSearch:
     async def test_default_platforms_is_exa(self, mock_config):
         """默认只搜 Exa (通用网页搜索), 不发起其他平台的请求"""
         with _patch_all_platforms(_empty_mock()):
-            result = await _search(query="test", config=mock_config)
+            result = await _search(query="test", tool_runtime=ToolRuntime(config=mock_config))
 
         assert len(search_cache) == 1
         assert "EXA" in result.upper()
@@ -1876,7 +1877,7 @@ class TestMultiPlatformSearch:
     async def test_searches_all_platforms(self, mock_config):
         """platforms='all' 搜索全部平台, 每个平台都有结果(即使为空)"""
         with _patch_all_platforms(_empty_mock()):
-            result = await _search(query="test", platforms="all", config=mock_config)
+            result = await _search(query="test", platforms="all", tool_runtime=ToolRuntime(config=mock_config))
 
         # 全部平台都应出现在结果中(多平台分隔线含平台名)
         for platform in PLATFORM_SEARCHERS:
@@ -1887,7 +1888,7 @@ class TestMultiPlatformSearch:
         """platforms 参数只搜索指定平台, 不包含其他平台"""
         with _patch_all_platforms(_empty_mock()):
             result = await _search(
-                query="test", platforms="github,arxiv", config=mock_config
+                query="test", platforms="github,arxiv", tool_runtime=ToolRuntime(config=mock_config)
             )
 
         # 只应出现 github 和 arxiv (分隔线含平台名)
@@ -1904,7 +1905,7 @@ class TestMultiPlatformSearch:
     async def test_platforms_filter_single(self, mock_config):
         """platforms 传单个平台只搜索该平台"""
         with _patch_all_platforms(_empty_mock()):
-            result = await _search(query="test", platforms="github", config=mock_config)
+            result = await _search(query="test", platforms="github", tool_runtime=ToolRuntime(config=mock_config))
 
         assert "GITHUB" in result.upper()
         assert "ARXIV" not in result.upper()
@@ -1914,7 +1915,7 @@ class TestMultiPlatformSearch:
         """platforms 参数大小写不敏感, 容忍空格"""
         with _patch_all_platforms(_empty_mock()):
             result = await _search(
-                query="test", platforms=" GitHub , BING ", config=mock_config
+                query="test", platforms=" GitHub , BING ", tool_runtime=ToolRuntime(config=mock_config)
             )
 
         assert "GITHUB" in result.upper()
@@ -1925,7 +1926,7 @@ class TestMultiPlatformSearch:
     async def test_platforms_all_covers_everything(self, mock_config):
         """platforms='all' 覆盖全部平台 (与只搜单个平台的默认行为不同)"""
         with _patch_all_platforms(_empty_mock()):
-            result = await _search(query="test", platforms="all", config=mock_config)
+            result = await _search(query="test", platforms="all", tool_runtime=ToolRuntime(config=mock_config))
         assert len(search_cache) == len(PLATFORM_SEARCHERS)
 
     @pytest.mark.asyncio
@@ -1933,7 +1934,7 @@ class TestMultiPlatformSearch:
         """platforms 全为无效平台名时抛出 ValueError"""
         with pytest.raises(ValueError):
             await _search(
-                query="test", platforms="notexist1,notexist2", config=mock_config
+                query="test", platforms="notexist1,notexist2", tool_runtime=ToolRuntime(config=mock_config)
             )
 
     @pytest.mark.asyncio
@@ -1941,7 +1942,7 @@ class TestMultiPlatformSearch:
         """platforms 部分无效时忽略无效名, 只搜有效平台"""
         with _patch_all_platforms(_empty_mock()):
             result = await _search(
-                query="test", platforms="github,notexist", config=mock_config
+                query="test", platforms="github,notexist", tool_runtime=ToolRuntime(config=mock_config)
             )
 
         assert "GITHUB" in result.upper()
@@ -1967,7 +1968,7 @@ class TestErrorHandling:
             )
             mock_client.return_value.__aexit__ = AsyncMock()
             result = await _search(
-                query="test", platforms="github", timeout=3, config=mock_config
+                query="test", platforms="github", timeout=3, tool_runtime=ToolRuntime(config=mock_config)
             )
 
         # safe_search 捕获连接错误, 返回平台失败信息(非 TOOL_ERROR)而非抛异常
@@ -1987,7 +1988,7 @@ class TestErrorHandling:
             )
             mock_client.return_value.__aexit__ = AsyncMock()
             result = await _search(
-                query="test", platforms="github", timeout=1, config=mock_config
+                query="test", platforms="github", timeout=1, tool_runtime=ToolRuntime(config=mock_config)
             )
 
         assert "超时" in result
@@ -2006,7 +2007,7 @@ class TestErrorHandling:
         )
 
         with _patch_base(mock_response), _patch_mcp():
-            result = await _search(query="test", platforms="github", config=mock_config)
+            result = await _search(query="test", platforms="github", tool_runtime=ToolRuntime(config=mock_config))
 
         # 平台 HTTP 错误返回 PLATFORM_ERROR(单平台失败), 而非 TOOL_ERROR
         assert PLATFORM_ERROR in result
@@ -2025,11 +2026,11 @@ class TestCache:
         with _patch_all_platforms(_empty_mock()):
             # 第一次调用: 真实搜索, 结果带耗时标注
             result1 = await _search(
-                query="cache_test", platforms="all", config=mock_config
+                query="cache_test", platforms="all", tool_runtime=ToolRuntime(config=mock_config)
             )
             # 第二次调用: 命中缓存, 返回干净结果 (无耗时标注)
             result2 = await _search(
-                query="cache_test", platforms="all", config=mock_config
+                query="cache_test", platforms="all", tool_runtime=ToolRuntime(config=mock_config)
             )
 
         assert "[搜索用时" in result1
@@ -2045,8 +2046,8 @@ class TestCache:
     async def test_different_query_no_cache(self, mock_config):
         """不同查询不应命中缓存"""
         with _patch_all_platforms(_empty_mock()):
-            await _search(query="query1", platforms="all", config=mock_config)
-            await _search(query="query2", platforms="all", config=mock_config)
+            await _search(query="query1", platforms="all", tool_runtime=ToolRuntime(config=mock_config))
+            await _search(query="query2", platforms="all", tool_runtime=ToolRuntime(config=mock_config))
 
         # 两个查询 × 全部平台 = 独立缓存条目
         assert len(search_cache) == 2 * len(PLATFORM_SEARCHERS)
@@ -2061,13 +2062,13 @@ class TestCache:
 
         with _patch_all_platforms(_empty_mock()):
             # 第一次: 全部平台搜索成功(含 bing), 写入缓存
-            result1 = await _search(query="reuse", platforms="all", config=mock_config)
+            result1 = await _search(query="reuse", platforms="all", tool_runtime=ToolRuntime(config=mock_config))
             assert "bing" in result1.lower()
 
             # 第二次: bing.http_get 被替换为抛错, 但 bing 命中缓存, 不会调用它
             with patch("uniclaw.tools.search.bing.http_get", new=bing_get):
                 result2 = await _search(
-                    query="reuse", platforms="all", config=mock_config
+                    query="reuse", platforms="all", tool_runtime=ToolRuntime(config=mock_config)
                 )
                 assert "bing" in result2.lower()
                 assert bing_get.await_count == 0
@@ -2085,7 +2086,7 @@ class TestCache:
             _patch_all_platforms(_empty_mock()),
             patch("uniclaw.tools.search.bing.http_get", failing_get),
         ):
-            result1 = await _search(query="retry", platforms="all", config=mock_config)
+            result1 = await _search(query="retry", platforms="all", tool_runtime=ToolRuntime(config=mock_config))
             assert PLATFORM_ERROR in result1
             # 失败结果不写入缓存 (平台级缓存无该 key, 与生产 key 格式一致)
             p_ck = cache_key("retry", "bing", limit=10)
@@ -2096,7 +2097,7 @@ class TestCache:
             _patch_all_platforms(_empty_mock()),
             patch("uniclaw.tools.search.bing.http_get", failing_get),
         ):
-            result2 = await _search(query="retry", platforms="all", config=mock_config)
+            result2 = await _search(query="retry", platforms="all", tool_runtime=ToolRuntime(config=mock_config))
             assert PLATFORM_ERROR in result2
 
         # bing 每轮搜索最多请求 2 次 (RSS 失败后回退 HTML), 两轮共 4 次
@@ -2184,7 +2185,7 @@ class TestRerankResults:
                 new=AsyncMock(return_value=mock_response),
             ) as mock_achat,
         ):
-            result = await _search(query="test", platforms="all", config=mock_config)
+            result = await _search(query="test", platforms="all", tool_runtime=ToolRuntime(config=mock_config))
 
         mock_achat.assert_awaited_once()
         assert result == reranked_text
@@ -2199,7 +2200,7 @@ class TestRerankResults:
                 new=AsyncMock(return_value=MagicMock(content="不应被使用")),
             ) as mock_achat,
         ):
-            result = await _search(query="test", platforms="all", config=mock_config)
+            result = await _search(query="test", platforms="all", tool_runtime=ToolRuntime(config=mock_config))
 
         mock_achat.assert_not_awaited()
         assert "GitHub" in result
@@ -2214,7 +2215,7 @@ class TestRerankResults:
                 new=AsyncMock(side_effect=RuntimeError("LLM 不可用")),
             ),
         ):
-            result = await _search(query="test", platforms="all", config=mock_config)
+            result = await _search(query="test", platforms="all", tool_runtime=ToolRuntime(config=mock_config))
 
         assert "GitHub" in result
         assert "user/repo" in result
@@ -2240,7 +2241,7 @@ class TestRerankResults:
                 new=AsyncMock(return_value=mock_response),
             ),
         ):
-            result = await _search(query="test", platforms="all", config=mock_config)
+            result = await _search(query="test", platforms="all", tool_runtime=ToolRuntime(config=mock_config))
 
         # 重排文本 + 失败平台错误信息
         assert "精选结果" in result
@@ -2268,7 +2269,7 @@ class TestRerankResults:
                 query="python",
                 platforms="all",
                 intent="找用于数据分析的库",
-                config=mock_config,
+                tool_runtime=ToolRuntime(config=mock_config),
             )
 
         assert result == reranked_text
@@ -2298,7 +2299,7 @@ class TestRerankResults:
             _patch_all_with_github(self._github_mock(12)),
             patch("uniclaw.provider.fallback.achat", new=_fake_achat),
         ):
-            await _search(query="python", platforms="all", config=mock_config)
+            await _search(query="python", platforms="all", tool_runtime=ToolRuntime(config=mock_config))
 
         session = captured["session"]
         user_content = "\n".join(
@@ -2316,20 +2317,15 @@ class TestStreamingOutput:
 
     @pytest.mark.asyncio
     async def test_streams_each_platform_on_completion(self, mock_config):
-        """每个平台完成时都应通过 tool_stream 推送, 且推送内容含平台名"""
-        from uniclaw.tools.stream import set_stream_callback, reset_stream_callback
-
+        """每个平台完成时都应通过 tool_runtime.stream 推送, 且推送内容含平台名"""
         streamed: list[str] = []
 
-        async def _cb(content: str):
+        async def _writer(tool_call_id: str, content: str):
             streamed.append(content)
 
-        token = set_stream_callback(_cb)
-        try:
-            with _patch_all_platforms(_empty_mock()):
-                await _search(query="stream", platforms="all", config=mock_config)
-        finally:
-            reset_stream_callback(token)
+        rt = ToolRuntime(config=mock_config, stream_writer=_writer)
+        with _patch_all_platforms(_empty_mock()):
+            await _search(query="stream", platforms="all", tool_runtime=rt)
 
         # 每个平台都推送了一次
         assert len(streamed) == len(PLATFORM_SEARCHERS)
@@ -2343,7 +2339,9 @@ class TestStreamingOutput:
     async def test_stream_noop_without_callback(self, mock_config):
         """无流式回调时 (命令行直接调用), 推送被静默忽略, 不影响正常返回"""
         with _patch_all_platforms(_empty_mock()):
-            result = await _search(query="noop", platforms="all", config=mock_config)
+            result = await _search(
+                query="noop", platforms="all", tool_runtime=ToolRuntime(config=mock_config)
+            )
 
         # 正常返回合并结果 (非空)
         assert isinstance(result, str)
@@ -2353,28 +2351,23 @@ class TestStreamingOutput:
     @pytest.mark.asyncio
     async def test_stream_preserves_final_result(self, mock_config):
         """流式推送不影响最终返回值 (缓存 + 失败信息逻辑不变)"""
-        from uniclaw.tools.stream import set_stream_callback, reset_stream_callback
-
         streamed: list[str] = []
 
-        async def _cb(content: str):
+        async def _writer(tool_call_id: str, content: str):
             streamed.append(content)
 
-        token = set_stream_callback(_cb)
-        try:
-            with _patch_all_platforms(_empty_mock()):
-                result_stream = await _search(
-                    query="same", platforms="all", config=mock_config
-                )
-        finally:
-            reset_stream_callback(token)
+        rt = ToolRuntime(config=mock_config, stream_writer=_writer)
+        with _patch_all_platforms(_empty_mock()):
+            result_stream = await _search(
+                query="same", platforms="all", tool_runtime=rt
+            )
 
         # 不设流式回调时结果一致 (流式只影响 UI 展示)
         # 注意: 首次调用写入缓存, 第二次调用可能命中缓存; 清空缓存保证两次都真实搜索
         search_cache.clear()
         with _patch_all_platforms(_empty_mock()):
             result_plain = await _search(
-                query="same", platforms="all", config=mock_config
+                query="same", platforms="all", tool_runtime=ToolRuntime(config=mock_config)
             )
 
         assert result_stream == result_plain

@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from uniclaw.tools.base import ToolRuntime
 from uniclaw.tools.hooks import HookError, HookEvent, run_hooks, add_hook
 from uniclaw.tools.hooks import hook_read, hook_add
 
@@ -89,11 +90,14 @@ def test_hook_add_and_read(tmp_path, monkeypatch):
     )
 
     result = hook_add.func(
-        event="SessionStart", commands="echo hi", name="test-hook", config=mock_config
+        event="SessionStart",
+        commands="echo hi",
+        name="test-hook",
+        tool_runtime=ToolRuntime(config=mock_config),
     )
     assert "已添加 hook" in result
 
-    read_output = hook_read.func(config=mock_config)
+    read_output = hook_read.func(tool_runtime=ToolRuntime(config=mock_config))
     assert "SessionStart" in read_output
     assert "echo hi" in read_output
     assert "test-hook" in read_output

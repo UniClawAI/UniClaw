@@ -1,6 +1,8 @@
 """顾问模型工具测试 — 覆盖 advisor_list、_strip_provider、_match_model 和工具注册。"""
 
 import pytest
+
+from uniclaw.tools.base import ToolRuntime
 from unittest.mock import MagicMock
 
 from uniclaw.tools.advisor import (
@@ -70,7 +72,7 @@ class TestAdvisorList:
     @pytest.mark.asyncio
     async def test_no_config(self):
         """无配置返回提示。"""
-        result = await advisor_list(config=None)
+        result = await advisor_list(tool_runtime=ToolRuntime(config=None))
         assert "未配置" in result
 
     @pytest.mark.asyncio
@@ -78,7 +80,7 @@ class TestAdvisorList:
         """未配置顾问模型返回提示。"""
         config = MagicMock()
         config.large_model_name = []
-        result = await advisor_list(config=config)
+        result = await advisor_list(tool_runtime=ToolRuntime(config=config))
         assert "未配置" in result
 
     @pytest.mark.asyncio
@@ -86,7 +88,7 @@ class TestAdvisorList:
         """有顾问模型时返回列表。"""
         config = MagicMock()
         config.large_model_name = ["openai/o3", "anthropic/claude-opus-4-20250514"]
-        result = await advisor_list(config=config)
+        result = await advisor_list(tool_runtime=ToolRuntime(config=config))
         assert "2 个顾问模型" in result
         assert "o3" in result
         assert "claude-opus-4-20250514" in result

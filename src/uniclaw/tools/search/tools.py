@@ -5,7 +5,7 @@ import re
 import time
 
 from uniclaw.config import AppConfig
-from uniclaw.tools.base import tool
+from uniclaw.tools.base import tool, ToolRuntime
 
 from .base import PLATFORM_ERROR, cache_key, search_cache, search_with_timeout
 from .time_range import parse_time_range
@@ -196,7 +196,7 @@ async def webSearch(
     intent: str = "",
     platforms: str = "exa",
     time_range: str = "",
-    config: AppConfig = None,
+    tool_runtime: ToolRuntime = None,
 ) -> str:
     """并发搜索多个平台并合并结果。
     结果超过 10 条时自动用 LLM 重新排序并剔除低价值项目,
@@ -228,6 +228,8 @@ async def webSearch(
     """
     selected_platforms = _resolve_platforms(platforms)
     total = len(selected_platforms)
+
+    config = tool_runtime.config
 
     # 入口统一校验: 空 query 快速失败, 避免透传各平台 (github API 会返回
     # 晦涩的 HTTP 422)
@@ -278,8 +280,6 @@ async def webSearch(
         return f"{result}\n[搜索用时 {elapsed:.1f}秒]"
 
     # as_completed: 谁先完成先处理, 立即推送该平台结果到 UI, 不等最慢的平台
-    from uniclaw.tools.stream import tool_stream
-
     async def _run_named(p: str) -> tuple[str, str]:
         return p, await _run(p)
 
@@ -290,7 +290,7 @@ async def webSearch(
         done_count += 1
         result_map[p] = result
         # 耗时标注已在 result 末尾, 此处只推送进度 (放在最后一行)
-        await tool_stream(f"[{p}]\n{result}\n搜索完成 ({done_count}/{total})\n")
+        await tool_runtime.stream(f"[{p}]\n{result}\n搜索完成 ({done_count}/{total})\n")
     results = [result_map[p] for p in selected_platforms]
     success, errors = _split_results(selected_platforms, results)
 

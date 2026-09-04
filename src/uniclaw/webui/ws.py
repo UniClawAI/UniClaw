@@ -33,7 +33,7 @@ from uniclaw.agent import (
 )
 from uniclaw.config import AppConfig, RunMode, load_config
 from uniclaw.tools.session.session_manager import SessionManager
-from uniclaw.tools.base import tc_name, tc_args
+from uniclaw.tools.base import tc_name, tc_args, ToolRuntime
 from uniclaw.tools.shell import Bash
 from uniclaw.webui.spinner import WebSpinner
 from uniclaw.utils.constants import SYSTEM_PREFIX
@@ -533,7 +533,7 @@ async def bridge_events(session_id: str, config: AppConfig):
                 }
             )
             try:
-                out = await Bash(event.command, config=config)
+                out = await Bash(event.command, tool_runtime=ToolRuntime(config=config))
             except Exception as e:
                 out = f"命令执行失败: {e}"
             # 计算 msg_idx: drain_user_queue 会在 send_event_to_user 返回后
@@ -797,7 +797,7 @@ async def handle_ws_message(ws: WebSocket, msg: dict):
         else:
             # Agent 空闲:直接执行；仅聊天区命令注入 session
             try:
-                output = await Bash(cmd, config=config)
+                output = await Bash(cmd, tool_runtime=ToolRuntime(config=config))
             except Exception as e:
                 output = f"命令执行失败: {e}"
             if source == "chat":

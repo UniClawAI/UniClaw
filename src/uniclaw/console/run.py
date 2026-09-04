@@ -19,6 +19,7 @@ from uniclaw.console.ui import C, ok
 from uniclaw.console.output_renderer import OutputRenderer
 from uniclaw.console.dialog import DialogManager
 from uniclaw.console.session_panel import SessionPanel
+from uniclaw.tools.base import ToolRuntime
 from uniclaw.tools.shell import Bash
 from uniclaw.agent import (
     AgentTask,
@@ -1236,7 +1237,7 @@ class TUIApp:
             elif isinstance(event, ShellCommandEvent):
                 self.config.spinner.stop(wait_id=queued_task.id)
                 self.print(f"  $ {event.command}")
-                out = await Bash(event.command, config=self.config)
+                out = await Bash(event.command, tool_runtime=ToolRuntime(config=self.config))
                 self.print(out)
                 event.content = out
                 event.return_event.set()
@@ -1319,7 +1320,7 @@ class TUIApp:
                     shell_cmd = user_input[1:].strip()
                     if shell_cmd:
                         self.print(f"  $ {shell_cmd}")
-                        out = await Bash(shell_cmd, config=self.config)
+                        out = await Bash(shell_cmd, tool_runtime=ToolRuntime(config=self.config))
                         self.print(out)
                         task.session.add_message(
                             MessageRole.USER,

@@ -4,7 +4,7 @@ from pathlib import Path
 
 from uniclaw.config import AppConfig
 from uniclaw.ilink_bot.exceptions import NoContextError
-from uniclaw.tools.base import tool
+from uniclaw.tools.base import tool, ToolRuntime
 from uniclaw.utils.constants import TOOL_ERROR
 
 
@@ -54,7 +54,7 @@ def _resolve_path(file_path: str, config: AppConfig) -> tuple[Path | None, str]:
 
 
 @tool
-def wechat_list_contacts(config: AppConfig = None) -> str:
+def wechat_list_contacts(tool_runtime: ToolRuntime = None) -> str:
     """列出当前已登录的微信机器人名称。可用于确认哪些微信号可以收发消息。
 
     Returns:
@@ -62,6 +62,7 @@ def wechat_list_contacts(config: AppConfig = None) -> str:
     """
     from uniclaw.ilink_bot.manager import BotManager
 
+    config = tool_runtime.config
     if config is None:
         return f"{TOOL_ERROR}: 无法获取配置"
 
@@ -81,7 +82,7 @@ def wechat_list_contacts(config: AppConfig = None) -> str:
 async def wechat_send_text(
     text: str,
     bot_name: str = "",
-    config: AppConfig = None,
+    tool_runtime: ToolRuntime = None,
 ) -> str:
     """通过微信向当前对话用户发送文字消息。
 
@@ -92,6 +93,7 @@ async def wechat_send_text(
     Returns:
         str: 发送结果消息
     """
+    config = tool_runtime.config
     if config is None:
         return f"{TOOL_ERROR}: 无法获取配置"
 
@@ -113,7 +115,7 @@ async def wechat_send_image(
     image_path: str,
     caption: str = "",
     bot_name: str = "",
-    config: AppConfig = None,
+    tool_runtime: ToolRuntime = None,
 ) -> str:
     """通过微信向当前对话用户发送图片。
 
@@ -125,6 +127,7 @@ async def wechat_send_image(
     Returns:
         str: 发送结果消息
     """
+    config = tool_runtime.config
     if config is None:
         return f"{TOOL_ERROR}: 无法获取配置"
 
@@ -150,7 +153,7 @@ async def wechat_send_file(
     file_path: str,
     file_name: str = "",
     bot_name: str = "",
-    config: AppConfig = None,
+    tool_runtime: ToolRuntime = None,
 ) -> str:
     """通过微信向当前对话用户发送文件。
 
@@ -162,6 +165,7 @@ async def wechat_send_file(
     Returns:
         str: 发送结果消息
     """
+    config = tool_runtime.config
     if config is None:
         return f"{TOOL_ERROR}: 无法获取配置"
 

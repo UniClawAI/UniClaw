@@ -178,13 +178,13 @@ class TestBuildParameters:
         assert "b" not in params["required"]
         assert params["properties"]["b"]["default"] == 10
 
-    def test_config_excluded(self):
-        def func(a: str, config=None):
+    def test_tool_runtime_excluded(self):
+        def func(a: str, tool_runtime=None):
             """Tool."""
 
         params = _build_parameters(func)
         assert "a" in params["properties"]
-        assert "config" not in params["properties"]
+        assert "tool_runtime" not in params["properties"]
 
     def test_arg_descs_injected(self):
         def func(a: str):
@@ -415,10 +415,10 @@ class TestToolDecorator:
 
         assert func.name == "custom"
 
-    def test_config_not_in_schema(self):
+    def test_tool_runtime_not_in_schema(self):
         @tool
-        def func(a: str, config=None):
+        def func(a: str, tool_runtime=None):
             """Doc."""
 
-        assert "config" not in func.parameters["properties"]
+        assert "tool_runtime" not in func.parameters["properties"]
         assert "a" in func.parameters["properties"]

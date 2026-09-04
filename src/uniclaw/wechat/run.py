@@ -30,6 +30,7 @@ from uniclaw.agent import (
 )
 from uniclaw.commands import handle_slash
 from uniclaw.config import Permissions, RunMode, load_config, AppConfig
+from uniclaw.tools.base import ToolRuntime
 from uniclaw.tools.shell import Bash
 from uniclaw.ilink_bot import IlinkBotClient, IncomingMessage
 from uniclaw.ilink_bot.media import download_media, detect_ext
@@ -219,7 +220,7 @@ async def _collect_response(
                 event.return_event.set()
             elif isinstance(event, ShellCommandEvent):
                 await info(f"[微信] 用户执行Shell命令: {event.command}", config)
-                result = await Bash(event.command, config=config)
+                result = await Bash(event.command, tool_runtime=ToolRuntime(config=config))
                 output = _ANSI_RE.sub("", result).strip()
                 print(clr(f"  $ {event.command}", C.CYAN))
                 print(clr(output or "(无输出)", C.DIM))
@@ -315,7 +316,7 @@ def make_handler():
             shell_cmd = text[1:].strip()
             if shell_cmd:
                 await info(f"[微信] 执行命令: {shell_cmd}", config)
-                result = await Bash(shell_cmd, config=config)
+                result = await Bash(shell_cmd, tool_runtime=ToolRuntime(config=config))
                 output = _ANSI_RE.sub("", result).strip()
                 bot.reply_text(output.replace("\n", "\n\n") or "(无输出)")
             return

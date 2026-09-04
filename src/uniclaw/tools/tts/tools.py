@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from uniclaw.tools.base import tool
+from uniclaw.tools.base import tool, ToolRuntime
 
 
 @tool
@@ -11,7 +11,7 @@ async def text_to_speech(
     style: str = "",
     save_path: str = "",
     play: bool = False,
-    config=None,
+    tool_runtime: ToolRuntime = None,
 ) -> str:
     """将文本转换为语音。
 
@@ -38,7 +38,7 @@ async def text_to_speech(
         style=style,
         save_path=save_path,
         play=play,
-        config=config,
+        config=tool_runtime.config,
     )
 
 

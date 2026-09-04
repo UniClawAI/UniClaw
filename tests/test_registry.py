@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from unittest.mock import MagicMock, patch
 
-from uniclaw.tools.base import Tool
+from uniclaw.tools.base import Tool, ToolRuntime
 from uniclaw.tools.registry import (
     CORE_TOOL_NAMES,
     CORE_TOOLS,
@@ -439,7 +439,7 @@ class TestSearchToolsTool:
         """无结果返回提示。"""
         config, p = _make_search_config(ToolRegistry(), {"anything"})
         with p:
-            result = await search_tools("nonexistentxyz", config=config)
+            result = await search_tools("nonexistentxyz", tool_runtime=ToolRuntime(config=config))
         assert "未找到匹配" in result
 
     @pytest.mark.asyncio
@@ -453,7 +453,7 @@ class TestSearchToolsTool:
             registry, {"kg_search", "tool_alpha", "tool_beta", "tool_gamma"}
         )
         with p:
-            result = await search_tools("kgquery", config=config)
+            result = await search_tools("kgquery", tool_runtime=ToolRuntime(config=config))
         assert "kg_search" in result
         assert "kg_search" in config.current_agent.extended_mgr.loaded
 
@@ -466,7 +466,7 @@ class TestSearchToolsTool:
             registry, {"tool_alpha", "tool_beta", "tool_gamma"}
         )
         with p:
-            result = await search_tools("kgquery", config=config)
+            result = await search_tools("kgquery", tool_runtime=ToolRuntime(config=config))
         assert "当前不可用" in result
         assert "kg_search" in result
 
@@ -481,7 +481,7 @@ class TestSearchToolsTool:
             loaded=["kg_search"],
         )
         with p:
-            result = await search_tools("kgquery", config=config)
+            result = await search_tools("kgquery", tool_runtime=ToolRuntime(config=config))
         assert "均已加载" in result
 
     @pytest.mark.asyncio
@@ -496,7 +496,7 @@ class TestSearchToolsTool:
         for i in range(MAX_LOADED_EXTENDED):
             config.current_agent.extended_mgr.touch(f"old_{i}")
         with p:
-            result = await search_tools("newword", config=config)
+            result = await search_tools("newword", tool_runtime=ToolRuntime(config=config))
         assert "已淘汰" in result
 
 

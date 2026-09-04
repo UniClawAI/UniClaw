@@ -1,9 +1,9 @@
-from uniclaw.tools.base import tool
+from uniclaw.tools.base import tool, ToolRuntime
 
 
 @tool
 async def AskUserQuestion(
-    questions: list[dict], title: str = "请选择", config=None
+    questions: list[dict], title: str = "请选择", tool_runtime: ToolRuntime = None
 ) -> str:
     """
     向用户(人类)提问以确认需求细节。当你需要了解用户的偏好、意图或需求时使用此工具。
@@ -33,6 +33,7 @@ async def AskUserQuestion(
     """
     from uniclaw.tools.session.session import SessionType
 
+    config = tool_runtime.config
     if config and config.current_agent.session.session_type == SessionType.A2A:
         return "错误:A2A 远程 Agent 模式下无法向用户提问,请自主决策。"
 

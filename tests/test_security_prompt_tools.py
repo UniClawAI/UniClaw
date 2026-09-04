@@ -2,6 +2,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+from uniclaw.tools.base import ToolRuntime
 from uniclaw.tools.security import (
     clear_llm_safe_prompt,
     edit_llm_safe_prompt,
@@ -49,27 +50,27 @@ def test_llm_safe_prompt_tools_persist(tmp_path, monkeypatch):
     config = _make_config(tmp_path)
 
     assert (
-        read_llm_safe_prompt.func(config=config)
+        read_llm_safe_prompt.func(tool_runtime=ToolRuntime(config=config))
         == "当前未设置 llm_safe_check 注入提示词。"
     )
 
     assert (
-        write_llm_safe_prompt.func("允许 git push", config=config)
+        write_llm_safe_prompt.func("允许 git push", tool_runtime=ToolRuntime(config=config))
         == "已保存 llm_safe_check 注入提示词。"
     )
-    assert read_llm_safe_prompt.func(config=config) == "允许 git push"
+    assert read_llm_safe_prompt.func(tool_runtime=ToolRuntime(config=config)) == "允许 git push"
 
     assert "已编辑" in edit_llm_safe_prompt.func(
-        "允许 git push", "允许 docker ps", config=config
+        "允许 git push", "允许 docker ps", tool_runtime=ToolRuntime(config=config)
     )
-    assert read_llm_safe_prompt.func(config=config) == "允许 docker ps"
+    assert read_llm_safe_prompt.func(tool_runtime=ToolRuntime(config=config)) == "允许 docker ps"
 
     assert (
-        clear_llm_safe_prompt.func(config=config)
+        clear_llm_safe_prompt.func(tool_runtime=ToolRuntime(config=config))
         == "已清除 llm_safe_check 注入提示词。"
     )
     assert (
-        read_llm_safe_prompt.func(config=config)
+        read_llm_safe_prompt.func(tool_runtime=ToolRuntime(config=config))
         == "当前未设置 llm_safe_check 注入提示词。"
     )
 

@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from uniclaw.context import Scope
+from uniclaw.tools.base import ToolRuntime
 from uniclaw.tools.knowledge.tools import (
     _get_graph,
     get_all_tools,
@@ -112,22 +113,22 @@ class TestAddEntity:
         """添加实体成功。"""
         config = _make_config(tmp_path)
         result = await kg_add_entity(
-            "Python", type="technology", description="编程语言", config=config
+            "Python", type="technology", description="编程语言", tool_runtime=ToolRuntime(config=config)
         )
         assert "已添加" in result
         assert "Python" in result
         assert "technology" in result
         assert "ID=" in result
         # 验证持久化
-        detail = await kg_get_entity("Python", config=config)
+        detail = await kg_get_entity("Python", tool_runtime=ToolRuntime(config=config))
         assert "实体: Python" in detail
 
     @pytest.mark.asyncio
     async def test_duplicate_warning(self, tmp_path):
         """重复添加返回警告。"""
         config = _make_config(tmp_path)
-        await kg_add_entity("Python", type="technology", config=config)
-        result = await kg_add_entity("Python", type="technology", config=config)
+        await kg_add_entity("Python", type="technology", tool_runtime=ToolRuntime(config=config))
+        result = await kg_add_entity("Python", type="technology", tool_runtime=ToolRuntime(config=config))
         assert "⚠" in result
         assert "已存在" in result
 
@@ -139,17 +140,17 @@ class TestAddEntity:
             "Python",
             type="technology",
             properties={"version": "3.14"},
-            config=config,
+            tool_runtime=ToolRuntime(config=config),
         )
-        detail = await kg_get_entity("Python", config=config)
+        detail = await kg_get_entity("Python", tool_runtime=ToolRuntime(config=config))
         assert "version=3.14" in detail
 
     @pytest.mark.asyncio
     async def test_default_type_concept(self, tmp_path):
         """默认类型为 concept。"""
         config = _make_config(tmp_path)
-        await kg_add_entity("UniClaw", config=config)
-        detail = await kg_get_entity("UniClaw", config=config)
+        await kg_add_entity("UniClaw", tool_runtime=ToolRuntime(config=config))
+        detail = await kg_get_entity("UniClaw", tool_runtime=ToolRuntime(config=config))
         assert "type=concept" in detail
 
 
@@ -160,10 +161,10 @@ class TestAddRelation:
     async def test_success(self, tmp_path):
         """添加关系成功。"""
         config = _make_config(tmp_path)
-        await kg_add_entity("Guido", type="person", config=config)
-        await kg_add_entity("Python", type="technology", config=config)
+        await kg_add_entity("Guido", type="person", tool_runtime=ToolRuntime(config=config))
+        await kg_add_entity("Python", type="technology", tool_runtime=ToolRuntime(config=config))
         result = await kg_add_relation(
-            "Guido", "Python", "created_by", config=config
+            "Guido", "Python", "created_by", tool_runtime=ToolRuntime(config=config)
         )
         assert "关系已添加" in result
         assert "Guido" in result
@@ -175,7 +176,7 @@ class TestAddRelation:
         """源实体不存在返回错误。"""
         config = _make_config(tmp_path)
         result = await kg_add_relation(
-            "Nonexistent", "Python", "related_to", config=config
+            "Nonexistent", "Python", "related_to", tool_runtime=ToolRuntime(config=config)
         )
         assert "错误" in result
         assert "源实体" in result
@@ -185,9 +186,9 @@ class TestAddRelation:
     async def test_missing_target(self, tmp_path):
         """目标实体不存在返回错误。"""
         config = _make_config(tmp_path)
-        await kg_add_entity("Guido", type="person", config=config)
+        await kg_add_entity("Guido", type="person", tool_runtime=ToolRuntime(config=config))
         result = await kg_add_relation(
-            "Guido", "Nonexistent", "related_to", config=config
+            "Guido", "Nonexistent", "related_to", tool_runtime=ToolRuntime(config=config)
         )
         assert "错误" in result
         assert "目标实体" in result
@@ -200,8 +201,8 @@ class TestAddAlias:
     async def test_success(self, tmp_path):
         """添加别名成功。"""
         config = _make_config(tmp_path)
-        await kg_add_entity("Python", type="technology", config=config)
-        result = await kg_add_alias("Python", "Py", config=config)
+        await kg_add_entity("Python", type="technology", tool_runtime=ToolRuntime(config=config))
+        result = await kg_add_alias("Python", "Py", tool_runtime=ToolRuntime(config=config))
         assert "别名已添加" in result
         assert "Python" in result
         assert "Py" in result
@@ -210,7 +211,7 @@ class TestAddAlias:
     async def test_entity_missing(self, tmp_path):
         """实体不存在返回错误。"""
         config = _make_config(tmp_path)
-        result = await kg_add_alias("Nonexistent", "X", config=config)
+        result = await kg_add_alias("Nonexistent", "X", tool_runtime=ToolRuntime(config=config))
         assert "错误" in result
         assert "不存在" in result
 
@@ -222,18 +223,18 @@ class TestUpdateEntity:
     async def test_update_description(self, tmp_path):
         """更新描述。"""
         config = _make_config(tmp_path)
-        await kg_add_entity("Python", type="technology", config=config)
-        result = await kg_update_entity("Python", description="新描述", config=config)
+        await kg_add_entity("Python", type="technology", tool_runtime=ToolRuntime(config=config))
+        result = await kg_update_entity("Python", description="新描述", tool_runtime=ToolRuntime(config=config))
         assert "已更新" in result
         assert "description" in result
-        detail = await kg_get_entity("Python", config=config)
+        detail = await kg_get_entity("Python", tool_runtime=ToolRuntime(config=config))
         assert "新描述" in detail
 
     @pytest.mark.asyncio
     async def test_entity_missing(self, tmp_path):
         """实体不存在返回错误。"""
         config = _make_config(tmp_path)
-        result = await kg_update_entity("Nonexistent", description="x", config=config)
+        result = await kg_update_entity("Nonexistent", description="x", tool_runtime=ToolRuntime(config=config))
         assert "错误" in result
         assert "不存在" in result
 
@@ -241,8 +242,8 @@ class TestUpdateEntity:
     async def test_no_fields(self, tmp_path):
         """无有效更新字段返回错误。"""
         config = _make_config(tmp_path)
-        await kg_add_entity("Python", type="technology", config=config)
-        result = await kg_update_entity("Python", config=config)
+        await kg_add_entity("Python", type="technology", tool_runtime=ToolRuntime(config=config))
+        result = await kg_update_entity("Python", tool_runtime=ToolRuntime(config=config))
         assert "错误" in result
 
 
@@ -253,18 +254,18 @@ class TestDeleteEntity:
     async def test_success(self, tmp_path):
         """删除实体成功。"""
         config = _make_config(tmp_path)
-        await kg_add_entity("Python", type="technology", config=config)
-        result = await kg_delete_entity("Python", config=config)
+        await kg_add_entity("Python", type="technology", tool_runtime=ToolRuntime(config=config))
+        result = await kg_delete_entity("Python", tool_runtime=ToolRuntime(config=config))
         assert "实体 'Python' 及其关系已删除" in result
         # 验证已删除
-        detail = await kg_get_entity("Python", config=config)
+        detail = await kg_get_entity("Python", tool_runtime=ToolRuntime(config=config))
         assert "未找到实体" in detail
 
     @pytest.mark.asyncio
     async def test_missing(self, tmp_path):
         """实体不存在返回错误。"""
         config = _make_config(tmp_path)
-        result = await kg_delete_entity("Nonexistent", config=config)
+        result = await kg_delete_entity("Nonexistent", tool_runtime=ToolRuntime(config=config))
         assert "错误" in result
         assert "不存在" in result
 
@@ -276,10 +277,10 @@ class TestDeleteRelation:
     async def test_success(self, tmp_path):
         """删除关系成功。"""
         config = _make_config(tmp_path)
-        await kg_add_entity("A", type="concept", config=config)
-        await kg_add_entity("B", type="concept", config=config)
-        await kg_add_relation("A", "B", "related_to", config=config)
-        result = await kg_delete_relation("A", "B", "related_to", config=config)
+        await kg_add_entity("A", type="concept", tool_runtime=ToolRuntime(config=config))
+        await kg_add_entity("B", type="concept", tool_runtime=ToolRuntime(config=config))
+        await kg_add_relation("A", "B", "related_to", tool_runtime=ToolRuntime(config=config))
+        result = await kg_delete_relation("A", "B", "related_to", tool_runtime=ToolRuntime(config=config))
         assert "关系已删除" in result
         assert "A" in result
         assert "B" in result
@@ -288,9 +289,9 @@ class TestDeleteRelation:
     async def test_missing(self, tmp_path):
         """关系不存在返回错误。"""
         config = _make_config(tmp_path)
-        await kg_add_entity("A", type="concept", config=config)
-        await kg_add_entity("B", type="concept", config=config)
-        result = await kg_delete_relation("A", "B", "nonexistent", config=config)
+        await kg_add_entity("A", type="concept", tool_runtime=ToolRuntime(config=config))
+        await kg_add_entity("B", type="concept", tool_runtime=ToolRuntime(config=config))
+        result = await kg_delete_relation("A", "B", "nonexistent", tool_runtime=ToolRuntime(config=config))
         assert "错误" in result
         assert "关系不存在" in result
 
@@ -302,11 +303,11 @@ class TestMergeEntities:
     async def test_success(self, tmp_path):
         """合并实体成功。"""
         config = _make_config(tmp_path)
-        await kg_add_entity("A", type="concept", config=config)
-        await kg_add_entity("B", type="concept", config=config)
-        await kg_add_entity("C", type="concept", config=config)
-        await kg_add_relation("A", "C", "related_to", config=config)
-        result = await kg_merge_entities("A", "B", config=config)
+        await kg_add_entity("A", type="concept", tool_runtime=ToolRuntime(config=config))
+        await kg_add_entity("B", type="concept", tool_runtime=ToolRuntime(config=config))
+        await kg_add_entity("C", type="concept", tool_runtime=ToolRuntime(config=config))
+        await kg_add_relation("A", "C", "related_to", tool_runtime=ToolRuntime(config=config))
+        result = await kg_merge_entities("A", "B", tool_runtime=ToolRuntime(config=config))
         assert "实体合并完成" in result
         assert "'A'" in result
         assert "'B'" in result
@@ -317,8 +318,8 @@ class TestMergeEntities:
     async def test_source_missing(self, tmp_path):
         """源实体不存在返回错误。"""
         config = _make_config(tmp_path)
-        await kg_add_entity("B", type="concept", config=config)
-        result = await kg_merge_entities("Nonexistent", "B", config=config)
+        await kg_add_entity("B", type="concept", tool_runtime=ToolRuntime(config=config))
+        result = await kg_merge_entities("Nonexistent", "B", tool_runtime=ToolRuntime(config=config))
         assert "错误" in result
         assert "不存在" in result
 
@@ -335,13 +336,13 @@ class TestGetEntity:
             type="technology",
             description="编程语言",
             properties={"version": "3.14"},
-            config=config,
+            tool_runtime=ToolRuntime(config=config),
         )
-        await kg_add_entity("Guido", type="person", config=config)
-        await kg_add_relation("Guido", "Python", "created_by", config=config)
-        await kg_add_alias("Python", "Py", config=config)
+        await kg_add_entity("Guido", type="person", tool_runtime=ToolRuntime(config=config))
+        await kg_add_relation("Guido", "Python", "created_by", tool_runtime=ToolRuntime(config=config))
+        await kg_add_alias("Python", "Py", tool_runtime=ToolRuntime(config=config))
 
-        result = await kg_get_entity("Python", config=config)
+        result = await kg_get_entity("Python", tool_runtime=ToolRuntime(config=config))
         assert "实体: Python" in result
         assert "type=technology" in result
         assert "描述: 编程语言" in result
@@ -355,7 +356,7 @@ class TestGetEntity:
     async def test_not_found(self, tmp_path):
         """实体不存在。"""
         config = _make_config(tmp_path)
-        result = await kg_get_entity("Nonexistent", config=config)
+        result = await kg_get_entity("Nonexistent", tool_runtime=ToolRuntime(config=config))
         assert "未找到实体 'Nonexistent'" in result
 
 
@@ -366,9 +367,9 @@ class TestSearch:
     async def test_found(self, tmp_path):
         """搜索命中。"""
         config = _make_config(tmp_path)
-        await kg_add_entity("Python", type="technology", config=config)
-        await kg_add_entity("Java", type="technology", config=config)
-        result = await kg_search("Python", config=config)
+        await kg_add_entity("Python", type="technology", tool_runtime=ToolRuntime(config=config))
+        await kg_add_entity("Java", type="technology", tool_runtime=ToolRuntime(config=config))
+        result = await kg_search("Python", tool_runtime=ToolRuntime(config=config))
         assert "找到 1 个匹配实体" in result
         assert "[technology] Python" in result
 
@@ -376,17 +377,17 @@ class TestSearch:
     async def test_empty(self, tmp_path):
         """搜索无结果。"""
         config = _make_config(tmp_path)
-        await kg_add_entity("Python", type="technology", config=config)
-        result = await kg_search("zzzznotfound", config=config)
+        await kg_add_entity("Python", type="technology", tool_runtime=ToolRuntime(config=config))
+        result = await kg_search("zzzznotfound", tool_runtime=ToolRuntime(config=config))
         assert "未找到匹配 'zzzznotfound' 的实体" in result
 
     @pytest.mark.asyncio
     async def test_type_filter(self, tmp_path):
         """按类型过滤。"""
         config = _make_config(tmp_path)
-        await kg_add_entity("Python", type="technology", config=config)
-        await kg_add_entity("Python", type="concept", config=config)
-        result = await kg_search("Python", type="concept", config=config)
+        await kg_add_entity("Python", type="technology", tool_runtime=ToolRuntime(config=config))
+        await kg_add_entity("Python", type="concept", tool_runtime=ToolRuntime(config=config))
+        result = await kg_search("Python", type="concept", tool_runtime=ToolRuntime(config=config))
         assert "找到 1 个匹配实体" in result
         assert "[concept] Python" in result
         assert "[technology] Python" not in result
@@ -399,12 +400,12 @@ class TestNeighbors:
     async def test_found(self, tmp_path):
         """查询邻居。"""
         config = _make_config(tmp_path)
-        await kg_add_entity("A", type="concept", config=config)
-        await kg_add_entity("B", type="concept", config=config)
-        await kg_add_entity("C", type="concept", config=config)
-        await kg_add_relation("A", "B", "related_to", config=config)
-        await kg_add_relation("A", "C", "related_to", config=config)
-        result = await kg_neighbors("A", config=config)
+        await kg_add_entity("A", type="concept", tool_runtime=ToolRuntime(config=config))
+        await kg_add_entity("B", type="concept", tool_runtime=ToolRuntime(config=config))
+        await kg_add_entity("C", type="concept", tool_runtime=ToolRuntime(config=config))
+        await kg_add_relation("A", "B", "related_to", tool_runtime=ToolRuntime(config=config))
+        await kg_add_relation("A", "C", "related_to", tool_runtime=ToolRuntime(config=config))
+        result = await kg_neighbors("A", tool_runtime=ToolRuntime(config=config))
         assert "实体 'A' 的邻居" in result
         assert "B" in result
         assert "C" in result
@@ -414,15 +415,15 @@ class TestNeighbors:
     async def test_empty(self, tmp_path):
         """无邻居。"""
         config = _make_config(tmp_path)
-        await kg_add_entity("A", type="concept", config=config)
-        result = await kg_neighbors("A", config=config)
+        await kg_add_entity("A", type="concept", tool_runtime=ToolRuntime(config=config))
+        result = await kg_neighbors("A", tool_runtime=ToolRuntime(config=config))
         assert "实体 'A' 没有邻居" in result
 
     @pytest.mark.asyncio
     async def test_entity_missing(self, tmp_path):
         """实体不存在视为无邻居。"""
         config = _make_config(tmp_path)
-        result = await kg_neighbors("Nonexistent", config=config)
+        result = await kg_neighbors("Nonexistent", tool_runtime=ToolRuntime(config=config))
         assert "没有邻居" in result
 
 
@@ -433,10 +434,10 @@ class TestPath:
     async def test_found(self, tmp_path):
         """找到路径。"""
         config = _make_config(tmp_path)
-        await kg_add_entity("A", type="concept", config=config)
-        await kg_add_entity("B", type="concept", config=config)
-        await kg_add_relation("A", "B", "related_to", config=config)
-        result = await kg_path("A", "B", config=config)
+        await kg_add_entity("A", type="concept", tool_runtime=ToolRuntime(config=config))
+        await kg_add_entity("B", type="concept", tool_runtime=ToolRuntime(config=config))
+        await kg_add_relation("A", "B", "related_to", tool_runtime=ToolRuntime(config=config))
+        result = await kg_path("A", "B", tool_runtime=ToolRuntime(config=config))
         assert "找到 1 条路径" in result
         assert "路径 1" in result
         assert "--[related_to]--> B" in result
@@ -445,9 +446,9 @@ class TestPath:
     async def test_not_found(self, tmp_path):
         """无路径。"""
         config = _make_config(tmp_path)
-        await kg_add_entity("A", type="concept", config=config)
-        await kg_add_entity("B", type="concept", config=config)
-        result = await kg_path("A", "B", config=config)
+        await kg_add_entity("A", type="concept", tool_runtime=ToolRuntime(config=config))
+        await kg_add_entity("B", type="concept", tool_runtime=ToolRuntime(config=config))
+        result = await kg_path("A", "B", tool_runtime=ToolRuntime(config=config))
         assert "未找到 'A' 到 'B' 的路径" in result
 
 
@@ -458,7 +459,7 @@ class TestStats:
     async def test_empty(self, tmp_path):
         """空图谱。"""
         config = _make_config(tmp_path)
-        result = await kg_stats(config=config)
+        result = await kg_stats(tool_runtime=ToolRuntime(config=config))
         assert "知识图谱统计" in result
         assert "实体: 0" in result
         assert "关系: 0" in result
@@ -468,12 +469,12 @@ class TestStats:
     async def test_with_data(self, tmp_path):
         """有数据时显示类型分布。"""
         config = _make_config(tmp_path)
-        await kg_add_entity("Python", type="technology", config=config)
-        await kg_add_entity("Java", type="technology", config=config)
-        await kg_add_entity("Guido", type="person", config=config)
-        await kg_add_relation("Guido", "Python", "created_by", config=config)
-        await kg_add_alias("Python", "Py", config=config)
-        result = await kg_stats(config=config)
+        await kg_add_entity("Python", type="technology", tool_runtime=ToolRuntime(config=config))
+        await kg_add_entity("Java", type="technology", tool_runtime=ToolRuntime(config=config))
+        await kg_add_entity("Guido", type="person", tool_runtime=ToolRuntime(config=config))
+        await kg_add_relation("Guido", "Python", "created_by", tool_runtime=ToolRuntime(config=config))
+        await kg_add_alias("Python", "Py", tool_runtime=ToolRuntime(config=config))
+        result = await kg_stats(tool_runtime=ToolRuntime(config=config))
         assert "实体: 3" in result
         assert "关系: 1" in result
         assert "别名: 1" in result
@@ -491,9 +492,9 @@ class TestExport:
     async def test_json(self, tmp_path):
         """导出 JSON。"""
         config = _make_config(tmp_path)
-        await kg_add_entity("Python", type="technology", config=config)
+        await kg_add_entity("Python", type="technology", tool_runtime=ToolRuntime(config=config))
         out = tmp_path / "kg.json"
-        result = await kg_export(str(out), config=config)
+        result = await kg_export(str(out), tool_runtime=ToolRuntime(config=config))
         assert "知识图谱已导出" in result
         assert out.exists()
         data = json.loads(out.read_text(encoding="utf-8"))
@@ -504,9 +505,9 @@ class TestExport:
     async def test_markdown(self, tmp_path):
         """导出 Markdown。"""
         config = _make_config(tmp_path)
-        await kg_add_entity("Python", type="technology", config=config)
+        await kg_add_entity("Python", type="technology", tool_runtime=ToolRuntime(config=config))
         out = tmp_path / "kg.md"
-        result = await kg_export(str(out), config=config)
+        result = await kg_export(str(out), tool_runtime=ToolRuntime(config=config))
         assert "知识图谱已导出" in result
         content = out.read_text(encoding="utf-8")
         assert "Python" in content
@@ -516,9 +517,9 @@ class TestExport:
     async def test_html(self, tmp_path):
         """导出 HTML 可视化。"""
         config = _make_config(tmp_path)
-        await kg_add_entity("Python", type="technology", config=config)
+        await kg_add_entity("Python", type="technology", tool_runtime=ToolRuntime(config=config))
         out = tmp_path / "kg.html"
-        result = await kg_export(str(out), config=config)
+        result = await kg_export(str(out), tool_runtime=ToolRuntime(config=config))
         assert "HTML 可视化已生成" in result
         assert out.exists()
         content = out.read_text(encoding="utf-8")
@@ -529,7 +530,7 @@ class TestExport:
         """不支持的后缀。"""
         config = _make_config(tmp_path)
         out = tmp_path / "kg.txt"
-        result = await kg_export(str(out), config=config)
+        result = await kg_export(str(out), tool_runtime=ToolRuntime(config=config))
         assert "不支持的文件后缀" in result
         assert not out.exists()
 
@@ -541,16 +542,16 @@ class TestList:
     async def test_empty(self, tmp_path):
         """空图谱。"""
         config = _make_config(tmp_path)
-        result = await kg_list(config=config)
+        result = await kg_list(tool_runtime=ToolRuntime(config=config))
         assert "知识图谱为空" in result
 
     @pytest.mark.asyncio
     async def test_with_items(self, tmp_path):
         """列出实体。"""
         config = _make_config(tmp_path)
-        await kg_add_entity("Python", type="technology", description="编程语言", config=config)
-        await kg_add_entity("Java", type="technology", config=config)
-        result = await kg_list(config=config)
+        await kg_add_entity("Python", type="technology", description="编程语言", tool_runtime=ToolRuntime(config=config))
+        await kg_add_entity("Java", type="technology", tool_runtime=ToolRuntime(config=config))
+        result = await kg_list(tool_runtime=ToolRuntime(config=config))
         assert "共 2 个实体" in result
         assert "[technology] Python" in result
         assert "编程语言" in result
@@ -559,9 +560,9 @@ class TestList:
     async def test_type_filter(self, tmp_path):
         """按类型过滤。"""
         config = _make_config(tmp_path)
-        await kg_add_entity("Python", type="technology", config=config)
-        await kg_add_entity("Guido", type="person", config=config)
-        result = await kg_list(type="person", config=config)
+        await kg_add_entity("Python", type="technology", tool_runtime=ToolRuntime(config=config))
+        await kg_add_entity("Guido", type="person", tool_runtime=ToolRuntime(config=config))
+        result = await kg_list(type="person", tool_runtime=ToolRuntime(config=config))
         assert "共 1 个实体" in result
         assert "[person] Guido" in result
         assert "Python" not in result
@@ -574,15 +575,15 @@ class TestClear:
     async def test_clear(self, tmp_path):
         """清空图谱。"""
         config = _make_config(tmp_path)
-        await kg_add_entity("Python", type="technology", config=config)
-        await kg_add_entity("Guido", type="person", config=config)
-        await kg_add_relation("Guido", "Python", "created_by", config=config)
-        result = await kg_clear(config=config)
+        await kg_add_entity("Python", type="technology", tool_runtime=ToolRuntime(config=config))
+        await kg_add_entity("Guido", type="person", tool_runtime=ToolRuntime(config=config))
+        await kg_add_relation("Guido", "Python", "created_by", tool_runtime=ToolRuntime(config=config))
+        result = await kg_clear(tool_runtime=ToolRuntime(config=config))
         assert "知识图谱已清空" in result
         assert "删除了 2 个实体" in result
         assert "1 条关系" in result
         # 验证已清空
-        listed = await kg_list(config=config)
+        listed = await kg_list(tool_runtime=ToolRuntime(config=config))
         assert "知识图谱为空" in listed
 
 
@@ -593,7 +594,7 @@ class TestExtract:
     async def test_no_input(self, tmp_path):
         """未提供 text 和 path。"""
         config = _make_config(tmp_path)
-        result = await kg_extract(config=config)
+        result = await kg_extract(tool_runtime=ToolRuntime(config=config))
         assert "请提供 text 或 path" in result
 
     @pytest.mark.asyncio
@@ -601,7 +602,7 @@ class TestExtract:
     async def test_agent_def_missing(self, mock_defs, tmp_path):
         """未找到 kg-extract 定义。"""
         config = _make_config(tmp_path)
-        result = await kg_extract(text="hello", config=config)
+        result = await kg_extract(text="hello", tool_runtime=ToolRuntime(config=config))
         assert "未找到 'kg-extract' 子智能体定义" in result
 
     @pytest.mark.asyncio
@@ -612,7 +613,7 @@ class TestExtract:
         """完整提取流程。"""
         config = _make_config(tmp_path)
         # 预先真实添加 Python 实体,供关系引用
-        await kg_add_entity("Python", type="technology", config=config)
+        await kg_add_entity("Python", type="technology", tool_runtime=ToolRuntime(config=config))
 
         mock_defs.return_value = {"kg-extract": MagicMock(name="kg-extract-def")}
         mgr = MagicMock()
@@ -635,7 +636,7 @@ class TestExtract:
             ],
         }
 
-        result = await kg_extract(text="Numpy 是一个数组库", config=config)
+        result = await kg_extract(text="Numpy 是一个数组库", tool_runtime=ToolRuntime(config=config))
 
         assert "AI 提取结果" in result
         assert "实体: 1 个" in result
@@ -661,7 +662,7 @@ class TestExtract:
         mgr.wait = AsyncMock()
         mock_get.return_value = mgr
 
-        result = await kg_extract(text="hello", config=config)
+        result = await kg_extract(text="hello", tool_runtime=ToolRuntime(config=config))
         assert "无法解析为 JSON" in result
 
     @pytest.mark.asyncio
@@ -675,7 +676,7 @@ class TestExtract:
         mgr.start_sub_agent = AsyncMock(side_effect=Exception("boom"))
         mock_get.return_value = mgr
 
-        result = await kg_extract(text="hello", config=config)
+        result = await kg_extract(text="hello", tool_runtime=ToolRuntime(config=config))
         assert "subagent 启动失败: boom" in result
 
     @pytest.mark.asyncio
@@ -694,5 +695,5 @@ class TestExtract:
         mgr.start_sub_agent = AsyncMock(return_value=task)
         mock_get.return_value = mgr
 
-        result = await kg_extract(text="hello", config=config)
+        result = await kg_extract(text="hello", tool_runtime=ToolRuntime(config=config))
         assert "subagent 启动失败: 初始化错误" in result

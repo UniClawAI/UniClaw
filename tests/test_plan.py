@@ -3,6 +3,7 @@
 import pytest
 from unittest.mock import MagicMock
 
+from uniclaw.tools.base import ToolRuntime
 from uniclaw.tools.plan import (
     ExitPermission,
     enter_plan_mode,
@@ -50,7 +51,7 @@ class TestEnterPlanMode:
         config.permission_mode = Permissions.AUTO
         config.is_console = True
         config.root_dir = None
-        result = await enter_plan_mode(config=config)
+        result = await enter_plan_mode(tool_runtime=ToolRuntime(config=config))
         assert config.permission_mode == Permissions.PLAN
         assert "计划模式" in result
 
@@ -61,7 +62,7 @@ class TestEnterPlanMode:
         config.permission_mode = Permissions.AUTO
         config.is_console = True
         config.root_dir = None
-        result = await enter_plan_mode(config=config)
+        result = await enter_plan_mode(tool_runtime=ToolRuntime(config=config))
         assert "计划" in result
 
 
@@ -72,7 +73,7 @@ class TestExitPlanMode:
     async def test_exit_to_auto(self):
         """退出到 auto 模式。"""
         config = MagicMock()
-        result = await exit_plan_mode(permission_mode=ExitPermission.AUTO, config=config)
+        result = await exit_plan_mode(permission_mode=ExitPermission.AUTO, tool_runtime=ToolRuntime(config=config))
         assert "已退出计划模式" in result
         assert "auto" in result
 
@@ -80,7 +81,7 @@ class TestExitPlanMode:
     async def test_exit_to_accept_all(self):
         """退出到 accept-all 模式。"""
         config = MagicMock()
-        result = await exit_plan_mode(permission_mode=ExitPermission.ACCEPT_ALL, config=config)
+        result = await exit_plan_mode(permission_mode=ExitPermission.ACCEPT_ALL, tool_runtime=ToolRuntime(config=config))
         assert "已退出计划模式" in result
         assert "accept-all" in result
 

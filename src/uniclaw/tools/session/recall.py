@@ -6,9 +6,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-from uniclaw.tools.base import tool
+from uniclaw.tools.base import tool, ToolRuntime
 from uniclaw.utils.constants import TOOL_ERROR
 from uniclaw.tools.session.session import (
     Session,
@@ -18,9 +16,6 @@ from uniclaw.tools.session.session import (
     ToolCallMessage,
 )
 from uniclaw.utils.message import MessageRole
-
-if TYPE_CHECKING:
-    from uniclaw.config import AppConfig
 
 
 def _count_recent_messages(session: Session) -> int:
@@ -101,7 +96,7 @@ def recall_history(
     keywords: list[str],
     context_size: int = 3,
     max_results: int = 10,
-    config: AppConfig = None,
+    tool_runtime: ToolRuntime = None,
 ) -> str:
     """搜索会话历史中被压缩移出当前上下文的旧消息。
 
@@ -113,6 +108,7 @@ def recall_history(
         context_size: 每条匹配结果前后各包含的上下文消息条数,默认3
         max_results: 最多返回的匹配条数,默认10
     """
+    config = tool_runtime.config
 
     # 关键词预处理
     import re
@@ -189,7 +185,7 @@ def recall_history(
 def get_history_range(
     start: int,
     end: int,
-    config: AppConfig = None,
+    tool_runtime: ToolRuntime = None,
 ) -> str:
     """获取会话历史中指定序号范围的消息。
 
@@ -200,6 +196,7 @@ def get_history_range(
         start: 起始序号(从0开始,包含)
         end: 结束序号(从0开始,不包含)
     """
+    config = tool_runtime.config
     session = config.current_agent.session
     history = session.history
     total = len(history)

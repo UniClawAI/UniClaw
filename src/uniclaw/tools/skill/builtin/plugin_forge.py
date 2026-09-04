@@ -113,6 +113,10 @@ def get_tools():
 - **docstring 决定 schema**: `Args:` 段的每行解析为参数描述; 摘要部分为工具描述。
   没有 `Args:` 段时参数只有名字和类型,LLM 不知道传什么。给每个参数写清描述。
 - **类型注解**决定参数类型,支持 `str` / `int` / `float` / `bool` / `list[X]` / `dict` / `Optional[X]`。
+- **运行时上下文注入**: 需要配置或推流时,声明 `tool_runtime: ToolRuntime = None` 参数
+  (放参数列表最后,`from uniclaw.tools.base import tool, ToolRuntime`),框架调用时自动注入,
+  不会出现在 schema 中。通过 `tool_runtime.config` 获取配置,`await tool_runtime.stream("...")`
+  向前端推流。
 - **枚举约束**: 参数值是固定集合时,用 `Enum` 导出,会自动生成 enum 列表。
 - **默认值参数不强制**(不给 required),无默认值参数为必填。别给必填参数写默认值。
 - **不要手动构造 `Tool(...)`**: 除非手写 schema 有特殊用途,否则一律用 `@tool`,保证 `strict` 兼容。
@@ -128,14 +132,13 @@ UniClaw 的主循环是**单个 asyncio 事件循环**,工具调用会被 `await
 
 ```python
 import asyncio
-from uniclaw.config import AppConfig
-from uniclaw.tools.base import tool
+from uniclaw.tools.base import tool, ToolRuntime
 from uniclaw.utils.wakeup import wake_agent
 from uniclaw.utils.constants import SYSTEM_PREFIX
 
 
 @tool
-def long_task(name: str, config: AppConfig = None) -> str:
+def long_task(name: str, tool_runtime: ToolRuntime = None) -> str:
     \"\"\"
     执行耗时的长任务(立即返回,后台完成后自动唤醒).
 
@@ -145,6 +148,8 @@ def long_task(name: str, config: AppConfig = None) -> str:
     Returns:
         str: 确认任务已启动。
     \"\"\"
+    config = tool_runtime.config
+
     async def _run():
         try:
             result = await asyncio.to_thread(_do_heavy_work, name)
@@ -160,7 +165,8 @@ def long_task(name: str, config: AppConfig = None) -> str:
 - **函数是同步 `def`,立即 `return`**,不阻塞;真正的耗时逻辑放进后台协程 `_run()`。
 - 后台里阻塞的库调用(requests、subprocess、文件 IO)用 `await asyncio.to_thread(...)` 跑在线程池。
 - 完成/失败都通过 `wake_agent(f"{SYSTEM_PREFIX}(工具名) 结果", config)` 唤醒,让 LLM 继续。
-- **`config` 唯一用途是转手传给 `wake_agent`**,不读取、不操作它的任何字段。
+- **`tool_runtime` 由框架自动注入**,签名写 `tool_runtime: ToolRuntime = None`。需要配置时取
+  `tool_runtime.config` 转手传给 `wake_agent`;需要向前端推流时用 `await tool_runtime.stream("...")`。
 - **不要用 `time.sleep`**,在后台协程里用 `await asyncio.sleep(...)`。
 
 ### Step 5: 生命周期钩子(可选)
@@ -195,7 +201,7 @@ async def shutdown():
 | 搜到了但调用报 `ToolError` | 插件语法或运行时出错。用 `Bash` 执行 `python -c "import importlib.util; ..."` 加载模块看 traceback |
 | `asyncio.create_task` 后台任务静默失败 | 后台协程里的异常不会冒泡到工具返回值。在 `_run()` 里加 `try/except` 并用 `print` 或日志输出错误,或在 `except` 里通过 `wake_agent` 把错误信息传回 |
 | 工具返回值不符合预期 | 检查 `@tool` 的 docstring 与实现是否一致:参数名、类型、默认值、返回值类型必须对齐 |
-| `config` 相关报错 | 插件不应直接使用 config。如果需要唤醒,只把 config 原样传给 `wake_agent` |
+| `tool_runtime` 相关报错 | 插件签名写 `tool_runtime: ToolRuntime = None`,框架自动注入;配置取 `tool_runtime.config`,推流用 `await tool_runtime.stream("...")` |
 
 ### Step 7: 交付报告
 

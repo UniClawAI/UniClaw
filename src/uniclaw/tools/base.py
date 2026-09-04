@@ -1,4 +1,8 @@
-"""自定义 @tool 装饰器 — 生成 OpenAI function calling schema,自动排除 config 参数。"""
+"""自定义 @tool 装饰器 — 生成 OpenAI function calling schema,自动排除注入参数。
+
+ToolRuntime: 工具运行时上下文 dataclass,含 config / tool_call_id / stream_writer 三个字段。
+工具函数声明 `tool_runtime: ToolRuntime = None` 形参即可拿到运行时上下文,由调用方(agent 主循环等)构造传入。
+"""
 
 from __future__ import annotations
 
@@ -9,7 +13,10 @@ import logging
 import re
 import typing
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, get_type_hints
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, get_type_hints
+
+if TYPE_CHECKING:
+    from uniclaw.config import AppConfig
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +33,7 @@ _TYPE_MAP = {
 }
 
 # 运行时注入的参数,不写入 schema
-_INJECTED_PARAMS = {"config"}
+_INJECTED_PARAMS = {"tool_runtime"}
 
 # 参数行正则: "name: desc" 或 "name (type): desc",冒号前为小写/下划线标识符,冒号后有空格
 _PARAM_LINE_RE = re.compile(r"^[a-z_][a-zA-Z0-9_]*\s*(?:\(.*?\))?\s*:\s")
@@ -42,6 +49,26 @@ _BUILTIN_TYPE_NAMES: dict[str, type] = {
     "bytes": bytes,
     "None": type(None),
 }
+
+
+@dataclass
+class ToolRuntime:
+    """工具运行时上下文,由调用方(agent 主循环等)构造并传入签名为 tool_runtime 的参数。
+
+    - config: 应用配置
+    - tool_call_id: 本次工具调用的 ID(原仅在事件层可见,现工具内部也可获取)
+    - stream_writer: 流式输出回调,签名 async (tool_call_id: str, content: str) -> None;
+      None 表示无 UI 接收方。凭 tool_call_id 路由归属,异步/后台任务推流也能落到正确工具块。
+    """
+
+    config: AppConfig | None = None
+    tool_call_id: str = ""
+    stream_writer: Callable[[str, str], Awaitable[None]] | None = None
+
+    async def stream(self, content: str) -> None:
+        """推送流式输出到前端,自动附上 tool_call_id 定位归属;无接收方时静默忽略。"""
+        if self.stream_writer is not None:
+            await self.stream_writer(self.tool_call_id, content)
 
 
 def _resolve_str_annotation(tp: str, func_globals: dict = None) -> Any:
@@ -350,21 +377,22 @@ class Tool:
     async def __call__(
         self,
         *args,
-        stream_callback: Callable[[str], Awaitable[None]] | None = None,
         **kwargs,
     ):
         """调用工具,自动处理:
-        - 过滤 _explain 参数
-        - 异步/同步自动适配
-        - 流式回调设置/清理
+        - 位置参数映射
+        - _explain 过滤
+        - 注入参数过滤(tool_runtime 由调用方构造传入,按普通 kwargs 透传)
+        - 同步/异步自动适配
 
         支持位置参数和关键字参数,与直接调用函数一致:
-            await tool("ls", timeout=30, config=config)
-            await tool(command="ls", timeout=30, config=config)
+            await tool("ls", timeout=30)
+            await tool(command="ls", timeout=30)
         """
         # 将位置参数映射到函数参数名
+        sig = inspect.signature(self.func)
+        params = list(sig.parameters)
         if args:
-            params = list(inspect.signature(self.func).parameters)
             if len(args) > len(params):
                 raise TypeError(
                     f"{self.name}() takes {len(params)} positional arguments but {len(args)} were given"
@@ -372,22 +400,15 @@ class Tool:
             for i, arg in enumerate(args):
                 kwargs[params[i]] = arg
         kwargs.pop("_explain", None)
-        # 过滤函数签名中不接受的注入参数(如 config)
-        func_params = inspect.signature(self.func).parameters
+
+        # 过滤函数签名中不接受的注入参数(如 MCP **kwargs 动态函数)
+        # tool_runtime 本身按普通 kwargs 透传,由调用方负责构造传入
         for injected in _INJECTED_PARAMS:
-            if injected in kwargs and injected not in func_params:
+            if injected in kwargs and injected not in params:
                 kwargs.pop(injected)
+
         if not inspect.iscoroutinefunction(self.func):
             return self.func(**kwargs)
-        # 异步工具:支持流式回调
-        if stream_callback:
-            from uniclaw.tools.stream import set_stream_callback, reset_stream_callback
-
-            token = set_stream_callback(stream_callback)
-            try:
-                return await self.func(**kwargs)
-            finally:
-                reset_stream_callback(token)
         return await self.func(**kwargs)
 
 
@@ -398,9 +419,10 @@ def tool(
 
     用法:
         @tool
-        def Bash(command: str, timeout: int = 30, config: AppConfig = None) -> str:
+        def Bash(command: str, timeout: int = 30, tool_runtime: ToolRuntime = None) -> str:
             \"\"\"执行 shell 命令。\"\"\"
             ...
+            config = tool_runtime.config
 
         @tool(name="custom_name")
         def my_func(...):

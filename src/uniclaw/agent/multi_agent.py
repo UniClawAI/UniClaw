@@ -33,6 +33,7 @@ from uniclaw.tools.base import (
     tc_name as _tc_name,
     tc_args as _tc_args,
     Tool,
+    ToolRuntime,
     extract_explains,
 )
 
@@ -962,17 +963,21 @@ class MultiAgent:
                 )
                 try:
 
-                    async def _stream_cb(content: str, _tc_id=tc_id, _tc_name=tc_name):
+                    async def _stream_writer(
+                        tool_call_id: str, content: str, _tc_name=tc_name
+                    ):
+                        # 凭 tool_call_id 路由,前端按 session_id:tool_call_id 定位工具块
                         await self.send_event_to_user(
                             ToolStreamEvent(
-                                name=_tc_name, content=content, tool_call_id=_tc_id
+                                name=_tc_name, content=content, tool_call_id=tool_call_id
                             ),
                             config,
                         )
 
-                    tool_resp_content = await tool(
-                        **tc_args, config=config, stream_callback=_stream_cb
+                    rt = ToolRuntime(
+                        config=config, tool_call_id=tc_id, stream_writer=_stream_writer
                     )
+                    tool_resp_content = await tool(**tc_args, tool_runtime=rt)
                     # 标记扩展工具已使用(LRU:移到最前,防止被淘汰),核心工具不参与能量管理
                     from uniclaw.tools.registry import CORE_TOOL_NAMES
 

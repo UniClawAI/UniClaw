@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from uniclaw.tools.base import ToolRuntime
 from uniclaw.tools.web import webFetch
 
 
@@ -43,7 +44,7 @@ async def test_web_fetch_html_includes_metadata():
         mock_cls.return_value.__aenter__.return_value = _mock_client(
             _FakeResponse(html, "text/html; charset=utf-8")
         )
-        result = await webFetch("https://example.com", config=None)
+        result = await webFetch("https://example.com", tool_runtime=ToolRuntime())
 
     assert "HTTP 200" in result
     assert "text/html" in result
@@ -66,7 +67,7 @@ async def test_web_fetch_html_strips_scripts_and_styles():
         mock_cls.return_value.__aenter__.return_value = _mock_client(
             _FakeResponse(html, "text/html")
         )
-        result = await webFetch("https://example.com", config=None)
+        result = await webFetch("https://example.com", tool_runtime=ToolRuntime())
 
     assert "alert" not in result
     assert ".x{}" not in result
@@ -81,7 +82,7 @@ async def test_web_fetch_raw_keeps_html():
         mock_cls.return_value.__aenter__.return_value = _mock_client(
             _FakeResponse(html, "text/html")
         )
-        result = await webFetch("https://example.com", config=None, raw=True)
+        result = await webFetch("https://example.com", raw=True, tool_runtime=ToolRuntime())
 
     assert result.startswith("HTTP 200")
     assert "<p>Raw</p>" in result
@@ -99,7 +100,7 @@ async def test_web_fetch_tiny_max_tokens_reports_truncation():
         mock_cls.return_value.__aenter__.return_value = _mock_client(
             _FakeResponse(html, "text/html")
         )
-        result = await webFetch("https://example.com", config=None, max_tokens=5)
+        result = await webFetch("https://example.com", max_tokens=5, tool_runtime=ToolRuntime())
 
     assert "HTTP 200" in result
     assert "截断" in result
@@ -114,7 +115,7 @@ async def test_web_fetch_empty_body_reports_empty():
         mock_cls.return_value.__aenter__.return_value = _mock_client(
             _FakeResponse(html, "text/html")
         )
-        result = await webFetch("https://example.com", config=None)
+        result = await webFetch("https://example.com", tool_runtime=ToolRuntime())
 
     assert "网页内容为空" in result
 
@@ -127,7 +128,7 @@ async def test_web_fetch_json_passes_through():
         mock_cls.return_value.__aenter__.return_value = _mock_client(
             _FakeResponse(payload, "application/json")
         )
-        result = await webFetch("https://api.example.com", config=None)
+        result = await webFetch("https://api.example.com", tool_runtime=ToolRuntime())
 
     assert "HTTP 200" in result
     assert '"key": "value"' in result
@@ -142,7 +143,7 @@ async def test_web_fetch_error_returns_tool_error():
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=mock_response)
         mock_cls.return_value.__aenter__.return_value = mock_client
-        result = await webFetch("https://example.com", config=None)
+        result = await webFetch("https://example.com", tool_runtime=ToolRuntime())
 
     assert result.startswith("[TOOL_ERROR]")
 
@@ -155,7 +156,7 @@ async def test_web_fetch_respects_max_tokens():
         mock_cls.return_value.__aenter__.return_value = _mock_client(
             _FakeResponse(html, "text/html")
         )
-        result = await webFetch("https://example.com", config=None, max_tokens=100)
+        result = await webFetch("https://example.com", max_tokens=100, tool_runtime=ToolRuntime())
 
     assert "HTTP 200" in result
     assert "已截断" in result
@@ -174,7 +175,7 @@ async def test_web_fetch_raw_truncation_notice():
             _FakeResponse(html, "text/html")
         )
         result = await webFetch(
-            "https://example.com", config=None, raw=True, max_tokens=100
+            "https://example.com", raw=True, max_tokens=100, tool_runtime=ToolRuntime()
         )
 
     assert result.startswith("HTTP 200")
@@ -189,7 +190,7 @@ async def test_web_fetch_no_truncation_no_notice():
         mock_cls.return_value.__aenter__.return_value = _mock_client(
             _FakeResponse(html, "text/html")
         )
-        result = await webFetch("https://example.com", config=None)
+        result = await webFetch("https://example.com", tool_runtime=ToolRuntime())
 
     assert "HTTP 200" in result
     assert "已截断" not in result

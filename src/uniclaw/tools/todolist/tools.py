@@ -1,4 +1,4 @@
-from uniclaw.tools.base import tool
+from uniclaw.tools.base import tool, ToolRuntime
 from uniclaw.utils.constants import TOOL_ERROR
 from uniclaw.config import AppConfig
 
@@ -9,7 +9,7 @@ from .todolist import TodoList, TodoStatus
 
 @tool
 async def todolist_create(
-    items: list[str], reason: str = "", config: AppConfig = None
+    items: list[str], reason: str = "", tool_runtime: ToolRuntime = None
 ) -> str:
     """
     创建一个新的任务清单(todolist),替换现有内容。如果已有清单则覆盖。
@@ -22,6 +22,7 @@ async def todolist_create(
         items: 任务步骤列表,每个元素是一个步骤的描述。优先分解为更多细粒度步骤,避免步骤过于宽泛。
         reason: 监工模式下必填,说明重建理由(原清单问题 + 新清单改进)。非监工模式可留空。
     """
+    config = tool_runtime.config
     todo = config.current_agent.todolist
     if todo.overseer.active:
         return await _overseer_create(items, reason, config)
@@ -35,7 +36,7 @@ async def todolist_create(
 
 @tool
 async def todolist_update(
-    step: int, status: str, reason: str = "", config: AppConfig = None
+    step: int, status: str, reason: str = "", tool_runtime: ToolRuntime = None
 ) -> str:
     """
     更新任务清单中指定步骤的状态。
@@ -47,6 +48,7 @@ async def todolist_update(
         status: 新状态,可选值为 "pending"(未完成)、"in_progress"(正在进行)、"completed"(已完成)
         reason: 监工模式下必填,完成说明(做了什么、改了哪些文件)。非监工模式可留空。
     """
+    config = tool_runtime.config
     try:
         todo_status = TodoStatus(status)
     except ValueError:
@@ -63,8 +65,9 @@ async def todolist_update(
 
 
 @tool
-def todolist_clear(config: AppConfig = None) -> str:
+def todolist_clear(tool_runtime: ToolRuntime = None) -> str:
     """清空当前任务清单。当所有步骤完成后调用此工具。"""
+    config = tool_runtime.config
     todo = config.current_agent.todolist
     count = len(todo.items)
     todo.clear()
@@ -72,18 +75,20 @@ def todolist_clear(config: AppConfig = None) -> str:
 
 
 @tool
-def todolist_cancel(config: AppConfig = None) -> str:
+def todolist_cancel(tool_runtime: ToolRuntime = None) -> str:
     """
     取消当前任务清单。用户明确要求暂停或取消时调用,允许 agent 退出会话。
     设置取消事件,使 agent 可以正常退出。
     """
+    config = tool_runtime.config
     config.current_agent.cancel_event.set()
     return "任务暂停,等待用户下一步指示..."
 
 
 @tool
-def todolist_list(config: AppConfig = None) -> str:
+def todolist_list(tool_runtime: ToolRuntime = None) -> str:
     """列出当前任务清单的所有步骤及状态。"""
+    config = tool_runtime.config
     todo = config.current_agent.todolist
     if todo.is_empty():
         return "当前没有任务清单"

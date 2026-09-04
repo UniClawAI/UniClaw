@@ -2,8 +2,7 @@ import math
 import time
 from pathlib import Path
 
-from uniclaw.tools.base import tool
-from uniclaw.config import AppConfig
+from uniclaw.tools.base import tool, ToolRuntime
 from uniclaw.console.ui import warn
 from uniclaw.tools.memory.context import ai_select_memories, memory_freshness_text
 from .memory import Memory, MemorySource, MemoryType, Scope
@@ -19,7 +18,7 @@ def memory_save(
     source: MemorySource = MemorySource.user,
     confidence: float = 1,
     force: bool = False,
-    config: AppConfig = None,
+    tool_runtime: ToolRuntime = None,
 ) -> str:
     """
     保存记忆到存储系统。
@@ -74,6 +73,7 @@ def memory_save(
         >>> print(result)
         记忆 '用户偏好' 已保存。
     """
+    config = tool_runtime.config
     # user scope 不需要 root_dir；project scope 需要 root_dir(无 root_dir 时 fallback 到用户级)
     if not name.strip():
         raise ValueError("记忆名称 name 不能为空")
@@ -134,7 +134,7 @@ def memory_save(
 
 
 @tool
-async def memory_delete(name: str, scope: Scope, config: AppConfig = None) -> str:
+async def memory_delete(name: str, scope: Scope, tool_runtime: ToolRuntime = None) -> str:
     """
     按名称删除持久化记忆条目。
 
@@ -158,6 +158,7 @@ async def memory_delete(name: str, scope: Scope, config: AppConfig = None) -> st
         >>> print(result)
         记忆已删除: '用户偏好' (作用域: user)
     """
+    config = tool_runtime.config
     # user scope 不需要 root_dir；project scope 需要从 config 获取 root_dir(无 root_dir 时 fallback 到用户级)
     memory_scope: Scope | Path = (
         config.root_dir if scope == Scope.PROJECT and config.root_dir else Scope.USER
@@ -181,7 +182,7 @@ async def memory_delete(name: str, scope: Scope, config: AppConfig = None) -> st
 
 
 @tool
-def memory_list(scope: Scope, config: AppConfig = None):
+def memory_list(scope: Scope, tool_runtime: ToolRuntime = None):
     """
     列出指定作用域下的所有记忆。
 
@@ -201,8 +202,8 @@ def memory_list(scope: Scope, config: AppConfig = None):
              - 记忆的描述信息(如果存在)
              如果没有记忆,返回相应的提示信息
     """
+    config = tool_runtime.config
     # 根据scope参数确定要查询的作用域范围
-    # config 由框架注入,请勿手动传入
     root_dir = config.root_dir
     if scope == Scope.PROJECT:
         memories = (
@@ -242,7 +243,7 @@ def memory_list(scope: Scope, config: AppConfig = None):
 
 
 @tool
-async def memory_search(query: str, max_results: int, config: AppConfig = None) -> str:
+async def memory_search(query: str, max_results: int, tool_runtime: ToolRuntime = None) -> str:
     """
     搜索与查询相关的记忆条目。
 
@@ -252,7 +253,6 @@ async def memory_search(query: str, max_results: int, config: AppConfig = None) 
     Args:
         query (str): 搜索查询字符串,通过 FTS5 unicode61 分词器在记忆的名称、描述和内容中进行 BM25 匹配
         max_results (int): 最大返回结果数量
-        config (AppConfig, optional): 系统配置信息
     Returns:
         str: 格式化的搜索结果字符串,包含找到的记忆条目信息。如果未找到匹配的记忆,返回提示信息
 
@@ -262,7 +262,7 @@ async def memory_search(query: str, max_results: int, config: AppConfig = None) 
         - 近期性评分采用指数衰减模型,半衰期约为21天
         - 返回的记忆条目会自动更新最后使用时间
     """
-    # config 由框架注入,请勿手动传入
+    config = tool_runtime.config
     root_dir = config.root_dir
 
     # 收集所有记忆目录(传给 fts_search 定位数据库文件)

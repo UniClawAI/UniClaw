@@ -13,11 +13,9 @@ from enum import StrEnum
 from pathlib import Path
 from urllib.parse import urlparse, unquote
 
-from uniclaw.config import AppConfig
 from uniclaw.context import Scope, get_app_dir
-from uniclaw.tools.base import tool
+from uniclaw.tools.base import tool, ToolRuntime
 from uniclaw.tools.download.manager import get_http_download_manager
-from uniclaw.tools.stream import tool_stream
 from uniclaw.utils.http_download import (
     DEFAULT_BLOCK_TIMEOUT,
     DEFAULT_CHUNK_SIZE,
@@ -98,7 +96,7 @@ async def http_download(
     checksum_value: str = "",
     async_mode: bool = False,
     block_timeout: float = DEFAULT_BLOCK_TIMEOUT,
-    config: AppConfig = None,
+    tool_runtime: ToolRuntime = None,
 ) -> str:
     """通过 HTTP/HTTPS 下载文件,支持多协程并发、断点续传、代理和校验。
 
@@ -120,6 +118,7 @@ async def http_download(
     Returns:
         str: 同步模式返回下载结果摘要; 异步模式返回任务 ID 和状态查询方式。
     """
+    config = tool_runtime.config
     root_dir = config.root_dir if config else None
     resolved_path = _resolve_save_path(save_path, url, root_dir)
 
@@ -163,7 +162,7 @@ async def http_download(
             return
         # 错误通知: 换行输出,避免被进度行覆盖
         if info.error:
-            await tool_stream(f"\n[错误] {info.error}\n")
+            await tool_runtime.stream(f"\n[错误] {info.error}\n")
             return
         percent = info.downloaded / info.total * 100 if info.total > 0 else 0
         now = datetime.now().strftime("%H:%M:%S")
@@ -179,7 +178,7 @@ async def http_download(
             f"速度: {file_format(info.speed)}/s "
             f"剩余: {eta}"
         )
-        await tool_stream(msg)
+        await tool_runtime.stream(msg)
 
     progress = await downloader.start(callback=progress_callback)
 

@@ -1,6 +1,5 @@
-from uniclaw.tools.base import tool
+from uniclaw.tools.base import tool, ToolRuntime
 from uniclaw.utils.constants import TOOL_ERROR
-from uniclaw.config import AppConfig
 
 
 @tool
@@ -11,7 +10,7 @@ async def monitor_start(
     notify_on_match: bool = True,
     timeout: int = 0,
     visible: bool = False,
-    config: AppConfig = None,
+    tool_runtime: ToolRuntime = None,
 ) -> str:
     """
     启动后台进程。可选监控输出模式,匹配时自动通知。
@@ -40,6 +39,7 @@ async def monitor_start(
     if not command.strip():
         return f"{TOOL_ERROR}: 命令不能为空"
 
+    config = tool_runtime.config
     root_dir = config.root_dir
 
     from .manager import MonitorManager

@@ -2,8 +2,7 @@
 
 import asyncio
 
-from uniclaw.tools.base import tool
-from uniclaw.config import AppConfig
+from uniclaw.tools.base import tool, ToolRuntime
 from uniclaw.utils.constants import TOOL_ERROR
 
 
@@ -21,13 +20,14 @@ def _match_model(name: str, candidates: list[str]) -> str | None:
 
 
 @tool
-def advisor_list(config: AppConfig = None) -> str:
+def advisor_list(tool_runtime: ToolRuntime = None) -> str:
     """
     列出已配置的 AI 顾问模型列表。当遇到难题或需要更强大 AI 模型的意见时,先用此工具查看可用的顾问模型。
 
     Returns:
         顾问模型列表及编号,若无配置则提示用户先配置。
     """
+    config = tool_runtime.config
     if not config or not config.large_model_name:
         return "未配置顾问模型。请先在设置中添加顾问模型(large_model_name),或使用 /model 命令将模型设为顾问模型。"
 
@@ -39,7 +39,7 @@ def advisor_list(config: AppConfig = None) -> str:
 
 
 @tool
-async def investigate(query: str, config: AppConfig = None) -> str:
+async def investigate(query: str, tool_runtime: ToolRuntime = None) -> str:
     """
     调查项目信息并返回精炼摘要。内部启动侦察代理收集和整理数据。
 
@@ -56,6 +56,7 @@ async def investigate(query: str, config: AppConfig = None) -> str:
     Args:
         query: 具体的调查问题,越详细越好(例如"auth 模块的登录流程是怎样实现的")
     """
+    config = tool_runtime.config
     if not config:
         return f"{TOOL_ERROR}: 无法获取配置"
 
@@ -97,7 +98,7 @@ async def ask_advisor(
     model: list[str],
     system_message: str,
     user_message: str,
-    config: AppConfig = None,
+    tool_runtime: ToolRuntime = None,
 ) -> str:
     """
     向 AI 顾问模型(高级大模型)请教方案和技术建议。当你自己拿不准怎么做时,让更强的模型帮你分析。
@@ -119,6 +120,7 @@ async def ask_advisor(
         system_message: 系统提示词,定义顾问的角色和专业领域(例如"你是一个专注于性能优化的资深工程师")
         user_message: 用户提问内容,应包含完整的问题描述和背景信息
     """
+    config = tool_runtime.config
     if not config:
         return f"{TOOL_ERROR}: 无法获取配置"
 

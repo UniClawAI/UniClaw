@@ -1,9 +1,8 @@
 import json
 from pathlib import Path
 from typing import Optional, List
-from uniclaw.tools.base import tool
+from uniclaw.tools.base import tool, ToolRuntime
 from uniclaw.utils.constants import TOOL_ERROR
-from uniclaw.config import AppConfig
 from uniclaw.context import APP_NAME
 from uniclaw.provider.fallback import achat
 from .loader import SkillDef, load_skills, find_skill
@@ -65,7 +64,7 @@ def skill_summary(skill: SkillDef) -> str:
 
 @tool
 async def skill_suggest(
-    task_description: str, max_results: int = 10, config: AppConfig | None = None
+    task_description: str, max_results: int = 10, tool_runtime: ToolRuntime = None
 ) -> str:
     """获取可用技能的列表信息。
     根据任务描述推荐可用skill,返回技能名称和简介。
@@ -77,6 +76,7 @@ async def skill_suggest(
     Returns:
         格式化的字符串,包含匹配到的技能名称和简介；若无直接匹配,则返回若干技能的简介作为备选。
     """
+    config = tool_runtime.config
     root_dir = config.root_dir
     all_skills_list = load_skills(root_dir)
     if not all_skills_list:
@@ -134,7 +134,7 @@ async def skill_suggest(
 
 # @tool
 def skill_list(
-    skill_name: Optional[str] = None, config: AppConfig | None = None
+    skill_name: Optional[str] = None, tool_runtime: ToolRuntime = None
 ) -> str:
     """获取可用技能的列表信息。
 
@@ -151,6 +151,7 @@ def skill_list(
              - 包含技能详细信息的格式化列表(技能名称、触发词、参数、描述、使用时机)
              - 如果没有可用技能或没有匹配的技能,返回"没有可用的技能。"
     """
+    config = tool_runtime.config
     root_dir = config.root_dir
     skills = load_skills(root_dir)
 
@@ -170,7 +171,7 @@ def skill_list(
 
 
 @tool
-def skill_read(skill_name: str, config: AppConfig | None = None) -> str:
+def skill_read(skill_name: str, tool_runtime: ToolRuntime = None) -> str:
     """读取指定技能的详细信息。
 
     该函数根据提供的技能名称查找对应的技能,并返回该技能的详细信息,
@@ -182,6 +183,7 @@ def skill_read(skill_name: str, config: AppConfig | None = None) -> str:
         str: 技能的详细信息字符串。如果技能存在,返回包含技能名称、触发词、参数提示、描述和使用时机的格式化字符串；
              如果未找到技能,返回错误信息提示。
     """
+    config = tool_runtime.config
     root_dir = config.root_dir
     skill = find_skill(root_dir, skill_name)
 

@@ -5,6 +5,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from uniclaw.tools import shell as shell_mod
+from uniclaw.tools.base import ToolRuntime
 from uniclaw.tools.shell import (
     Grep,
     GrepOutputMode,
@@ -192,6 +193,9 @@ class TestBash:
         config.current_agent = agent
         return config
 
+    def _rt(self, cancel_event=None):
+        return ToolRuntime(config=self._config(cancel_event))
+
     def _proc(self, returncode=0, pid=123, stdout=None, stderr=None):
         proc = AsyncMock()
         proc.pid = pid
@@ -207,7 +211,7 @@ class TestBash:
         from uniclaw.tools.shell import Bash
 
         with patch("uniclaw.tools.shell.asyncio.create_subprocess_shell") as mock_exec:
-            result = await Bash("echo hi", timeout=0, config=self._config())
+            result = await Bash("echo hi", timeout=0, tool_runtime=self._rt())
         assert "大于 0" in result
         mock_exec.assert_not_awaited()
 
@@ -217,7 +221,7 @@ class TestBash:
         from uniclaw.tools.shell import Bash
 
         with patch("uniclaw.tools.shell.asyncio.create_subprocess_shell") as mock_exec:
-            result = await Bash("echo hi", timeout=-1, config=self._config())
+            result = await Bash("echo hi", timeout=-1, tool_runtime=self._rt())
         assert "大于 0" in result
         mock_exec.assert_not_awaited()
 
@@ -228,7 +232,7 @@ class TestBash:
 
         proc = self._proc()
         with patch("uniclaw.tools.shell.asyncio.create_subprocess_shell", new_callable=AsyncMock, return_value=proc):
-            result = await Bash("true", config=self._config())
+            result = await Bash("true", tool_runtime=self._rt())
         assert result == "(没有输出)"
 
     @pytest.mark.asyncio
@@ -239,10 +243,8 @@ class TestBash:
         out_stream = AsyncMock()
         out_stream.read = AsyncMock(side_effect=[b"hello\n", b""])
         proc = self._proc(stdout=out_stream)
-        with patch("uniclaw.tools.shell.asyncio.create_subprocess_shell", new_callable=AsyncMock, return_value=proc), patch(
-            "uniclaw.tools.shell.tool_stream", new_callable=AsyncMock
-        ):
-            result = await Bash("echo hello", config=self._config())
+        with patch("uniclaw.tools.shell.asyncio.create_subprocess_shell", new_callable=AsyncMock, return_value=proc):
+            result = await Bash("echo hello", tool_runtime=self._rt())
         assert result == "hello"
 
     @pytest.mark.asyncio
@@ -255,10 +257,8 @@ class TestBash:
         err_stream = AsyncMock()
         err_stream.read = AsyncMock(side_effect=[b"err\n", b""])
         proc = self._proc(stdout=out_stream, stderr=err_stream)
-        with patch("uniclaw.tools.shell.asyncio.create_subprocess_shell", new_callable=AsyncMock, return_value=proc), patch(
-            "uniclaw.tools.shell.tool_stream", new_callable=AsyncMock
-        ):
-            result = await Bash("echo out; echo err >&2", config=self._config())
+        with patch("uniclaw.tools.shell.asyncio.create_subprocess_shell", new_callable=AsyncMock, return_value=proc):
+            result = await Bash("echo out; echo err >&2", tool_runtime=self._rt())
         # stdout 的末尾换行保留,再拼接 [stderr]
         assert result == "out\n\n[stderr]err"
 
@@ -273,7 +273,7 @@ class TestBash:
         with patch("uniclaw.tools.shell.asyncio.create_subprocess_shell", new_callable=AsyncMock, return_value=proc), patch(
             "uniclaw.tools.shell._kill_proc_tree", new_callable=AsyncMock
         ):
-            result = await Bash("sleep 100", config=self._config(cancel_event))
+            result = await Bash("sleep 100", tool_runtime=self._rt(cancel_event))
         assert "用户中断" in result
 
     @pytest.mark.asyncio
@@ -291,7 +291,7 @@ class TestBash:
         with patch("uniclaw.tools.shell.asyncio.create_subprocess_shell", new_callable=AsyncMock, return_value=proc), patch(
             "uniclaw.tools.monitor.manager.MonitorManager.get_instance", return_value=mock_monitor
         ):
-            result = await Bash("sleep 100", timeout=0.2, config=self._config())
+            result = await Bash("sleep 100", timeout=0.2, tool_runtime=self._rt())
         assert "超时" in result
         assert "abc12345" in result
         assert "监控" in result
@@ -307,7 +307,7 @@ class TestBash:
             side_effect=OSError("boom"),
         ):
             with pytest.raises(OSError):
-                await Bash("echo hi", config=self._config())
+                await Bash("echo hi", tool_runtime=self._rt())
 
 
 class TestGrepTool:

@@ -9,6 +9,7 @@ import pytest
 
 from uniclaw.agent import AgentStatus
 from uniclaw.config import RunMode
+from uniclaw.tools.base import ToolRuntime
 from uniclaw.tools.restart import get_tools, get_all_tools
 from uniclaw.tools.restart.manager import find_running_other_sessions
 from uniclaw.tools.restart.tools import restart_agent
@@ -70,27 +71,27 @@ class TestRestartAgentValidation:
     @pytest.mark.asyncio
     async def test_console_mode_rejected(self):
         """Console 模式下拒绝重启。"""
-        result = await restart_agent(config=_make_config(run_mode=RunMode.CONSOLE))
+        result = await restart_agent(tool_runtime=ToolRuntime(config=_make_config(run_mode=RunMode.CONSOLE)))
         assert TOOL_ERROR in result
         assert "WebUI" in result
 
     @pytest.mark.asyncio
     async def test_none_config_rejected(self):
         """config 缺失时拒绝重启。"""
-        result = await restart_agent(config=None)
+        result = await restart_agent(tool_runtime=ToolRuntime(config=None))
         assert TOOL_ERROR in result
 
     @pytest.mark.asyncio
     async def test_a2a_session_rejected(self):
         """A2A 会话不支持重启(会话不持久化)。"""
-        result = await restart_agent(config=_make_config(session_type=SessionType.A2A))
+        result = await restart_agent(tool_runtime=ToolRuntime(config=_make_config(session_type=SessionType.A2A)))
         assert TOOL_ERROR in result
 
     @pytest.mark.asyncio
     async def test_wechat_session_rejected(self):
         """WeChat 会话不支持重启。"""
         result = await restart_agent(
-            config=_make_config(session_type=SessionType.WECHAT)
+            tool_runtime=ToolRuntime(config=_make_config(session_type=SessionType.WECHAT))
         )
         assert TOOL_ERROR in result
 
@@ -99,7 +100,7 @@ class TestRestartAgentValidation:
     async def test_other_sessions_running_rejected(self, mock_find):
         """其他会话有 agent 运行时拒绝重启。"""
         mock_find.return_value = ["其他会话"]
-        result = await restart_agent(config=_make_config())
+        result = await restart_agent(tool_runtime=ToolRuntime(config=_make_config()))
         assert TOOL_ERROR in result
         assert "其他会话" in result
 
@@ -110,7 +111,7 @@ class TestRestartAgentValidation:
         mock_asyncio.create_task = _fake_create_task
         from uniclaw.tools.restart import manager
 
-        result = await restart_agent(config=_make_config())
+        result = await restart_agent(tool_runtime=ToolRuntime(config=_make_config()))
         assert "已调度" in result
         assert manager.restart_scheduled is True
 
@@ -121,8 +122,8 @@ class TestRestartAgentValidation:
         mock_asyncio.create_task = _fake_create_task
         from uniclaw.tools.restart import manager
 
-        first = await restart_agent(config=_make_config())
-        second = await restart_agent(config=_make_config())
+        first = await restart_agent(tool_runtime=ToolRuntime(config=_make_config()))
+        second = await restart_agent(tool_runtime=ToolRuntime(config=_make_config()))
         assert "已调度" in first
         assert "勿重复调用" in second
         assert manager.restart_scheduled is True

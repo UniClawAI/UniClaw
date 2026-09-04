@@ -1,6 +1,6 @@
 import json
 
-from uniclaw.tools.base import tool
+from uniclaw.tools.base import tool, ToolRuntime
 from uniclaw.utils.constants import TOOL_ERROR
 
 
@@ -42,7 +42,7 @@ def schedule_create(
     name: str,
     schedule: str,
     action: str,
-    config=None,
+    tool_runtime: ToolRuntime = None,
 ) -> str:
     """
     创建定时任务。
@@ -74,6 +74,7 @@ def schedule_create(
     Returns:
         str: 创建结果消息,包含任务 ID
     """
+    config = tool_runtime.config
     from .scheduler import Scheduler
 
     action = action.strip()
@@ -193,7 +194,6 @@ def schedule_update(
 def schedule_toggle(
     task_id: str,
     enabled: bool,
-    config=None,
 ) -> str:
     """
     启用或禁用定时任务。

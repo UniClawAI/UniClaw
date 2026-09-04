@@ -1,9 +1,8 @@
 import sys
 
-from uniclaw.tools.base import tool
+from uniclaw.tools.base import tool, ToolRuntime
 from uniclaw.utils.constants import TOOL_ERROR
 
-from uniclaw.config import AppConfig
 from uniclaw.context import Scope
 from uniclaw.tools.hooks.hook_manager import (
     HookEvent,
@@ -154,13 +153,14 @@ def hook_docs() -> str:
 
 
 @tool
-def hook_read(config: AppConfig = None) -> str:
+def hook_read(tool_runtime: ToolRuntime = None) -> str:
     """
     读取全部 hooks 配置。Hook 是在特定事件触发时自动执行的 shell 命令。
     输出先项目级后用户级,每个 hook 显示 id、名称、事件、匹配器和命令。
     使用前请先调用 hook_docs 查看完整文档。
 
     """
+    config = tool_runtime.config
     if not config or not config.current_agent:
         raise ValueError("hook_read 需要 config 中的 current_agent 来获取 root_dir")
     root_dir = config.root_dir
@@ -194,7 +194,7 @@ def hook_add(
     name: str = "",
     matcher: str = "",
     scope: Scope = Scope.PROJECT,
-    config: AppConfig = None,
+    tool_runtime: ToolRuntime = None,
 ) -> str:
     """
     添加单条 hook。在特定事件触发时自动执行 shell 命令。
@@ -210,6 +210,7 @@ def hook_add(
     Returns:
         str: 操作结果消息。
     """
+    config = tool_runtime.config
     if not config or not config.current_agent:
         raise ValueError("hook_add 需要 config 中的 current_agent 来获取 root_dir")
     root_dir = config.root_dir
@@ -233,7 +234,7 @@ def hook_add(
 
 
 @tool
-def hook_remove(id_or_name: str, config: AppConfig = None) -> str:
+def hook_remove(id_or_name: str, tool_runtime: ToolRuntime = None) -> str:
     """
     删除单条 hook。Hook 是在特定事件触发时自动执行的 shell 命令。
     根据 id 或 name 删除,自动搜索项目级和用户级配置。
@@ -245,6 +246,7 @@ def hook_remove(id_or_name: str, config: AppConfig = None) -> str:
     Returns:
         str: 操作结果消息。
     """
+    config = tool_runtime.config
     if not config or not config.current_agent:
         raise ValueError("hook_remove 需要 config 中的 current_agent 来获取 root_dir")
     root_dir = config.root_dir

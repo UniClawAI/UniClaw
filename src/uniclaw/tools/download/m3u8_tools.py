@@ -8,15 +8,13 @@
 from enum import StrEnum
 from pathlib import Path
 
-from uniclaw.config import AppConfig
-from uniclaw.tools.base import tool
+from uniclaw.tools.base import tool, ToolRuntime
 from uniclaw.tools.download.m3u8 import (
     DEFAULT_M3U8_CONCURRENCY,
     M3u8Downloader,
     M3u8Status,
 )
 from uniclaw.tools.download.manager import get_m3u8_download_manager
-from uniclaw.tools.stream import tool_stream
 from uniclaw.utils.http_download import (
     DEFAULT_BLOCK_TIMEOUT,
     DEFAULT_MAX_RETRIES,
@@ -37,7 +35,7 @@ async def m3u8_download(
     cookies: str = "",
     block_timeout: float = DEFAULT_BLOCK_TIMEOUT,
     async_mode: bool = False,
-    config: AppConfig = None,
+    tool_runtime: ToolRuntime = None,
 ) -> str:
     """下载 M3U8/HLS 视频流,支持多分辨率选择、多协程并发、AES-128 解密、断点续传和合并。
 
@@ -60,6 +58,7 @@ async def m3u8_download(
         str: 多分辨率时的可选列表; 同步模式返回下载结果摘要; 异步模式返回任务 ID 和状态查询方式。
     """
     # save_path 必须为绝对路径
+    config = tool_runtime.config
     resolved_path = Path(save_path).expanduser()
     if not resolved_path.is_absolute():
         raise ValueError(
@@ -116,7 +115,7 @@ async def m3u8_download(
             return
         # 错误通知(如分片被防盗链拦截返回 HTML): 换行输出,避免被进度行覆盖
         if info.error:
-            await tool_stream(f"\n[错误] {info.error}\n")
+            await tool_runtime.stream(f"\n[错误] {info.error}\n")
             return
         # 估算剩余时间
         if info.speed > 0 and info.total > info.downloaded:
@@ -139,7 +138,7 @@ async def m3u8_download(
             f"速度: {file_format(info.speed)}/s "
             f"剩余: {eta}"
         )
-        await tool_stream(msg)
+        await tool_runtime.stream(msg)
 
     progress = await downloader.start(callback=progress_callback)
 

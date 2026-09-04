@@ -3,6 +3,7 @@
 import pytest
 from unittest.mock import MagicMock, patch
 
+from uniclaw.tools.base import ToolRuntime
 from uniclaw.tools.todolist.tools import (
     todolist_create,
     todolist_update,
@@ -58,7 +59,7 @@ class TestCreate:
         """正常创建清单。"""
         todo = TodoList()
         config = _make_config(todo)
-        result = await todolist_create(["步骤1", "步骤2"], config=config)
+        result = await todolist_create(["步骤1", "步骤2"], tool_runtime=ToolRuntime(config=config))
         assert "已创建任务清单" in result
         assert "共 2 个步骤" in result
         assert len(todo.items) == 2
@@ -70,7 +71,7 @@ class TestCreate:
         todo = TodoList()
         todo.add("旧任务")
         config = _make_config(todo)
-        result = await todolist_create(["新任务"], config=config)
+        result = await todolist_create(["新任务"], tool_runtime=ToolRuntime(config=config))
         assert "共 1 个步骤" in result
         assert len(todo.items) == 1
         assert todo.items[0].content == "新任务"
@@ -80,7 +81,7 @@ class TestCreate:
         """空列表创建返回 0 个步骤。"""
         todo = TodoList()
         config = _make_config(todo)
-        result = await todolist_create([], config=config)
+        result = await todolist_create([], tool_runtime=ToolRuntime(config=config))
         assert "共 0 个步骤" in result
 
 
@@ -93,7 +94,7 @@ class TestUpdate:
         todo = TodoList()
         todo.add("任务")
         config = _make_config(todo)
-        result = await todolist_update(0, "in_progress", config=config)
+        result = await todolist_update(0, "in_progress", tool_runtime=ToolRuntime(config=config))
         assert "[*]" in result
         assert todo.items[0].status == TodoStatus.IN_PROGRESS
 
@@ -103,7 +104,7 @@ class TestUpdate:
         todo = TodoList()
         todo.add("任务")
         config = _make_config(todo)
-        result = await todolist_update(0, "bogus", config=config)
+        result = await todolist_update(0, "bogus", tool_runtime=ToolRuntime(config=config))
         assert "无效状态" in result
 
     @pytest.mark.asyncio
@@ -111,7 +112,7 @@ class TestUpdate:
         """空清单更新返回错误。"""
         todo = TodoList()
         config = _make_config(todo)
-        result = await todolist_update(0, "pending", config=config)
+        result = await todolist_update(0, "pending", tool_runtime=ToolRuntime(config=config))
         assert "没有任务清单" in result
 
     @pytest.mark.asyncio
@@ -120,8 +121,8 @@ class TestUpdate:
         todo = TodoList()
         todo.add("任务")
         config = _make_config(todo)
-        await todolist_update(0, "in_progress", config=config)
-        result = await todolist_update(0, "completed", config=config)
+        await todolist_update(0, "in_progress", tool_runtime=ToolRuntime(config=config))
+        result = await todolist_update(0, "completed", tool_runtime=ToolRuntime(config=config))
         assert "[✓]" in result
         assert todo.items[0].status == TodoStatus.COMPLETED
 
@@ -132,11 +133,11 @@ class TestUpdate:
         todo.add("任务1")
         todo.add("任务2")
         config = _make_config(todo)
-        await todolist_update(0, "in_progress", config=config)
-        partial = await todolist_update(0, "completed", config=config)
+        await todolist_update(0, "in_progress", tool_runtime=ToolRuntime(config=config))
+        partial = await todolist_update(0, "completed", tool_runtime=ToolRuntime(config=config))
         assert "todolist_clear" not in partial
-        await todolist_update(1, "in_progress", config=config)
-        result = await todolist_update(1, "completed", config=config)
+        await todolist_update(1, "in_progress", tool_runtime=ToolRuntime(config=config))
+        result = await todolist_update(1, "completed", tool_runtime=ToolRuntime(config=config))
         assert "全部 2 个步骤均已完成" in result
         assert f"请立即调用 {todolist_clear.name}" in result
 
@@ -147,7 +148,7 @@ class TestUpdate:
         todo.add("任务")
         config = _make_config(todo)
         # pending 不能直接改为 completed
-        result = await todolist_update(0, "completed", config=config)
+        result = await todolist_update(0, "completed", tool_runtime=ToolRuntime(config=config))
         assert TOOL_ERROR in result
         assert "todolist_clear" not in result
 
@@ -162,7 +163,7 @@ class TestClear:
         todo.add("任务1")
         todo.add("任务2")
         config = _make_config(todo)
-        result = await todolist_clear(config=config)
+        result = await todolist_clear(tool_runtime=ToolRuntime(config=config))
         assert "已清空任务清单" in result
         assert "共 2 个步骤" in result
         assert todo.is_empty()
@@ -176,7 +177,7 @@ class TestCancel:
         """取消时设置 cancel_event。"""
         todo = TodoList()
         config = _make_config(todo)
-        result = await todolist_cancel(config=config)
+        result = await todolist_cancel(tool_runtime=ToolRuntime(config=config))
         assert "任务暂停" in result
         config.current_agent.cancel_event.set.assert_called_once()
 
@@ -189,7 +190,7 @@ class TestList:
         """空清单返回提示。"""
         todo = TodoList()
         config = _make_config(todo)
-        result = await todolist_list(config=config)
+        result = await todolist_list(tool_runtime=ToolRuntime(config=config))
         assert "没有任务清单" in result
 
     @pytest.mark.asyncio
@@ -199,7 +200,7 @@ class TestList:
         todo.add("任务1")
         todo.add("任务2")
         config = _make_config(todo)
-        result = await todolist_list(config=config)
+        result = await todolist_list(tool_runtime=ToolRuntime(config=config))
         assert "任务1" in result
         assert "任务2" in result
 
@@ -321,7 +322,7 @@ class TestOverseerModeTools:
         todo.add("旧任务")
         config = _make_config(todo)
         result = await todolist_create(
-            ["新任务1", "新任务2"], reason="旧清单不合理", config=config
+            ["新任务1", "新任务2"], reason="旧清单不合理", tool_runtime=ToolRuntime(config=config)
         )
         assert "已重建清单" in result
         mock_reviewer.assert_called_once()
@@ -336,7 +337,7 @@ class TestOverseerModeTools:
         todo.items[0].status = TodoStatus.IN_PROGRESS
         config = _make_config(todo)
         result = await todolist_update(
-            0, "completed", reason="已完成功能", config=config
+            0, "completed", reason="已完成功能", tool_runtime=ToolRuntime(config=config)
         )
         assert "已标记为完成" in result
         mock_reviewer.assert_called_once()
@@ -351,7 +352,7 @@ class TestOverseerModeTools:
         todo.items[0].status = TodoStatus.IN_PROGRESS
         config = _make_config(todo)
         result = await todolist_update(
-            0, "completed", reason="已完成功能", config=config
+            0, "completed", reason="已完成功能", tool_runtime=ToolRuntime(config=config)
         )
         assert f"请立即调用 {todolist_clear.name}" in result
 
@@ -367,7 +368,7 @@ class TestOverseerModeTools:
         todo.add("任务")
         todo.items[0].status = TodoStatus.IN_PROGRESS
         config = _make_config(todo)
-        result = await todolist_update(0, "completed", reason="糊弄一下", config=config)
+        result = await todolist_update(0, "completed", reason="糊弄一下", tool_runtime=ToolRuntime(config=config))
         assert "审核未通过" in result
         # 状态应保持 in_progress
         assert todo.items[0].status == TodoStatus.IN_PROGRESS

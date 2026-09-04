@@ -10,8 +10,7 @@ import uuid
 from pathlib import Path
 
 from uniclaw.utils.constants import TOOL_ERROR
-from uniclaw.tools.base import tool
-from uniclaw.config import AppConfig
+from uniclaw.tools.base import tool, ToolRuntime
 
 # 临时文件下载映射: file_id → {"path": Path, "name": str, "expires_at": int}
 _file_downloads: dict[str, dict] = {}
@@ -72,7 +71,7 @@ async def send_file(
     file_path: str,
     file_name: str = "",
     expire_minutes: int = DEFAULT_EXPIRE_MINUTES,
-    config: AppConfig = None,
+    tool_runtime: ToolRuntime = None,
 ) -> str:
     """发送文件给用户。
 
@@ -87,6 +86,7 @@ async def send_file(
     Returns:
         str: 发送结果消息
     """
+    config = tool_runtime.config
     if config is None:
         return f"{TOOL_ERROR}: 无法获取配置"
 

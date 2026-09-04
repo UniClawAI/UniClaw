@@ -3,6 +3,7 @@
 import pytest
 from unittest.mock import MagicMock, patch
 
+from uniclaw.tools.base import ToolRuntime
 from uniclaw.tools.multi_agent.tools import (
     subagent_send_message,
     subagent_close,
@@ -190,7 +191,7 @@ class TestListDefinitions:
         mock_load.return_value = {}
         config = MagicMock()
         config.root_dir = None
-        result = await subagent_list_definitions(config=config)
+        result = await subagent_list_definitions(tool_runtime=ToolRuntime(config=config))
         assert "没有可用的智能体类型" in result
 
     @pytest.mark.asyncio
@@ -205,7 +206,7 @@ class TestListDefinitions:
         mock_load.return_value = {"coder": mock_def}
         config = MagicMock()
         config.root_dir = None
-        result = await subagent_list_definitions(config=config)
+        result = await subagent_list_definitions(tool_runtime=ToolRuntime(config=config))
         assert "coder" in result
         assert "可用的智能体类型" in result
 
@@ -220,7 +221,7 @@ class TestGetDefinition:
         mock_load.return_value = {}
         config = MagicMock()
         config.root_dir = None
-        result = await subagent_get_definition("nonexistent", config=config)
+        result = await subagent_get_definition("nonexistent", tool_runtime=ToolRuntime(config=config))
         assert "未找到类型" in result
 
     @pytest.mark.asyncio
@@ -237,7 +238,7 @@ class TestGetDefinition:
         mock_load.return_value = {"coder": mock_def}
         config = MagicMock()
         config.root_dir = None
-        result = await subagent_get_definition("coder", config=config)
+        result = await subagent_get_definition("coder", tool_runtime=ToolRuntime(config=config))
         assert "coder" in result
         assert "code writer" in result
         assert "gpt-4o" in result

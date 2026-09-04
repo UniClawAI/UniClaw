@@ -3,13 +3,11 @@ import time
 from datetime import datetime, timedelta
 from uniclaw.utils.constants import SYSTEM_PREFIX, TOOL_ERROR
 from uniclaw.utils.wakeup import wake_agent
-from uniclaw.tools.base import tool
-from uniclaw.tools.stream import tool_stream
-from uniclaw.config import AppConfig
+from uniclaw.tools.base import tool, ToolRuntime
 
 
 @tool
-def sleep_timer(seconds: int, name: str = "", config: AppConfig = None) -> str:
+def sleep_timer(seconds: int, name: str = "", tool_runtime: ToolRuntime = None) -> str:
     """
     异步等待指定秒数后唤醒 AI 继续工作。函数立即返回,不阻塞。
     适用于需要等待的场景,如等待安装/下载完成、等待服务启动、等待冷却等。
@@ -21,6 +19,7 @@ def sleep_timer(seconds: int, name: str = "", config: AppConfig = None) -> str:
     Returns:
         str: 确认消息
     """
+    config = tool_runtime.config
     # 验证等待时间是否在合法范围内
     if seconds <= 0 or seconds > 3600:
         return f"{TOOL_ERROR}: 等待秒数必须在 1-3600 之间"
@@ -56,13 +55,14 @@ def sleep_timer(seconds: int, name: str = "", config: AppConfig = None) -> str:
 
 
 @tool
-async def wait(seconds: float, config: AppConfig = None) -> str:
+async def wait(seconds: float, tool_runtime: ToolRuntime = None) -> str:
     """
     等待指定的秒数。此工具会阻塞当前线程,超过30秒请使用 sleep_timer。
 
     Args:
         seconds: 等待秒数(1-30)
     """
+    config = tool_runtime.config
     if seconds <= 0 or seconds > 30:
         return f"{TOOL_ERROR}: 等待秒数必须在 1-30 之间,超过 30 秒请使用 sleep_timer"
 
@@ -84,14 +84,14 @@ async def wait(seconds: float, config: AppConfig = None) -> str:
 
             if sec != last_displayed:
                 last_displayed = sec
-                await tool_stream(f"\r⏳ 剩余 {sec}s")
+                await tool_runtime.stream(f"\r⏳ 剩余 {sec}s")
 
             await asyncio.sleep(min(0.2, remaining))
 
     except asyncio.CancelledError:
         return f"{SYSTEM_PREFIX}(wait) 等待被取消"
 
-    await tool_stream("✅ 完成")
+    await tool_runtime.stream("✅ 完成")
     return f"已等待 {seconds} 秒"
 
 

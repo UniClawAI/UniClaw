@@ -13,8 +13,7 @@ from typing import Optional
 from rank_bm25 import BM25Okapi
 from uniclaw.utils.tokenize import tokenize as _tokenize
 
-from .base import Tool, tool
-from uniclaw.config import AppConfig
+from .base import Tool, tool, ToolRuntime
 
 # ── 工具分类定义 ──────────────────────────────────────────────
 
@@ -1981,7 +1980,7 @@ class ExtendedToolManager:
 
 
 @tool
-async def search_tools(query: str, config: AppConfig = None) -> str:
+async def search_tools(query: str, tool_runtime: ToolRuntime = None) -> str:
     """搜索可用的扩展工具。当你需要使用非常用工具时,先搜索再使用。
     搜索结果会自动加载到可用工具集中,下一轮即可调用。支持中英文关键词。
     优先使用工具名搜索(如 "screenshot"、"mouse_click")比用功能描述搜索更精准。
@@ -1989,6 +1988,7 @@ async def search_tools(query: str, config: AppConfig = None) -> str:
     Args:
         query: 搜索关键词,优先传入工具名,其次用功能描述(如 "screenshot"、"截图"、"定时任务")
     """
+    config = tool_runtime.config
     # 搜索前自动刷新插件,确保新写入的插件文件能被搜到
     from uniclaw.tools.plugins import PluginManager
 

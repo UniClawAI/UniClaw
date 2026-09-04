@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from enum import StrEnum
 
-from uniclaw.tools.base import tool
+from uniclaw.tools.base import tool, ToolRuntime
 from uniclaw.utils.constants import TOOL_ERROR
 from . import MCPManager
 from uniclaw.console.ui import info, ok
@@ -39,7 +39,7 @@ async def mcp_add_server(
     headers: dict[str, str] | None = None,
     cwd: str | None = None,
     timeout: float | None = None,
-    config: AppConfig = None,
+    tool_runtime: ToolRuntime = None,
 ) -> str:
     """
     添加新的 MCP 服务器配置。支持 stdio、sse、streamable_http、websocket 四种传输类型。
@@ -77,6 +77,7 @@ async def mcp_add_server(
             url="http://localhost:8080/sse"
         )
     """
+    config = tool_runtime.config
     manager = MCPManager.get_instance()
 
     # 检查服务器是否已存在
@@ -130,7 +131,7 @@ async def mcp_add_server(
 
 
 @tool
-async def mcp_remove_server(name: str, config=None) -> str:
+async def mcp_remove_server(name: str, tool_runtime: ToolRuntime = None) -> str:
     """
     删除指定的 MCP 服务器配置。
 
@@ -140,6 +141,7 @@ async def mcp_remove_server(name: str, config=None) -> str:
     Returns:
         str: 操作结果信息
     """
+    config = tool_runtime.config
     manager = MCPManager.get_instance()
 
     if not await manager.get_server(name, config):
@@ -154,7 +156,7 @@ async def mcp_remove_server(name: str, config=None) -> str:
 
 
 @tool
-async def mcp_toggle_server(name: str, enabled: bool = True, config=None) -> str:
+async def mcp_toggle_server(name: str, enabled: bool = True, tool_runtime: ToolRuntime = None) -> str:
     """
     启用或禁用指定的 MCP 服务器。禁用的服务器不会加载其工具。
 
@@ -165,6 +167,7 @@ async def mcp_toggle_server(name: str, enabled: bool = True, config=None) -> str
     Returns:
         str: 操作结果信息
     """
+    config = tool_runtime.config
     manager = MCPManager.get_instance()
 
     if not await manager.get_server(name, config):
@@ -180,13 +183,14 @@ async def mcp_toggle_server(name: str, enabled: bool = True, config=None) -> str
 
 
 @tool
-async def mcp_list_servers(config=None) -> str:
+async def mcp_list_servers(tool_runtime: ToolRuntime = None) -> str:
     """
     列出所有已配置的 MCP 服务器,包括名称、传输类型、启用状态、连接详情以及每个服务器提供的工具列表。
 
     Returns:
         str: 服务器列表信息,包含每个服务器的工具数量和工具描述
     """
+    config = tool_runtime.config
     manager = MCPManager.get_instance()
     servers = await manager.list_servers(config)
 

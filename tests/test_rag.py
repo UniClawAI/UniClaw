@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from uniclaw.tools.base import ToolRuntime
 from uniclaw.context import Scope
 from uniclaw.tools.rag.loader import (
     TEXT_EXTENSIONS,
@@ -568,7 +569,7 @@ class TestRAGIngest:
         result = await rag_ingest.func(
             path="/tmp/test",
             collection="test",
-            config=None,
+            tool_runtime=ToolRuntime(config=None),
         )
         assert "无法获取配置" in result
 
@@ -579,7 +580,7 @@ class TestRAGIngest:
         result = await rag_ingest.func(
             path=str(tmp_path / "nonexistent"),
             collection="test",
-            config=config,
+            tool_runtime=ToolRuntime(config=config),
         )
         assert "路径不存在" in result
 
@@ -592,7 +593,7 @@ class TestRAGIngest:
         result = await rag_ingest.func(
             path=str(tmp_path / "test.xyz"),
             collection="test",
-            config=config,
+            tool_runtime=ToolRuntime(config=config),
         )
         assert "不支持的文件格式" in result
 
@@ -612,7 +613,7 @@ class TestRAGIngest:
         result = await rag_ingest.func(
             path=str(file_path),
             collection="test",
-            config=config,
+            tool_runtime=ToolRuntime(config=config),
         )
         assert "成功导入" in result
         assert "1 个文档" in result
@@ -636,7 +637,7 @@ class TestRAGIngest:
         result = await rag_ingest.func(
             path=str(dir_path),
             collection="test",
-            config=config,
+            tool_runtime=ToolRuntime(config=config),
         )
         assert "成功导入" in result
         assert "2 个文档" in result
@@ -651,7 +652,7 @@ class TestRAGSearch:
         result = await rag_search.func(
             query="test query",
             collection="test",
-            config=None,
+            tool_runtime=ToolRuntime(config=None),
         )
         assert "无法获取配置" in result
 
@@ -667,7 +668,7 @@ class TestRAGSearch:
         result = await rag_search.func(
             query="test query",
             collection="test",
-            config=config,
+            tool_runtime=ToolRuntime(config=config),
         )
         assert "未找到" in result
 
@@ -690,7 +691,7 @@ class TestRAGSearch:
         result = await rag_search.func(
             query="test query",
             collection="test",
-            config=config,
+            tool_runtime=ToolRuntime(config=config),
         )
         assert "找到 1 个相关结果" in result
         assert "test content" in result
@@ -719,7 +720,7 @@ class TestRAGSearch:
         result = await rag_search.func(
             query="test query",
             collection="test",
-            config=config,
+            tool_runtime=ToolRuntime(config=config),
         )
         # 应该只显示一个结果
         assert "找到 1 个相关结果" in result
@@ -730,7 +731,7 @@ class TestRAGListCollections:
 
     def test_no_config(self):
         """测试无配置时返回错误"""
-        result = rag_list_collections.func(config=None)
+        result = rag_list_collections.func(tool_runtime=ToolRuntime(config=None))
         assert "无法获取配置" in result
 
     @patch("uniclaw.tools.rag.tools._get_manager")
@@ -741,7 +742,7 @@ class TestRAGListCollections:
         mock_get_manager.return_value = mock_manager
         mock_manager.list_collections.return_value = []
 
-        result = rag_list_collections.func(config=config)
+        result = rag_list_collections.func(tool_runtime=ToolRuntime(config=config))
         assert "没有任何集合" in result
 
     @patch("uniclaw.tools.rag.tools._get_manager")
@@ -759,7 +760,7 @@ class TestRAGListCollections:
             }
         ]
 
-        result = rag_list_collections.func(config=config)
+        result = rag_list_collections.func(tool_runtime=ToolRuntime(config=config))
         assert "test-collection" in result
         assert "10 个文档块" in result
         assert "Test collection" in result
@@ -773,7 +774,7 @@ class TestRAGSetDesc:
         result = rag_set_desc.func(
             collection="test",
             description="Test description",
-            config=None,
+            tool_runtime=ToolRuntime(config=None),
         )
         assert "无法获取配置" in result
 
@@ -788,7 +789,7 @@ class TestRAGSetDesc:
         result = rag_set_desc.func(
             collection="test",
             description="New description",
-            config=config,
+            tool_runtime=ToolRuntime(config=config),
         )
         assert "已更新" in result
         assert "New description" in result
@@ -804,7 +805,7 @@ class TestRAGSetDesc:
         result = rag_set_desc.func(
             collection="nonexistent",
             description="New description",
-            config=config,
+            tool_runtime=ToolRuntime(config=config),
         )
         assert "不存在或设置失败" in result
 
@@ -816,7 +817,7 @@ class TestRAGDeleteCollection:
         """测试无配置时返回错误"""
         result = rag_delete_collection.func(
             collection="test",
-            config=None,
+            tool_runtime=ToolRuntime(config=None),
         )
         assert "无法获取配置" in result
 
@@ -830,7 +831,7 @@ class TestRAGDeleteCollection:
 
         result = rag_delete_collection.func(
             collection="test",
-            config=config,
+            tool_runtime=ToolRuntime(config=config),
         )
         assert "已删除集合" in result
 
@@ -844,7 +845,7 @@ class TestRAGDeleteCollection:
 
         result = rag_delete_collection.func(
             collection="nonexistent",
-            config=config,
+            tool_runtime=ToolRuntime(config=config),
         )
         assert "不存在或删除失败" in result
 
@@ -866,7 +867,7 @@ class TestRAGContext:
         mock_manager.list_collections.return_value = []
 
         with patch("uniclaw.tools.rag.rag.RAGManager", return_value=mock_manager), \
-             patch.dict(sys.modules, {"uniclaw.config": MagicMock(config=mock_config)}):
+             patch.dict(sys.modules, {"uniclaw.config": MagicMock(tool_runtime=ToolRuntime(config=mock_config))}):
             result = get_rag_system_prompt(mock_config)
         assert result == ""
 
@@ -887,7 +888,7 @@ class TestRAGContext:
         ]
 
         with patch("uniclaw.tools.rag.rag.RAGManager", return_value=mock_manager), \
-             patch.dict(sys.modules, {"uniclaw.config": MagicMock(config=mock_config)}):
+             patch.dict(sys.modules, {"uniclaw.config": MagicMock(tool_runtime=ToolRuntime(config=mock_config))}):
             result = get_rag_system_prompt(mock_config)
         assert "RAG 文档检索" in result
         assert "test-collection" in result
@@ -916,7 +917,7 @@ class TestRAGContext:
         ]
 
         with patch("uniclaw.tools.rag.rag.RAGManager", return_value=mock_manager), \
-             patch.dict(sys.modules, {"uniclaw.config": MagicMock(config=mock_config)}):
+             patch.dict(sys.modules, {"uniclaw.config": MagicMock(tool_runtime=ToolRuntime(config=mock_config))}):
             result = get_rag_system_prompt(mock_config)
         # empty-collection 应该被过滤掉（count=0）
         assert "- empty-collection" not in result
@@ -944,7 +945,7 @@ class TestRAGContext:
             return mock
 
         with patch("uniclaw.tools.rag.rag.RAGManager", side_effect=side_effect), \
-             patch.dict(sys.modules, {"uniclaw.config": MagicMock(config=mock_config)}):
+             patch.dict(sys.modules, {"uniclaw.config": MagicMock(tool_runtime=ToolRuntime(config=mock_config))}):
             result = get_rag_system_prompt(mock_config)
         assert "项目级集合" in result
         assert "project-col" in result
@@ -964,7 +965,7 @@ class TestRAGContext:
         ]
 
         with patch("uniclaw.tools.rag.rag.RAGManager", return_value=mock_manager), \
-             patch.dict(sys.modules, {"uniclaw.config": MagicMock(config=mock_config)}):
+             patch.dict(sys.modules, {"uniclaw.config": MagicMock(tool_runtime=ToolRuntime(config=mock_config))}):
             result = get_rag_system_prompt(mock_config)
         # 应该只有用户级集合
         assert "user-col" in result
@@ -1177,7 +1178,7 @@ class TestRAGEvaluate:
         result = await rag_evaluate.func(
             collection="test",
             queries=["query1"],
-            config=None,
+            tool_runtime=ToolRuntime(config=None),
         )
         assert "无法获取配置" in result
 
@@ -1188,7 +1189,7 @@ class TestRAGEvaluate:
         result = await rag_evaluate.func(
             collection="test",
             queries=[],
-            config=config,
+            tool_runtime=ToolRuntime(config=config),
         )
         assert "queries 不能为空" in result
 
@@ -1200,7 +1201,7 @@ class TestRAGEvaluate:
             collection="test",
             queries=["query1"],
             top_k=0,
-            config=config,
+            tool_runtime=ToolRuntime(config=config),
         )
         assert "top_k 必须为正整数" in result
 
@@ -1218,7 +1219,7 @@ class TestRAGEvaluate:
         result = await rag_evaluate.func(
             collection="test",
             queries=["query1"],
-            config=config,
+            tool_runtime=ToolRuntime(config=config),
         )
         assert "未启用 LLM Judge" in result
         assert "评估完成" in result
@@ -1244,7 +1245,7 @@ class TestRAGEvaluate:
         result = await rag_evaluate.func(
             collection="test",
             queries=["query1"],
-            config=config,
+            tool_runtime=ToolRuntime(config=config),
         )
         assert "搜索错误" in result
 
@@ -1267,7 +1268,7 @@ class TestRAGEvaluate:
         result = await rag_evaluate.func(
             collection="test",
             queries=["query1"],
-            config=config,
+            tool_runtime=ToolRuntime(config=config),
         )
         assert "返回 1 个结果" in result
 
@@ -1366,7 +1367,7 @@ class TestRAGEvaluateExtended:
             collection="test",
             queries=["query1"],
             use_llm_judge=True,
-            config=config,
+            tool_runtime=ToolRuntime(config=config),
         )
         assert "LLM Judge" in result
         assert "Context Precision" in result
@@ -1387,7 +1388,7 @@ class TestRAGEvaluateExtended:
             collection="test",
             queries=["query1"],
             use_llm_judge=True,
-            config=config,
+            tool_runtime=ToolRuntime(config=config),
         )
         assert "评估完成" in result
         assert "返回 0 个结果" in result

@@ -124,8 +124,10 @@ class TestM3u8SavePathRequired:
     """m3u8_download 的 save_path 必须为绝对路径。"""
 
     async def _call(self, **kwargs):
+        from uniclaw.tools.base import ToolRuntime
         from uniclaw.tools.download.m3u8_tools import m3u8_download
 
+        kwargs.setdefault("tool_runtime", ToolRuntime())
         return await m3u8_download(**kwargs)
 
     async def test_relative_path_rejected(self):

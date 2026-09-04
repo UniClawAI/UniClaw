@@ -1,8 +1,7 @@
 import json
 from pathlib import Path
-from uniclaw.tools.base import tool
+from uniclaw.tools.base import tool, ToolRuntime
 from uniclaw.utils.constants import TOOL_ERROR
-from uniclaw.config import AppConfig
 
 # ── 系统提示词(静态常量,最大化 LLM 缓存命中) ──────────────
 
@@ -64,7 +63,7 @@ def _clear_llm_safe_prompt(root_dir: Path | None):
 
 
 @tool
-def read_llm_safe_prompt(config: AppConfig = None) -> str:
+def read_llm_safe_prompt(tool_runtime: ToolRuntime = None) -> str:
     """读取当前安全策略注入提示词。
 
     读取存储的安全审核策略提示词。这个提示词会被自动注入到 LLM 的安全检测系统提示中,
@@ -74,13 +73,13 @@ def read_llm_safe_prompt(config: AppConfig = None) -> str:
     Returns:
         str: 当前存储的安全策略提示词内容,如果未设置则返回提示信息
     """
-
+    config = tool_runtime.config
     prompt = _load_llm_safe_prompt(config.root_dir)
     return prompt or "当前未设置 llm_safe_check 注入提示词。"
 
 
 @tool
-def write_llm_safe_prompt(prompt: str, config: AppConfig = None) -> str:
+def write_llm_safe_prompt(prompt: str, tool_runtime: ToolRuntime = None) -> str:
     """覆盖保存安全审核策略提示词。
 
     将新的安全策略提示词完整替换并保存。使用此工具时,旧的提示词会被完全覆盖。
@@ -92,6 +91,7 @@ def write_llm_safe_prompt(prompt: str, config: AppConfig = None) -> str:
     Returns:
         str: 保存成功提示
     """
+    config = tool_runtime.config
     if config.root_dir is None:
         return f"{TOOL_ERROR}: 当前会话无工作目录,无法保存安全策略"
     _save_llm_safe_prompt(prompt, config.root_dir)
@@ -100,7 +100,7 @@ def write_llm_safe_prompt(prompt: str, config: AppConfig = None) -> str:
 
 @tool
 def edit_llm_safe_prompt(
-    old_string: str, new_string: str, config: AppConfig = None
+    old_string: str, new_string: str, tool_runtime: ToolRuntime = None
 ) -> str:
     """精确编辑安全审核策略提示词中的特定部分。
 
@@ -119,6 +119,7 @@ def edit_llm_safe_prompt(
     Returns:
         str: 操作结果。成功时显示修改前后的预览；失败时返回错误信息。
     """
+    config = tool_runtime.config
     try:
         if config.root_dir is None:
             return f"{TOOL_ERROR}: 当前会话无工作目录,无法编辑安全策略"
@@ -151,7 +152,7 @@ def edit_llm_safe_prompt(
 
 
 @tool
-def clear_llm_safe_prompt(config: AppConfig = None) -> str:
+def clear_llm_safe_prompt(tool_runtime: ToolRuntime = None) -> str:
     """清除所有存储的安全审核策略提示词。
 
     删除保存的安全策略,恢复到默认的安全审核规则。此后 llm_safe_check 将不再使用
@@ -160,6 +161,7 @@ def clear_llm_safe_prompt(config: AppConfig = None) -> str:
     Returns:
         str: 清除成功提示
     """
+    config = tool_runtime.config
     _clear_llm_safe_prompt(config.root_dir)
     return "已清除 llm_safe_check 注入提示词。"
 

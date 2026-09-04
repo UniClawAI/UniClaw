@@ -4,10 +4,11 @@
 1. skill 注册与指令完整性(确定性断言)。
 2. skill 产出效果: 按 plugin-forge 规范生成的典型插件,用真实 PluginManager
    加载、调用、async 防卡死、多文件拆分、生命周期钩子,证明 skill 生成的插件可用。
-   插件无 config 权限。
+   插件通过 ToolRuntime 获取配置,无其他 config 权限。
 """
 from pathlib import Path
 
+from uniclaw.tools.base import ToolRuntime
 from uniclaw.tools.plugins.loader import PluginManager
 from uniclaw.tools.skill.loader import get_builtin_skills
 
@@ -71,7 +72,7 @@ def test_plugin_forge_prompt_contains_key_contracts():
 
 
 def test_plugin_forge_prompt_config_only_for_wake_agent_and_demands_async():
-    """prompt 必须: 教 wake_agent 唤醒(耗时任务 async);config 仅用于唤醒,不做其他操作。"""
+    """prompt 必须: 教 wake_agent 唤醒(耗时任务 async);tool_runtime.config 仅用于唤醒,不做其他操作。"""
     import uniclaw.tools.skill.builtin.plugin_forge as module
 
     prompt = module._PLUGIN_FORGE_PROMPT
@@ -82,13 +83,10 @@ def test_plugin_forge_prompt_config_only_for_wake_agent_and_demands_async():
     assert "asyncio.to_thread" in prompt
     assert "卡死" in prompt
     assert "time.sleep" in prompt or "asyncio.sleep" in prompt
-    # config 只用于转手传给 wake_agent,不得用于读取字段
-    assert "config" in prompt
-    assert "唯一用途是转手传给" in prompt and "wake_agent" in prompt
-    # 明确禁止用 config 做读取操作(其余字段不展开讲)
-    assert "不读取" in prompt or "不做任何其他操作" in prompt
-    # 不教任何 config 属性/字段访问(如 config.xxx / config.get)
-    assert "config." not in prompt and ".get(" not in prompt
+    # tool_runtime 由框架自动注入,配置取 tool_runtime.config 转手传给 wake_agent
+    assert "tool_runtime" in prompt
+    assert "tool_runtime.config" in prompt
+    assert "await tool_runtime.stream" in prompt
     # 禁止同步阻塞写法
     assert "time.sleep" in prompt or "asyncio.sleep" in prompt
 
@@ -197,10 +195,10 @@ def get_tools():
 
 
 async def test_forge_wake_agent_pattern_plugin(tmp_path, monkeypatch):
-    """eval-2b: wake_agent 唤醒模式插件,立即返回 + 后台任务,config 仅转手传唤醒。
+    """eval-2b: wake_agent 唤醒模式插件,立即返回 + 后台任务,tool_runtime.config 仅转手传唤醒。
 
     校验 skill 教的官方标准模式: 工具立即 return;后台协程完成后 wake_agent;
-    config 参数被 @tool 从 schema 屏蔽(LLM 不会传,由框架注入,仅用于唤醒)。
+    tool_runtime 参数被 @tool 从 schema 屏蔽(LLM 不会传,由框架注入,仅用于唤醒)。
     """
     import asyncio
     from unittest.mock import patch
@@ -208,14 +206,13 @@ async def test_forge_wake_agent_pattern_plugin(tmp_path, monkeypatch):
     plugin_dir = _home_fixture(tmp_path, monkeypatch)
     (plugin_dir / "wake_op.py").write_text(
         '''import asyncio
-from uniclaw.config import AppConfig
-from uniclaw.tools.base import tool
+from uniclaw.tools.base import tool, ToolRuntime
 from uniclaw.utils.wakeup import wake_agent
 from uniclaw.utils.constants import SYSTEM_PREFIX
 
 
 @tool
-def background_job(name: str, config: AppConfig = None) -> str:
+def background_job(name: str, tool_runtime: ToolRuntime = None) -> str:
     """
     后台执行耗时任务,完成后自动唤醒 AI 继续。
 
@@ -225,6 +222,8 @@ def background_job(name: str, config: AppConfig = None) -> str:
     Returns:
         str: 确认任务已启动。
     """
+    config = tool_runtime.config
+
     async def _run():
         try:
             result = await asyncio.to_thread(_do_work, name)
@@ -259,13 +258,13 @@ def get_tools():
             assert [t.name for t in tools] == ["background_job"]
             tool = tools[0]
 
-            # config 只用于唤醒: 从 schema 中被屏蔽,LLM 只看到 name
+            # tool_runtime 只用于唤醒: 从 schema 中被屏蔽,LLM 只看到 name
             assert list(tool.parameters["properties"].keys()) == ["name"]
-            assert "config" not in tool.parameters["required"]
+            assert "tool_runtime" not in tool.parameters["required"]
 
-            # 工具立即返回(不阻塞 = 不卡死主循环)
+            # 工具立即返回(不阻塞 = 不卡死主循环);调用时构造 ToolRuntime 传入
             started = asyncio.get_event_loop().time()
-            result = await tool(name="alpha")
+            result = await tool(name="alpha", tool_runtime=ToolRuntime())
             elapsed = asyncio.get_event_loop().time() - started
             assert result.startswith("已启动")
             assert elapsed < 2  # 立即返回,不等待后台完成

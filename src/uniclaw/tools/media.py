@@ -8,9 +8,8 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-from uniclaw.config import AppConfig
 from uniclaw.utils.constants import SYSTEM_PREFIX, TOOL_ERROR
-from uniclaw.tools.base import tool
+from uniclaw.tools.base import tool, ToolRuntime
 
 IMAGE_EXTENSIONS = {
     ".png",
@@ -262,7 +261,7 @@ def _get_description_prompt(content: list[dict]) -> str:
 
 @tool
 async def ReadMedia(
-    file_path: str, fps: int = 2, as_text: bool = False, config: AppConfig = None
+    file_path: str, fps: int = 2, as_text: bool = False, tool_runtime: ToolRuntime = None
 ) -> list | str:
     """
     读取媒体文件(图片、音频、视频)并返回多模态内容供分析。
@@ -283,6 +282,7 @@ async def ReadMedia(
     Returns:
         list: 多模态内容块列表(成功时),str: 文字描述或错误信息
     """
+    config = tool_runtime.config
     result = await asyncio.to_thread(_read_media_impl, file_path, fps)
 
     # 如果不是要求转为文本,或者原始结果已经是错误信息,直接返回
@@ -327,7 +327,7 @@ async def GenerateImage(
     prompt: str,
     save_path: str | None = None,
     size: str = "1024x768",
-    config=None,
+    tool_runtime: ToolRuntime = None,
 ) -> list | str:
     """
     使用 AI 生成图片。可以保存到文件或返回多模态数据供分析。
@@ -340,6 +340,7 @@ async def GenerateImage(
     Returns:
         save_path 非空时返回保存路径字符串;save_path 为空时返回多模态内容块列表(可直接用于视觉分析)
     """
+    config = tool_runtime.config
     from uniclaw.provider.openai_provider import agenerate_image
 
     model_name = config.image_model

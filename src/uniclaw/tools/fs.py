@@ -3,8 +3,7 @@ import difflib
 import re
 import time
 from pathlib import Path
-from uniclaw.config import AppConfig
-from uniclaw.tools.base import tool
+from uniclaw.tools.base import tool, ToolRuntime
 from uniclaw.utils.constants import SYSTEM_PREFIX, TOOL_ERROR
 
 
@@ -313,7 +312,7 @@ def _build_llm_client(config):
 
 
 @tool
-async def ConvertToMarkdown(file_path: str, output_path: str = "", config: AppConfig = None) -> str:
+async def ConvertToMarkdown(file_path: str, output_path: str = "", tool_runtime: ToolRuntime = None) -> str:
     """
     将文档转换为 Markdown 格式并保存为 .md 文件。支持 PDF、DOCX、PPTX、XLSX、HTML、CSV、JSON、XML、EPUB。
 
@@ -328,6 +327,7 @@ async def ConvertToMarkdown(file_path: str, output_path: str = "", config: AppCo
     Returns:
         str: 立即返回转换任务已启动的确认信息。实际转换结果将通过唤醒机制异步返回
     """
+    config = tool_runtime.config
     # -- 参数校验(立即完成) --
     try:
         from markitdown import MarkItDown  # noqa: F401 — 验证已安装

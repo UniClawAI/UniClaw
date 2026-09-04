@@ -3,6 +3,7 @@
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 
+from uniclaw.tools.base import ToolRuntime
 from uniclaw.tools.session.tools import (
     session_list,
     session_detail,
@@ -168,7 +169,7 @@ class TestSessionDelete:
     async def test_not_found(self, mock_load):
         """未找到会话。"""
         mock_load.return_value = None
-        result = await session_delete("nonexistent", config=_make_config())
+        result = await session_delete("nonexistent", tool_runtime=ToolRuntime(config=_make_config()))
         assert "未找到会话ID" in result
 
     @pytest.mark.asyncio
@@ -180,7 +181,7 @@ class TestSessionDelete:
     async def test_delete_success(self, mock_ok, mock_load, mock_delete):
         """删除成功。"""
         mock_load.return_value = _make_nonempty_session("待删会话")
-        result = await session_delete("s1", config=_make_config())
+        result = await session_delete("s1", tool_runtime=ToolRuntime(config=_make_config()))
         assert "成功删除会话" in result
         assert "待删会话" in result
 
@@ -193,7 +194,7 @@ class TestSessionDelete:
     async def test_delete_failure(self, mock_err, mock_load, mock_delete):
         """删除失败。"""
         mock_load.return_value = _make_nonempty_session("待删会话")
-        result = await session_delete("s1", config=_make_config())
+        result = await session_delete("s1", tool_runtime=ToolRuntime(config=_make_config()))
         assert "删除会话失败" in result
 
 
@@ -206,7 +207,7 @@ class TestSessionUpdateTitle:
         """未找到会话。"""
         mock_load.return_value = None
         result = await session_update_title(
-            "nonexistent", "新标题", config=_make_config()
+            "nonexistent", "新标题", tool_runtime=ToolRuntime(config=_make_config())
         )
         assert "未找到会话ID" in result
 
@@ -217,7 +218,7 @@ class TestSessionUpdateTitle:
     async def test_update_success(self, mock_ok, mock_load, mock_update):
         """更新成功。"""
         mock_load.return_value = _make_nonempty_session("旧标题")
-        result = await session_update_title("s1", "新标题", config=_make_config())
+        result = await session_update_title("s1", "新标题", tool_runtime=ToolRuntime(config=_make_config()))
         assert "成功更新会话标题" in result
         assert "旧标题" in result
         assert "新标题" in result
@@ -231,7 +232,7 @@ class TestSessionUpdateTitle:
     async def test_update_failure(self, mock_err, mock_load, mock_update):
         """更新失败。"""
         mock_load.return_value = _make_nonempty_session("旧标题")
-        result = await session_update_title("s1", "新标题", config=_make_config())
+        result = await session_update_title("s1", "新标题", tool_runtime=ToolRuntime(config=_make_config()))
         assert "更新会话标题失败" in result
 
 
@@ -241,7 +242,7 @@ class TestRecallHistory:
     @pytest.mark.asyncio
     async def test_empty_keywords(self):
         """空关键词返回提示。"""
-        result = await recall_history([], config=_make_config(_make_session()))
+        result = await recall_history([], tool_runtime=ToolRuntime(config=_make_config(_make_session())))
         assert "请提供至少一个搜索关键词" in result
 
     @pytest.mark.asyncio
@@ -250,27 +251,27 @@ class TestRecallHistory:
         s = Session()
         s.history = [UserMessage(content="只有一条")]
         s._messages = [UserMessage(content="只有一条")]
-        result = await recall_history(["数据库"], config=_make_config(s))
+        result = await recall_history(["数据库"], tool_runtime=ToolRuntime(config=_make_config(s)))
         assert "没有被压缩的历史消息" in result
 
     @pytest.mark.asyncio
     async def test_match_found(self):
         """命中关键词。"""
-        result = await recall_history(["数据库"], config=_make_config(_make_session()))
+        result = await recall_history(["数据库"], tool_runtime=ToolRuntime(config=_make_config(_make_session())))
         assert "找到" in result
         assert "数据库" in result
 
     @pytest.mark.asyncio
     async def test_no_match(self):
         """无命中。"""
-        result = await recall_history(["xyzabc"], config=_make_config(_make_session()))
+        result = await recall_history(["xyzabc"], tool_runtime=ToolRuntime(config=_make_config(_make_session())))
         assert "未在历史消息中找到匹配关键词" in result
 
     @pytest.mark.asyncio
     async def test_multiple_keywords(self):
         """多关键词搜索。"""
         result = await recall_history(
-            ["数据库", "migration"], config=_make_config(_make_session())
+            ["数据库", "migration"], tool_runtime=ToolRuntime(config=_make_config(_make_session()))
         )
         assert "找到" in result
 
@@ -282,7 +283,7 @@ class TestRecallHistory:
         导致归档边界错一位(#5 被排除在可搜索范围外)。
         """
         s = _make_compacted_session()
-        result = await recall_history(["回答"], context_size=0, config=_make_config(s))
+        result = await recall_history(["回答"], context_size=0, tool_runtime=ToolRuntime(config=_make_config(s)))
         assert "#5" in result
 
 
@@ -293,7 +294,7 @@ class TestGetHistoryRange:
     async def test_empty_history(self):
         """无历史消息。"""
         s = Session()
-        result = await get_history_range(0, 10, config=_make_config(s))
+        result = await get_history_range(0, 10, tool_runtime=ToolRuntime(config=_make_config(s)))
         assert "没有历史消息" in result
 
     @pytest.mark.asyncio
@@ -301,7 +302,7 @@ class TestGetHistoryRange:
         """有效范围。"""
         s = Session()
         s.history = [UserMessage(content=f"消息{i}") for i in range(5)]
-        result = await get_history_range(0, 3, config=_make_config(s))
+        result = await get_history_range(0, 3, tool_runtime=ToolRuntime(config=_make_config(s)))
         assert "消息0" in result
         assert "消息2" in result
 
@@ -310,7 +311,7 @@ class TestGetHistoryRange:
         """start >= end。"""
         s = Session()
         s.history = [UserMessage(content="x") for _ in range(3)]
-        result = await get_history_range(2, 1, config=_make_config(s))
+        result = await get_history_range(2, 1, tool_runtime=ToolRuntime(config=_make_config(s)))
         assert "无效范围" in result
 
     @pytest.mark.asyncio
@@ -318,7 +319,7 @@ class TestGetHistoryRange:
         """越界被修正。"""
         s = Session()
         s.history = [UserMessage(content=f"m{i}") for i in range(3)]
-        result = await get_history_range(0, 99, config=_make_config(s))
+        result = await get_history_range(0, 99, tool_runtime=ToolRuntime(config=_make_config(s)))
         assert "m0" in result
 
     @pytest.mark.asyncio
@@ -329,7 +330,7 @@ class TestGetHistoryRange:
         旧代码把摘要助手消息误计为最近消息,边界错一位(#5 显示为 ●)。
         """
         s = _make_compacted_session()
-        result = await get_history_range(0, 20, config=_make_config(s))
+        result = await get_history_range(0, 20, tool_runtime=ToolRuntime(config=_make_config(s)))
         lines = [
             ln
             for ln in result.splitlines()

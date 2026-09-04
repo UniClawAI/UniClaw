@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from uniclaw.tools.base import ToolRuntime
 from uniclaw.tools.mcp.tools import (
     mcp_add_server,
     mcp_list_servers,
@@ -47,14 +48,14 @@ def manager():
 class TestAddServer:
     async def test_duplicate_rejected(self, manager):
         manager.get_server.return_value = {"name": "fs"}
-        result = await mcp_add_server.func(name="fs", config=None)
+        result = await mcp_add_server.func(name="fs", tool_runtime=ToolRuntime(config=None))
         assert TOOL_ERROR in result
         assert "已存在" in result
         manager.add_server.assert_not_awaited()
 
     async def test_stdio_requires_command(self, manager):
         result = await mcp_add_server.func(
-            name="fs", transport="stdio", command=None, config=None
+            name="fs", transport="stdio", command=None, tool_runtime=ToolRuntime(config=None)
         )
         assert TOOL_ERROR in result
         assert "command" in result
@@ -66,7 +67,7 @@ class TestAddServer:
             command="npx",
             command_args=["-y", "server"],
             env={"A": "1"},
-            config=None,
+            tool_runtime=ToolRuntime(config=None),
         )
         assert "成功" in result
         connection = manager.add_server.await_args.args[1]
@@ -77,7 +78,7 @@ class TestAddServer:
 
     async def test_sse_requires_url(self, manager):
         result = await mcp_add_server.func(
-            name="web", transport="sse", url=None, config=None
+            name="web", transport="sse", url=None, tool_runtime=ToolRuntime(config=None)
         )
         assert TOOL_ERROR in result
         assert "url" in result
@@ -89,7 +90,7 @@ class TestAddServer:
             url="http://localhost:8080/mcp",
             headers={"Authorization": "Bearer x"},
             timeout=30.0,
-            config=None,
+            tool_runtime=ToolRuntime(config=None),
         )
         assert "成功" in result
         connection = manager.add_server.await_args.args[1]
@@ -99,14 +100,14 @@ class TestAddServer:
 
     async def test_websocket_requires_url(self, manager):
         result = await mcp_add_server.func(
-            name="ws", transport="websocket", url=None, config=None
+            name="ws", transport="websocket", url=None, tool_runtime=ToolRuntime(config=None)
         )
         assert TOOL_ERROR in result
         assert "url" in result
 
     async def test_websocket_success(self, manager):
         result = await mcp_add_server.func(
-            name="ws", transport="websocket", url="ws://localhost:9000", config=None
+            name="ws", transport="websocket", url="ws://localhost:9000", tool_runtime=ToolRuntime(config=None)
         )
         assert "成功" in result
         connection = manager.add_server.await_args.args[1]
@@ -115,7 +116,7 @@ class TestAddServer:
     async def test_add_failure_returns_error(self, manager):
         manager.add_server.side_effect = ValueError("连接验证失败")
         result = await mcp_add_server.func(
-            name="fs", transport="stdio", command="npx", config=None
+            name="fs", transport="stdio", command="npx", tool_runtime=ToolRuntime(config=None)
         )
         assert TOOL_ERROR in result
         assert "连接验证失败" in result
@@ -123,7 +124,7 @@ class TestAddServer:
     async def test_add_unexpected_exception(self, manager):
         manager.add_server.side_effect = RuntimeError("boom")
         result = await mcp_add_server.func(
-            name="fs", transport="stdio", command="npx", config=None
+            name="fs", transport="stdio", command="npx", tool_runtime=ToolRuntime(config=None)
         )
         assert TOOL_ERROR in result
         assert "boom" in result
@@ -135,20 +136,20 @@ class TestAddServer:
 class TestRemoveServer:
     async def test_not_found(self, manager):
         manager.get_server.return_value = None
-        result = await mcp_remove_server.func(name="nope", config=None)
+        result = await mcp_remove_server.func(name="nope", tool_runtime=ToolRuntime(config=None))
         assert TOOL_ERROR in result
         assert "不存在" in result
 
     async def test_success(self, manager):
         manager.get_server.return_value = {"name": "fs"}
-        result = await mcp_remove_server.func(name="fs", config=None)
+        result = await mcp_remove_server.func(name="fs", tool_runtime=ToolRuntime(config=None))
         assert "成功" in result
         manager.remove_server.assert_awaited_once_with("fs", None)
 
     async def test_remove_failure(self, manager):
         manager.get_server.return_value = {"name": "fs"}
         manager.remove_server.side_effect = RuntimeError("io error")
-        result = await mcp_remove_server.func(name="fs", config=None)
+        result = await mcp_remove_server.func(name="fs", tool_runtime=ToolRuntime(config=None))
         assert TOOL_ERROR in result
         assert "io error" in result
 
@@ -159,20 +160,20 @@ class TestRemoveServer:
 class TestToggleServer:
     async def test_not_found(self, manager):
         manager.get_server.return_value = None
-        result = await mcp_toggle_server.func(name="nope", enabled=True, config=None)
+        result = await mcp_toggle_server.func(name="nope", enabled=True, tool_runtime=ToolRuntime(config=None))
         assert TOOL_ERROR in result
         assert "不存在" in result
 
     async def test_enable(self, manager):
         manager.get_server.return_value = {"name": "fs"}
-        result = await mcp_toggle_server.func(name="fs", enabled=True, config=None)
+        result = await mcp_toggle_server.func(name="fs", enabled=True, tool_runtime=ToolRuntime(config=None))
         assert "成功" in result
         assert "启用" in result
         manager.toggle_server.assert_awaited_once_with("fs", True, None)
 
     async def test_disable(self, manager):
         manager.get_server.return_value = {"name": "fs"}
-        result = await mcp_toggle_server.func(name="fs", enabled=False, config=None)
+        result = await mcp_toggle_server.func(name="fs", enabled=False, tool_runtime=ToolRuntime(config=None))
         assert "禁用" in result
         manager.toggle_server.assert_awaited_once_with("fs", False, None)
 
@@ -183,7 +184,7 @@ class TestToggleServer:
 class TestListServers:
     async def test_empty(self, manager):
         manager.list_servers.return_value = []
-        result = await mcp_list_servers.func(config=None)
+        result = await mcp_list_servers.func(tool_runtime=ToolRuntime(config=None))
         assert "暂无 MCP 服务器配置" in result
 
     async def test_stdio_entry_rendering(self, manager):
@@ -196,7 +197,7 @@ class TestListServers:
                 "args": ["-y", "server-fs", "/tmp"],
             }
         ]
-        result = await mcp_list_servers.func(config=None)
+        result = await mcp_list_servers.func(tool_runtime=ToolRuntime(config=None))
         assert "共 1 个" in result
         assert "[✓ 启用] fs (stdio)" in result
         assert "npx -y server-fs /tmp" in result
@@ -210,7 +211,7 @@ class TestListServers:
                 "url": "http://localhost:8080/sse",
             }
         ]
-        result = await mcp_list_servers.func(config=None)
+        result = await mcp_list_servers.func(tool_runtime=ToolRuntime(config=None))
         assert "[✗ 禁用] web (sse)" in result
         assert "http://localhost:8080/sse" in result
 
@@ -221,7 +222,7 @@ class TestListServers:
         manager.get_tools_info.return_value = [
             {"name": "read_file", "description": "读取文件内容"}
         ]
-        result = await mcp_list_servers.func(config=None)
+        result = await mcp_list_servers.func(tool_runtime=ToolRuntime(config=None))
         assert "工具数量: 1 个" in result
         assert "read_file: 读取文件内容" in result
 
@@ -231,7 +232,7 @@ class TestListServers:
         ]
         long_desc = "长" * 150
         manager.get_tools_info.return_value = [{"name": "t", "description": long_desc}]
-        result = await mcp_list_servers.func(config=None)
+        result = await mcp_list_servers.func(tool_runtime=ToolRuntime(config=None))
         assert "..." in result
         assert long_desc not in result
 
@@ -240,5 +241,5 @@ class TestListServers:
             {"name": "fs", "transport": "stdio", "enabled": True, "command": "npx"}
         ]
         manager.get_tools_info.return_value = []
-        result = await mcp_list_servers.func(config=None)
+        result = await mcp_list_servers.func(tool_runtime=ToolRuntime(config=None))
         assert "工具数量: 0 个" in result

@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from uniclaw.tools import media as media_mod
+from uniclaw.tools.base import ToolRuntime
 from uniclaw.tools.media import (
     GenerateImage,
     ReadMedia,
@@ -195,14 +196,14 @@ class TestReadMediaTool:
         """异步读取媒体。"""
         p = tmp_path / "test.png"
         p.write_bytes(b"\x89PNG data")
-        result = await ReadMedia(str(p))
+        result = await ReadMedia(str(p), tool_runtime=ToolRuntime())
         assert isinstance(result, list)
         assert result[1]["type"] == "image_url"
 
     @pytest.mark.asyncio
     async def test_read_media_missing(self, tmp_path):
         """文件不存在。"""
-        result = await ReadMedia(str(tmp_path / "missing.png"))
+        result = await ReadMedia(str(tmp_path / "missing.png"), tool_runtime=ToolRuntime())
         assert isinstance(result, str)
         assert TOOL_ERROR in result
 
@@ -221,7 +222,7 @@ class TestGenerateImage:
     async def test_save_url(self, mock_retrieve, mock_gen, tmp_path):
         """URL 结果保存到文件。"""
         target = str(tmp_path / "out.png")
-        result = await GenerateImage("一只猫", save_path=target, config=self._config())
+        result = await GenerateImage("一只猫", save_path=target, tool_runtime=ToolRuntime(config=self._config()))
         assert result == f"已保存到: {(tmp_path / 'out.png').resolve()}"
         mock_retrieve.assert_called_once()
 
@@ -230,14 +231,14 @@ class TestGenerateImage:
     async def test_save_base64(self, mock_gen, tmp_path):
         """base64 结果保存到文件。"""
         target = str(tmp_path / "out.png")
-        result = await GenerateImage("一只猫", save_path=target, config=self._config())
+        result = await GenerateImage("一只猫", save_path=target, tool_runtime=ToolRuntime(config=self._config()))
         assert (tmp_path / "out.png").read_bytes() == b"hello"
 
     @pytest.mark.asyncio
     @patch("uniclaw.provider.openai_provider.agenerate_image", new_callable=AsyncMock, return_value=["http://img/x.png"])
     async def test_no_path_url(self, mock_gen):
         """无 path 且 URL 结果返回多模态。"""
-        result = await GenerateImage("一只猫", config=self._config())
+        result = await GenerateImage("一只猫", tool_runtime=ToolRuntime(config=self._config()))
         assert isinstance(result, list)
         assert result[0]["type"] == "text"
         assert result[1]["image_url"]["url"] == "http://img/x.png"
@@ -246,7 +247,7 @@ class TestGenerateImage:
     @patch("uniclaw.provider.openai_provider.agenerate_image", new_callable=AsyncMock, return_value=["aGVsbG8="])
     async def test_no_path_base64(self, mock_gen):
         """无 path 且 base64 结果返回 data URI。"""
-        result = await GenerateImage("一只猫", config=self._config())
+        result = await GenerateImage("一只猫", tool_runtime=ToolRuntime(config=self._config()))
         assert isinstance(result, list)
         url = result[1]["image_url"]["url"]
         assert url.startswith("data:image/png;base64,")
@@ -255,7 +256,7 @@ class TestGenerateImage:
     @patch("uniclaw.provider.openai_provider.agenerate_image", new_callable=AsyncMock, side_effect=RuntimeError("boom"))
     async def test_exception(self, mock_gen):
         """生成异常。"""
-        result = await GenerateImage("一只猫", config=self._config())
+        result = await GenerateImage("一只猫", tool_runtime=ToolRuntime(config=self._config()))
         assert isinstance(result, str)
         assert "图片生成失败" in result
 
@@ -263,7 +264,7 @@ class TestGenerateImage:
     @patch("uniclaw.provider.openai_provider.agenerate_image", new_callable=AsyncMock, return_value=[])
     async def test_empty_result(self, mock_gen):
         """空结果。"""
-        result = await GenerateImage("一只猫", config=self._config())
+        result = await GenerateImage("一只猫", tool_runtime=ToolRuntime(config=self._config()))
         assert isinstance(result, str)
         assert "返回为空" in result
 

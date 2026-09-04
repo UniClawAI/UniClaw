@@ -11,13 +11,13 @@
 import asyncio
 
 from uniclaw.config import AppConfig, RunMode
-from uniclaw.tools.base import tool
+from uniclaw.tools.base import tool, ToolRuntime
 from uniclaw.tools.restart import manager
 from uniclaw.utils.constants import TOOL_ERROR
 
 
 @tool
-def restart_agent(config: AppConfig = None) -> str:
+def restart_agent(tool_runtime: ToolRuntime = None) -> str:
     """
     重启 UniClaw 自身所在的进程(WebUI 模式专用)。当你修改了 UniClaw 的源代码
     或配置文件后,用本工具重启使改动生效。重启不会丢失工作进度:等待本轮回复
@@ -29,6 +29,7 @@ def restart_agent(config: AppConfig = None) -> str:
     Returns:
         str: 成功返回重启计划确认消息;失败返回 "TOOL_ERROR: " 前缀的错误原因。
     """
+    config = tool_runtime.config
 
     # 仅 WebUI 模式可用
     if config is None or config.run_mode != RunMode.WEBUI:

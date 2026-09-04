@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 
+from uniclaw.tools.base import ToolRuntime
 from uniclaw.tools.memory.memory import Memory
 from uniclaw.tools.memory.tools import memory_save
 
@@ -15,6 +16,7 @@ def test_memory_save_force_replaces_existing_memory(monkeypatch, tmp_path):
         current_agent=SimpleNamespace(),
         root_dir=tmp_path,
     )
+    rt = ToolRuntime(config=mock_config)
 
     first = memory_save.func(
         name="api-endpoint",
@@ -22,7 +24,7 @@ def test_memory_save_force_replaces_existing_memory(monkeypatch, tmp_path):
         content="Use /v1/old.",
         type="feedback",
         scope="project",
-        config=mock_config,
+        tool_runtime=rt,
     )
     conflict = memory_save.func(
         name="api-endpoint",
@@ -30,7 +32,7 @@ def test_memory_save_force_replaces_existing_memory(monkeypatch, tmp_path):
         content="Use /v2/new.",
         type="feedback",
         scope="project",
-        config=mock_config,
+        tool_runtime=rt,
     )
     replaced = memory_save.func(
         name="api-endpoint",
@@ -39,7 +41,7 @@ def test_memory_save_force_replaces_existing_memory(monkeypatch, tmp_path):
         type="feedback",
         scope="project",
         force=True,
-        config=mock_config,
+        tool_runtime=rt,
     )
 
     loaded = Memory.load_memory(Memory.get_memory_path(tmp_path, "api-endpoint"))

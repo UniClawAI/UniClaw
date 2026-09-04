@@ -6,7 +6,7 @@ from pathlib import Path
 
 from uniclaw.config import AppConfig
 from uniclaw.context import Scope
-from uniclaw.tools.base import tool
+from uniclaw.tools.base import tool, ToolRuntime
 from uniclaw.utils.constants import TOOL_ERROR
 
 from .loader import load_directory, load_file
@@ -63,7 +63,7 @@ async def rag_ingest(
     chunk_size: int = 1000,
     chunk_overlap: int = 200,
     scope: Scope = Scope.PROJECT,
-    config: AppConfig = None,
+    tool_runtime: ToolRuntime = None,
 ) -> str:
     """
     读取文件或目录,递归拆分为文档块,生成 embedding 后存入向量数据库。
@@ -78,6 +78,7 @@ async def rag_ingest(
     Returns:
         str: 处理结果摘要,包含文件数、块数和集合信息。
     """
+    config = tool_runtime.config
     if not config:
         return f"{TOOL_ERROR}: 无法获取配置"
 
@@ -91,9 +92,7 @@ async def rag_ingest(
             return f"{TOOL_ERROR}: 路径不存在: {path}"
 
         # 加载文档
-        from uniclaw.tools.stream import tool_stream
-
-        await tool_stream(f"📂 正在加载: {path}\n")
+        await tool_runtime.stream(f"📂 正在加载: {path}\n")
         if target.is_file():
             docs = load_file(target)
         else:
@@ -101,14 +100,14 @@ async def rag_ingest(
 
         if not docs:
             return f"{TOOL_ERROR}: 未在 {path} 中找到可读取的文档"
-        await tool_stream(f"✅ 加载完成,共 {len(docs)} 个文档\n")
+        await tool_runtime.stream(f"✅ 加载完成,共 {len(docs)} 个文档\n")
 
         # 拆分文档
-        await tool_stream("✂️  正在拆分文档...\n")
+        await tool_runtime.stream("✂️  正在拆分文档...\n")
         chunks = split_documents(docs, chunk_size, chunk_overlap)
         if not chunks:
             return f"{TOOL_ERROR}: 文档拆分后为空"
-        await tool_stream(f"✅ 拆分完成,共 {len(chunks)} 个文档块\n")
+        await tool_runtime.stream(f"✅ 拆分完成,共 {len(chunks)} 个文档块\n")
 
         # 存入向量数据库
         manager = _get_manager(config, scope)
@@ -121,16 +120,16 @@ async def rag_ingest(
         for source in sources:
             deleted += manager.delete_by_source(collection, source)
         if deleted:
-            await tool_stream(f"🧹 已清除 {deleted} 个旧文档块\n")
+            await tool_runtime.stream(f"🧹 已清除 {deleted} 个旧文档块\n")
 
-        await tool_stream(f"⚙️  正在生成 embedding 并入库(共 {len(chunks)} 个块)...\n")
+        await tool_runtime.stream(f"⚙️  正在生成 embedding 并入库(共 {len(chunks)} 个块)...\n")
 
         async def _progress(done: int, total: int) -> None:
             pct = done * 100 // total if total else 0
-            await tool_stream(f"\r⏳ 进度: {done}/{total} ({pct}%)")
+            await tool_runtime.stream(f"\r⏳ 进度: {done}/{total} ({pct}%)")
 
         count = await manager.ingest(collection, chunks, progress_callback=_progress)
-        await tool_stream("\n")
+        await tool_runtime.stream("\n")
 
         info = manager.get_collection_info(collection)
         total = info["count"] if info else count
@@ -141,7 +140,7 @@ async def rag_ingest(
         if deleted:
             msg = f"已清除 {deleted} 个旧文档块。" + msg
         msg += f"集合当前共 {total} 个文档块。"
-        await tool_stream(f"✅ {msg}\n")
+        await tool_runtime.stream(f"✅ {msg}\n")
         return msg
     except ValueError as e:
         return f"{TOOL_ERROR}: {e}"
@@ -158,7 +157,7 @@ async def rag_search(
     rerank: bool = True,
     use_bm25: bool = True,
     intent: str = "",
-    config: AppConfig = None,
+    tool_runtime: ToolRuntime = None,
 ) -> str:
     """
     在向量数据库中多路召回检索与查询最相关的文档块。
@@ -179,6 +178,7 @@ async def rag_search(
     Returns:
         str: 格式化的检索结果,包含相关文档块内容、来源和相似度分数。
     """
+    config = tool_runtime.config
     if not config:
         return f"{TOOL_ERROR}: 无法获取配置"
 
@@ -257,7 +257,7 @@ async def rag_search(
 
 @tool
 def rag_list_collections(
-    config: AppConfig = None,
+    tool_runtime: ToolRuntime = None,
 ) -> str:
     """
     列出向量数据库中的所有集合及其文档数量。
@@ -266,6 +266,7 @@ def rag_list_collections(
     Returns:
         str: 集合列表及其统计信息。
     """
+    config = tool_runtime.config
     if not config:
         return f"{TOOL_ERROR}: 无法获取配置"
 
@@ -303,7 +304,7 @@ def rag_set_desc(
     collection: str,
     description: str,
     scope: Scope = Scope.PROJECT,
-    config: AppConfig = None,
+    tool_runtime: ToolRuntime = None,
 ) -> str:
     """
     设置或更新向量数据库集合的描述信息。
@@ -317,6 +318,7 @@ def rag_set_desc(
     Returns:
         str: 设置结果。
     """
+    config = tool_runtime.config
     if not config:
         return f"{TOOL_ERROR}: 无法获取配置"
 
@@ -333,7 +335,7 @@ def rag_set_desc(
 def rag_delete_collection(
     collection: str,
     scope: Scope = Scope.PROJECT,
-    config: AppConfig = None,
+    tool_runtime: ToolRuntime = None,
 ) -> str:
     """
     删除指定的向量数据库集合。
@@ -345,6 +347,7 @@ def rag_delete_collection(
     Returns:
         str: 删除结果。
     """
+    config = tool_runtime.config
     if not config:
         return f"{TOOL_ERROR}: 无法获取配置"
 
@@ -435,7 +438,7 @@ async def rag_evaluate(
     rerank: bool = True,
     use_bm25: bool = True,
     use_llm_judge: bool = False,
-    config: AppConfig = None,
+    tool_runtime: ToolRuntime = None,
 ) -> str:
     """
     评估 RAG 检索效果:对一组测试问题执行检索,输出 LLM Judge 相关性指标。
@@ -455,6 +458,7 @@ async def rag_evaluate(
     Returns:
         str: 评估报告,包含总指标和每个问题的检索明细。
     """
+    config = tool_runtime.config
     if not config:
         return f"{TOOL_ERROR}: 无法获取配置"
     if not queries:

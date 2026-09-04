@@ -4,7 +4,7 @@ import asyncio
 import json
 
 from uniclaw.config import AppConfig
-from uniclaw.tools.base import tool
+from uniclaw.tools.base import tool, ToolRuntime
 from uniclaw.utils.constants import TOOL_ERROR
 from .client import A2AClient, extract_a2a_text
 from .manager import A2AManager
@@ -139,7 +139,7 @@ async def a2a_list_agents() -> str:
 
 
 @tool
-async def a2a_submit_task(agent_name: str, message: str, context_id: str = "", config: AppConfig = None) -> str:
+async def a2a_submit_task(agent_name: str, message: str, context_id: str = "", tool_runtime: ToolRuntime = None) -> str:
     """异步提交远程 A2A 任务,立即返回 task_id 和 context_id;传入 context_id 可继续多轮对话。
 
     Args:
@@ -147,6 +147,7 @@ async def a2a_submit_task(agent_name: str, message: str, context_id: str = "", c
         message: 本轮消息或任务说明。
         context_id: 可选的前一轮返回 context_id,用于继续同一对话。
     """
+    config = tool_runtime.config
     remote = await A2AManager.get_instance().get_agent(agent_name)
     if not remote:
         return f"{TOOL_ERROR}: 未找到 A2A Agent '{agent_name}'。"

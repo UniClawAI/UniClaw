@@ -1,7 +1,6 @@
-from uniclaw.tools.base import tool
+from uniclaw.tools.base import tool, ToolRuntime
 import asyncio
 import time
-from uniclaw.config import AppConfig
 from uniclaw.utils.constants import SYSTEM_PREFIX, TOOL_ERROR
 from uniclaw.tools.multi_agent.sub_agent import load_agent_definitions
 from uniclaw.context import APP_NAME
@@ -15,7 +14,7 @@ async def subagent_create(
     name: str,
     wait: bool = True,
     isolation=False,
-    config: AppConfig = None,
+    tool_runtime: ToolRuntime = None,
 ):
     """
     创建并启动一个子智能体任务。
@@ -45,6 +44,7 @@ async def subagent_create(
     """
     from uniclaw.agent import MultiAgent
 
+    config = tool_runtime.config
     # 创建多智能体管理器实例
     mgr = MultiAgent.get_instance()
     # 创建子智能体配置
@@ -321,13 +321,14 @@ async def subagent_discuss(topic: str, participants: list[str], rounds: int = 2)
 
 
 @tool
-def subagent_list_definitions(config: AppConfig = None) -> str:
+def subagent_list_definitions(tool_runtime: ToolRuntime = None) -> str:
     """
     列出所有可用的智能体类型定义。
 
     该函数加载并格式化显示系统中所有已定义的智能体类型信息,包括每个智能体的名称、
     调用 subagent_create 时使用类型名称作为 subagent_type。
     """
+    config = tool_runtime.config
     root_dir = config.root_dir
     defs = load_agent_definitions(root_dir)
     if not defs:
@@ -347,13 +348,14 @@ def subagent_list_definitions(config: AppConfig = None) -> str:
 
 
 @tool
-def subagent_get_definition(subagent_type: str, config: AppConfig = None) -> str:
+def subagent_get_definition(subagent_type: str, tool_runtime: ToolRuntime = None) -> str:
     """
     获取指定智能体类型的详细信息。
 
     Args:
         subagent_type: 智能体类型标识符(如 "coder"、"recon")
     """
+    config = tool_runtime.config
     defs = load_agent_definitions(config.root_dir)
     d = defs.get(subagent_type)
     if not d:
