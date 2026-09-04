@@ -10,8 +10,9 @@
 ## ✨ 特性
 
 - 🤖 **智能代理**: 基于 OpenAI SDK 和 Anthropic SDK 的全异步对话式 AI 助手,多 provider 自动路由,支持 reasoning_content 和思考标签流式解析,内置死循环检测防止工具调用陷入无限循环
+- 🛠️ **ToolRuntime 统一运行时**: 工具函数通过 `tool_runtime` 形参获取配置、调用 ID 和流式输出能力,`@tool` 自动从 schema 中屏蔽该参数;凭 `tool_call_id` 路由推流,异步/后台任务推流也能落进正确的工具块
 - 🔄 **多模型 Fallback**: 主模型失败时自动切换到备用模型,支持 `model_name` 列表配置多个模型,提高可用性
-- 🩺 **错误分类重试**: 内置错误分类器将 LLM 调用错误分为六类(RATE_LIMIT/CONTEXT_OVERFLOW/AUTH/SERVER_ERROR/TIMEOUT/UNKNOWN),按分类采用差异化重试与退避策略(CONTEXT_OVERFLOW 先压缩会话再重试,指数/线性退避)
+- 🩺 **错误分类重试**: 内置错误分类器将 LLM 调用错误分为六类(RATE_LIMIT/CONTEXT_OVERFLOW/AUTH/SERVER_ERROR/TIMEOUT/UNKNOWN),按分类采用差异化重试与退避策略(CONTEXT_OVERFLOW 先压缩会话再重试,指数/线性退避),LLM 请求默认 180 秒超时且可按调用覆盖
 - 🎓 **顾问模型**: 配置 `large_model_name` 作为顾问模型,遇到难题时可同时咨询多个更强力模型获取第二意见
 - 🔍 **工具注册表**: BM25 智能工具搜索,核心工具常驻加载 + 扩展工具按需发现(search_tools 元工具),LRU + 能量机制(每工具 30 点能量,每轮-1,调用/搜索恢复满,归零淘汰)自动管理已加载工具,优化 prompt 缓存
 - 📡 **工具可用性跟踪**: 环境检测自动记录不可用工具及原因(如 Docker 未安装、未配置 embedding_model),search_tools 搜索时自动提示不可用原因,避免无用调用
@@ -41,7 +42,7 @@
 - 🔒 **权限管理**: 支持多种权限模式(自动/手动/全部接受),保障操作安全
 - 📋 **持久化规则**: 自定义权限规则,记住您的权限偏好,避免重复确认
 - 💭 **实时反馈**: 显示思考过程、工具调用详情和 Token 使用情况
-- ♾️ **无限上下文**: 双列表存储(活跃上下文 + 完整历史) + 三级自动压缩(50%/70%/85%) + 按需历史召回,对话永不失忆
+- ♾️ **无限上下文**: 双列表存储(活跃上下文 + 完整历史) + 三级自动压缩(50%/70%/85%) + 按需历史召回,对话永不失忆;工具调用消息按内容哈希去重,重复结果自动折叠节省上下文
 - 📊 **上下文管理**: 自动监控和管理对话上下文长度,三级压力策略自动压缩(50%/70%/85%)
 - 🎯 **目标模式**: 设置目标停止条件,agent 停止时用独立 judge 模型评估是否达成,未达标则自动继续工作
 - 🌐 **平台搜索**: 支持 GitHub/arXiv/Stack Overflow/Hacker News/B站等多平台并发搜索
@@ -181,7 +182,8 @@ uv add <package-name>
 uv add --dev <package-name>
 
 # 运行测试
-uv run pytest tests/ -v
+uv run pytest tests/ -v -m 'not slow' -n auto   # 日常测试(并行,排除 Docker 沙箱等耗时任务)
+uv run pytest tests/ -v                          # 全量测试(串行)
 
 # 更新依赖
 uv lock --upgrade
@@ -901,7 +903,7 @@ uv run uniclaw --mode webui
 UniClaw 提供了丰富的内置工具,AI 助手可以自动调用这些工具完成任务。工具分为**核心工具**(始终加载)和**扩展工具**(通过 `search_tools` 按需发现),详见 [工具注册表系统](#工具注册表系统)。此外,用户可通过 [插件系统](#-插件系统) 自定义外部工具插件。
 
 工具基础设施：
-- **`base.py`** — 自定义 `@tool` 装饰器,自动生成 OpenAI function calling schema,自动排除 `config` 注入参数
+- **`base.py`** — 自定义 `@tool` 装饰器,自动生成 OpenAI function calling schema,自动排除 `tool_runtime` 注入参数;`ToolRuntime` 运行时上下文 dataclass(含 `config` / `tool_call_id` / `stream_writer`),工具函数声明 `tool_runtime: ToolRuntime = None` 形参即可获取配置、调用 ID 和流式输出能力(`await tool_runtime.stream(content)`)
 - **`registry.py`** — 工具注册表,BM25 搜索索引,核心/扩展工具分层管理
 
 #### 文件系统工具
@@ -915,15 +917,20 @@ UniClaw 提供了丰富的内置工具,AI 助手可以自动调用这些工具�
 #### Shell 工具
 
 - **Bash** - 执行 Shell 命令(支持超时控制和上限校验,跨平台兼容,支持流式输出)
-- **Grep** - 在文件中搜索文本模式(优先使用 ripgrep,支持正则表达式)
+  - 超时后进程自动转入后台监控系统(返回监控 ID,用 monitor_output 查看后续输出)
+  - 执行过程中实时推送输出到前端(WebUI),无需等待命令完成即可看到进度
+- **Grep** - 在文件中搜索文本模式,支持正则表达式
+  - 执行链: ripgrep → grep(非 Windows)→ 纯 Python 回退实现,保证全平台可用
+  - 支持 `output_mode`(content/files_with_matches/count)、`case_insensitive`、`context` 上下文行数
+  - 纯 Python 回退默认忽略隐藏文件/目录,支持多种编码自动识别
 - **search_files_with_everything** - 使用 Everything 搜索引擎快速搜索文件名(仅 Windows,需安装 Everything es.exe)
   - 支持通配符(`*`、`?`)和逻辑运算符(AND/OR/NOT)
   - `max_results`: 最大返回结果数(0 为不限制)
   - `path_filter`: 路径过滤器,限定搜索范围到特定目录
 
-> 💡 **流式输出**: Bash 工具执行过程中会实时推送输出到前端(WebUI),无需等待命令完成即可看到进度。
+> 💡 **流式输出**: Bash 等工具执行过程中会实时推送输出到前端(WebUI),无需等待命令完成即可看到进度。工具通过 `ToolRuntime.stream()` 推流,凭 `tool_call_id` 路由到正确的工具块,异步/后台任务推流同样有效。
 
-> 💡 **Windows 用户提示**: 在 Windows 系统上,如果检测到 Git Bash,Bash 工具会自动使用 Git Bash 执行命令,提供更好的 Unix 命令兼容性。建议安装 [Git for Windows](https://git-scm.com/download/win) 以获得最佳的 Shell 体验。Bash 工具还会自动修正 Windows 环境下 `nul` 重定向为 `/dev/null`,避免 Git Bash 兼容性问题。
+> 💡 **Windows 用户提示**: 在 Windows 系统上,Bash 工具默认通过 cmd.exe 执行;如需 Unix 命令兼容性,可用 `bash -c "命令"` 调用 Git Bash(系统会自动检测 Git Bash 安装路径并加入 PATH),或用 `powershell -c "命令"` 调用 PowerShell。建议安装 [Git for Windows](https://git-scm.com/download/win) 以获得最佳的 Shell 体验。Bash 工具还会自动修正 Windows 环境下 `nul` 重定向为 `/dev/null`,避免 Git Bash 兼容性问题。
 
 > ⚠️ **注意事项**: 某些命令可能触发分页器(如 `git log`、`man` 等),导致进程阻塞等待用户交互。解决方法：
 > - Git 命令添加 `--no-pager` 参数：`git --no-pager log`
@@ -1274,8 +1281,8 @@ http_download(
 
 #### 文件发送工具 📤
 
-- **send_file** - 发送文件给用户
-  - WebUI 模式: 文本文件直接在前端渲染 Markdown 预览(内容不进入模型上下文),其他文件生成临时下载链接(默认 30 分钟有效)
+- **send_file** - 发送文件给用户(支持 `expire_minutes` 自定义有效期,默认 30 分钟)
+  - WebUI 模式: 文本文件(UTF-8 可解码且无 NUL 字节)直接在前端渲染 Markdown 预览,内容不进入模型上下文;其他文件生成临时下载链接
   - 微信模式: 通过 Bot 直接发送文件
   - Console 模式: 不支持(忽略)
 
@@ -1328,6 +1335,7 @@ http_download(
   - 支持格式: txt/md/py/json/yaml/csv/html/pdf 等
   - 可配置文档块大小(`chunk_size`)和重叠度(`chunk_overlap`)
   - 支持用户级/项目级双层作用域
+  - 重复导入自动清除旧文档块,embedding 入库过程实时推送进度
 - **rag_search** - 在指定集合中语义检索,返回最相关的文档片段
   - 支持 `score_threshold` 过滤低相关度结果
   - 支持 `top_k` 控制返回数量
@@ -1467,6 +1475,7 @@ def get_tools():
 - 每个插件文件必须有 `get_tools()` 函数,返回 `@tool` 装饰的工具列表或元组
 - 必须使用 `@tool` 装饰器(`from uniclaw.tools.base import tool`)
 - 工具函数必须使用 Google style docstring(包含 `Args:` 和 `Returns:` 段)
+- 需要运行时上下文时,声明 `tool_runtime: ToolRuntime = None` 形参(放在参数列表最后),由调用方注入,不会出现在 LLM 可见的 schema 中
 - 工具名只含 `[A-Za-z0-9_-]`,不能与内置工具或其他插件重名
 - 文件名不能以下划线开头(会被跳过)
 
@@ -1476,14 +1485,13 @@ def get_tools():
 
 ```python
 import asyncio
-from uniclaw.config import AppConfig
-from uniclaw.tools.base import tool
+from uniclaw.tools.base import ToolRuntime, tool
 from uniclaw.utils.wakeup import wake_agent
 from uniclaw.utils.constants import SYSTEM_PREFIX
 
 
 @tool
-def long_task(name: str, config: AppConfig = None) -> str:
+def long_task(name: str, tool_runtime: ToolRuntime = None) -> str:
     """
     执行耗时的长任务(立即返回,后台完成后自动唤醒)。
 
@@ -1493,6 +1501,8 @@ def long_task(name: str, config: AppConfig = None) -> str:
     Returns:
         str: 确认任务已启动。
     """
+    config = tool_runtime.config
+
     async def _run():
         try:
             result = await asyncio.to_thread(_do_heavy_work, name)
@@ -1565,7 +1575,7 @@ UniClaw/
     │   ├── types.py        # Protocol/Effort 枚举,Usage 用量统计
     │   └── common.py       # get_provider(),compare_urls(),HTTP 客户端缓存
     │
-    ├── commands/           # 斜杠命令系统 📝 (31 个命令 + 7 个别名)
+    ├── commands/           # 斜杠命令系统 📝 (33 个命令 + 11 个别名)
     │   ├── __init__.py     # 命令注册中心(COMMANDS dict)
     │   ├── session.py      # 会话管理(clear/compact/export)
     │   ├── resume.py       # 会话恢复(list/del/search/fork) 💬
@@ -1615,10 +1625,10 @@ UniClaw/
     │
     ├── tools/              # 工具系统
     │   ├── __init__.py     # 工具注册中心
-    │   ├── base.py         # @tool 装饰器(自动生成 OpenAI schema)
-    │   ├── registry.py     # 工具注册表(BM25 搜索,核心/扩展分层,LRU 淘汰)
-    │   ├── fs.py           # 文件系统(Read/Write/Edit/Glob)
-    │   ├── shell.py        # Shell(Bash/Grep/Everything)
+    │   ├── base.py         # @tool 装饰器(自动生成 OpenAI schema)+ ToolRuntime 运行时上下文
+    │   ├── registry.py     # 工具注册表(BM25 搜索,核心/扩展分层,LRU + 能量淘汰,可用性跟踪)
+    │   ├── fs.py           # 文件系统(Read/Write/Edit/Glob/ConvertToMarkdown)
+    │   ├── shell.py        # Shell(Bash/Grep/Everything,含纯 Python grep 回退)
     │   ├── web.py          # Web(webFetch/webSearch)
     │   ├── search/         # 多平台搜索(GitHub/arXiv/Stack Overflow/B站等)
     │   │   ├── tools.py    # 搜索入口 + 工具定义(webSearch 多平台并发)
@@ -1685,6 +1695,10 @@ UniClaw/
     │   │   ├── relauncher.py # 重启执行与进程拉起
     │   │   └── resumer.py  # 新进程侧会话恢复
     │   ├── session/        # 会话持久化 + 历史消息检索 + 自动保存 💬
+    │   │   ├── session.py  # Session(双列表存储 + 内容哈希去重)
+    │   │   ├── session_manager.py # SessionManager(持久化到 .UniClaw/sessions/)
+    │   │   ├── recall.py   # recall_history/get_history_range 历史召回工具
+    │   │   └── tools.py    # 会话管理工具定义
     │   ├── hooks/          # Hook 系统 🪝
     │   ├── tts/            # 语音合成(TTS) 🔊
     │   ├── plugins/        # 插件系统(用户级外部工具动态加载) 🔌
@@ -1693,10 +1707,9 @@ UniClaw/
     │   ├── advisor.py      # 顾问模型工具(ask_advisor 多模型并发咨询) 🎓
     │   ├── wechat.py       # 微信工具(联系人/发送文本/图片/文件)
     │   ├── help.py         # AI 自助帮助工具 📖
-    │   ├── send_file.py    # 文件发送工具 📤
-    │   ├── stream.py       # 工具流式输出(实时推送执行进度到前端)
+    │   ├── send_file.py    # 文件发送工具(WebUI 文本预览/下载链接) 📤
     │   ├── rag/            # RAG 检索增强(文档导入/语义检索/集合管理) 📚
-    │   │   ├── tools.py    # 工具定义(rag_ingest/search/list/delete/set_desc)
+    │   │   ├── tools.py    # 工具定义(rag_ingest/search/list/delete/set_desc/evaluate)
     │   │   ├── rag.py      # RAG 管理器(向量数据库 + embedding)
     │   │   ├── loader.py   # 文档加载器(多格式支持)
     │   │   ├── splitter.py # 文档拆分器(智能分块)
@@ -1713,10 +1726,11 @@ UniClaw/
     ├── utils/              # 实用工具
     │   ├── checkpoint.py   # 文件快照检查点系统
     │   ├── downloader.py   # 下载器抽象基类(BaseDownloader 接口,DownloadManager 统一管理)
-    │   ├── http_download.py # HTTP 下载引擎(多协程并发 + 断点续传)
+    │   ├── http_download.py # HTTP 下载引擎(多协程并发 + 断点续传,支持 chunked 编码)
     │   ├── usage.py        # Token 用量统计 + OpenRouter 定价
-    │   ├── tokenize.py     # 分词(BM25 索引用)
+    │   ├── tokenize.py     # 分词(BM25 索引用,支持驼峰/下划线子词分割)
     │   ├── truncation.py   # 基于 token 的文本截取
+    │   ├── wakeup.py       # wake_agent 异步唤醒机制(插件/后台任务用)
     │   └── ...             # git, format, cache, logger, frontmatter 等
     │
     ├── ilink_bot/          # iLink Bot 微信协议客户端
@@ -1798,6 +1812,8 @@ Session 维护两条平行的消息列表：
 | `history` | 完整历史,所有消息的唯一真相 | 无限增长,持久化到磁盘,永不截断 |
 
 每条消息(user/assistant/tool)同时写入两个列表。压缩只影响 `_messages`,`history` 始终完整。
+
+**工具结果去重**: `ToolCallMessage` 基于"工具名 + 参数 + 结果内容"计算 SHA-256 内容哈希(带缓存失效机制),重复写入自动去重;主循环还会对只读工具(Read/Glob/Grep/webFetch)超过 500 字符的相同结果折叠为存根,节省上下文。
 
 #### 三级自动压缩
 
@@ -2673,7 +2689,9 @@ A: 使用 `/schedule` 命令管理定时任务：
 动作类型支持：
 - `shell: <命令>` - 执行 Shell 命令
 - `agent: <消息>` - 发送给 AI 处理
+- `agent:<类型>: <消息>` - 指定子代理类型(如 `agent:coder: 重构代码`)
 - `py: <Python代码>` - 在当前 Python 环境执行代码
+- `monitor: <命令> → agent[:<类型>]: <消息>` - 先执行 shell 命令,退出码非零时触发 agent
 
 ### Q: 如何使用后台任务功能？
 
