@@ -137,7 +137,6 @@ def _make_session(estimate_side_effects):
 
     session = Session.__new__(Session)
     session._messages = []
-    session.dedup_cache = set()
     session.estimate_tokens = MagicMock(side_effect=estimate_side_effects)
     session.snip_old_tool_results = MagicMock()
     session.compact = AsyncMock()

@@ -1,5 +1,6 @@
 from __future__ import annotations
 import base64
+import hashlib
 import logging
 import numpy as np
 from dataclasses import dataclass, field
@@ -434,6 +435,52 @@ class ToolCallMessage(BaseMessage):
     tool_call_id: str = ""
     args: dict[str, Any] = field(default_factory=dict)
     explain: str = ""  # AI 对本次工具调用的解释(explain 模式)
+    # 内容哈希缓存: 惰性计算,__setattr__ 拦截 content/args 赋值自动失效
+    _hash_cache: str = field(default="", repr=False, compare=False)
+
+    def __setattr__(self, key: str, value: Any) -> None:
+        """content/args 被重新赋值时自动使哈希缓存失效。
+
+        覆盖 msg.content = ... / self.content = ... / setattr() 等所有赋值路径;
+        未覆盖列表/字典元素的原地修改(当前代码库无此用法)。
+        """
+        if key in ("content", "args"):
+            object.__setattr__(self, "_hash_cache", "")
+        object.__setattr__(self, key, value)
+
+    def _content_text(self) -> str:
+        """结果内容扁平化为文本,兼容 MultimodalBlock / 原始 dict 块。"""
+        if isinstance(self.content, list):
+            parts = []
+            for block in self.content:
+                if isinstance(block, MultimodalBlock):
+                    parts.append(block.to_str())
+                elif isinstance(block, dict):
+                    parts.append(
+                        block.get("text") or f"[{block.get('type', 'unknown')}]"
+                    )
+                else:
+                    parts.append(str(block))
+            return "\n".join(parts)
+        return self.content or ""
+
+    @property
+    def content_hash(self) -> str:
+        """工具名+参数+结果内容的 SHA-256 短哈希(前 16 位),惰性计算并缓存。
+
+        参数使用完整 JSON 序列化(排序键),结果内容为原始文本,不经显示截断。
+        不持久化到磁盘;content/args 赋值时由 __setattr__ 自动失效。
+        """
+        if not self._hash_cache:
+            material = (
+                f"{self.name}\x1f"
+                f"{json.dumps(self.args, sort_keys=True, ensure_ascii=False, default=str)}\x1f"
+                f"{self._content_text()}"
+            )
+            self._hash_cache = hashlib.sha256(
+                material.encode("utf-8", errors="replace")
+            ).hexdigest()[:16]
+        return self._hash_cache
 
     @property
     def role(self) -> str:
@@ -644,7 +691,6 @@ class Session:
     _compact_count: int = field(
         default=0, repr=False
     )  # _messages 开头的压缩摘要消息数 (0 或 2)
-    dedup_cache: set = field(default_factory=set, repr=False)  # 只读工具结果去重缓存
     from uniclaw.tools.fs import Glob, Read
     from uniclaw.tools.search import webSearch
     from uniclaw.tools.shell import Grep
@@ -765,8 +811,28 @@ class Session:
             self.root_dir = get_app_dir(Scope.USER) / "workspace" / self.id
             self.root_dir.mkdir(parents=True, exist_ok=True)
 
+    def _find_duplicate_hash(self, tool_name: str, dedup_key: str) -> bool:
+        """遍历消息列表,判断是否存在同名工具且内容哈希相同的历史调用。
+
+        无独立缓存:哈希取自消息上惰性缓存的 content_hash,
+        消息的增删与压缩天然反映到比对结果中。
+
+        Args:
+            tool_name: 工具名,先按此过滤再比对哈希。
+            dedup_key: 待比对的哈希值。
+
+        Returns:
+            bool: 存在相同的历史调用时为 True。
+        """
+        return any(
+            isinstance(msg, ToolCallMessage)
+            and msg.name == tool_name
+            and msg.content_hash == dedup_key
+            for msg in self._messages
+        )
+
     def check_dedup(self, tool_name: str, args: dict, result: str | list) -> str | None:
-        """检查只读工具结果是否重复。重复时返回去重提示,否则返回 None。"""
+        """检查只读工具结果是否与历史调用完全相同。重复时返回去重提示,否则返回 None。"""
         if (
             tool_name not in self._DEDUP_TOOLS
             or not isinstance(result, str)
@@ -775,18 +841,21 @@ class Session:
             return None
         try:
             args_key = json.dumps(args, sort_keys=True, ensure_ascii=False)
-            dedup_key = hash(tool_name + args_key + result)
-            if dedup_key in self.dedup_cache:
-                from uniclaw.utils.format import format_args_for_display
-
-                args_short = format_args_for_display(args, max_length=200)
-                return (
-                    f"[deduped] {tool_name}({args_short}) "
-                    f"的结果与之前调用完全相同,已省略。"
+            dedup_key = hashlib.sha256(
+                f"{tool_name}\x1f{args_key}\x1f{result}".encode(
+                    "utf-8", errors="replace"
                 )
-            self.dedup_cache.add(dedup_key)
+            ).hexdigest()[:16]
         except (TypeError, ValueError):
-            pass
+            return None
+        if self._find_duplicate_hash(tool_name, dedup_key):
+            from uniclaw.utils.format import format_args_for_display
+
+            args_short = format_args_for_display(args, max_length=200)
+            return (
+                f"[deduped] {tool_name}({args_short}) "
+                f"的结果与之前调用完全相同,已省略。"
+            )
         return None
 
     @classmethod
@@ -1099,7 +1168,6 @@ class Session:
         """清空所有消息。"""
         self._messages.clear()
         self.history.clear()
-        self.dedup_cache.clear()
 
     def delete_messages(self, count: int, source: str = "messages") -> int:
         """从末尾删除指定数量的消息。返回实际删除数量。
@@ -1130,7 +1198,6 @@ class Session:
             del self.history[len(self.history) - count :]
         else:
             self.history.clear()
-        self.dedup_cache.clear()
         return count
 
     def _delete_tail_from_history(self, count: int) -> int:
@@ -1148,14 +1215,12 @@ class Session:
             self._messages.extend(self.history)
         else:
             del self._messages[keep:]
-        self.dedup_cache.clear()
         return count
 
     def replace_messages(self, messages: list[dict[str, Any]]) -> None:
         """用原始 dict 列表整体替换消息。"""
         self._messages.clear()
         self.history.clear()
-        self.dedup_cache.clear()
         for msg in messages:
             role = msg.get("role", "")
             if role == MessageRole.USER:
@@ -1252,7 +1317,6 @@ class Session:
             return
 
         self._messages.clear()
-        self.dedup_cache.clear()
         # 历史检索提示追加到摘要消息末尾,与压缩数据同生共死:
         # system prompt 在 run 开始时一次性构建,而压缩可能在运行中途后台触发,
         # 若提示只放在 system prompt 中,压缩发生后 LLM 便无从得知可用
@@ -1313,7 +1377,6 @@ class Session:
                 quarter = max_chars // 4
                 snipped = len(content) - half - quarter
                 msg.content = f"{content[:half]}\n[... {snipped} 个字符已省略 ...]\n{content[-quarter:]}"
-        self.dedup_cache.clear()
 
     async def maybe_compact(self, config: AppConfig) -> bool:
         """根据上下文长度阈值判断是否需要执行消息压缩。
