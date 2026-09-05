@@ -841,7 +841,7 @@ class MultiAgent:
         # 以 tool 消息回复本次 tool_calls,保证每个工具调用都有对应结果,
         # 避免部分模型校验"assistant.tool_calls 必须有配套 tool 消息"而报错
         loop_break_msg = (
-            f"你已经连续 {LOOP_DETECTION_THRESHOLD} 次使用相同的参数调用工具 `{tool_name_str}`,"
+            f"{TOOL_ERROR}: 你已经连续 {LOOP_DETECTION_THRESHOLD} 次使用相同的参数调用工具 `{tool_name_str}`,"
             f"这表明你可能陷入了死循环。请立即停止当前操作,换一种不同的方法或思路来完成任务。"
         )
         for tc in tool_calls:
