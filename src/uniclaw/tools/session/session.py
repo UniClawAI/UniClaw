@@ -819,7 +819,7 @@ class Session:
             hook_read.name,
         }
     )
-    _DEDUP_MIN_CHARS = 500
+    _DEDUP_MIN_CHARS = 2000
 
     # 可再生工具 — 结果可以重新执行获取,压缩时直接清空
     COMPACTABLE_TOOLS = frozenset(
@@ -888,6 +888,7 @@ class Session:
             return (
                 f"[deduped] {tool_name}({args_short}) "
                 f"的结果与之前调用完全相同,已省略。"
+                f"上次结果开头: {result[:100]}"
             )
         return None
 
