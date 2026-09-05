@@ -110,6 +110,13 @@ def _build_extended_keywords() -> dict[str, list[str]]:
         session_update_title,
     )
     from .session.recall import recall_history, get_history_range
+    from .session.notes import (
+        session_note_add,
+        session_note_update,
+        session_note_delete,
+        session_note_list,
+        session_note_get,
+    )
     from .scheduler.tools import (
         schedule_create,
         schedule_list,
@@ -563,6 +570,41 @@ def _build_extended_keywords() -> dict[str, list[str]]:
             "归档",
             "旧消息",
             "历史消息",
+        ],
+        session_note_add.name: [
+            "会话笔记",
+            "笔记",
+            "记笔记",
+            "添加笔记",
+            "保存笔记",
+            "记录重要信息",
+            "写遗言",
+            "session note",
+            "note add",
+            "压缩前保存",
+        ],
+        session_note_update.name: [
+            "更新笔记",
+            "修改笔记",
+            "编辑笔记",
+            "session note update",
+        ],
+        session_note_delete.name: [
+            "删除笔记",
+            "移除笔记",
+            "session note delete",
+        ],
+        session_note_list.name: [
+            "笔记列表",
+            "列出笔记",
+            "查看笔记",
+            "session note list",
+        ],
+        session_note_get.name: [
+            "查看笔记内容",
+            "笔记详情",
+            "读取笔记",
+            "session note get",
         ],
         get_history_range.name: [
             "历史范围",
@@ -1434,6 +1476,13 @@ def _build_tool_categories() -> dict[str, str]:
         session_update_title,
     )
     from .session.recall import recall_history, get_history_range
+    from .session.notes import (
+        session_note_add,
+        session_note_update,
+        session_note_delete,
+        session_note_list,
+        session_note_get,
+    )
     from .scheduler.tools import (
         schedule_create,
         schedule_list,
@@ -1623,6 +1672,11 @@ def _build_tool_categories() -> dict[str, str]:
         session_update_title.name: "会话管理",
         recall_history.name: "会话管理",
         get_history_range.name: "会话管理",
+        session_note_add.name: "会话管理",
+        session_note_update.name: "会话管理",
+        session_note_delete.name: "会话管理",
+        session_note_list.name: "会话管理",
+        session_note_get.name: "会话管理",
         schedule_create.name: "定时任务",
         schedule_list.name: "定时任务",
         schedule_update.name: "定时任务",
