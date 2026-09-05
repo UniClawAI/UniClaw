@@ -585,6 +585,7 @@ CHECKPOINT_TEMPLATE = """请将以下对话整理为**续作摘要**。这份摘
 - 文件路径、URL、端口号、变量名、命令、API/工具名称必须一字不改完整保留
 - 报错信息保留关键行,可精简不可省略
 - 用户需求一节把每条用户消息原文列出,不合并、不概括
+- 已写入会话笔记(session_note_add)的内容不展开复述,仅在相关处标注"详见笔记 xxx";笔记正文不会因压缩丢失,无需在摘要中备份
 - 信息密度优先,不写空话套话;没有对应内容的分节写"无"
 - 总长度控制在 __BUDGET__ token 以内"""
 
@@ -595,6 +596,14 @@ SUMMARY_PREFIX = "[之前的对话摘要]"
 # 摘要输出 token 预算下限/上限(自适应: 按被替换的 token 量分配)
 _SUMMARY_MIN_TOKENS = 500
 _SUMMARY_MAX_TOKENS = 1500
+
+# 压缩预警阈值系数:达到某压力等级阈值 * 此系数时,通过 wake_agent 注入
+# "写遗言"提示,让 LLM 在压缩发生前把关键信息存入会话笔记。
+# 预警必须先于压缩触发,故取阈值打折(0.9)。
+_COMPACT_WARN_FACTOR = 0.9
+# 预警的最低压力等级:低于此等级的压缩不损失信息(仅微压缩清空可再生工具结果),
+# 无需预警。0 = 含 level 0 在内都预警,1 = 只预警 level 1 及以上。
+_WARN_LEVEL_MIN = 1
 
 
 def _build_summary_transcript(
@@ -670,6 +679,26 @@ class SessionType(StrEnum):
 
 
 @dataclass
+class SessionNote:
+    """会话笔记 — 单条笔记条目,随会话持久化,压缩时摘要注入。"""
+
+    name: str          # 唯一标识,简短名称
+    description: str   # 一句话摘要
+    content: str       # 完整内容
+
+    def to_dict(self) -> dict:
+        return {"name": self.name, "description": self.description, "content": self.content}
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "SessionNote":
+        return cls(
+            name=data.get("name", ""),
+            description=data.get("description", ""),
+            content=data.get("content", ""),
+        )
+
+
+@dataclass
 class Session:
     root_dir: Path | None = None
     id: str = ""
@@ -677,6 +706,7 @@ class Session:
     title: str | None = None
     session_type: SessionType = SessionType.CONSOLE
     system_prompt: str | None = None
+    session_notes: list[SessionNote] = field(default_factory=list)
 
     @property
     def is_wechat(self) -> bool:
@@ -691,6 +721,9 @@ class Session:
     _compact_count: int = field(
         default=0, repr=False
     )  # _messages 开头的压缩摘要消息数 (0 或 2)
+    _compact_warned_levels: set[int] = field(
+        default_factory=set, repr=False
+    )  # 已注入过"写遗言"预警的压力等级 (0/1/2)
     from uniclaw.tools.fs import Glob, Read
     from uniclaw.tools.search import webSearch
     from uniclaw.tools.shell import Grep
@@ -940,6 +973,9 @@ class Session:
                 session._compact_count = (
                     0 if len(history_data) == len(messages_data) else 2
                 )
+        # 加载会话笔记
+        for note_data in data.get("session_notes", []):
+            session.session_notes.append(SessionNote.from_dict(note_data))
         return session
 
     def to_openai_messages(self) -> list[dict[str, str | list[dict[str, Any]]]]:
@@ -1024,6 +1060,7 @@ class Session:
             "compact_count": self._compact_count,
             "compacted": [m.to_dict() for m in self.history[:old_count]],
             "messages": self.to_messages(),
+            "session_notes": [n.to_dict() for n in self.session_notes],
         }
         return data
 
@@ -1330,6 +1367,16 @@ class Session:
         if recall_hint:
             summary_content += f"\n\n{recall_hint}"
 
+        # 注入会话笔记快照 — 标注为旧快照,LLM 需要详情时应调用笔记工具
+        if self.session_notes:
+            from uniclaw.tools.session.notes import session_note_list
+
+            notes_section = "\n\n## 会话笔记(上轮对话快照,可能已过期,仅供参考)\n"
+            for note in self.session_notes:
+                notes_section += f"- [{note.name}]: {note.description}\n"
+            notes_section += f"使用 {session_note_list.name} 查看全部笔记。\n"
+            summary_content += notes_section
+
         # 直接操作 _messages,不走 add_* 以避免污染 history
         self._messages.append(UserMessage(content=summary_content))
         self._messages.append(
@@ -1341,6 +1388,7 @@ class Session:
         )
         self._messages.extend(recent)
         self._compact_count = 2
+        self._compact_warned_levels.clear()  # 重置预警状态,下个压缩周期可再次预警
 
     def _find_split_point(self, keep_ratio: float = 0.3) -> int:
         """查找分割点使最近部分约占总 token 的 keep_ratio。"""
@@ -1385,12 +1433,35 @@ class Session:
         - level 0 (50%): 仅微压缩(清空旧工具结果)
         - level 1 (70%): 微压缩 + LLM 结构化摘要
         - level 2 (85%): 微压缩 + 更激进的 LLM 摘要
+
+        压缩前预警:每跨过一个压力阈值,在其 *_COMPACT_WARN_FACTOR 比例处通过
+        wake_agent 注入一次"写遗言"提示,让 LLM 在压缩发生前把关键信息存入会话笔记。
         """
-        from uniclaw.compaction import get_context_limit, get_pressure_level
+        from uniclaw.compaction import (
+            PRESSURE_LEVELS,
+            get_context_limit,
+            get_pressure_level,
+        )
 
         model = config.model_name[0] if config.model_name else "unknown"
         limit = await get_context_limit(model)
         current_tokens = self.estimate_tokens(model)
+        ratio = current_tokens / limit if limit > 0 else 0
+
+        # 压缩前预警 — 每个压力等级只预警一次:
+        # 跨过 min(该等级阈值, 上一等级阈值)*_COMPACT_WARN_FACTOR 时注入提示,
+        # 例如 70% 档在 63% 预警、85% 档在 76.5% 预警。
+        # level 0(50%)仅微压缩(清空可再生工具结果,可重新获取),信息无损,不预警。
+        # 预警等级下限: WARN_LEVEL_MIN 之下的等级只做 snip,不触发 LLM 摘要。
+        for i, (threshold, _) in enumerate(PRESSURE_LEVELS):
+            if i < _WARN_LEVEL_MIN:
+                continue
+            upper = PRESSURE_LEVELS[i - 1][0] if i > 0 else 1.0
+            warn_at = min(threshold, upper) * _COMPACT_WARN_FACTOR
+            if ratio >= warn_at and i not in self._compact_warned_levels:
+                self._compact_warned_levels.add(i)
+                await self._notify_compact_warning(config, threshold)
+
         level = await get_pressure_level(current_tokens, model)
 
         if level < 0:
@@ -1398,17 +1469,40 @@ class Session:
 
         # level 0+: 微压缩 — 清空可再生工具结果
         self.snip_old_tool_results()
-        if self.estimate_tokens(model) <= limit * 0.50:
+        if self.estimate_tokens(model) <= limit * PRESSURE_LEVELS[-1][0]:
             return True
 
         # level 1+: LLM 结构化摘要 (keep_ratio=0.3)
         await self.compact(config, keep_ratio=0.3)
-        if self.estimate_tokens(model) <= limit * 0.70:
+        if self.estimate_tokens(model) <= limit * PRESSURE_LEVELS[1][0]:
             return True
 
         # level 2: 更激进的摘要 (keep_ratio=0.15)
         await self.compact(config, keep_ratio=0.15)
         return True
+
+    async def _notify_compact_warning(self, config: AppConfig, threshold: float) -> None:
+        """通过 wake_agent 注入压缩前"写遗言"提示。
+
+        压缩可能由后台任务触发,当前 agent 可能不在运行,因此走统一唤醒通道:
+        运行中 → user_queue 注入;空闲 → 重新拉起。
+        """
+        from uniclaw.utils.constants import SYSTEM_PREFIX
+        from uniclaw.tools.session.notes import session_note_add
+
+        message = (
+            f"{SYSTEM_PREFIX}[压缩预警] 上下文用量即将达到 {threshold:.0%} 压缩阈值,"
+            "超过该阈值的早期消息将被压缩为摘要,摘要可能丢失细节。"
+            "如有压缩后仍需保留的关键信息(配置值、决策结论、路径、密钥格式等),"
+            f"请立即调用 {session_note_add.name} 保存到会话笔记。"
+        )
+
+        try:
+            from uniclaw.utils.wakeup import wake_agent
+
+            await wake_agent(message, config)
+        except Exception as e:
+            logger.warning("注入压缩预警失败: %s", e)
 
     def build_context_summary(
         self,
