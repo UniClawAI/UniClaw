@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from uniclaw.utils.gitignore import is_ignored_by_gitignore
+
 from uniclaw.utils.read_text import read_text_file
 
 # 支持的文本文件扩展名
@@ -47,30 +49,33 @@ def load_file(path: Path) -> list[Document]:
     raise ValueError(f"不支持的文件格式: {suffix}")
 
 
-def load_directory(path: Path, recursive: bool = True) -> list[Document]:
+def load_directory(path: Path, recursive: bool = True) -> tuple[list[Document], int]:
     """加载目录下的所有支持格式文件。
+
+    逐级向上查找 .gitignore 过滤文件和目录,无任何 .gitignore 时使用
+    兜底规则(隐藏文件 + __pycache__/node_modules 等常见垃圾目录)。
 
     Args:
         path: 目录路径
         recursive: 是否递归子目录
 
     Returns:
-        文档列表
+        (文档列表, 跳过的无法读取文件数)
     """
     docs = []
+    skipped = 0
     pattern = "**/*" if recursive else "*"
-    for file_path in sorted(path.glob(pattern)):
-        if not file_path.is_file():
-            continue
-        # 跳过隐藏文件和隐藏目录
-        if any(part.startswith(".") for part in file_path.relative_to(path).parts):
-            continue
+    candidates = [f for f in sorted(path.glob(pattern)) if f.is_file()]
+    # 批量按 .gitignore 规则过滤(覆盖隐藏文件和依赖/构建目录)
+    ignored = set(is_ignored_by_gitignore(candidates))
+    candidates = [f for f in candidates if f not in ignored]
+    for file_path in candidates:
         if file_path.suffix.lower() in TEXT_EXTENSIONS or file_path.suffix.lower() == ".pdf":
             try:
                 docs.extend(load_file(file_path))
-            except (ValueError, Exception):
-                continue  # 跳过无法读取的文件
-    return docs
+            except Exception:
+                skipped += 1  # 跳过无法读取的文件,计数不静默丢弃
+    return docs, skipped
 
 
 def _load_text(path: Path) -> list[Document]:

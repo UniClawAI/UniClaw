@@ -57,6 +57,8 @@ class TextSplitter:
         for doc in documents:
             texts = self.split_text(doc.content)
             for i, text in enumerate(texts):
+                if not text.strip():
+                    continue
                 chunk = Chunk(
                     content=text,
                     metadata={
@@ -168,7 +170,7 @@ class RecursiveSplitter(TextSplitter):
                 current_chunk = test_chunk
             else:
                 if current_chunk:
-                    chunks.append(current_chunk)
+                    chunks.append(current_chunk.strip())
                     # 保留尾部 overlap 部分作为下一个块的开头
                     if self.chunk_overlap > 0:
                         overlap_text = self._take_tail(current_chunk, self.chunk_overlap)
@@ -196,8 +198,8 @@ class RecursiveSplitter(TextSplitter):
                     else:
                         current_chunk = split
 
-        if current_chunk:
-            chunks.append(current_chunk)
+        if current_chunk and current_chunk.strip():
+            chunks.append(current_chunk.strip())
 
         return chunks
 

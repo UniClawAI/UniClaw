@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from uniclaw.config import AppConfig
@@ -12,6 +13,30 @@ from uniclaw.utils.constants import TOOL_ERROR
 from .loader import load_directory, load_file
 from .rag import RAGManager
 from .splitter import split_documents
+
+# collection 名称规则: 仅小写字母、数字、连字符和下划线
+_COLLECTION_NAME_RE = re.compile(r"^[a-z0-9_-]+$")
+
+
+def validate_collection_name(collection: str) -> str | None:
+    """校验 collection 名称,合法返回 None,非法返回错误信息。
+
+    Args:
+        collection: 集合名称
+
+    Returns:
+        str | None: 错误描述,名称合法时为 None
+    """
+    if not collection:
+        return "collection 名称不能为空"
+    if len(collection) > 64:
+        return "collection 名称过长(最多 64 字符)"
+    if not _COLLECTION_NAME_RE.match(collection):
+        return (
+            f"collection 名称 '{collection}' 非法,仅允许小写字母、数字、"
+            "连字符和下划线,不支持中文"
+        )
+    return None
 
 
 def _validate_chunk_params(chunk_size: int, chunk_overlap: int) -> None:
@@ -26,6 +51,11 @@ def _validate_chunk_params(chunk_size: int, chunk_overlap: int) -> None:
     """
     if chunk_size <= 0:
         raise ValueError("chunk_size 必须为正整数")
+    if chunk_size > 32000:
+        raise ValueError(
+            f"chunk_size 不能超过 32000,当前值: {chunk_size}。"
+            "过大的 chunk_size 会导致生成的块超过 embedding 模型最大输入长度"
+        )
     if chunk_overlap < 0:
         raise ValueError("chunk_overlap 不能为负数")
     if chunk_overlap >= chunk_size:
@@ -33,12 +63,17 @@ def _validate_chunk_params(chunk_size: int, chunk_overlap: int) -> None:
 
 
 _manager_cache: dict[tuple, RAGManager] = {}
+_MANAGER_CACHE_MAX = 32  # 缓存上限,防止长时间运行时内存泄漏
 
 
 def _get_manager(config: AppConfig, scope: Scope) -> RAGManager:
-    """获取 RAGManager 实例(带缓存)。"""
+    """获取 RAGManager 实例(带缓存,LRU 淘汰)。"""
     key = (config.current_agent.session.id, scope)
     if key not in _manager_cache:
+        # 超出上限时淘汰最早的条目
+        if len(_manager_cache) >= _MANAGER_CACHE_MAX:
+            evict_key = next(iter(_manager_cache))
+            _manager_cache.pop(evict_key)
         _manager_cache[key] = RAGManager(config, scope)
     return _manager_cache[key]
 
@@ -61,8 +96,9 @@ async def rag_ingest(
     path: str,
     collection: str,
     chunk_size: int = 1000,
-    chunk_overlap: int = 200,
+    chunk_overlap: int = 200, 
     scope: Scope = Scope.PROJECT,
+    contextual: bool = False,
     tool_runtime: ToolRuntime = None,
 ) -> str:
     """
@@ -74,6 +110,9 @@ async def rag_ingest(
         chunk_size: 每个文档块的最大 token 数。默认为 1000。
         chunk_overlap: 相邻文档块的重叠 token 数。默认为 200。
         scope: 存储级别,Scope.PROJECT(项目级) 或 Scope.USER(用户级)。
+        contextual: 是否启用 Contextual Retrieval — 用 mini 模型为每个块生成情境上下文,
+            拼接到块内容前再入库。能显著提升指代性/缩写类内容的召回率,但会增加导入耗时。
+            默认为 False。
 
     Returns:
         str: 处理结果摘要,包含文件数、块数和集合信息。
@@ -83,6 +122,11 @@ async def rag_ingest(
         return f"{TOOL_ERROR}: 无法获取配置"
 
     try:
+        # 校验 collection 名称
+        err = validate_collection_name(collection)
+        if err:
+            return f"{TOOL_ERROR}: {err}"
+
         # 验证参数
         _validate_chunk_params(chunk_size, chunk_overlap)
 
@@ -93,14 +137,20 @@ async def rag_ingest(
 
         # 加载文档
         await tool_runtime.stream(f"📂 正在加载: {path}\n")
+        skipped = 0
         if target.is_file():
             docs = load_file(target)
         else:
-            docs = load_directory(target)
+            docs, skipped = load_directory(target)
 
         if not docs:
-            return f"{TOOL_ERROR}: 未在 {path} 中找到可读取的文档"
+            msg = f"{TOOL_ERROR}: 未在 {path} 中找到可读取的文档"
+            if skipped:
+                msg += f"({skipped} 个文件读取失败已跳过)"
+            return msg
         await tool_runtime.stream(f"✅ 加载完成,共 {len(docs)} 个文档\n")
+        if skipped:
+            await tool_runtime.stream(f"⚠️  {skipped} 个文件读取失败已跳过\n")
 
         # 拆分文档
         await tool_runtime.stream("✂️  正在拆分文档...\n")
@@ -112,31 +162,91 @@ async def rag_ingest(
         # 存入向量数据库
         manager = _get_manager(config, scope)
 
-        # 导入前先删除同源文档,避免重复
+        # 增量导入: 按内容哈希跳过未变更的块,只重灌变更的部分
         sources = {
             doc.metadata.get("source") for doc in docs if doc.metadata.get("source")
         }
-        deleted = 0
+        existing_hashes: set[str] = set()
         for source in sources:
-            deleted += manager.delete_by_source(collection, source)
+            existing_hashes |= manager.get_existing_hashes(collection, source)
+
+        hashes = await manager.compute_chunk_hashes(
+            chunks,
+            lambda cur, tot: tool_runtime.stream(f"\r🔢 计算哈希: {cur}/{tot}"),
+        )
+        new_chunks = []
+        new_hashes = []
+        for chunk, h in zip(chunks, hashes):
+            if h in existing_hashes:
+                continue  # 内容未变更,跳过
+            new_chunks.append(chunk)
+            new_hashes.append(h)
+
+        # 已存在于集合但本次不再出现的旧块需要清除(文件被修改或删除的场景)
+        stale_hashes = existing_hashes - set(hashes)
+        # 仅当存在同源旧块且内容有变化时才需要清理;全新文档无需删除
+        deleted = 0
+        if stale_hashes:
+            deleted = manager.delete_by_hashes(collection, stale_hashes)
+
+        skipped_count = len(chunks) - len(new_chunks)
+        if skipped_count:
+            await tool_runtime.stream(
+                f"⏭️  {skipped_count} 个块内容未变更,跳过\n"
+            )
+        if not new_chunks:
+            info = manager.get_collection_info(collection)
+            total = info["count"] if info else "原"
+            msg = (
+                f"全部 {len(chunks)} 个块内容未变更,无需重新导入。"
+                f"集合 '{collection}' 保持 {total} 个文档块。"
+            )
+            await tool_runtime.stream(f"✅ {msg}\n")
+            return msg
         if deleted:
             await tool_runtime.stream(f"🧹 已清除 {deleted} 个旧文档块\n")
 
-        await tool_runtime.stream(f"⚙️  正在生成 embedding 并入库(共 {len(chunks)} 个块)...\n")
+        # Contextual Retrieval: 为新块生成情境上下文(哈希已在原始内容上计算,不影响增量判断)
+        if contextual and new_chunks:
+            await tool_runtime.stream(
+                f"🧠 正在为 {len(new_chunks)} 个新块生成情境上下文...\n"
+            )
+            try:
+
+                async def _ctx_progress(done: int, total: int) -> None:
+                    await tool_runtime.stream(f"\r⏳ 上下文生成: {done}/{total}")
+
+                contexts = await manager.generate_chunk_contexts(
+                    new_chunks, progress_callback=_ctx_progress
+                )
+                for chunk, ctx in zip(new_chunks, contexts):
+                    if ctx:
+                        chunk.content = f"{ctx}\n\n{chunk.content}"
+                await tool_runtime.stream("\n")
+            except Exception as e:
+                await tool_runtime.stream(f"\n⚠️ 上下文生成失败,按原始内容入库: {e}\n")
+
+        await tool_runtime.stream(
+            f"⚙️  正在生成 embedding 并入库(共 {len(new_chunks)} 个新块)...\n"
+        )
 
         async def _progress(done: int, total: int) -> None:
             pct = done * 100 // total if total else 0
             await tool_runtime.stream(f"\r⏳ 进度: {done}/{total} ({pct}%)")
 
-        count = await manager.ingest(collection, chunks, progress_callback=_progress)
+        # 将 content_hash 写入 metadata,供下次增量导入比对
+        for chunk, h in zip(new_chunks, new_hashes):
+            chunk.metadata["content_hash"] = h
+
+        count = await manager.ingest(collection, new_chunks, progress_callback=_progress)
         await tool_runtime.stream("\n")
 
         info = manager.get_collection_info(collection)
         total = info["count"] if info else count
 
-        msg = (
-            f"成功导入 {len(docs)} 个文档,拆分为 {count} 个块,存入集合 '{collection}'。"
-        )
+        msg = f"成功导入 {len(docs)} 个文档,新增 {count} 个块,存入集合 '{collection}'。"
+        if skipped_count:
+            msg = f"{skipped_count} 个未变更块已跳过。" + msg
         if deleted:
             msg = f"已清除 {deleted} 个旧文档块。" + msg
         msg += f"集合当前共 {total} 个文档块。"
@@ -157,6 +267,7 @@ async def rag_search(
     rerank: bool = True,
     use_bm25: bool = True,
     intent: str = "",
+    where: dict | None = None,
     tool_runtime: ToolRuntime = None,
 ) -> str:
     """
@@ -174,6 +285,12 @@ async def rag_search(
         intent: 搜索意图描述,描述当前想要搜索什么样的数据,供 LLM 重排序时判断相关性参考。
             传入非空 intent 时自动启用重排序(即使 rerank=False),避免意图描述被忽略。
             可为空字符串。
+        where: ChromaDB where 条件,用于元数据过滤。
+            可用字段: source(完整路径), filename(文件名), suffix(扩展名), chunk_index(块索引), created_at(导入时间)。
+            示例: {"filename": "a.txt"}、{"suffix": {"$in": [".md", ".txt"]}}、
+            {"$and": [{"chunk_index": {"$gt": 100}}, {"suffix": ".md"}]}。
+            注意: source 是文件完整路径,按文件名过滤请用 filename 字段。
+            向量与 BM25 两路同时生效。默认 None 表示不过滤。
 
     Returns:
         str: 格式化的检索结果,包含相关文档块内容、来源和相似度分数。
@@ -182,28 +299,55 @@ async def rag_search(
     if not config:
         return f"{TOOL_ERROR}: 无法获取配置"
 
+    if not query or not query.strip():
+        return f"{TOOL_ERROR}: 查询文本不能为空"
+    if top_k < 1:
+        return f"{TOOL_ERROR}: top_k 必须大于等于 1,当前值: {top_k}"
+    if top_k > 100:
+        return f"{TOOL_ERROR}: top_k 不能超过 100,当前值: {top_k}"
+
     try:
+        err = validate_collection_name(collection)
+        if err:
+            return f"{TOOL_ERROR}: {err}"
+
         all_results = []
-        seen_contents = set()
+        seen_keys: set[str] = set()
         errors = []
+        collection_exists = False
+
+        await tool_runtime.stream(f"🔍 正在搜索集合 '{collection}'...\n")
 
         # 搜索两个层级,search() 内部已处理集合不存在/为空的情况
         for scope in [Scope.PROJECT, Scope.USER]:
             try:
                 manager = _get_manager(config, scope)
+                # 检查集合是否存在
+                info = manager.get_collection_info(collection)
+                if info:
+                    collection_exists = True
                 results = await manager.search(
-                    collection, query, top_k, rerank, use_bm25, intent
+                    collection,
+                    query,
+                    top_k,
+                    rerank,
+                    use_bm25,
+                    intent,
+                    where=where,
                 )
                 for r in results:
-                    # 按内容去重
-                    if r["content"] not in seen_contents:
-                        seen_contents.add(r["content"])
+                    # 按 (内容, 来源) 去重,避免同内容不同来源的块被合并
+                    dedup_key = f"{r['content']}|{r.get('metadata', {}).get('source', '')}"
+                    if dedup_key not in seen_keys:
+                        seen_keys.add(dedup_key)
                         all_results.append(r)
             except Exception as e:
                 errors.append(f"{scope.value}: {e}")
                 continue
 
         if not all_results:
+            if not collection_exists:
+                return f"{TOOL_ERROR}: 集合 '{collection}' 不存在。请先使用 {rag_ingest.name} 导入文档创建集合。"
             msg = f"{TOOL_ERROR}: 在集合 '{collection}' 中未找到与查询相关的结果"
             if errors:
                 msg += f"\n搜索过程中出现错误:\n" + "\n".join(
@@ -322,7 +466,14 @@ def rag_set_desc(
     if not config:
         return f"{TOOL_ERROR}: 无法获取配置"
 
+    if not description or not description.strip():
+        return f"{TOOL_ERROR}: 描述内容不能为空"
+
     try:
+        err = validate_collection_name(collection)
+        if err:
+            return f"{TOOL_ERROR}: {err}"
+
         manager = _get_manager(config, scope)
         if manager.set_collection_desc(collection, description):
             return f"已更新集合 '{collection}' 的描述: {description}"
@@ -352,6 +503,10 @@ def rag_delete_collection(
         return f"{TOOL_ERROR}: 无法获取配置"
 
     try:
+        err = validate_collection_name(collection)
+        if err:
+            return f"{TOOL_ERROR}: {err}"
+
         manager = _get_manager(config, scope)
         if manager.delete_collection(collection):
             return f"已删除集合 '{collection}'"
@@ -411,6 +566,7 @@ async def _judge_relevance(
             thinking=False,
             config=config,
             temperature=0.3,
+            response_format={"type": "json_object"},
         )
         result = parse_json_from_llm(resp.content)
         judgments = result.get("judgments", []) if result else []
@@ -438,6 +594,7 @@ async def rag_evaluate(
     rerank: bool = True,
     use_bm25: bool = True,
     use_llm_judge: bool = False,
+    where: dict | None = None,
     tool_runtime: ToolRuntime = None,
 ) -> str:
     """
@@ -454,6 +611,8 @@ async def rag_evaluate(
         use_bm25: 是否启用 BM25 关键词检索实现多路召回。默认为 True。
         use_llm_judge: 是否启用 LLM judge 评估检索相关性。默认为 False。
             启用后计算平均相关性分数和 Context Precision@k,无需人工标注。
+        where: ChromaDB where 条件,用于元数据过滤。可用字段: filename, suffix, chunk_index 等。
+            示例: {"filename": "a.txt"}、{"suffix": {"$in": [".md", ".txt"]}}。默认 None 表示不过滤。
 
     Returns:
         str: 评估报告,包含总指标和每个问题的检索明细。
@@ -467,21 +626,26 @@ async def rag_evaluate(
         return f"{TOOL_ERROR}: top_k 必须为正整数"
 
     try:
+        err = validate_collection_name(collection)
+        if err:
+            return f"{TOOL_ERROR}: {err}"
+
         # 为每个问题执行多层级检索,按内容去重
         all_retrieved: dict[str, list[dict]] = {}
         errors = []
         for qi, query in enumerate(queries):
             retrieved = []
-            seen_contents = set()
+            seen_keys: set[str] = set()
             for s in [Scope.PROJECT, Scope.USER]:
                 try:
                     manager = _get_manager(config, s)
                     results = await manager.search(
-                        collection, query, top_k, rerank, use_bm25
+                        collection, query, top_k, rerank, use_bm25, where=where
                     )
                     for r in results:
-                        if r["content"] not in seen_contents:
-                            seen_contents.add(r["content"])
+                        dedup_key = f"{r['content']}|{r.get('metadata', {}).get('source', '')}"
+                        if dedup_key not in seen_keys:
+                            seen_keys.add(dedup_key)
                             retrieved.append(r)
                 except Exception as e:
                     errors.append(f"问题 {qi + 1} ({s.value}): {e}")

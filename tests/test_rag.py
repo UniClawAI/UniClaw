@@ -25,7 +25,7 @@ from uniclaw.tools.rag.loader import (
     load_directory,
     load_file,
 )
-from uniclaw.tools.rag.rag import RAGManager
+from uniclaw.tools.rag.rag import RAGManager, _match_where
 from uniclaw.tools.rag.splitter import (
     Chunk,
     FixedSizeSplitter,
@@ -35,6 +35,7 @@ from uniclaw.tools.rag.splitter import (
 from uniclaw.tools.rag.tools import (
     _get_manager,
     _judge_relevance,
+    _manager_cache,
     rag_delete_collection,
     rag_evaluate,
     rag_ingest,
@@ -230,8 +231,9 @@ class TestLoadDirectory:
         (dir_path / "subdir").mkdir(exist_ok=True)
         ((dir_path / "subdir") / "file3.md").write_text("content3")
 
-        docs = load_directory(dir_path, recursive=True)
+        docs, skipped = load_directory(dir_path, recursive=True)
         assert len(docs) == 3
+        assert skipped == 0
 
     def test_load_non_recursive(self, tmp_path):
         """测试非递归加载目录"""
@@ -244,7 +246,7 @@ class TestLoadDirectory:
         (dir_path / "subdir").mkdir(exist_ok=True)
         ((dir_path / "subdir") / "file3.md").write_text("content3")
 
-        docs = load_directory(dir_path, recursive=False)
+        docs, skipped = load_directory(dir_path, recursive=False)
         assert len(docs) == 2
 
     def test_skip_hidden_files(self, tmp_path):
@@ -254,7 +256,7 @@ class TestLoadDirectory:
             ".hidden.txt": "hidden content",
         }
         dir_path = _create_temp_directory(tmp_path, files)
-        docs = load_directory(dir_path)
+        docs, _ = load_directory(dir_path)
         assert len(docs) == 1
         assert docs[0].metadata["filename"] == "file1.txt"
 
@@ -269,8 +271,37 @@ class TestLoadDirectory:
         hidden_dir.mkdir()
         (hidden_dir / "file2.txt").write_text("hidden content")
 
-        docs = load_directory(dir_path, recursive=True)
+        docs, _ = load_directory(dir_path, recursive=True)
         assert len(docs) == 1
+
+    def test_skip_node_modules(self, tmp_path):
+        """测试兜底规则跳过 node_modules/__pycache__ 等依赖目录"""
+        dir_path = tmp_path / "test_dir"
+        dir_path.mkdir()
+        (dir_path / "file1.txt").write_text("content1")
+
+        for junk in ("node_modules", "__pycache__"):
+            junk_dir = dir_path / junk
+            junk_dir.mkdir()
+            (junk_dir / f"{junk}.txt").write_text("junk content")
+
+        docs, _ = load_directory(dir_path, recursive=True)
+        assert len(docs) == 1
+        assert docs[0].metadata["filename"] == "file1.txt"
+
+    def test_gitignore_rules_respected(self, tmp_path):
+        """测试 .gitignore 规则过滤"""
+        dir_path = _create_temp_directory(tmp_path, {
+            "file1.txt": "content1",
+            "build/out.txt": "build output",
+            "secret.txt": "secret",
+        })
+        (dir_path / ".gitignore").write_text("build/\nsecret.txt\n", encoding="utf-8")
+
+        docs, _ = load_directory(dir_path, recursive=True)
+        names = {d.metadata["filename"] for d in docs}
+        # .gitignore 本身无后缀(Path('.gitignore').suffix == ''),不会进入文档
+        assert names == {"file1.txt"}
 
     def test_unsupported_files_skipped(self, tmp_path):
         """测试跳过不支持的文件格式"""
@@ -279,14 +310,29 @@ class TestLoadDirectory:
             "file2.xyz": "unsupported content",
         }
         dir_path = _create_temp_directory(tmp_path, files)
-        docs = load_directory(dir_path)
+        docs, _ = load_directory(dir_path)
         assert len(docs) == 1
+
+    def test_unreadable_files_counted(self, tmp_path):
+        """测试无法读取的文件计数返回"""
+        files = {
+            "file1.txt": "content1",
+            "file2.md": "content2",
+        }
+        dir_path = _create_temp_directory(tmp_path, files)
+        with patch(
+            "uniclaw.tools.rag.loader.load_file",
+            side_effect=[load_file(dir_path / "file1.txt"), OSError("disk error")],
+        ):
+            docs, skipped = load_directory(dir_path)
+        assert len(docs) == 1
+        assert skipped == 1
 
     def test_empty_directory(self, tmp_path):
         """测试空目录"""
         dir_path = tmp_path / "empty"
         dir_path.mkdir()
-        docs = load_directory(dir_path)
+        docs, _ = load_directory(dir_path)
         assert len(docs) == 0
 
 
@@ -552,9 +598,22 @@ class TestRAGManagerRRFMerge:
         bm25_results = [{"content": "doc1", "bm25_score": 0.8}]
         merged = RAGManager._rrf_merge(vector_results, bm25_results, top_k=10, k=30)
         assert len(merged) == 1
-        # RRF 分数应该使用 k=30 计算
-        expected_score = 1.0 / (30 + 0) + 1.0 / (30 + 0)  # 两路都是 rank 0
+        # RRF 分数应使用 k=30 计算并归一化到 [0, 1](理论最大值 2/k)
+        expected_score = 1.0  # 双路 rank 0,恰好达到归一化最大值
         assert abs(merged[0]["rrf_score"] - expected_score) < 0.001
+
+    def test_rrf_merge_scores_normalized(self):
+        """测试 RRF 分数归一化: 双路命中的分数高于单路命中"""
+        vector_results = [
+            {"content": "both", "distance": 0.1},
+            {"content": "vector-only", "distance": 0.3},
+        ]
+        bm25_results = [{"content": "both", "bm25_score": 0.8}]
+        merged = RAGManager._rrf_merge(vector_results, bm25_results, top_k=10)
+        by_content = {r["content"]: r["rrf_score"] for r in merged}
+        # 双路第一名归一化后为 1.0,单路第二名为 1/(60+1) / (2/60) ≈ 0.49
+        assert by_content["both"] == pytest.approx(1.0)
+        assert by_content["vector-only"] < 0.5
 
 
 # ── tools.py 测试 ─────────────────────────────────────────
@@ -562,6 +621,13 @@ class TestRAGManagerRRFMerge:
 
 class TestRAGIngest:
     """rag_ingest 工具测试"""
+
+    @pytest.fixture(autouse=True)
+    def _clear_cache(self):
+        """清除 _manager_cache 避免 mock 跨测试泄漏。"""
+        _manager_cache.clear()
+        yield
+        _manager_cache.clear()
 
     @pytest.mark.asyncio
     async def test_no_config(self):
@@ -606,7 +672,9 @@ class TestRAGIngest:
 
         mock_manager = MagicMock()
         mock_manager_class.return_value = mock_manager
-        mock_manager.delete_by_source.return_value = 0
+        mock_manager.get_existing_hashes.return_value = set()
+        mock_manager.compute_chunk_hashes.return_value = ["h1"]
+        mock_manager.delete_by_hashes.return_value = 0
         mock_manager.ingest = AsyncMock(return_value=1)
         mock_manager.get_collection_info.return_value = {"count": 1}
 
@@ -630,7 +698,9 @@ class TestRAGIngest:
 
         mock_manager = MagicMock()
         mock_manager_class.return_value = mock_manager
-        mock_manager.delete_by_source.return_value = 0
+        mock_manager.get_existing_hashes.return_value = set()
+        mock_manager.compute_chunk_hashes.return_value = ["h1", "h2"]
+        mock_manager.delete_by_hashes.return_value = 0
         mock_manager.ingest = AsyncMock(return_value=2)
         mock_manager.get_collection_info.return_value = {"count": 2}
 
@@ -642,9 +712,90 @@ class TestRAGIngest:
         assert "成功导入" in result
         assert "2 个文档" in result
 
+    @pytest.mark.asyncio
+    @patch("uniclaw.tools.rag.tools.RAGManager")
+    async def test_incremental_skip_unchanged(self, mock_manager_class, tmp_path):
+        """增量导入: 所有块哈希未变更时跳过"""
+        config = _create_mock_config(root_dir=tmp_path)
+        file_path = _create_temp_file(tmp_path, "test.txt", "Hello, world!")
+
+        mock_manager = MagicMock()
+        mock_manager_class.return_value = mock_manager
+        # 所有块哈希已存在 → 全部跳过
+        mock_manager.get_existing_hashes.return_value = {"h1"}
+        mock_manager.compute_chunk_hashes.return_value = ["h1"]
+        mock_manager.get_collection_info.return_value = {"count": 1}
+
+        result = await rag_ingest.func(
+            path=str(file_path),
+            collection="test",
+            tool_runtime=ToolRuntime(config=config),
+        )
+        assert "未变更" in result
+        # 不应调用 ingest
+        mock_manager.ingest.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch("uniclaw.tools.rag.tools.RAGManager")
+    async def test_incremental_delete_stale(self, mock_manager_class, tmp_path):
+        """增量导入: 文件内容变更后删除旧块"""
+        config = _create_mock_config(root_dir=tmp_path)
+        file_path = _create_temp_file(tmp_path, "test.txt", "New content!")
+
+        mock_manager = MagicMock()
+        mock_manager_class.return_value = mock_manager
+        # 旧哈希 old_h1 不在新哈希中 → 应被删除
+        mock_manager.get_existing_hashes.return_value = {"old_h1"}
+        mock_manager.compute_chunk_hashes.return_value = ["new_h1"]
+        mock_manager.delete_by_hashes.return_value = 1
+        mock_manager.ingest = AsyncMock(return_value=1)
+        mock_manager.get_collection_info.return_value = {"count": 1}
+
+        result = await rag_ingest.func(
+            path=str(file_path),
+            collection="test",
+            tool_runtime=ToolRuntime(config=config),
+        )
+        assert "成功导入" in result
+        mock_manager.delete_by_hashes.assert_called_once_with("test", {"old_h1"})
+
+    @pytest.mark.asyncio
+    @patch("uniclaw.tools.rag.tools.RAGManager")
+    async def test_contextual_enabled(self, mock_manager_class, tmp_path):
+        """测试启用 Contextual Retrieval"""
+        config = _create_mock_config(root_dir=tmp_path)
+        file_path = _create_temp_file(tmp_path, "test.txt", "Hello, world!")
+
+        mock_manager = MagicMock()
+        mock_manager_class.return_value = mock_manager
+        mock_manager.get_existing_hashes.return_value = set()
+        mock_manager.compute_chunk_hashes.return_value = ["h1"]
+        mock_manager.delete_by_hashes.return_value = 0
+        mock_manager.generate_chunk_contexts = AsyncMock(
+            return_value=["这是一段测试文档"]
+        )
+        mock_manager.ingest = AsyncMock(return_value=1)
+        mock_manager.get_collection_info.return_value = {"count": 1}
+
+        result = await rag_ingest.func(
+            path=str(file_path),
+            collection="test",
+            contextual=True,
+            tool_runtime=ToolRuntime(config=config),
+        )
+        assert "成功导入" in result
+        mock_manager.generate_chunk_contexts.assert_called_once()
+
 
 class TestRAGSearch:
     """rag_search 工具测试"""
+
+    @pytest.fixture(autouse=True)
+    def _clear_cache(self):
+        """清除 _manager_cache 避免 mock 跨测试泄漏。"""
+        _manager_cache.clear()
+        yield
+        _manager_cache.clear()
 
     @pytest.mark.asyncio
     async def test_no_config(self):
@@ -699,11 +850,11 @@ class TestRAGSearch:
     @pytest.mark.asyncio
     @patch("uniclaw.tools.rag.tools._get_manager")
     async def test_search_deduplication(self, mock_get_manager, tmp_path):
-        """测试搜索结果去重"""
+        """测试搜索结果去重:同内容同来源去重,同内容不同来源保留"""
         config = _create_mock_config(root_dir=tmp_path)
         mock_manager = MagicMock()
         mock_get_manager.return_value = mock_manager
-        # 返回重复内容
+        # 返回同内容不同来源的两条结果 → 保留两条
         mock_manager.search = AsyncMock(return_value=[
             {
                 "content": "duplicate content",
@@ -722,7 +873,35 @@ class TestRAGSearch:
             collection="test",
             tool_runtime=ToolRuntime(config=config),
         )
-        # 应该只显示一个结果
+        # 不同来源的同内容块应保留两条
+        assert "找到 2 个相关结果" in result
+
+    @pytest.mark.asyncio
+    @patch("uniclaw.tools.rag.tools._get_manager")
+    async def test_search_deduplication_same_source(self, mock_get_manager, tmp_path):
+        """测试同内容同来源的跨层级去重"""
+        config = _create_mock_config(root_dir=tmp_path)
+        mock_manager = MagicMock()
+        mock_get_manager.return_value = mock_manager
+        # 返回同内容同来源的两条结果(模拟跨层级返回相同文档) → 去重为一条
+        mock_manager.search = AsyncMock(return_value=[
+            {
+                "content": "duplicate content",
+                "metadata": {"source": "test.txt"},
+                "rerank_score": 0.9,
+            },
+            {
+                "content": "duplicate content",
+                "metadata": {"source": "test.txt"},
+                "rerank_score": 0.8,
+            },
+        ])
+
+        result = await rag_search.func(
+            query="test query",
+            collection="test",
+            tool_runtime=ToolRuntime(config=config),
+        )
         assert "找到 1 个相关结果" in result
 
 
@@ -848,6 +1027,91 @@ class TestRAGDeleteCollection:
             tool_runtime=ToolRuntime(config=config),
         )
         assert "不存在或删除失败" in result
+
+
+# ── _match_where 测试 ─────────────────────────────────────
+
+
+class TestMatchWhere:
+    """_match_where 本地 ChromaDB where 过滤测试"""
+
+    def test_empty_where_matches_anything(self):
+        """空条件匹配任何 metadata"""
+        assert _match_where({"source": "a.txt"}, {}) is True
+        assert _match_where(None, {}) is True
+
+    def test_implicit_eq(self):
+        """隐式 $eq: {key: value}"""
+        assert _match_where({"source": "a.txt"}, {"source": "a.txt"}) is True
+        assert _match_where({"source": "a.txt"}, {"source": "b.txt"}) is False
+
+    def test_explicit_operators(self):
+        """显式操作符 $ne/$gt/$gte/$lt/$lte"""
+        meta = {"size": 100}
+        assert _match_where(meta, {"size": {"$ne": 50}}) is True
+        assert _match_where(meta, {"size": {"$ne": 100}}) is False
+        assert _match_where(meta, {"size": {"$gt": 50}}) is True
+        assert _match_where(meta, {"size": {"$gte": 100}}) is True
+        assert _match_where(meta, {"size": {"$lt": 200}}) is True
+        assert _match_where(meta, {"size": {"$lte": 100}}) is True
+
+    def test_in_nin(self):
+        """$in / $nin 操作符"""
+        meta = {"suffix": ".md"}
+        assert _match_where(meta, {"suffix": {"$in": [".md", ".txt"]}}) is True
+        assert _match_where(meta, {"suffix": {"$in": [".txt", ".py"]}}) is False
+        assert _match_where(meta, {"suffix": {"$nin": [".txt", ".py"]}}) is True
+
+    def test_and_logic(self):
+        """$and 组合条件"""
+        meta = {"size": 200, "suffix": ".md"}
+        where = {"$and": [{"size": {"$gt": 100}}, {"suffix": ".md"}]}
+        assert _match_where(meta, where) is True
+        where_fail = {"$and": [{"size": {"$gt": 300}}, {"suffix": ".md"}]}
+        assert _match_where(meta, where_fail) is False
+
+    def test_or_logic(self):
+        """$or 组合条件"""
+        meta = {"suffix": ".md"}
+        where = {"$or": [{"suffix": ".md"}, {"suffix": ".txt"}]}
+        assert _match_where(meta, where) is True
+        where_fail = {"$or": [{"suffix": ".txt"}, {"suffix": ".py"}]}
+        assert _match_where(meta, where_fail) is False
+
+    def test_none_metadata(self):
+        """metadata 为 None 时,隐式 $eq 应返回 False"""
+        assert _match_where(None, {"source": "a.txt"}) is False
+
+    def test_missing_key(self):
+        """metadata 中不存在的 key 应不匹配"""
+        assert _match_where({"other": 1}, {"source": "a.txt"}) is False
+
+
+class TestRAGSearchWhere:
+    """rag_search where 参数透传测试"""
+
+    @pytest.mark.asyncio
+    @patch("uniclaw.tools.rag.tools._get_manager")
+    async def test_where_passed_to_manager(self, mock_get_manager, tmp_path):
+        """where 参数应透传给 manager.search"""
+        config = _create_mock_config(root_dir=tmp_path)
+        mock_manager = MagicMock()
+        mock_get_manager.return_value = mock_manager
+        mock_manager.search = AsyncMock(return_value=[])
+
+        where_cond = {"suffix": {"$in": [".md", ".txt"]}}
+        await rag_search.func(
+            query="test",
+            collection="test",
+            where=where_cond,
+            tool_runtime=ToolRuntime(config=config),
+        )
+
+        # 验证 where 被传给 search
+        call_kwargs = mock_manager.search.call_args
+        assert call_kwargs.kwargs.get("where") == where_cond or (
+            len(call_kwargs.args) >= 8 and call_kwargs.args[7] == where_cond
+        )
 
 
 # ── context.py 测试 ───────────────────────────────────────
@@ -1092,7 +1356,7 @@ class TestRAGIntegration:
         dir_path = _create_temp_directory(tmp_path, files)
 
         # 加载目录
-        docs = load_directory(dir_path)
+        docs, _ = load_directory(dir_path)
         assert len(docs) == 2
 
         # 拆分文档
