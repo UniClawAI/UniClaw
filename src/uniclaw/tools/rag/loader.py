@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from uniclaw.utils.gitignore import is_ignored_by_gitignore
+from uniclaw.utils.gitignore import get_not_ignored_files
 
 from uniclaw.utils.read_text import read_text_file
 
@@ -67,8 +67,7 @@ def load_directory(path: Path, recursive: bool = True) -> tuple[list[Document], 
     pattern = "**/*" if recursive else "*"
     candidates = [f for f in sorted(path.glob(pattern)) if f.is_file()]
     # 批量按 .gitignore 规则过滤(覆盖隐藏文件和依赖/构建目录)
-    ignored = set(is_ignored_by_gitignore(candidates))
-    candidates = [f for f in candidates if f not in ignored]
+    candidates = get_not_ignored_files(candidates)
     for file_path in candidates:
         if file_path.suffix.lower() in TEXT_EXTENSIONS or file_path.suffix.lower() == ".pdf":
             try:

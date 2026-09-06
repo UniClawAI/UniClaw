@@ -351,15 +351,6 @@ async def _has_native_grep() -> bool:
         return False
 
 
-def _is_hidden_path(path: Path, root: Path) -> bool:
-    """判断路径相对于搜索根是否为隐藏路径(任一路径段以 . 开头)"""
-    try:
-        rel = path.relative_to(root)
-    except ValueError:
-        return False
-    return any(part.startswith(".") for part in rel.parts)
-
-
 def _python_grep(
     pattern: str,
     path: str,
@@ -386,7 +377,10 @@ def _python_grep(
         files = [target]
     elif target.is_dir():
         files = sorted(target.rglob(glob or "*"))
-        files = [f for f in files if f.is_file() and not _is_hidden_path(f, target)]
+        files = [f for f in files if f.is_file()]
+        # 按 .gitignore 规则过滤(含隐藏文件)
+        from uniclaw.utils.gitignore import get_not_ignored_files
+        files = get_not_ignored_files(files)
     else:
         return f"{TOOL_ERROR}: 路径不存在: {path}"
 

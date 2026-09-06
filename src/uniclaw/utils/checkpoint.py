@@ -12,8 +12,6 @@ import time
 from pathlib import Path
 from typing import Optional
 
-import pathspec
-
 from uniclaw.context import get_app_dir
 from uniclaw.utils.git import (
     get_git_root,
@@ -74,53 +72,25 @@ def _save_index(checkpoint_dir: Path, index: list) -> None:
     )
 
 
-def _load_gitignore(root_dir: Path) -> pathspec.PathSpec:
-    """加载 .gitignore 文件并编译为 PathSpec 匹配器。
-
-    读取工作目录下的 .gitignore,将其 gitwild 模式规则编译为
-    pathspec.PathSpec 对象,供 _get_all_files 等函数用于过滤
-    应被忽略的文件(非 git 仓库场景下的替代方案)。
-
-    没有 .gitignore 时,返回默认规则:忽略所有 . 开头的文件和目录。
-
-    Args:
-        root_dir: 项目根目录路径,函数会在此目录下查找 .gitignore
-
-    Returns:
-        pathspec.PathSpec: 编译后的匹配器,可用于 match_file() 判断文件是否被忽略
-    """
-    gitignore = root_dir / ".gitignore"
-    if gitignore.exists():
-        try:
-            lines = gitignore.read_text(encoding="utf-8").splitlines()
-            return pathspec.GitIgnoreSpec.from_lines(lines)
-        except (OSError, UnicodeDecodeError):
-            pass
-    # 没有 .gitignore 时,默认忽略所有 . 开头的文件和目录
-    return pathspec.GitIgnoreSpec.from_lines([".*", "__pycache__/", "node_modules/"])
-
-
 def _scan_files_sync(root_dir: Path) -> list[str]:
-    """同步扫描目录文件列表(供 run_in_executor 调用)。"""
-    gitignore_spec = _load_gitignore(root_dir)
-    files = []
+    """同步扫描目录文件列表(供 asyncio.to_thread 调用)。
+
+    使用 get_not_ignored_files 批量过滤文件。
+    """
+    from uniclaw.utils.gitignore import get_not_ignored_files
+
+    # 收集所有文件
+    all_files: list[Path] = []
     for root, dirs, filenames in os.walk(root_dir):
-        # 用 gitignore 规则剪枝目录,避免进入不需要遍历的目录
-        rel_root = os.path.relpath(root, root_dir)
-        dirs[:] = [
-            d
-            for d in dirs
-            if not gitignore_spec.match_file(
-                d if rel_root == "." else f"{rel_root}/{d}"
-            )
-        ]
+        root_path = Path(root)
         for filename in filenames:
-            filepath = Path(root) / filename
-            rel_path = str(filepath.relative_to(root_dir))
-            if gitignore_spec.match_file(rel_path):
-                continue
-            files.append(rel_path)
-    return files
+            all_files.append(root_path / filename)
+
+    # 批量获取未被 .gitignore 忽略的文件
+    not_ignored = get_not_ignored_files(all_files)
+
+    # 返回相对路径列表
+    return [str(f.relative_to(root_dir)) for f in not_ignored]
 
 
 async def _get_all_files(root_dir: Path) -> list[str]:
@@ -140,7 +110,7 @@ async def _get_all_files(root_dir: Path) -> list[str]:
         app_dir_name = get_app_dir(root_dir).name  # ".UniClaw"
         # 基础排除:应用数据目录
         exclude_args = [f"--exclude={app_dir_name}/"]
-        # 没有 .gitignore 时,补上默认排除规则(与 _load_gitignore 兜底一致)
+        # 没有 .gitignore 时,补上默认排除规则(与 load_gitignore_spec 兜底一致)
         if not (root_dir / ".gitignore").exists():
             exclude_args += [
                 "--exclude=.*",
@@ -160,8 +130,7 @@ async def _get_all_files(root_dir: Path) -> list[str]:
             return [f for f in result.stdout.strip().splitlines() if f]
 
     # 无 git 时扫描目录(同步 I/O,放到线程池避免阻塞事件循环)
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, _scan_files_sync, root_dir)
+    return await asyncio.to_thread(_scan_files_sync, root_dir)
 
 
 def _read_file_content(filepath: Path) -> Optional[str]:
@@ -188,7 +157,7 @@ def _generate_diff(
 
 
 def _copy_files_sync(root_dir: Path, all_files: list[str], cp_path: Path) -> list[str]:
-    """同步拷贝文件到检查点目录(供 run_in_executor 调用)。"""
+    """同步拷贝文件到检查点目录(供 asyncio.to_thread 调用)。"""
     files_path = cp_path / "files"
     files_path.mkdir(parents=True, exist_ok=True)
     copied_files = []
@@ -215,10 +184,7 @@ async def _file_create_checkpoint(root_dir: Path, message: str = "") -> bool:
     cp_path = checkpoint_dir / cp_id
 
     # 文件拷贝是同步 I/O,放到线程池避免阻塞事件循环
-    loop = asyncio.get_running_loop()
-    copied_files = await loop.run_in_executor(
-        None, _copy_files_sync, root_dir, all_files, cp_path
-    )
+    copied_files = await asyncio.to_thread(_copy_files_sync, root_dir, all_files, cp_path)
 
     if not copied_files:
         shutil.rmtree(cp_path, ignore_errors=True)
@@ -435,9 +401,7 @@ async def _file_diff_checkpoint(root_dir: Path, index: int = 0) -> str:
         return err
 
     current_files = await _get_all_files(root_dir)
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(
-        None,
+    return await asyncio.to_thread(
         _file_diff_two_dirs,
         meta.get("files", []),
         current_files,
@@ -460,9 +424,7 @@ async def _file_has_diff(root_dir: Path, index: int = 0) -> bool:
         return True  # 获取失败,保守返回有差异
 
     current_files = await _get_all_files(root_dir)
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(
-        None,
+    return await asyncio.to_thread(
         _file_has_diff_sync,
         meta.get("files", []),
         current_files,
@@ -545,16 +507,14 @@ async def pop_checkpoint(root_dir: Path, index: int = 0) -> tuple[bool, str]:
     """恢复检查点并删除(根据配置选择模式)。"""
     if await has_git_commit(root_dir):
         return await git_pop_checkpoint(root_dir, index)
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, _file_pop_checkpoint, root_dir, index)
+    return await asyncio.to_thread(_file_pop_checkpoint, root_dir, index)
 
 
 async def apply_checkpoint(root_dir: Path, index: int = 0) -> tuple[bool, str]:
     """恢复检查点但保留(根据配置选择模式)。"""
     if await has_git_commit(root_dir):
         return await git_apply_checkpoint(root_dir, index)
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, _file_apply_checkpoint, root_dir, index)
+    return await asyncio.to_thread(_file_apply_checkpoint, root_dir, index)
 
 
 async def list_checkpoints(root_dir: Path) -> str:
@@ -582,15 +542,11 @@ async def diff_between(root_dir: Path, index_a: int, index_b: int) -> str:
     """比较两个检查点的差异(根据配置选择模式)。"""
     if await has_git_commit(root_dir):
         return await git_diff_between(root_dir, index_a, index_b)
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(
-        None, _file_diff_between, root_dir, index_a, index_b
-    )
+    return await asyncio.to_thread(_file_diff_between, root_dir, index_a, index_b)
 
 
 async def delete_checkpoint(root_dir: Path, index: int = 0) -> tuple[bool, str]:
     """删除检查点(根据配置选择模式)。"""
     if await has_git_commit(root_dir):
         return await git_delete_checkpoint(root_dir, index)
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, _file_delete_checkpoint, root_dir, index)
+    return await asyncio.to_thread(_file_delete_checkpoint, root_dir, index)

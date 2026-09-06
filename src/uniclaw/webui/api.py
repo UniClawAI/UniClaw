@@ -881,11 +881,14 @@ async def list_files(root_dir: str, path: str = "", recursive: bool = False):
     entries = []
     try:
         if recursive:
-            for item in sorted(target.rglob("*")):
-                if item.name.startswith(".") or any(
-                    p.startswith(".") for p in item.relative_to(base).parts
-                ):
-                    continue
+            all_items = sorted(target.rglob("*"))
+            files = [i for i in all_items if i.is_file()]
+            dirs = [i for i in all_items if i.is_dir()]
+            # 按 .gitignore 规则过滤文件(含隐藏文件)
+            from uniclaw.utils.gitignore import get_not_ignored_files, is_ignored_by_gitignore
+            visible_files = set(get_not_ignored_files(files))
+            visible_dirs = [d for d in dirs if not is_ignored_by_gitignore([d])]
+            for item in visible_dirs + sorted(visible_files):
                 entries.append(
                     {
                         "name": item.name,

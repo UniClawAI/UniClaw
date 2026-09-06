@@ -11,10 +11,10 @@ from uniclaw.utils.checkpoint import (
     _file_pop_checkpoint,
     _file_restore_checkpoint,
     _generate_diff,
-    _load_gitignore,
     _load_index,
     _read_file_content,
     _save_index,
+    _scan_files_sync,
 )
 
 
@@ -48,23 +48,80 @@ class TestIndex:
         assert loaded[0]["message"] == "中文消息"
 
 
-# ── _load_gitignore ──────────────────────────────────────────────
+# ── _scan_files_sync ─────────────────────────────────────────────
 
 
-class TestLoadGitignore:
-    def test_no_gitignore_default_rules(self, tmp_path):
-        spec = _load_gitignore(tmp_path)
-        assert spec.match_file(".hidden")
-        assert spec.match_file("__pycache__/")
-        assert spec.match_file("node_modules/")
-        assert not spec.match_file("main.py")
+class TestScanFilesSync:
+    def test_subdirectory_gitignore(self, tmp_path):
+        """测试子目录中的 .gitignore 规则。"""
+        import os
 
-    def test_custom_gitignore(self, tmp_path):
-        (tmp_path / ".gitignore").write_text("*.log\nbuild/\n", encoding="utf-8")
-        spec = _load_gitignore(tmp_path)
-        assert spec.match_file("app.log")
-        assert spec.match_file("build/output.js")
-        assert not spec.match_file("main.py")
+        # 创建根目录结构
+        (tmp_path / "main.py").write_text("print('hello')", encoding="utf-8")
+        (tmp_path / "app.log").write_text("log content", encoding="utf-8")
+
+        # 创建子目录及其 .gitignore
+        subdir = tmp_path / "subdir"
+        subdir.mkdir()
+        (subdir / "code.py").write_text("x = 1", encoding="utf-8")
+        (subdir / "debug.log").write_text("debug info", encoding="utf-8")
+        (subdir / ".gitignore").write_text("*.log\n", encoding="utf-8")
+
+        # 创建更深层的子目录
+        deep_dir = subdir / "deep"
+        deep_dir.mkdir()
+        (deep_dir / "helper.py").write_text("def help(): pass", encoding="utf-8")
+        (deep_dir / "error.log").write_text("error info", encoding="utf-8")
+
+        # 扫描文件
+        files = _scan_files_sync(tmp_path)
+
+        # 将路径标准化为使用正斜杠，便于比较
+        normalized_files = [f.replace(os.sep, "/") for f in files]
+
+        # 验证根目录的 .gitignore 规则（默认规则忽略隐藏文件和 __pycache__）
+        assert "main.py" in normalized_files
+        # app.log 不在根目录的 .gitignore 中，应该被包含
+        assert "app.log" in normalized_files
+
+        # 验证子目录的 .gitignore 规则
+        assert "subdir/code.py" in normalized_files
+        # subdir/debug.log 应该被子目录的 .gitignore 忽略
+        assert "subdir/debug.log" not in normalized_files
+
+        # 验证深层子目录继承子目录的 .gitignore 规则
+        assert "subdir/deep/helper.py" in normalized_files
+        # subdir/deep/error.log 应该被子目录的 .gitignore 忽略
+        assert "subdir/deep/error.log" not in normalized_files
+
+    def test_multiple_gitignore_levels(self, tmp_path):
+        """测试多层级 .gitignore 规则。"""
+        import os
+
+        # 根目录 .gitignore
+        (tmp_path / ".gitignore").write_text("*.tmp\n", encoding="utf-8")
+        (tmp_path / "data.tmp").write_text("temp data", encoding="utf-8")
+        (tmp_path / "data.txt").write_text("real data", encoding="utf-8")
+
+        # 子目录 .gitignore（覆盖根目录规则）
+        subdir = tmp_path / "subdir"
+        subdir.mkdir()
+        (subdir / ".gitignore").write_text("!*.tmp\n*.log\n", encoding="utf-8")
+        (subdir / "keep.tmp").write_text("keep this", encoding="utf-8")
+        (subdir / "remove.log").write_text("remove this", encoding="utf-8")
+
+        files = _scan_files_sync(tmp_path)
+
+        # 将路径标准化为使用正斜杠，便于比较
+        normalized_files = [f.replace(os.sep, "/") for f in files]
+
+        # 根目录规则生效
+        assert "data.tmp" not in normalized_files
+        assert "data.txt" in normalized_files
+
+        # 子目录规则覆盖根目录规则
+        assert "subdir/keep.tmp" in normalized_files  # !*.tmp 取消忽略
+        assert "subdir/remove.log" not in normalized_files  # *.log 被忽略
 
 
 # ── _read_file_content ───────────────────────────────────────────

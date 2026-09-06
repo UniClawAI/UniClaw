@@ -78,24 +78,35 @@ def is_ignored_by_gitignore(
     if spec is None:
         spec = _DEFAULT_SPEC
 
-    # 目录的 .gitignore 加载缓存: 存在 → spec;不存在/读取失败 → None
-    # None 的目录不单独处理,直接落到全局 spec 兜底
-    layer_cache: dict[Path, pathspec.PathSpec | None] = {}
+    # 1) 预加载所有相关目录的 .gitignore(批量优化)
+    # 收集所有唯一目录及其祖先目录
+    all_dirs: set[Path] = set()
+    path_list = [Path(p) if not isinstance(p, Path) else p for p in paths]
 
-    def _layer_spec(directory: Path) -> pathspec.PathSpec | None:
-        if directory not in layer_cache:
-            layer_cache[directory] = _load_dir_gitignore(directory)
-        return layer_cache[directory]
-
-    ignored: list[Path] = []
-    for raw in paths:
-        path = Path(raw)
-        matched = False
-
-        # 1) 逐级向上找第一个含 .gitignore 的目录,用它判断
+    for path in path_list:
         directory = path.parent
         while True:
-            layer = _layer_spec(directory)
+            if directory in all_dirs:
+                break  # 已经收集过这个目录及其祖先
+            all_dirs.add(directory)
+            if directory == directory.parent:
+                break
+            directory = directory.parent
+
+    # 批量加载所有目录的 .gitignore
+    layer_cache: dict[Path, pathspec.PathSpec | None] = {}
+    for directory in all_dirs:
+        layer_cache[directory] = _load_dir_gitignore(directory)
+
+    # 2) 批量判断每个文件
+    ignored: list[Path] = []
+    for path in path_list:
+        matched = False
+
+        # 逐级向上找第一个含 .gitignore 的目录,用它判断
+        directory = path.parent
+        while True:
+            layer = layer_cache.get(directory)
             if layer is not None:
                 matched = _match_relative(layer, path, directory)
                 break
@@ -103,7 +114,7 @@ def is_ignored_by_gitignore(
                 break
             directory = directory.parent
 
-        # 2) 所有层级都没有 .gitignore → 全局兜底规则,按路径分量逐级检查
+        # 所有层级都没有 .gitignore → 全局兜底规则,按路径分量逐级检查
         if not matched:
             parts = path.parts[1:] if path.is_absolute() else path.parts
             matched = _match_parts(spec, parts)
@@ -165,3 +176,25 @@ def _load_dir_gitignore(directory: Path) -> pathspec.PathSpec | None:
             或读取失败时返回 None(该目录不产生规则,由全局 spec 兜底)
     """
     return load_gitignore_spec(directory / ".gitignore", default_fallback=False)
+
+
+def get_not_ignored_files(
+    paths: Sequence[Path | str],
+    spec: pathspec.PathSpec | None = None,
+) -> list[Path]:
+    """批量判断文件是否被忽略,返回没被忽略的文件列表。
+
+    与 is_ignored_by_gitignore 相反,返回未被 .gitignore 忽略的文件。
+
+    Args:
+        paths: 待判断的文件/目录路径列表
+        spec: 全局兜底规则,仅当所有层级都没有 .gitignore 时应用。
+            传入会替换默认兜底规则。
+
+    Returns:
+        list[Path]: paths 中未被忽略的文件(保持输入顺序)
+    """
+    # 先统一转换为 Path 对象,避免重复转换
+    path_list = [p if isinstance(p, Path) else Path(p) for p in paths]
+    ignored = set(is_ignored_by_gitignore(path_list, spec))
+    return [p for p in path_list if p not in ignored]
