@@ -7,7 +7,7 @@ const MultiInputDialog = {
     _countdownCancelled: false,
     _questions: [],
     _currentTab: 0,
-    _selections: {},   // {tabIndex: optionIndex}
+    _selections: {},   // {tabIndex: optionIndex | [optionIndex, ...]}
     _otherTexts: {},   // {tabIndex: string}
     _otherActive: false,
 
@@ -29,7 +29,11 @@ const MultiInputDialog = {
         this.currentRequest = msg;
         this._questions = msg.questions || [];
         this._currentTab = 0;
+        // 多选问题初始化为空数组,单选为 undefined
         this._selections = {};
+        this._questions.forEach((q, i) => {
+            if (q.multi) this._selections[i] = [];
+        });
         this._otherTexts = {};
         this._otherActive = false;
 
@@ -125,30 +129,45 @@ const MultiInputDialog = {
         return String(opt);
     },
 
+    _isMulti(tabIndex) {
+        const q = this._questions[tabIndex];
+        return q && q.multi === true;
+    },
+
     _renderOptions() {
         const container = document.getElementById('multi-input-options');
         container.innerHTML = '';
         const q = this._questions[this._currentTab];
         if (!q) return;
         const options = (q.options || []).map(o => this._normalizeOpt(o));
+        const isMulti = this._isMulti(this._currentTab);
         const sel = this._selections[this._currentTab];
+        // 多选时 sel 是数组,单选时是数字
+        const selectedSet = isMulti ? new Set(sel || []) : new Set(sel !== undefined ? [sel] : []);
 
         options.forEach((opt, i) => {
+            const isSelected = selectedSet.has(i);
             const item = document.createElement('div');
-            item.className = 'multi-input-option' + (sel === i ? ' selected' : '');
-            item.innerHTML = `<span class="multi-input-radio">${sel === i ? '●' : '○'}</span> ${this._escapeHtml(opt)}`;
+            item.className = 'multi-input-option' + (isSelected ? ' selected' : '');
+            const icon = isMulti
+                ? (isSelected ? '☑' : '☐')
+                : (isSelected ? '●' : '○');
+            item.innerHTML = `<span class="multi-input-radio ${isMulti ? 'checkbox' : ''}">${icon}</span> ${this._escapeHtml(opt)}`;
             item.onclick = () => this._selectOption(i);
             container.appendChild(item);
         });
 
         // "其他"选项
         const otherIdx = options.length;
+        const isOtherSelected = selectedSet.has(otherIdx);
         const otherItem = document.createElement('div');
-        otherItem.className = 'multi-input-option multi-input-other' + (sel === otherIdx ? ' selected' : '');
+        otherItem.className = 'multi-input-option multi-input-other' + (isOtherSelected ? ' selected' : '');
 
         const radio = document.createElement('span');
-        radio.className = 'multi-input-radio';
-        radio.textContent = sel === otherIdx ? '●' : '○';
+        radio.className = 'multi-input-radio' + (isMulti ? ' checkbox' : '');
+        radio.textContent = isMulti
+            ? (isOtherSelected ? '☑' : '☐')
+            : (isOtherSelected ? '●' : '○');
         otherItem.appendChild(radio);
 
         const label = document.createElement('span');
@@ -163,7 +182,7 @@ const MultiInputDialog = {
         input.onclick = (e) => { e.stopPropagation(); this._activateOther(); };
         input.oninput = (e) => {
             this._otherTexts[this._currentTab] = e.target.value;
-            if (this._selections[this._currentTab] !== otherIdx) {
+            if (!selectedSet.has(otherIdx)) {
                 this._selectOption(otherIdx);
             }
         };
@@ -187,16 +206,41 @@ const MultiInputDialog = {
     },
 
     _selectOption(idx) {
-        this._selections[this._currentTab] = idx;
+        const isMulti = this._isMulti(this._currentTab);
         const q = this._questions[this._currentTab];
         const options = (q.options || []).map(o => this._normalizeOpt(o));
-        if (idx !== options.length) {
-            this._otherActive = false;
+        const otherIdx = options.length;
+
+        if (isMulti) {
+            // 多选:切换选中状态
+            let arr = this._selections[this._currentTab] || [];
+            if (!Array.isArray(arr)) arr = [];
+            const pos = arr.indexOf(idx);
+            if (pos === -1) {
+                arr.push(idx);
+                // 选中"其他"时激活编辑模式
+                if (idx === otherIdx) {
+                    this._otherActive = true;
+                }
+            } else {
+                arr.splice(pos, 1);
+                // 取消选中"其他"时停用编辑模式
+                if (idx === otherIdx) {
+                    this._otherActive = false;
+                }
+            }
+            this._selections[this._currentTab] = arr;
+        } else {
+            // 单选:直接设置
+            this._selections[this._currentTab] = idx;
+            if (idx !== otherIdx) {
+                this._otherActive = false;
+            }
         }
         this._renderOptions();
         this._checkCanSubmit();
         // 如果选中的是"其他", 恢复输入框焦点
-        if (idx === options.length) {
+        if (idx === otherIdx) {
             this._activateOther();
         }
     },
@@ -217,7 +261,15 @@ const MultiInputDialog = {
 
     _checkCanSubmit() {
         const btn = document.getElementById('multi-input-submit');
-        const allSelected = this._questions.every((_, i) => this._selections[i] !== undefined);
+        const allSelected = this._questions.every((q, i) => {
+            const sel = this._selections[i];
+            if (q.multi) {
+                // 多选:数组且非空
+                return Array.isArray(sel) && sel.length > 0;
+            }
+            // 单选:有值
+            return sel !== undefined;
+        });
         btn.disabled = !allSelected;
         btn.style.opacity = allSelected ? '1' : '0.5';
     },
@@ -225,7 +277,13 @@ const MultiInputDialog = {
     _submit() {
         this._stopCountdown();
         if (!this.currentRequest) return;
-        const allSelected = this._questions.every((_, i) => this._selections[i] !== undefined);
+        const allSelected = this._questions.every((q, i) => {
+            const sel = this._selections[i];
+            if (q.multi) {
+                return Array.isArray(sel) && sel.length > 0;
+            }
+            return sel !== undefined;
+        });
         if (!allSelected) {
             FloatingWindow.hide('multi-input-modal');
             this.currentRequest = null;
@@ -237,7 +295,21 @@ const MultiInputDialog = {
             const sel = this._selections[i];
             const options = (q.options || []).map(o => this._normalizeOpt(o));
             const label = q.question || `Q${i + 1}`;
-            if (sel !== undefined && sel < options.length) {
+
+            if (q.multi && Array.isArray(sel)) {
+                // 多选:返回选项列表
+                const selectedOpts = [];
+                sel.forEach(idx => {
+                    if (idx < options.length) {
+                        selectedOpts.push(options[idx]);
+                    } else if (idx === options.length) {
+                        const otherText = (this._otherTexts[i] || '').trim();
+                        selectedOpts.push(otherText ? `其他:${otherText}` : '其他');
+                    }
+                });
+                answers[label] = selectedOpts;
+            } else if (sel !== undefined && sel < options.length) {
+                // 单选:返回单个值
                 answers[label] = options[sel];
             } else if (sel === options.length) {
                 const otherText = (this._otherTexts[i] || '').trim();

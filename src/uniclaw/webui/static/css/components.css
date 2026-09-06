@@ -812,6 +812,11 @@ textarea.input {
     color: var(--text-3);
 }
 
+.multi-input-radio.checkbox {
+    font-size: 14px;
+    min-width: 16px;
+}
+
 .multi-input-option.selected .multi-input-radio {
     color: var(--accent-bright);
 }

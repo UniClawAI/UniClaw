@@ -37,6 +37,10 @@ class MultiQuestionTextControl(FormattedTextControl):
         options = q.get("options", [])
         sel = dm.selections.get(dm.current_tab)
         other_idx = dm._get_other_idx()
+        is_multi = dm._is_multi()
+
+        # 多选时 sel 是列表,单选时是数字
+        selected_set = set(sel) if is_multi and isinstance(sel, list) else ({sel} if sel is not None else set())
 
         def _click(idx):
             def _h(mouse_event):
@@ -49,18 +53,22 @@ class MultiQuestionTextControl(FormattedTextControl):
         for i, qq in enumerate(dm.questions):
             q_text = qq.get("question", f"Q{i + 1}")
             click_tab = _click_tab(dm, i)
+            is_q_multi = dm._is_multi(i)
+            # Tab 显示提示:多选标记 [多选]
+            multi_tag = " [多选]" if is_q_multi else ""
             if i == dm.current_tab:
                 fragments.append(("", "  ◉ ", click_tab))
-                fragments.append(("fg:ansigreen bold", q_text, click_tab))
+                fragments.append(("fg:ansigreen bold", q_text + multi_tag, click_tab))
             else:
                 fragments.append(("", "  ○ ", click_tab))
-                fragments.append(("dim", q_text, click_tab))
+                fragments.append(("dim", q_text + multi_tag, click_tab))
             fragments.append(("", "\n"))
 
         fragments.append(("class:separator", "─" * 50 + "\n"))
 
         # ── 问题标题 ──
-        fragments.append(("bold", f" {q.get('question', '')}\n"))
+        multi_hint = " (可多选)" if is_multi else ""
+        fragments.append(("bold", f" {q.get('question', '')}{multi_hint}\n"))
         fragments.append(("", "\n"))
 
         # ── 选项(LLM 的"其他"跳过,由系统统一渲染) ──
@@ -68,50 +76,69 @@ class MultiQuestionTextControl(FormattedTextControl):
             if j == other_idx and other_idx < len(options):
                 continue
             h = _click(j)
-            if sel == j:
+            is_selected = j in selected_set
+            if is_multi:
+                icon = "☑" if is_selected else "☐"
+                style = "fg:ansigreen bold" if is_selected else ""
+            else:
+                icon = "●" if is_selected else "○"
+                style = "fg:ansigreen bold" if is_selected else ""
+            if is_selected:
                 fragments.append(("", "  ", h))
-                fragments.append(("fg:ansigreen bold", "●", h))
+                fragments.append((style, icon, h))
                 fragments.append(("", f" {j + 1}. {opt}\n", h))
             else:
                 fragments.append(("", "  ", h))
-                fragments.append(("", "○", h))
+                fragments.append(("", icon, h))
                 fragments.append(("", f" {j + 1}. {opt}\n", h))
 
         # ── "其他"选项 ──
         other_text = dm.other_texts.get(dm.current_tab, "")
         click_h = _click(other_idx)
-        if sel == other_idx and dm.other_active:
+        is_other_selected = other_idx in selected_set
+        if is_other_selected and dm.other_active:
             fragments.append(("", "  "))
-            fragments.append(("fg:ansiyellow bold", "●"))
+            if is_multi:
+                fragments.append(("fg:ansiyellow bold", "☑"))
+            else:
+                fragments.append(("fg:ansiyellow bold", "●"))
             fragments.append(("", f" {other_idx + 1}. 其他: "))
             fragments.append(("fg:ansiyellow", f"[{other_text}█]\n"))
-        elif sel == other_idx:
+        elif is_other_selected:
             d = f" [{other_text}]" if other_text else ""
             fragments.append(("", "  ", click_h))
-            fragments.append(("fg:ansiyellow bold", "●", click_h))
+            if is_multi:
+                fragments.append(("fg:ansiyellow bold", "☑", click_h))
+            else:
+                fragments.append(("fg:ansiyellow bold", "●", click_h))
             fragments.append(("", f" {other_idx + 1}. 其他:{d}\n", click_h))
         else:
             d = f" [{other_text}]" if other_text else ""
             fragments.append(("", "  ", click_h))
-            fragments.append(("", "○", click_h))
+            if is_multi:
+                fragments.append(("", "☐", click_h))
+            else:
+                fragments.append(("", "○", click_h))
             fragments.append(("", f" {other_idx + 1}. 其他:{d}\n", click_h))
 
         # ── 已选摘要 ──
-        if sel is not None:
+        if selected_set:
             fragments.append(("", "\n"))
-            if sel == other_idx:
-                ot = dm.other_texts.get(dm.current_tab, "").strip()
-                if ot:
-                    fragments.append(("fg:ansiyellow", f"  ◉ 已选: 其他:{ot}\n"))
-                else:
-                    fragments.append(("fg:ansiyellow", "  ◉ 已选: 其他 (请填写)\n"))
-            elif sel < len(options):
-                fragments.append(
-                    ("fg:ansigreen", f"  ◉ 已选: {sel + 1}. {options[sel]}\n")
-                )
+            selected_labels = []
+            for idx in sorted(selected_set):
+                if idx == other_idx:
+                    ot = dm.other_texts.get(dm.current_tab, "").strip()
+                    selected_labels.append(f"其他:{ot}" if ot else "其他")
+                elif idx < len(options):
+                    selected_labels.append(f"{idx + 1}. {options[idx]}")
+            if selected_labels:
+                fragments.append(("fg:ansigreen", f"  ◉ 已选: {', '.join(selected_labels)}\n"))
 
         fragments.append(("", "\n"))
-        fragments.append(("dim", "  Tab 切换 | 数字键选择 | Enter 提交\n"))
+        if is_multi:
+            fragments.append(("dim", "  Tab 切换 | 数字键选中/取消 | Enter 提交\n"))
+        else:
+            fragments.append(("dim", "  Tab 切换 | 数字键选择 | Enter 提交\n"))
         return fragments
 
 
@@ -149,7 +176,7 @@ class DialogManager:
         self.multi_mode: bool = False
         self.questions: list[dict] = []
         self.current_tab: int = 0
-        self.selections: dict[int, int | None] = {}
+        self.selections: dict[int, int | list[int] | None] = {}  # 单选:int|None, 多选:list[int]
         self.other_texts: dict[int, str] = {}
         self.other_active: bool = False
 
@@ -225,7 +252,8 @@ class DialogManager:
             normalized.append(nq)
         self.questions = normalized
         self.current_tab = 0
-        self.selections = {i: None for i in range(len(questions))}
+        # 多选问题初始化为空列表,单选初始化为 None
+        self.selections = {i: ([] if q.get("multi", False) else None) for i, q in enumerate(normalized)}
         self.other_texts = {i: "" for i in range(len(questions))}
         self.other_active = False
 
@@ -239,15 +267,41 @@ class DialogManager:
                 return len(options) - 1
         return len(options)
 
+    def _is_multi(self, tab_idx: int | None = None) -> bool:
+        """检查指定 Tab 是否为多选模式。"""
+        idx = tab_idx if tab_idx is not None else self.current_tab
+        q = self.questions[idx] if 0 <= idx < len(self.questions) else None
+        return q is not None and q.get("multi", False) is True
+
     def _select_option(self, idx: int):
         """选择当前 Tab 的某个选项。"""
         other_idx = self._get_other_idx()
-        if idx == other_idx:
-            self.selections[self.current_tab] = idx
-            self.other_active = True
+        is_multi = self._is_multi()
+
+        if is_multi:
+            # 多选:切换选中状态
+            sel = self.selections.get(self.current_tab)
+            if not isinstance(sel, list):
+                sel = []
+            if idx in sel:
+                sel.remove(idx)
+                # 取消选中"其他"时停用编辑模式
+                if idx == other_idx:
+                    self.other_active = False
+            else:
+                sel.append(idx)
+                # 选中"其他"时激活编辑模式
+                if idx == other_idx:
+                    self.other_active = True
+            self.selections[self.current_tab] = sel
         else:
-            self.selections[self.current_tab] = idx
-            self.other_active = False
+            # 单选:直接设置
+            if idx == other_idx:
+                self.selections[self.current_tab] = idx
+                self.other_active = True
+            else:
+                self.selections[self.current_tab] = idx
+                self.other_active = False
         self._invalidate()
 
     def _switch_tab(self, delta: int):
@@ -268,8 +322,15 @@ class DialogManager:
     def _all_selected(self) -> bool:
         """检查所有问题是否都已选择。"""
         for i in range(len(self.questions)):
-            if self.selections.get(i) is None:
-                return False
+            sel = self.selections.get(i)
+            if self._is_multi(i):
+                # 多选:需要是非空列表
+                if not isinstance(sel, list) or len(sel) == 0:
+                    return False
+            else:
+                # 单选:需要有值
+                if sel is None:
+                    return False
         return True
 
     def _collect_answers(self) -> str:
@@ -280,13 +341,27 @@ class DialogManager:
             options = q.get("options", [])
             label = q.get("question", f"Q{i + 1}")
             other_idx = self._get_other_idx_for(i)
-            if sel is not None and sel == other_idx:
+            is_multi = self._is_multi(i)
+
+            if is_multi and isinstance(sel, list):
+                # 多选:返回选项列表
+                selected_opts = []
+                for idx in sel:
+                    if idx == other_idx:
+                        other_text = self.other_texts.get(i, "").strip()
+                        selected_opts.append(f"其他:{other_text}" if other_text else "其他")
+                    elif idx < len(options):
+                        selected_opts.append(options[idx])
+                answers[label] = selected_opts if len(selected_opts) > 1 else (selected_opts[0] if selected_opts else "")
+            elif sel is not None and sel == other_idx:
+                # 单选"其他"
                 other_text = self.other_texts.get(i, "").strip()
                 if other_text:
                     answers[label] = f"其他:{other_text}"
                 else:
                     answers[label] = "其他"
             elif sel is not None and sel < len(options):
+                # 单选普通选项
                 answers[label] = options[sel]
             else:
                 answers[label] = ""
@@ -351,9 +426,12 @@ class DialogManager:
         _is_single = Condition(lambda: not self.multi_mode and self.active)
 
         # 输入框 — 多问题模式下显示提示文字而非输入框
-        hint_control = FormattedTextControl(
-            text=lambda: [("dim", "  数字键选择 | Tab 切换 | Enter 提交")]
-        )
+        def _get_hint():
+            if self._is_multi():
+                return [("dim", "  数字键选中/取消 | Tab 切换 | Enter 提交")]
+            return [("dim", "  数字键选择 | Tab 切换 | Enter 提交")]
+
+        hint_control = FormattedTextControl(text=_get_hint)
         hint_win = Window(content=hint_control, height=1, width=self.get_dialog_width)
 
         dialog_input_win = Window(

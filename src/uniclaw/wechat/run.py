@@ -402,23 +402,46 @@ async def wechat_multi_input(
 ) -> str:
     """微信模式的多问题输入:逐题调用 wechat_input。"""
     import json
+    import re
 
     answers = {}
     for q in questions:
         question_text = q.get("question", "")
         options = q.get("options", [])
+        is_multi = q.get("multi", False)
         lines = [question_text]
         for j, opt in enumerate(options):
             opt_str = opt if isinstance(opt, str) else str(opt)
             lines.append(f"  {j + 1}. {opt_str}")
-        lines.append("请输入编号或直接输入文字:")
+        if is_multi:
+            lines.append("可多选,请输入编号(用逗号或空格分隔)或直接输入文字:")
+        else:
+            lines.append("请输入编号或直接输入文字:")
         prompt = "\n".join(lines)
 
         reply = await wechat_input(prompt, title=title, config=config)
         reply = reply.strip()
-        if reply.isdigit() and 1 <= int(reply) <= len(options):
-            answers[question_text] = options[int(reply) - 1]
+
+        if is_multi:
+            # 多选:解析逗号/空格分隔的编号
+            selected = []
+            # 尝试解析为编号列表
+            parts = re.split(r'[,，\s]+', reply)
+            has_number = False
+            for part in parts:
+                part = part.strip()
+                if part.isdigit() and 1 <= int(part) <= len(options):
+                    selected.append(options[int(part) - 1])
+                    has_number = True
+            if has_number:
+                answers[question_text] = selected if len(selected) > 1 else selected[0]
+            else:
+                answers[question_text] = reply if reply else ""
         else:
-            answers[question_text] = reply if reply else ""
+            # 单选
+            if reply.isdigit() and 1 <= int(reply) <= len(options):
+                answers[question_text] = options[int(reply) - 1]
+            else:
+                answers[question_text] = reply if reply else ""
 
     return json.dumps(answers, ensure_ascii=False)

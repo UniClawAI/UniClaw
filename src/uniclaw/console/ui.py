@@ -471,14 +471,33 @@ async def get_multi_input(
         for q in questions:
             question_text = q.get("question", "")
             options = q.get("options", [])
+            is_multi = q.get("multi", False)
             print(f"  {question_text}")
             for j, opt in enumerate(options):
                 print(f"    {j + 1}. {opt}")
-            ans = input("  > ").strip()
-            if ans.isdigit() and 1 <= int(ans) <= len(options):
-                answers[question_text] = options[int(ans) - 1]
+            if is_multi:
+                print("  (可多选,输入编号用逗号或空格分隔)")
+                ans = input("  > ").strip()
+                # 解析多选
+                import re
+                parts = re.split(r'[,，\s]+', ans)
+                selected = []
+                has_number = False
+                for part in parts:
+                    part = part.strip()
+                    if part.isdigit() and 1 <= int(part) <= len(options):
+                        selected.append(options[int(part) - 1])
+                        has_number = True
+                if has_number:
+                    answers[question_text] = selected if len(selected) > 1 else selected[0]
+                else:
+                    answers[question_text] = ans if ans else ""
             else:
-                answers[question_text] = ans if ans else ""
+                ans = input("  > ").strip()
+                if ans.isdigit() and 1 <= int(ans) <= len(options):
+                    answers[question_text] = options[int(ans) - 1]
+                else:
+                    answers[question_text] = ans if ans else ""
             print()
     except (EOFError, KeyboardInterrupt):
         return ""

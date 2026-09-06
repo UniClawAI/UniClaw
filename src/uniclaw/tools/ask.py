@@ -21,14 +21,21 @@ async def AskUserQuestion(
 
     Args:
         questions: 问题列表(至少传 2 个问题),每项为 dict,格式:
-            {"question": "问题文本", "options": ["选项1", "选项2", "选项3"]}
+            {"question": "问题文本", "options": ["选项1", "选项2", "选项3"], "multi": false}
             每个问题必须提供 2-5 个纯文本 options。
+            multi: 可选,默认 false(单选)。设为 true 时用户可选择多个选项,返回列表。
         title: 对话框标题,默认为"请选择"
 
     示例:
+        # 单选模式
         AskUserQuestion(questions=[
             {"question": "你想用什么语言？", "options": ["Python", "JavaScript", "Go", "Rust"]},
             {"question": "目标平台？", "options": ["Web 后端", "CLI 工具", "桌面应用", "移动端"]},
+        ])
+        # 多选模式
+        AskUserQuestion(questions=[
+            {"question": "需要哪些功能？", "options": ["认证", "数据库", "缓存", "日志"], "multi": true},
+            {"question": "部署平台？", "options": ["Docker", "K8s", "云函数"]},
         ])
     """
     from uniclaw.tools.session.session import SessionType
