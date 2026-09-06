@@ -461,6 +461,7 @@ async def bridge_events(session_id: str, config: AppConfig):
                     "cache_discount": event.cache_discount,
                     "is_subagent": is_subagent,
                     "agent_name": agent_name,
+                    "created_at": event.created_at,
                 }
             )
             # 语音模式: flush 剩余文本到 TTS 队列

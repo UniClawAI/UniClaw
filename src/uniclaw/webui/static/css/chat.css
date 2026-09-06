@@ -82,11 +82,22 @@
     background: var(--bg-3);
     border-radius: var(--r-full);
 }
-.show-usage .msg-tokens {
+.show-details .msg-tokens,
+.show-details .msg-time {
     display: inline-block;
 }
-.chat-messages:not(.show-usage) .msg-tokens {
+.chat-messages:not(.show-details) .msg-tokens,
+.chat-messages:not(.show-details) .msg-time {
     display: none;
+}
+
+/* ---- 消息时间戳 ---- */
+.msg-time {
+    color: var(--text-3);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    padding: 1px 6px;
+    margin-left: 4px;
 }
 
 /* ---- 消息内容气泡 ---- */

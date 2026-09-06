@@ -132,6 +132,7 @@ const Chat = {
                     el = this._appendUserMessage(text);
                 }
                 if (el) el.dataset.msgIdx = msgIdx;
+                // 用户消息不显示时间戳
             } else if (role === 'assistant') {
                 const el = this._appendAssistantMessage('');
                 el.closest('.message').dataset.msgIdx = msgIdx;
@@ -155,7 +156,7 @@ const Chat = {
                         this._appendToolBlock(el, name, args, resultContent, success, tcId, explain);
                     });
                 }
-                this._appendUsageInfo(el, msg.usage?.input_tokens, msg.usage?.output_tokens, msg.model_name, msg.usage?.cached_tokens, msg.usage?.cache_write_tokens);
+                this._appendUsageInfo(el, msg.usage?.input_tokens, msg.usage?.output_tokens, msg.model_name, msg.usage?.cached_tokens, msg.usage?.cache_write_tokens, msg.created_at);
             }
         });
     },
@@ -545,21 +546,36 @@ const Chat = {
         body.innerHTML = Utils.renderDiff(ctrl.dataset.diffOld || '', ctrl.dataset.diffNew || '', mode);
     },
 
-    _appendUsageInfo(parentEl, inTokens, outTokens, modelName, cachedTokens, cacheWriteTokens) {
-        if (!inTokens && !outTokens && !modelName && !cachedTokens && !cacheWriteTokens) return;
-        const el = document.createElement('div');
-        el.className = 'msg-tokens';
-        const parts = [];
-        if (modelName) parts.push(modelName);
-        if (inTokens || outTokens) parts.push(`${this._fmtTk(inTokens)}→${this._fmtTk(outTokens)}`);
-        // 缓存字段仅 OpenRouter 等提供商返回;缺失或为 0 时不展示,保持原显示
-        if (cachedTokens > 0) parts.push(`缓存 ${this._fmtTk(cachedTokens)}`);
-        if (cacheWriteTokens > 0) parts.push(`写 ${this._fmtTk(cacheWriteTokens)}`);
-        el.textContent = parts.join(' · ');
-        parentEl.appendChild(el);
+    _appendUsageInfo(parentEl, inTokens, outTokens, modelName, cachedTokens, cacheWriteTokens, createdAt) {
+        if (!inTokens && !outTokens && !modelName && !cachedTokens && !cacheWriteTokens && !createdAt) return;
+        if (inTokens || outTokens || modelName || cachedTokens || cacheWriteTokens) {
+            const el = document.createElement('div');
+            el.className = 'msg-tokens';
+            const parts = [];
+            if (modelName) parts.push(modelName);
+            if (inTokens || outTokens) parts.push(`${this._fmtTk(inTokens)}→${this._fmtTk(outTokens)}`);
+            // 缓存字段仅 OpenRouter 等提供商返回;缺失或为 0 时不展示,保持原显示
+            if (cachedTokens > 0) parts.push(`缓存 ${this._fmtTk(cachedTokens)}`);
+            if (cacheWriteTokens > 0) parts.push(`写 ${this._fmtTk(cacheWriteTokens)}`);
+            el.textContent = parts.join(' · ');
+            parentEl.appendChild(el);
+        }
+        if (createdAt) {
+            const ts = document.createElement('span');
+            ts.className = 'msg-time';
+            ts.textContent = this._fmtTime(createdAt);
+            ts.title = (typeof createdAt === 'string' ? new Date(createdAt) : new Date(createdAt * 1000)).toLocaleString('zh-CN', { hour12: false });
+            parentEl.appendChild(ts);
+        }
     },
 
     _fmtTk(n) { return !n ? '0' : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`; },
+
+    _fmtTime(ts) {
+        if (!ts) return '';
+        const d = typeof ts === 'string' ? new Date(ts) : new Date(ts * 1000);
+        return d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+    },
 
     // 累计一条消息的缓存统计(实时路径用 in_tokens/cached_tokens,回放路径用 usage.*)
 
@@ -713,6 +729,7 @@ _showLightbox(url) {
         }
         // 后端广播的 msg_idx 赋给元素,供删除功能精确定位
         if (el && msg.msg_idx != null) el.dataset.msgIdx = msg.msg_idx;
+        // 用户消息不显示时间戳
     },
 
     /** 追加带图片的系统消息 */
@@ -884,7 +901,7 @@ _showLightbox(url) {
                 this._appendToolBlock(this.streamingEl, name, args, null, null, tc.id || '');
             });
         }
-        if (this.streamingEl) this._appendUsageInfo(this.streamingEl, msg.in_tokens, msg.out_tokens, msg.model_name, msg.cached_tokens, msg.cache_write_tokens);
+        if (this.streamingEl) this._appendUsageInfo(this.streamingEl, msg.in_tokens, msg.out_tokens, msg.model_name, msg.cached_tokens, msg.cache_write_tokens, msg.created_at);
         this.streamingEl = null; this.streamingContent = ''; this.streamingBody = null;
     },
 

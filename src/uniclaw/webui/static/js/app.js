@@ -202,7 +202,7 @@ const App = {
     _bindPanelToggles() {
         document.getElementById('toggle-left').onclick = () => this._toggleLeftPanel();
         document.getElementById('toggle-right').onclick = () => this._toggleRightPanel();
-        document.getElementById('toggle-usage').onclick = () => this._toggleUsage();
+        document.getElementById('toggle-details').onclick = () => this._toggleDetails();
         document.getElementById('left-panel').addEventListener('click', e => { if (e.currentTarget.classList.contains('collapsed')) this._toggleLeftPanel(); });
         document.getElementById('right-panel').addEventListener('click', e => { if (e.currentTarget.classList.contains('collapsed')) this._toggleRightPanel(); });
     },
@@ -232,13 +232,13 @@ const App = {
         }
     },
 
-    _toggleUsage() {
-        const btn = document.getElementById('toggle-usage');
+    _toggleDetails() {
+        const btn = document.getElementById('toggle-details');
         const chat = document.getElementById('chat-messages');
         if (!btn || !chat) return;
-        const show = chat.classList.toggle('show-usage');
+        const show = chat.classList.toggle('show-details');
         btn.classList.toggle('active', show);
-        localStorage.setItem('show_usage', show ? '1' : '0');
+        localStorage.setItem('show_details', show ? '1' : '0');
     },
 
     _restorePanelState() {
@@ -272,9 +272,14 @@ const App = {
                 if (content) content.style.touchAction = 'pan-y';
             }
         }
-        if (localStorage.getItem('show_usage') === '1') {
-            document.getElementById('chat-messages').classList.add('show-usage');
-            document.getElementById('toggle-usage').classList.add('active');
+        // 兼容旧 key show_usage → show_details
+        if (localStorage.getItem('show_usage') === '1' && !localStorage.getItem('show_details')) {
+            localStorage.setItem('show_details', '1');
+            localStorage.removeItem('show_usage');
+        }
+        if (localStorage.getItem('show_details') === '1') {
+            document.getElementById('chat-messages').classList.add('show-details');
+            document.getElementById('toggle-details').classList.add('active');
         }
     },
 

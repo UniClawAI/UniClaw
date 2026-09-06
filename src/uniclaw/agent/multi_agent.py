@@ -104,6 +104,7 @@ class AssistantEvent:
     cached_tokens: int = 0
     cache_write_tokens: int = 0
     cache_discount: float = 0.0
+    created_at: float = 0.0
 
 
 @dataclass
@@ -780,6 +781,7 @@ class MultiAgent:
                 cached_tokens=cached_tokens,
                 cache_write_tokens=cache_write_tokens,
                 cache_discount=cache_discount,
+                created_at=time.time(),
             ),
             config,
         )

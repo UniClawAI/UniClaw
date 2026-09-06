@@ -172,6 +172,18 @@ class BaseMessage:
     """消息基类提供 content 和 token 估算。"""
 
     content: SupportedContent = ""
+    created_at: datetime | None = None
+
+    @staticmethod
+    def _parse_created_at(data: dict[str, Any]) -> datetime | None:
+        """从序列化字典中解析 created_at,缺失或格式错误时返回 None。"""
+        raw = data.get("created_at")
+        if isinstance(raw, str):
+            try:
+                return datetime.fromisoformat(raw)
+            except ValueError:
+                return None
+        return raw if isinstance(raw, datetime) else None
 
     @property
     def role(self) -> str:
@@ -232,7 +244,7 @@ class UserMessage(BaseMessage):
         content = data["content"]
         if isinstance(content, list):
             content = [MultimodalBlock.from_dict(block) for block in content]
-        return cls(content=content)
+        return cls(content=content, created_at=cls._parse_created_at(data))
 
     def to_openai_message(self) -> dict[str, Any]:
 
@@ -256,7 +268,10 @@ class UserMessage(BaseMessage):
         }
 
     def to_dict(self) -> dict[str, Any]:
-        return self.to_openai_message()
+        data = self.to_openai_message()
+        if self.created_at is not None:
+            data["created_at"] = self.created_at.isoformat()
+        return data
 
     def to_str(self) -> str:
         return f"[user]:{self.to_content()}"
@@ -345,6 +360,7 @@ class AIMessage(BaseMessage):
             usage=Usage.from_dict(data.get("usage", {})),
             reasoning_content=data.get("reasoning_content"),
             tool_calls=data.get("tool_calls"),
+            created_at=cls._parse_created_at(data),
         )
 
     def to_openai_message(self) -> dict[str, Any]:
@@ -397,6 +413,8 @@ class AIMessage(BaseMessage):
         data = self.to_openai_message()
         data["usage"] = self.usage.to_dict()
         data["model_name"] = self.model_name
+        if self.created_at is not None:
+            data["created_at"] = self.created_at.isoformat()
         return data
 
     def to_content(self) -> str:
@@ -511,6 +529,8 @@ class ToolCallMessage(BaseMessage):
         data["args"] = self.args
         if self.explain:
             data["explain"] = self.explain
+        if self.created_at is not None:
+            data["created_at"] = self.created_at.isoformat()
         return data
 
     @classmethod
@@ -521,6 +541,7 @@ class ToolCallMessage(BaseMessage):
             content=data.get("content", ""),
             args=data.get("args", {}),
             explain=data.get("explain", ""),
+            created_at=cls._parse_created_at(data),
         )
 
     def to_content(self) -> str:
@@ -676,6 +697,10 @@ class SessionType(StrEnum):
     WECHAT = "wechat"
     FREE_CHAT = "free_chat"
     A2A = "a2a"
+
+
+# add_* 方法的 created_at 哨兵值: 区分"未传参"(用 datetime.now())和"显式传 None"(保留 None)
+_UNSET = object()
 
 
 @dataclass
@@ -928,8 +953,9 @@ class Session:
         messages_data = data.get("messages", [])
         for message in messages_data:
             role = message.get("role")
+            ca = BaseMessage._parse_created_at(message)
             if role == MessageRole.USER:
-                session.add_user_message(content=message.get("content", ""))
+                session.add_user_message(content=message.get("content", ""), created_at=ca)
             elif role == MessageRole.ASSISTANT:
                 session.add_assistant_message(
                     content=message.get("content", ""),
@@ -937,6 +963,7 @@ class Session:
                     usage=message.get("usage", {}),
                     reasoning_content=message.get("reasoning_content"),
                     tool_calls=message.get("tool_calls"),
+                    created_at=ca,
                 )
             elif role == MessageRole.TOOL:
                 session.add_tool_call_message(
@@ -947,6 +974,7 @@ class Session:
                         "args": message.get("args", {}),
                         "explain": message.get("explain", ""),
                     },
+                    created_at=ca,
                 )
 
         version = data.get("version", 1)
@@ -1085,10 +1113,10 @@ class Session:
                 parts.append(s)
         return "\n".join(parts)
 
-    def add_user_message(self, content: str | list[dict[str, Any]]) -> None:
+    def add_user_message(self, content: str | list[dict, Any], created_at: datetime | None = _UNSET) -> None:
         if isinstance(content, list) and content and isinstance(content[0], dict):
             content = [MultimodalBlock.from_dict(block) for block in content]
-        user_message = UserMessage(content=content)
+        user_message = UserMessage(content=content, created_at=created_at if created_at is not _UNSET else datetime.now())
         self._messages.append(user_message)
         self.history.append(user_message)
 
@@ -1121,6 +1149,7 @@ class Session:
         usage: dict[str, Any],
         reasoning_content: str | None = None,
         tool_calls: list[dict[str, Any]] | None = None,
+        created_at: datetime | None = _UNSET,
     ) -> None:
         if tool_calls:
             tool_calls = self._sanitize_tool_calls(tool_calls)
@@ -1130,6 +1159,7 @@ class Session:
             usage=Usage.from_dict(usage),
             reasoning_content=reasoning_content,
             tool_calls=tool_calls,
+            created_at=created_at if created_at is not _UNSET else datetime.now(),
         )
         self._messages.append(assistant_message)
         self.history.append(assistant_message)
@@ -1138,6 +1168,7 @@ class Session:
         self,
         content: SupportedContent,
         tool_call: dict[str, Any],
+        created_at: datetime | None = _UNSET,
     ) -> None:
         tool_call_message = ToolCallMessage(
             name=tool_call.get("name", ""),
@@ -1145,6 +1176,7 @@ class Session:
             content=content,
             args=tool_call.get("args", {}),
             explain=tool_call.get("explain", ""),
+            created_at=created_at if created_at is not _UNSET else datetime.now(),
         )
         self._messages.append(tool_call_message)
         self.history.append(tool_call_message)
@@ -1189,8 +1221,9 @@ class Session:
         self, role: MessageRole, content: str | list[dict[str, Any]], **kwargs
     ) -> None:
         """添加消息,内部转为结构化对象。"""
+        ca = kwargs.get("created_at", _UNSET)
         if role == MessageRole.USER:
-            self.add_user_message(content=content)
+            self.add_user_message(content=content, created_at=ca)
         elif role == MessageRole.ASSISTANT:
             self.add_assistant_message(
                 content=content,
@@ -1198,6 +1231,7 @@ class Session:
                 usage=kwargs.get("usage", {}),
                 reasoning_content=kwargs.get("reasoning_content"),
                 tool_calls=kwargs.get("tool_calls"),
+                created_at=ca,
             )
         elif role == MessageRole.TOOL:
             self.add_tool_call_message(
@@ -1208,6 +1242,7 @@ class Session:
                     "args": kwargs.get("args", {}),
                     "explain": kwargs.get("explain", ""),
                 },
+                created_at=ca,
             )
         else:
             raise ValueError(f"不支持的消息角色: {role}")
