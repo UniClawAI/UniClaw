@@ -754,7 +754,7 @@ class TUIApp:
 
         def _get_prompt():
             pct = self._token_pct
-            rd = self.current_task.session.root_dir if self.current_task else None
+            rd = self.config.current_agent.session.root_dir
             if rd is None:
                 raise RuntimeError("Console 模式下 root_dir 不能为 None")
             return HTML(f"<b>[{rd.name}] {pct:.0f}% </b>»")
