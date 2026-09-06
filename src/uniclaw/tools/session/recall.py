@@ -6,16 +6,14 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from uniclaw.tools.base import tool, ToolRuntime
 from uniclaw.utils.constants import TOOL_ERROR
-from uniclaw.tools.session.session import (
-    Session,
-    SUMMARY_PREFIX,
-    UserMessage,
-    AIMessage,
-    ToolCallMessage,
-)
 from uniclaw.utils.message import MessageRole
+
+if TYPE_CHECKING:
+    from uniclaw.tools.session.session import Session
 
 
 def _count_recent_messages(session: Session) -> int:
@@ -25,6 +23,8 @@ def _count_recent_messages(session: Session) -> int:
     不应计入最近消息。仅当头部不是标准摘要格式时回退到前缀扫描
     (兼容旧格式或摘要头被删除的会话)。
     """
+    from uniclaw.tools.session.session import SUMMARY_PREFIX, UserMessage
+
     compact_count = session._compact_count
     if compact_count > 0:
         head = session._messages[:compact_count]
@@ -69,6 +69,8 @@ def _get_archived_messages(session: Session) -> list[tuple[int, object]]:
 
 def _format_message(idx: int, msg) -> str:
     """格式化单条消息,带序号。"""
+    from uniclaw.tools.session.session import UserMessage, AIMessage, ToolCallMessage
+
     if isinstance(msg, UserMessage):
         role = "用户"
         content = msg.to_content()
