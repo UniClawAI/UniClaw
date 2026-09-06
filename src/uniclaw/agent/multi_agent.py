@@ -62,7 +62,6 @@ import traceback
 from uniclaw.utils.wrapper import error_catch
 from uniclaw.console.ui import info
 
-# 只读工具去重:相同 (name, args) 且结果相同时省略重复内容
 DEDUP_TOOLS = frozenset({"Read", "Glob", "Grep", "webFetch"})
 DEDUP_MIN_CHARS = 500  # 结果超过此长度才去重
 
@@ -969,7 +968,9 @@ class MultiAgent:
                         # 凭 tool_call_id 路由,前端按 session_id:tool_call_id 定位工具块
                         await self.send_event_to_user(
                             ToolStreamEvent(
-                                name=_tc_name, content=content, tool_call_id=tool_call_id
+                                name=_tc_name,
+                                content=content,
+                                tool_call_id=tool_call_id,
                             ),
                             config,
                         )

@@ -216,6 +216,7 @@ def is_safe_tool(name: str) -> bool:
         monitor_output,
         monitor_get_matched,
         monitor_update_pattern,
+        monitor_screen,
     )
     from uniclaw.tools.todolist import (
         todolist_create,
@@ -227,6 +228,13 @@ def is_safe_tool(name: str) -> bool:
     from uniclaw.tools.ask import AskUserQuestion
     from uniclaw.tools.session.tools import session_list, session_detail
     from uniclaw.tools.session.recall import recall_history, get_history_range
+    from uniclaw.tools.session.notes import (
+        session_note_add,
+        session_note_update,
+        session_note_delete,
+        session_note_list,
+        session_note_get,
+    )
     from uniclaw.tools.hooks.tools import hook_docs, hook_read
     from uniclaw.tools.multi_agent.tools import (
         subagent_list_tasks,
@@ -272,7 +280,7 @@ def is_safe_tool(name: str) -> bool:
     )
     from uniclaw.tools.advisor import advisor_list, ask_advisor
     from uniclaw.tools.security.tools import read_llm_safe_prompt
-    from uniclaw.tools.rag.tools import rag_search, rag_list_collections, rag_set_desc
+    from uniclaw.tools.rag.tools import rag_search, rag_list_collections, rag_set_desc, rag_evaluate
     from uniclaw.tools.download.tools import (
         http_download,
         http_download_status,
@@ -358,6 +366,7 @@ def is_safe_tool(name: str) -> bool:
         monitor_output.name,
         monitor_get_matched.name,
         monitor_update_pattern.name,
+        monitor_screen.name,
         # ── 任务清单 ──
         todolist_create.name,
         todolist_update.name,
@@ -378,6 +387,11 @@ def is_safe_tool(name: str) -> bool:
         session_update_title.name,
         recall_history.name,
         get_history_range.name,
+        session_note_add.name,
+        session_note_update.name,
+        session_note_delete.name,
+        session_note_list.name,
+        session_note_get.name,
         # ── Hooks ──
         hook_docs.name,
         hook_read.name,
@@ -423,6 +437,7 @@ def is_safe_tool(name: str) -> bool:
         rag_search.name,
         rag_list_collections.name,
         rag_set_desc.name,
+        rag_evaluate.name,
         # ── 下载(HTTP + M3U8,全部安全) ──
         http_download.name,
         http_download_status.name,

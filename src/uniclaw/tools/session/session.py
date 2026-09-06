@@ -760,6 +760,9 @@ class Session:
     from uniclaw.tools.advisor import advisor_list
     from uniclaw.tools.a2a.tools import a2a_list_agents
     from uniclaw.tools.hooks.tools import hook_docs, hook_read
+    from uniclaw.tools.session.recall import recall_history
+    from uniclaw.tools.ipython.tools import ipython_vars, ipython_list_kernels
+    from uniclaw.tools.registry import search_tools
 
     # 只读工具去重集合
     _DEDUP_TOOLS = frozenset(
@@ -817,6 +820,13 @@ class Session:
             # hooks (只读)
             hook_docs.name,
             hook_read.name,
+            # session recall
+            recall_history.name,
+            # ipython (只读)
+            ipython_vars.name,
+            ipython_list_kernels.name,
+            # registry
+            search_tools.name,
         }
     )
     _DEDUP_MIN_CHARS = 2000
