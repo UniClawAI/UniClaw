@@ -458,11 +458,15 @@ def extract_explains(tool_calls: list[dict]) -> tuple[list[dict], dict[str, str]
         if not fn:
             continue
         raw = fn.get("arguments", "{}")
-        args = (
-            json.loads(raw)
-            if isinstance(raw, str)
-            else (raw if isinstance(raw, dict) else {})
-        )
+        if isinstance(raw, str):
+            try:
+                args = json.loads(raw)
+            except json.JSONDecodeError:
+                args = {}
+        elif isinstance(raw, dict):
+            args = raw
+        else:
+            args = {}
         explain_text = args.pop("_explain", None)
         if explain_text:
             tool_explains[tc.get("id", "")] = explain_text
