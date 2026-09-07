@@ -43,6 +43,7 @@
 - 📋 **持久化规则**: 自定义权限规则,记住您的权限偏好,避免重复确认
 - 💭 **实时反馈**: 显示思考过程、工具调用详情和 Token 使用情况
 - ♾️ **无限上下文**: 双列表存储(活跃上下文 + 完整历史) + 三级自动压缩(50%/70%/85%) + 按需历史召回,对话永不失忆;工具调用消息按内容哈希去重,重复结果自动折叠节省上下文
+- 📝 **会话笔记**: 笔记随会话持久化,压缩时自动注入摘要,避免关键信息丢失;支持增删改查操作
 - 📊 **上下文管理**: 自动监控和管理对话上下文长度,三级压力策略自动压缩(50%/70%/85%)
 - 🎯 **目标模式**: 设置目标停止条件,agent 停止时用独立 judge 模型评估是否达成,未达标则自动继续工作
 - 🌐 **平台搜索**: 支持 GitHub/arXiv/Stack Overflow/Hacker News/B站等多平台并发搜索
@@ -1336,11 +1337,13 @@ http_download(
   - 可配置文档块大小(`chunk_size`)和重叠度(`chunk_overlap`)
   - 支持用户级/项目级双层作用域
   - 重复导入自动清除旧文档块,embedding 入库过程实时推送进度
+  - 自动遵守 `.gitignore` 规则,跳过被忽略的文件和目录
 - **rag_search** - 在指定集合中语义检索,返回最相关的文档片段
   - 支持 `score_threshold` 过滤低相关度结果
   - 支持 `top_k` 控制返回数量
   - 多路召回(向量语义 + BM25 关键词)+ RRF 融合 + LLM 重排序
   - 支持 `intent` 搜索意图参数:传入非空意图描述时自动启用 LLM 重排序,提升相关性判断
+  - 支持 `where` 元数据过滤(按 source/filename/suffix/chunk_index/created_at 筛选)
 - **rag_list_collections** - 列出所有 RAG 集合及其统计信息(文档数量、描述等)
 - **rag_delete_collection** - 删除指定集合及其所有文档
 - **rag_set_desc** - 设置或更新集合描述,便于后续检索时识别
@@ -1397,6 +1400,18 @@ http_download(
 - **session_update_title** - 更新会话标题
 - **recall_history** - 关键词搜索归档消息,支持正则匹配和上下文窗口(配合无限上下文机制)
 - **get_history_range** - 按索引范围查看历史消息,区分活跃/归档状态
+
+#### 会话笔记工具 📝
+
+笔记随会话持久化保存,上下文压缩时自动注入摘要,避免关键信息丢失。适用于记录重要决策结论、关键变量值、代码片段、API 用法等需要跨压缩保留的内容。
+
+- **session_note_add** - 添加笔记(名称 + 摘要 + 完整内容)
+- **session_note_update** - 更新已有笔记的描述和/或内容(留空的字段保持不变)
+- **session_note_delete** - 删除指定笔记
+- **session_note_list** - 列出所有笔记(仅显示名称和摘要)
+- **session_note_get** - 查看指定笔记的完整内容
+
+> 💡 **提示**: 笔记在压缩摘要中以"详见笔记 xxx"标注,正文不会因压缩丢失。AI 在检测到重要信息时会主动建议写入笔记。
 
 #### 用户交互工具 💬
 
@@ -1575,7 +1590,7 @@ UniClaw/
     │   ├── types.py        # Protocol/Effort 枚举,Usage 用量统计
     │   └── common.py       # get_provider(),compare_urls(),HTTP 客户端缓存
     │
-    ├── commands/           # 斜杠命令系统 📝 (33 个命令 + 11 个别名)
+    ├── commands/           # 斜杠命令系统 📝 (31 个命令 + 7 个别名,共38个注册项)
     │   ├── __init__.py     # 命令注册中心(COMMANDS dict)
     │   ├── session.py      # 会话管理(clear/compact/export)
     │   ├── resume.py       # 会话恢复(list/del/search/fork) 💬
@@ -1698,6 +1713,7 @@ UniClaw/
     │   │   ├── session.py  # Session(双列表存储 + 内容哈希去重)
     │   │   ├── session_manager.py # SessionManager(持久化到 .UniClaw/sessions/)
     │   │   ├── recall.py   # recall_history/get_history_range 历史召回工具
+    │   │   ├── notes.py    # 会话笔记工具(add/update/delete/list/get) 📝
     │   │   └── tools.py    # 会话管理工具定义
     │   ├── hooks/          # Hook 系统 🪝
     │   ├── tts/            # 语音合成(TTS) 🔊
@@ -1826,6 +1842,8 @@ Session 维护两条平行的消息列表：
 | Level 2 | 85% | 重度:清除 + 激进 LLM 摘要(保留 15% 近期消息) |
 
 压缩后的摘要包含：当前意图、下一步操作、涉及文件、已完成/未完成任务、关键决策、错误信息,以及用于检索的主题关键词。
+
+**会话笔记保护**: 通过 `session_note_add` 写入的笔记在压缩时自动注入摘要(以"详见笔记 xxx"标注),正文不会因压缩丢失。AI 在检测到重要信息时会主动建议写入笔记,确保关键内容跨压缩保留。
 
 #### 按需历史召回
 
