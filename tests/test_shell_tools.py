@@ -269,6 +269,7 @@ class TestBash:
 
         cancel_event = MagicMock()
         cancel_event.is_set.return_value = True
+        cancel_event.wait = AsyncMock()
         proc = self._proc(returncode=None)
         with patch("uniclaw.tools.shell.asyncio.create_subprocess_shell", new_callable=AsyncMock, return_value=proc), patch(
             "uniclaw.tools.shell._kill_proc_tree", new_callable=AsyncMock

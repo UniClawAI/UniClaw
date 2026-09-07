@@ -6,17 +6,21 @@ ToolRuntime: 工具运行时上下文 dataclass,含 config / tool_call_id / stre
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import inspect
 import json
 import logging
 import re
+import time
 import typing
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, get_type_hints
 
 if TYPE_CHECKING:
     from uniclaw.config import AppConfig
+
+from uniclaw.utils.constants import TOOL_ERROR
 
 logger = logging.getLogger(__name__)
 
@@ -409,7 +413,44 @@ class Tool:
 
         if not inspect.iscoroutinefunction(self.func):
             return self.func(**kwargs)
-        return await self.func(**kwargs)
+
+        # 异步工具:包装为 task,与 cancel_event 竞争
+        # cancel_event 触发时自动取消工具执行,各工具无需单独检查
+        rt = kwargs.get("tool_runtime")
+        cancel_event = None
+        if rt is not None:
+            try:
+                cancel_event = rt.config.current_agent.cancel_event
+            except (AttributeError, TypeError):
+                pass
+
+        if cancel_event is None:
+            return await self.func(**kwargs)
+
+        start = time.monotonic()
+        task = asyncio.create_task(self.func(**kwargs))
+        cancel_wait = asyncio.create_task(cancel_event.wait())
+        try:
+            done, _ = await asyncio.wait(
+                [task, cancel_wait],
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if task in done:
+                return task.result()
+            # cancel_event 触发,取消工具任务
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            elapsed = time.monotonic() - start
+            return f"{TOOL_ERROR}: {self.name} 被用户中断(已执行 {elapsed:.1f} 秒)"
+        finally:
+            # 清理:确保两个 task 都被关闭
+            if not cancel_wait.done():
+                cancel_wait.cancel()
+            if not task.done():
+                task.cancel()
 
 
 def tool(

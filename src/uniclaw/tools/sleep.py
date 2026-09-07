@@ -66,30 +66,18 @@ async def wait(seconds: float, tool_runtime: ToolRuntime = None) -> str:
     if seconds <= 0 or seconds > 30:
         return f"{TOOL_ERROR}: 等待秒数必须在 1-30 之间,超过 30 秒请使用 sleep_timer"
 
-    cancel_event = config.current_agent.cancel_event if config else None
+    deadline = time.monotonic() + seconds
+    last_displayed = -1
 
-    try:
-        deadline = time.monotonic() + seconds
-        last_displayed = -1
+    while time.monotonic() < deadline:
+        remaining = deadline - time.monotonic()
+        sec = int(remaining)
 
-        while time.monotonic() < deadline:
-            if cancel_event and cancel_event.is_set():
-                elapsed = seconds - (deadline - time.monotonic())
-                return (
-                    f"{SYSTEM_PREFIX}(wait) 等待被取消(已等待 {max(0, elapsed):.1f} 秒)"
-                )
+        if sec != last_displayed:
+            last_displayed = sec
+            await tool_runtime.stream(f"\r⏳ 剩余 {sec}s")
 
-            remaining = deadline - time.monotonic()
-            sec = int(remaining)
-
-            if sec != last_displayed:
-                last_displayed = sec
-                await tool_runtime.stream(f"\r⏳ 剩余 {sec}s")
-
-            await asyncio.sleep(min(0.2, remaining))
-
-    except asyncio.CancelledError:
-        return f"{SYSTEM_PREFIX}(wait) 等待被取消"
+        await asyncio.sleep(min(0.2, remaining))
 
     await tool_runtime.stream("✅ 完成")
     return f"已等待 {seconds} 秒"
