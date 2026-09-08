@@ -76,11 +76,18 @@ class WebBrowser:
         self._active_page_id: Optional[int] = None
         self._headless = True
         self._next_id = 1
+        self._connected_cdp = False  # 是否通过 CDP 连接外部浏览器
+        self._cdp_url: Optional[str] = None
 
     @property
     def is_running(self) -> bool:
         """浏览器是否正在运行。"""
         return self._browser is not None
+
+    @property
+    def connected_via_cdp(self) -> bool:
+        """是否通过 CDP 连接外部浏览器。"""
+        return self._connected_cdp
 
     @property
     def headless(self) -> bool:
@@ -128,9 +135,69 @@ class WebBrowser:
             # 创建默认页面
             await self.new_page()
             self._headless = headless
+            self._connected_cdp = False
+            self._cdp_url = None
 
         mode = "无头模式" if headless else "有头模式"
         return f"浏览器已启动({mode}),页面 ID: {self._active_page_id}"
+
+    async def connect_over_cdp(self, cdp_url: str = "http://localhost:9222") -> str:
+        """通过 CDP (Chrome DevTools Protocol) 连接到已运行的外部浏览器。
+
+        适用于用户手动启动的浏览器,如:
+            chrome.exe --remote-debugging-port=9222
+
+        连接后复用该浏览器已有的登录状态和标签页,后续页面操作与本地启动的浏览器完全一致。
+
+        Args:
+            cdp_url: 浏览器的 CDP 调试地址,如 "http://localhost:9222"。
+
+        Returns:
+            操作结果消息。
+        """
+        async_playwright_fn = _get_async_playwright()
+
+        if self._browser is not None:
+            await self.close()
+
+        try:
+            self._playwright = await async_playwright_fn().start()
+            self._browser = await self._playwright.chromium.connect_over_cdp(cdp_url)
+        except Exception as e:
+            # 连接失败时清理残留状态,避免 is_running 误报
+            self._browser = None
+            self._playwright = None
+            return (
+                f"{TOOL_ERROR}: 无法连接到浏览器 {cdp_url} ({e})\n"
+                "请确认浏览器已带远程调试参数启动(部分版本需同时指定 --user-data-dir 指向独立的用户数据目录),如:\n"
+                '"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" '
+                "--remote-debugging-port=9222 --user-data-dir=\"C:\\chrome-debug-profile\""
+            )
+
+        self._context = self._browser.contexts[0] if self._browser.contexts else None
+        if self._context is None:
+            self._context = await self._browser.new_context()
+
+        # 导入该浏览器已有的标签页
+        self._pages.clear()
+        self._active_page_id = None
+        for page in self._context.pages:
+            page_id = self._next_id
+            self._next_id += 1
+            self._pages[page_id] = page
+            if self._active_page_id is None:
+                self._active_page_id = page_id
+        if self._active_page_id is None:
+            await self.new_page()
+
+        self._connected_cdp = True
+        self._cdp_url = cdp_url
+        self._headless = False
+
+        return (
+            f"已通过 CDP 连接到浏览器 {cdp_url},"
+            f"导入 {len(self._pages)} 个页面,当前活动页面 ID: {self._active_page_id}"
+        )
 
     async def close(self) -> str:
         """关闭浏览器并释放资源。"""
@@ -138,6 +205,22 @@ class WebBrowser:
             return f"{TOOL_ERROR}: 浏览器未启动"
 
         try:
+            # CDP 连接的外部浏览器只断开连接,不关闭用户浏览器进程
+            if self._connected_cdp:
+                self._pages.clear()
+                self._active_page_id = None
+                self._connected_cdp = False
+                self._cdp_url = None
+                if self._context:
+                    self._context = None
+                if self._browser:
+                    await self._browser.close()  # disconnect: 仅断开 CDP 连接
+                    self._browser = None
+                if self._playwright:
+                    await self._playwright.stop()
+                    self._playwright = None
+                return "已断开与外部浏览器的 CDP 连接(浏览器保持运行)"
+
             for page in self._pages.values():
                 await page.close()
             self._pages.clear()
@@ -722,6 +805,11 @@ class WebBrowser:
         """
         if self._browser is None:
             return f"{TOOL_ERROR}: 浏览器未启动"
+        if self._connected_cdp:
+            return (
+                f"{TOOL_ERROR}: 已通过 CDP 连接外部浏览器,无法切换显示模式\n"
+                "显示模式由外部浏览器进程自身决定,如需无头模式请直接以 headless 参数启动浏览器"
+            )
         if self._headless == headless:
             return f"浏览器已在{'无头' if headless else '有头'}模式"
 

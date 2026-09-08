@@ -36,12 +36,32 @@ async def browser_start(url: str, headless: bool = True) -> str:
 
 @tool
 async def browser_close() -> str:
-    """关闭浏览器并释放所有页面。
+    """关闭浏览器并释放所有页面。如果当前是通过 CDP 连接的外部浏览器,则仅断开连接,外部浏览器进程保持运行。
 
     Returns:
         操作结果消息。
     """
     return await _browser.close()
+
+
+@tool
+async def browser_connect(cdp_url: str = "http://localhost:9222") -> str:
+    """通过 CDP (Chrome DevTools Protocol) 连接到已运行的外部浏览器,复用其标签页和登录状态。
+
+    使用前需以远程调试参数启动浏览器(部分 Chrome 版本会忽略无 --user-data-dir 的调试参数,
+    此时需额外指定一个独立的用户数据目录),例如:
+    "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" --remote-debugging-port=9222 --user-data-dir="C:\\chrome-debug-profile"
+
+    连接后所有页面操作工具(browser_navigate/click/type 等)均可直接使用。
+    browser_close 断开连接时不会关闭外部浏览器进程。
+
+    Args:
+        cdp_url: 浏览器的 CDP 调试地址,默认 "http://localhost:9222"。
+
+    Returns:
+        操作结果消息,包含导入的页面数量。
+    """
+    return await _browser.connect_over_cdp(cdp_url)
 
 
 # ── 页面管理 ──────────────────────────────────────────────────
@@ -409,7 +429,7 @@ async def browser_get_title(page_id: Optional[int] = None) -> str:
 
 @tool
 async def browser_toggle_mode(headless: bool = True) -> str:
-    """切换浏览器显示模式,保留所有页面 URL。
+    """切换浏览器显示模式,保留所有页面 URL。CDP 连接的外部浏览器不支持切换。
 
     当需要用户交互(如登录、验证码)时,可切换到有头模式(headless=False)显示浏览器窗口。
     交互完成后切换回无头模式(headless=True)继续自动化。
@@ -669,6 +689,7 @@ async def browser_get_styles(selector: str, page_id: Optional[int] = None) -> st
 # 核心浏览器工具(常用)
 CORE_BROWSE_TOOLS = [
     browser_start,
+    browser_connect,
     browser_close,
     browser_navigate,
     browser_click,

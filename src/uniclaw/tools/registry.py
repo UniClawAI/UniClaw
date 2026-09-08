@@ -157,6 +157,7 @@ def _build_extended_keywords() -> dict[str, list[str]]:
     from .tts.tools import text_to_speech
     from .web_browse.tools import (
         browser_start,
+        browser_connect,
         browser_close,
         browser_navigate,
         browser_click,
@@ -765,6 +766,18 @@ def _build_extended_keywords() -> dict[str, list[str]]:
             "start browser",
             "playwright",
             "open browser",
+        ],
+        browser_connect.name: [
+            "browser",
+            "连接浏览器",
+            "连接已有浏览器",
+            "远程调试",
+            "CDP",
+            "remote debugging",
+            "connect browser",
+            "chrome remote-debugging-port",
+            "接管浏览器",
+            "复用登录状态",
         ],
         browser_close.name: [
             "browser",
@@ -1523,6 +1536,7 @@ def _build_tool_categories() -> dict[str, str]:
     from .tts.tools import text_to_speech
     from .web_browse.tools import (
         browser_start,
+        browser_connect,
         browser_close,
         browser_navigate,
         browser_click,
@@ -1713,6 +1727,7 @@ def _build_tool_categories() -> dict[str, str]:
         push_notification.name: "通知",
         # Web Browse 工具
         browser_start.name: "浏览器",
+        browser_connect.name: "浏览器",
         browser_close.name: "浏览器",
         browser_navigate.name: "浏览器",
         browser_click.name: "浏览器",

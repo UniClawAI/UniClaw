@@ -692,6 +692,191 @@ class TestModeSwitch:
         assert "未启动" in result
 
 
+# ── CDP 连接测试 ─────────────────────────────────────────────
+
+
+class TestCdpConnect:
+    """测试通过 CDP 连接外部浏览器"""
+
+    @staticmethod
+    def _make_cdp_mocks(pages: list):
+        """构建 CDP 连接的 mock 环境。
+
+        注意: browser.py 中 self._playwright = await async_playwright_fn().start(),
+        因此必须让 mock 的 start() 返回其自身,配置才能生效。
+        """
+        mock_playwright = AsyncMock()
+        mock_playwright.start = AsyncMock(return_value=mock_playwright)
+        mock_browser = AsyncMock()
+        mock_context = AsyncMock()
+        mock_context.pages = pages
+        mock_browser.contexts = [mock_context]
+        mock_playwright.chromium.connect_over_cdp = AsyncMock(
+            return_value=mock_browser
+        )
+        return mock_playwright, mock_browser, mock_context
+
+    @pytest.fixture
+    async def cdp_browser(self, mock_context):
+        """构造一个已通过 CDP 连接的 WebBrowser"""
+        from unittest.mock import patch
+
+        from uniclaw.tools.web_browse.browser import WebBrowser
+
+        web_browser = WebBrowser()
+        mock_playwright, mock_browser, mock_context = self._make_cdp_mocks([])
+        with patch(
+            "uniclaw.tools.web_browse.browser._get_async_playwright",
+            return_value=lambda: mock_playwright,
+        ):
+            await web_browser.connect_over_cdp("http://devtools.example:9222")
+        return web_browser, mock_browser, mock_context
+
+    @pytest.mark.asyncio
+    async def test_connect_over_cdp(self, cdp_browser):
+        """测试 CDP 连接成功"""
+        web_browser, mock_browser, mock_context = cdp_browser
+
+        assert web_browser.is_running
+        assert web_browser.connected_via_cdp
+        assert mock_browser.contexts[0] is web_browser._context
+
+    @pytest.mark.asyncio
+    async def test_connect_imports_existing_pages(self, web_browser):
+        """测试连接时导入已有标签页"""
+        from unittest.mock import patch
+
+        page1 = AsyncMock()
+        page2 = AsyncMock()
+        mock_playwright, mock_browser, mock_context = self._make_cdp_mocks(
+            [page1, page2]
+        )
+
+        with patch(
+            "uniclaw.tools.web_browse.browser._get_async_playwright",
+            return_value=lambda: mock_playwright,
+        ):
+            result = await web_browser.connect_over_cdp("http://localhost:9222")
+
+        assert "导入 2 个页面" in result
+        assert 1 in web_browser._pages
+        assert 2 in web_browser._pages
+        assert web_browser._pages[1] is page1
+        assert web_browser._pages[2] is page2
+        assert web_browser._active_page_id == 1
+
+    @pytest.mark.asyncio
+    async def test_connect_creates_page_when_none(self, web_browser):
+        """测试无已有标签页时创建默认页面"""
+        from unittest.mock import patch
+
+        mock_page = AsyncMock()
+        mock_playwright, mock_browser, mock_context = self._make_cdp_mocks([])
+        mock_context.new_page = AsyncMock(return_value=mock_page)
+
+        with patch(
+            "uniclaw.tools.web_browse.browser._get_async_playwright",
+            return_value=lambda: mock_playwright,
+        ):
+            result = await web_browser.connect_over_cdp("http://localhost:9222")
+
+        assert "已通过 CDP 连接" in result
+        assert web_browser._active_page_id == 1
+        mock_context.new_page.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_connect_failure_returns_error(self, web_browser):
+        """测试连接失败时返回错误信息,状态不误报"""
+        from unittest.mock import patch
+
+        mock_playwright, _, _ = self._make_cdp_mocks([])
+        mock_playwright.chromium.connect_over_cdp = AsyncMock(
+            side_effect=Exception("connection refused")
+        )
+
+        with patch(
+            "uniclaw.tools.web_browse.browser._get_async_playwright",
+            return_value=lambda: mock_playwright,
+        ):
+            result = await web_browser.connect_over_cdp("http://localhost:9222")
+
+        assert "TOOL_ERROR" in result
+        assert "无法连接" in result
+        assert not web_browser.is_running
+        assert not web_browser.connected_via_cdp
+
+    @pytest.mark.asyncio
+    async def test_connect_when_already_running(self, web_browser, mock_playwright):
+        """测试已启动时再连接会先关闭旧浏览器"""
+        old_browser = AsyncMock()
+        web_browser._browser = old_browser
+        web_browser._playwright = mock_playwright
+        web_browser._context = AsyncMock()
+        web_browser._connected_cdp = False
+
+        mock_page = AsyncMock()
+        new_playwright, mock_browser, mock_context = self._make_cdp_mocks([mock_page])
+
+        with patch(
+            "uniclaw.tools.web_browse.browser._get_async_playwright",
+            return_value=lambda: new_playwright,
+        ):
+            result = await web_browser.connect_over_cdp("http://localhost:9222")
+
+        assert "已通过 CDP 连接" in result
+        old_browser.close.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_close_cdp_only_disconnects(self, web_browser):
+        """测试 CDP 模式下 close 仅断开连接,不关闭页面"""
+        mock_browser = AsyncMock()
+        mock_context = AsyncMock()
+        mock_page = AsyncMock()
+
+        web_browser._browser = mock_browser
+        web_browser._context = mock_context
+        web_browser._pages = {1: mock_page}
+        web_browser._active_page_id = 1
+        web_browser._connected_cdp = True
+
+        result = await web_browser.close()
+
+        assert "已断开" in result
+        assert "CDP" in result
+        mock_page.close.assert_not_called()  # 不应关闭用户浏览器中的页面
+        assert not web_browser.is_running
+        assert not web_browser.connected_via_cdp
+
+    @pytest.mark.asyncio
+    async def test_close_local_still_closes_pages(self, web_browser):
+        """测试本地模式下 close 仍关闭页面"""
+        mock_browser = AsyncMock()
+        mock_context = AsyncMock()
+        mock_page = AsyncMock()
+
+        web_browser._browser = mock_browser
+        web_browser._context = mock_context
+        web_browser._pages = {1: mock_page}
+        web_browser._active_page_id = 1
+        web_browser._connected_cdp = False
+
+        result = await web_browser.close()
+
+        assert "浏览器已关闭" in result
+        mock_page.close.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_switch_mode_blocked_in_cdp(self, web_browser):
+        """测试 CDP 模式下禁止切换显示模式"""
+        web_browser._browser = MagicMock()
+        web_browser._connected_cdp = True
+        web_browser._headless = False
+
+        result = await web_browser.switch_mode(headless=True)
+        assert "TOOL_ERROR" in result
+        assert "无法切换" in result
+
+
 # ── 工具函数测试 ─────────────────────────────────────────────
 
 
