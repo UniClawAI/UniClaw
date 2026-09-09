@@ -8,6 +8,8 @@ version = "0.1.0"
 description = "LLM-powered intelligent agent system"
 readme = "README.md"
 requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
 dependencies = [
     "croniter>=6.0.0",
     "fastapi>=0.135.1",
