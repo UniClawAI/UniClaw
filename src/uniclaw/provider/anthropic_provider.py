@@ -302,24 +302,16 @@ def stream(
 def _stream_inner(client: anthropic.Anthropic, kwargs: dict):
     """内部流式调用,处理 Anthropic SSE 事件流。"""
     tc_accum: dict[str, dict] = {}  # tool_use_id → tool_call dict
-    current_block_type = None
-    current_block_index = -1
-    thinking_text = ""
+    current_tool_id = ""  # 当前流式累积中的 tool_use block id
 
     with client.messages.stream(**kwargs) as stream:
         for event in stream:
             sc = StreamChunk()
 
             if event.type == "content_block_start":
-                current_block_index = event.index
                 block = event.content_block
-                if block.type == "text":
-                    current_block_type = "text"
-                elif block.type == "thinking":
-                    current_block_type = "thinking"
-                    thinking_text = ""
-                elif block.type == "tool_use":
-                    current_block_type = "tool_use"
+                if block.type == "tool_use":
+                    current_tool_id = block.id
                     tc_accum[block.id] = {
                         "id": block.id,
                         "type": "function",
@@ -336,25 +328,18 @@ def _stream_inner(client: anthropic.Anthropic, kwargs: dict):
                 if delta.type == "text_delta":
                     sc.content = delta.text
                 elif delta.type == "thinking_delta":
-                    thinking_text += delta.thinking
                     sc.reasoning_content = delta.thinking
                 elif delta.type == "input_json_delta":
-                    # 累积 tool arguments
-                    for tc in tc_accum.values():
-                        if not tc["function"]["arguments"]:
-                            tc["function"]["arguments"] = delta.partial_json
-                            break
-                        # 找到最后一个正在累积的
-                    # 更精确: 通过当前 block 关联
-                    if tc_accum:
-                        last_id = list(tc_accum.keys())[-1]
-                        tc_accum[last_id]["function"]["arguments"] += delta.partial_json
+                    # 通过 content_block_start 记录的 block id 精确关联
+                    if current_tool_id and current_tool_id in tc_accum:
+                        tc = tc_accum[current_tool_id]
+                        tc["function"]["arguments"] += delta.partial_json
                         sc.new_tool_call_args = safe_parse_args(
-                            tc_accum[last_id]["function"]["arguments"]
+                            tc["function"]["arguments"]
                         )
 
             elif event.type == "content_block_stop":
-                current_block_type = None
+                current_tool_id = ""
 
             elif event.type == "message_delta":
                 # usage 信息
@@ -365,12 +350,17 @@ def _stream_inner(client: anthropic.Anthropic, kwargs: dict):
             elif event.type == "message_start":
                 message = event.message
                 if hasattr(message, "model") and message.model:
-                    sc.model_name = (
-                        message.message if hasattr(message, "message") else ""
-                    )
+                    sc.model_name = message.model
 
             # 只在有内容时 yield
-            if sc.content or sc.reasoning_content or sc.new_tool_call_name or sc.usage:
+            if (
+                sc.content
+                or sc.reasoning_content
+                or sc.new_tool_call_name
+                or sc.new_tool_call_args
+                or sc.usage
+                or sc.model_name
+            ):
                 yield sc
 
     # 流结束 — yield 累积的 tool_calls
@@ -463,6 +453,7 @@ async def astream(
 async def _astream_inner(client: anthropic.AsyncAnthropic, kwargs: dict):
     """内部异步流式调用,处理 Anthropic SSE 事件流。"""
     tc_accum: dict[str, dict] = {}
+    current_tool_id = ""  # 当前流式累积中的 tool_use block id
 
     async with client.messages.stream(**kwargs) as stream:
         async for event in stream:
@@ -471,6 +462,7 @@ async def _astream_inner(client: anthropic.AsyncAnthropic, kwargs: dict):
             if event.type == "content_block_start":
                 block = event.content_block
                 if block.type == "tool_use":
+                    current_tool_id = block.id
                     tc_accum[block.id] = {
                         "id": block.id,
                         "type": "function",
@@ -489,12 +481,16 @@ async def _astream_inner(client: anthropic.AsyncAnthropic, kwargs: dict):
                 elif delta.type == "thinking_delta":
                     sc.reasoning_content = delta.thinking
                 elif delta.type == "input_json_delta":
-                    if tc_accum:
-                        last_id = list(tc_accum.keys())[-1]
-                        tc_accum[last_id]["function"]["arguments"] += delta.partial_json
+                    # 通过 content_block_start 记录的 block id 精确关联
+                    if current_tool_id and current_tool_id in tc_accum:
+                        tc = tc_accum[current_tool_id]
+                        tc["function"]["arguments"] += delta.partial_json
                         sc.new_tool_call_args = safe_parse_args(
-                            tc_accum[last_id]["function"]["arguments"]
+                            tc["function"]["arguments"]
                         )
+
+            elif event.type == "content_block_stop":
+                current_tool_id = ""
 
             elif event.type == "message_delta":
                 usage = getattr(event, "usage", None)
@@ -506,7 +502,14 @@ async def _astream_inner(client: anthropic.AsyncAnthropic, kwargs: dict):
                 if hasattr(message, "model") and message.model:
                     sc.model_name = message.model
 
-            if sc.content or sc.reasoning_content or sc.new_tool_call_name or sc.usage:
+            if (
+                sc.content
+                or sc.reasoning_content
+                or sc.new_tool_call_name
+                or sc.new_tool_call_args
+                or sc.usage
+                or sc.model_name
+            ):
                 yield sc
 
     if tc_accum:
