@@ -39,6 +39,8 @@ def get_env_system_prompt(config: AppConfig, is_a2a: bool = False) -> str:
     ]
     if root_dir:
         env_lines.append(f"- {'工作目录' if is_a2a else '当前目录'}:{root_dir}")
+    # 临时目录:有 root_dir 时用项目级,否则用用户级
+    env_lines.append(f"- 临时目录:{get_app_dir(root_dir) / 'temp'} (临时文件写入此处)")
     env_lines.append(f"- 平台:{platform.system()}")
     # Python 版本 + 解释器路径:模型常误判语言特性(依赖/语法/版本),需显式告知
     env_lines.append(f"- Python:{platform.python_version()} ({sys.executable})")
@@ -81,7 +83,7 @@ def get_base_system_prompt(config: AppConfig) -> str:
 - 文件操作始终使用绝对路径
 - 多步骤任务系统地逐步完成
 - 任务不清楚时,在继续之前请求澄清
-- 临时文件使用完毕后及时清理
+- 临时文件写入环境信息指定的临时目录(.UniClaw/temp),使用完毕后及时清理
 - **长任务进展汇报**:执行多步骤任务时,每完成约20次工具调用后,主动向用户简要汇报当前进展(已完成什么、正在做什么、下一步计划),保持用户对任务状态的感知。
 
 {get_platform_hints()}
