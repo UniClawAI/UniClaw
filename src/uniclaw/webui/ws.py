@@ -7,6 +7,7 @@ import time
 import base64
 import traceback
 import uuid
+import weakref
 from dataclasses import dataclass
 from typing import Any
 from fastapi import WebSocket, WebSocketDisconnect
@@ -81,7 +82,12 @@ _pending_session_lock = asyncio.Lock()
 
 
 async def get_or_load_session(session_id: str) -> AppConfig:
-    """从缓存获取 AppConfig,缓存未命中则从磁盘加载。"""
+    """从缓存获取 AppConfig,缓存未命中则从磁盘加载。
+
+    缓存被 LRU 淘汰但 agent 仍在运行时,复用内存中的活 task,
+    避免为同一会话创建第二个 AgentTask/event_queue(否则新队列无人消费,
+    agent 输出全部丢失,且与旧 task 并发写同一 session)。
+    """
     if session_id in session_cache:
         config = session_cache[session_id]
         # 确保 event_queue 已初始化
@@ -91,6 +97,26 @@ async def get_or_load_session(session_id: str) -> AppConfig:
         if isinstance(config.spinner, WebSpinner):
             config.spinner.set_send_callback(_broadcast)
         return config
+    # 缓存未命中:查弱引用注册表,若该会话的 agent 仍在运行则复用现有 config,
+    # 避免为同一会话创建第二个 AgentTask/event_queue(否则新队列无人消费,
+    # agent 输出全部丢失,且与旧 task 并发写同一 session)
+    config = _config_registry.get(session_id)
+    if config is not None:
+        task = config.current_agent
+        future_alive = task.future is not None and not task.future.done()
+        has_pending = not task.user_queue.empty()
+        if future_alive or has_pending or task.status in (
+            AgentStatus.RUNNING,
+            AgentStatus.WAITING,
+        ):
+            if task.event_queue is None:
+                task.event_queue = asyncio.Queue()
+            session_cache[session_id] = config
+            if isinstance(config.spinner, WebSpinner):
+                config.spinner.set_send_callback(_broadcast)
+            return config
+        # agent 已死:清理注册表,走磁盘重载
+        _config_registry.pop(session_id, None)
     # 从磁盘加载
     session = SessionManager.load_session(session_id)
     if session is None:
@@ -106,9 +132,27 @@ async def get_or_load_session(session_id: str) -> AppConfig:
     # 初始化 event_queue
     config.current_agent.event_queue = asyncio.Queue()
     session_cache[session_id] = config
+    _register_config(config)
     # 绑定 spinner 回调(新加载的 spinner 缺少 send_callback)
     spinner.set_send_callback(_broadcast)
     return config
+
+
+# session_id → AppConfig 弱引用注册表(不受 LRU 淘汰影响)。
+# 用途:LRU 淘汰后若 agent 仍在运行,复用同一 config/task,
+# 避免重复创建 event_queue 导致事件无人消费。
+# 弱引用 + 退出清理防止内存泄漏。
+_config_registry: "weakref.WeakValueDictionary[str, AppConfig]" = (
+    weakref.WeakValueDictionary()
+)
+
+
+def _register_config(config: AppConfig):
+    """将会话 config 记入弱引用注册表。"""
+    try:
+        _config_registry[config.current_agent.session.id] = config
+    except TypeError:
+        pass  # 对象不支持弱引用时跳过(不影响主流程)
 
 
 async def _register_pending(session_id: str, req_id: str, req: PendingRequest):
@@ -746,7 +790,15 @@ async def handle_ws_message(ws: WebSocket, msg: dict):
         get_logger("webui", Path.cwd()).info(
             f"[{session_id}] 准备启动 agent, task.status={task.status}"
         )
-        if task.status != AgentStatus.RUNNING:
+        # future 存活才算真正在运行:status 可能因 run() 异常退出而残留 RUNNING(修复前)
+        # 或 PENDING 但从未启动。此时入队消息将无人消费,必须走 start_agent 分支
+        future_alive = task.future is not None and not task.future.done()
+        if task.status != AgentStatus.RUNNING or not future_alive:
+            if task.status == AgentStatus.RUNNING:
+                get_logger("webui", Path.cwd()).warning(
+                    f"[{session_id}] status=RUNNING 但 future 已结束,"
+                    f"重置状态后重新启动 agent"
+                )
             get_logger("webui", Path.cwd()).info(f"[{session_id}] 启动 agent")
             multi_agent = MultiAgent.get_instance()
             agent_task = multi_agent.start_agent(content, config)

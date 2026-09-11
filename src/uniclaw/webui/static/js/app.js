@@ -141,6 +141,13 @@ const App = {
             if (dot) dot.className = 'connection-dot connected';
             if (_hasConnected) {
                 Utils.showSuccess('已重新连接到服务器');
+                // 重连后恢复状态:断线期间的广播(流式输出/权限请求)不会补发,
+                // 重发 set_active 让后端重推待处理请求,并重载当前会话历史补齐缺口
+                const sid = SessionPanel.activeSessionId;
+                if (sid) {
+                    WS.send({ type: 'set_active', session_id: sid });
+                    Chat.loadHistory(sid).catch(e => console.error('[App] 重连后重载历史失败:', e));
+                }
             } else {
                 Utils.showSuccess('已连接到服务器');
                 _hasConnected = true;

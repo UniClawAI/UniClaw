@@ -521,15 +521,15 @@ class MultiAgent:
         task.notify_parent = notify_parent  # run 主循环在 resp 出结果时读取并即时唤醒
         root_dir = config.root_dir
 
-        if (
-            inherit_events
-            and parent_task is not None
-            and parent_task.event_queue is not None
-        ):
+        if parent_task is not None and parent_task.event_queue is not None:
+            # 事件队列始终共享:wait=False 的异步子代理若不共享父队列,
+            # 其 event_queue 为 None,send_event_to_user 会静默丢弃所有
+            # thinking/text/tool 事件,前端看不到子代理任何输出
             task.event_queue = parent_task.event_queue
-            task.cancel_event = parent_task.cancel_event
-            # 同步子 agent:共享 cancel_event,ESC 可直接取消
-            # 异步子 agent:不走此分支,各自独立的 cancel_event
+            if inherit_events:
+                # 同步子 agent:还共享 cancel_event,ESC 可直接取消
+                # 异步子 agent:不走此分支,各自独立的 cancel_event
+                task.cancel_event = parent_task.cancel_event
         self.id2AgentTask[task.id] = task
 
         base_system_prompt = get_base_system_prompt(config)
@@ -1234,6 +1234,27 @@ class MultiAgent:
 
     @error_catch("agent")
     async def run(
+        self,
+        user_message: str | list[dict[str, Any]],
+        system_message: Optional[str] = None,
+        config: AppConfig = None,
+        allowed_tools: list[Tool] | None = None,
+    ):
+        task = config.current_agent
+        try:
+            await self._run(user_message, system_message, config, allowed_tools)
+        except asyncio.CancelledError:
+            task.status = AgentStatus.CANCELLED
+            raise
+        except Exception:
+            # 异常时确保状态归位并发 EndEvent,否则 status 卡在 RUNNING:
+            # bridge 不退出、前端一直显示运行中,后续消息只入队无人消费(被静默吞掉)
+            if task.status in (AgentStatus.RUNNING, AgentStatus.PENDING):
+                task.status = AgentStatus.FAILED
+            await self.send_event_to_user(EndEvent(depth=config.depth), config)
+            raise
+
+    async def _run(
         self,
         user_message: str | list[dict[str, Any]],
         system_message: Optional[str] = None,
