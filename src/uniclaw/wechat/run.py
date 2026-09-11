@@ -48,14 +48,13 @@ def _get_user_config(user_id: str) -> AppConfig:
     """获取或创建用户的 AppConfig(含独立的 session 和 agent)。"""
     if user_id not in _user_configs:
         from uniclaw.tools.session.session_manager import SessionManager
+        from uniclaw.tools.session.session import SessionType
 
         # 尝试加载已有会话,找不到则新建
         session = SessionManager.load_session(user_id)
         if session is None:
             session = user_id
         else:
-            from uniclaw.tools.session.session import SessionType
-
             session.session_type = SessionType.WECHAT
 
         config = load_config(
