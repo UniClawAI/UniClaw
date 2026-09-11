@@ -40,6 +40,7 @@ class AgentTask:
     status: str = AgentStatus.PENDING
     result: Optional[str] = None
     result_read_index: int = 0
+    notify_parent: bool = False  # 异步子代理:执行中/结束时唤醒父 agent(run 主循环读取)
 
     worktree_path: str = ""
     worktree_branch: str = ""

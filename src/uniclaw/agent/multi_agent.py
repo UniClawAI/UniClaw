@@ -60,7 +60,7 @@ from uniclaw.tools.hooks.hook_manager import HookError, HookEvent, run_hooks
 import traceback
 
 from uniclaw.utils.wrapper import error_catch
-from uniclaw.console.ui import info
+from uniclaw.console.ui import err, info, warn
 
 DEDUP_TOOLS = frozenset({"Read", "Glob", "Grep", "webFetch"})
 DEDUP_MIN_CHARS = 500  # 结果超过此长度才去重
@@ -415,6 +415,34 @@ class MultiAgent:
                 await event.return_event.wait()
             return event.content
 
+    async def _notify_sub_agent_progress(self, task: AgentTask, config: AppConfig):
+        """异步子代理执行中产出新输出时,即时唤醒父 agent(尽力而为,失败仅告警)。
+
+        由 _process_response 在 resp 出结果且含文本输出时通过 create_task 调用。
+        状态字段为 running,父 agent 可据此区分"中间播报"与"最终完成"。
+        """
+        parent_config = config.parent_config
+        if parent_config is None:
+            return
+        parent_task = parent_config.current_agent
+        if parent_task is None or parent_task is task:
+            return
+        reason = "此子智能体执行中有新输出(尚未完成)。"
+        msg = (
+            f"{SYSTEM_PREFIX}[child_agent]\n"
+            f"名称: {task.name}\n"
+            f"任务ID: {task.id}\n"
+            f"状态: {task.status}\n"
+            f"消息: {reason}\n"
+            f'- 请调用 {subagent_check_result.name}(task_id="{task.id}") 来读取结果\n'
+            f'- 使用 {subagent_send_message.name}(task_id="{task.id}", message="...") 发送消息\n'
+            f'- 使用 {subagent_close.name}(task_id="{task.id}") 关闭智能体'
+        )
+        try:
+            await wake_agent(msg, parent_config)
+        except Exception as e:
+            await warn(f"通知父 agent 失败(子代理 {task.name}): {e}", config)
+
     async def wait(self, task_id: str, timeout: float = None):
         """
         异步等待指定任务完成并返回任务对象。
@@ -490,6 +518,7 @@ class MultiAgent:
         task = config.current_agent
         task.prompt = user_message
         task.status = AgentStatus.PENDING
+        task.notify_parent = notify_parent  # run 主循环在 resp 出结果时读取并即时唤醒
         root_dir = config.root_dir
 
         if (
@@ -564,6 +593,32 @@ class MultiAgent:
             config.writable_dirs.insert(0, worktree_path)
             task.session.root_dir = Path(worktree_path)
 
+        def _notify_message(reason: str) -> str:
+            """构造发给父 agent 的 [child_agent] 通知消息。"""
+            return (
+                f"{SYSTEM_PREFIX}[child_agent]\n"
+                f"名称: {task.name}\n"
+                f"任务ID: {task.id}\n"
+                f"状态: {task.status}\n"
+                f"消息: {reason}\n"
+                f'- 请调用 {subagent_check_result.name}(task_id="{task.id}") 来读取结果\n'
+                f'- 使用 {subagent_send_message.name}(task_id="{task.id}", message="...") 发送消息\n'
+                f'- 使用 {subagent_close.name}(task_id="{task.id}") 关闭智能体'
+            )
+
+        async def _notify_parent(reason: str):
+            """向父 agent 发送唤醒通知(尽力而为,失败仅记日志)。"""
+            if (
+                notify_parent
+                and parent_task is not None
+                and parent_task is not task
+                and config.parent_config is not None
+            ):
+                try:
+                    await wake_agent(_notify_message(reason), config.parent_config)
+                except Exception as e:
+                    await warn(f"通知父 agent 失败(子代理 {task.name}): {e}", config)
+
         async def _run_proc(user_message, system_prompt, config, task: AgentTask):
             try:
                 task.user_queue.put_nowait(user_message)
@@ -582,25 +637,11 @@ class MultiAgent:
                     await self.run(msg, system_prompt, config, allowed_tools)
                     if task.cancel_event.is_set():
                         task.result = "任务已取消。"
+                        # 取消也通知父 agent,避免父 agent 永远等不到结果
+                        await _notify_parent("此子智能体已被取消。")
                         return
                     task.result = task.session.get_assistant_messages()
-                    if (
-                        notify_parent
-                        and parent_task is not None
-                        and parent_task is not task
-                        and config.parent_config is not None
-                    ):
-                        msg = (
-                            f"{SYSTEM_PREFIX}[child_agent]\n"
-                            f"名称: {task.name}\n"
-                            f"任务ID: {task.id}\n"
-                            f"状态: {task.status}\n"
-                            "消息: 此子智能体有新的输出。\n"
-                            f'- 请调用 {subagent_check_result.name}(task_id="{task.id}") 来读取结果\n'
-                            f'- 使用 {subagent_send_message.name}(task_id="{task.id}", message="...") 发送消息\n'
-                            f'- 使用 {subagent_close.name}(task_id="{task.id}") 关闭智能体'
-                        )
-                        await wake_agent(msg, config.parent_config)
+                    await _notify_parent("此子智能体有新的输出。")
                     if not keep_alive:
                         break
                 if not task.result:
@@ -608,17 +649,37 @@ class MultiAgent:
             except Exception as e:
                 task.result = f"任务处理失败:{str(e)}"
                 task.status = AgentStatus.FAILED
+                await err(f"子代理 {task.name} 执行失败: {e}\n{traceback.format_exc()}")
+                # 失败也通知父 agent,避免父 agent 永远等不到结果
+                await _notify_parent(f"此子智能体执行失败:{e}")
             finally:
                 if task.status == AgentStatus.WAITING:
                     task.status = AgentStatus.COMPLETED
                 if task.worktree_path:
-                    await remove_worktree(
-                        task.worktree_path, task.worktree_branch, root_dir
-                    )
+                    try:
+                        await remove_worktree(
+                            task.worktree_path, task.worktree_branch, root_dir
+                        )
+                    except Exception as e:
+                        # 清理失败不掩盖真实结果/异常
+                        await warn(f"移除工作树失败(子代理 {task.name}): {e}", config)
 
         task.future = asyncio.create_task(
             _run_proc(user_message, system_prompt, config, task)
         )
+
+        # 兜底回调:防止未来某条路径绕过 try/except,异常被静默吞掉直到 GC
+        def _log_future_exception(t: asyncio.Task):
+            if not t.cancelled() and t.exception() is not None:
+                err_sync = (
+                    f"子代理 {task.name} future 异常:\n"
+                    f"{''.join(traceback.format_exception(t.exception()))}"
+                )
+                asyncio.get_running_loop().call_soon_threadsafe(
+                    asyncio.create_task, err(err_sync, config)
+                )
+
+        task.future.add_done_callback(_log_future_exception)
         return task
 
     def list_tasks(self) -> list[AgentTask]:
@@ -785,6 +846,9 @@ class MultiAgent:
             ),
             config,
         )
+        # 异步子代理执行中有新输出 → 即时唤醒父 agent(create_task 不阻塞主循环)
+        if task.notify_parent and content:
+            asyncio.create_task(self._notify_sub_agent_progress(task, config))
         from uniclaw.utils.usage import record_usage
 
         await record_usage(
