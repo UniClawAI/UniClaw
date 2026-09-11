@@ -415,33 +415,24 @@ class MultiAgent:
                 await event.return_event.wait()
             return event.content
 
-    async def _notify_sub_agent_progress(self, task: AgentTask, config: AppConfig):
-        """异步子代理执行中产出新输出时,即时唤醒父 agent(尽力而为,失败仅告警)。
+    async def _notify_sub_agent_progress(
+        self, task: AgentTask, config: AppConfig, content: str
+    ):
+        """异步子代理执行中产出新输出时,以 info 消息把输出内容展示给用户(不唤醒父 agent)。
 
         由 _process_response 在 resp 出结果且含文本输出时通过 create_task 调用。
-        状态字段为 running,父 agent 可据此区分"中间播报"与"最终完成"。
         """
         parent_config = config.parent_config
         if parent_config is None:
             return
-        parent_task = parent_config.current_agent
-        if parent_task is None or parent_task is task:
-            return
-        reason = "此子智能体执行中有新输出(尚未完成)。"
-        msg = (
-            f"{SYSTEM_PREFIX}[child_agent]\n"
-            f"名称: {task.name}\n"
-            f"任务ID: {task.id}\n"
-            f"状态: {task.status}\n"
-            f"消息: {reason}\n"
-            f'- 请调用 {subagent_check_result.name}(task_id="{task.id}") 来读取结果\n'
-            f'- 使用 {subagent_send_message.name}(task_id="{task.id}", message="...") 发送消息\n'
-            f'- 使用 {subagent_close.name}(task_id="{task.id}") 关闭智能体'
-        )
+        output = truncate_text_by_lines(content, max_tokens=500)
+        msg = f"[子智能体:{task.name}] {output}"
         try:
-            await wake_agent(msg, parent_config)
+            await info(msg, parent_config)
         except Exception as e:
-            await warn(f"通知父 agent 失败(子代理 {task.name}): {e}", config)
+            get_logger("agent", config.root_dir).debug(
+                "子代理进度通知失败(%s): %s", task.name, e
+            )
 
     async def wait(self, task_id: str, timeout: float = None):
         """
@@ -521,15 +512,17 @@ class MultiAgent:
         task.notify_parent = notify_parent  # run 主循环在 resp 出结果时读取并即时唤醒
         root_dir = config.root_dir
 
-        if parent_task is not None and parent_task.event_queue is not None:
-            # 事件队列始终共享:wait=False 的异步子代理若不共享父队列,
-            # 其 event_queue 为 None,send_event_to_user 会静默丢弃所有
-            # thinking/text/tool 事件,前端看不到子代理任何输出
+        if (
+            inherit_events
+            and parent_task is not None
+            and parent_task.event_queue is not None
+        ):
+            # 仅同步子 agent(wait=True)共享父队列和 cancel_event(ESC 可直接取消)。
+            # 异步子 agent 不共享:thinking/text/tool 事件由 send_event_to_user
+            # 静默丢弃,中途进度改由 _notify_sub_agent_progress 以 info 展示给用户;
+            # 阻塞事件(权限请求)仍经 root_config 链路由到主队列。
             task.event_queue = parent_task.event_queue
-            if inherit_events:
-                # 同步子 agent:还共享 cancel_event,ESC 可直接取消
-                # 异步子 agent:不走此分支,各自独立的 cancel_event
-                task.cancel_event = parent_task.cancel_event
+            task.cancel_event = parent_task.cancel_event
         self.id2AgentTask[task.id] = task
 
         base_system_prompt = get_base_system_prompt(config)
@@ -846,9 +839,9 @@ class MultiAgent:
             ),
             config,
         )
-        # 异步子代理执行中有新输出 → 即时唤醒父 agent(create_task 不阻塞主循环)
+        # 异步子代理执行中有新输出 → info 展示输出给用户(create_task 不阻塞主循环)
         if task.notify_parent and content:
-            asyncio.create_task(self._notify_sub_agent_progress(task, config))
+            asyncio.create_task(self._notify_sub_agent_progress(task, config, content))
         from uniclaw.utils.usage import record_usage
 
         await record_usage(

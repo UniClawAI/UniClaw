@@ -94,7 +94,7 @@ async def subagent_create(
             f"使用 {subagent_check_result.name} 或 {subagent_send_message.name} 与此智能体交互。"
         )
         info_parts.append(
-            f"子智能体完成/失败/被取消时会发送以 {SYSTEM_PREFIX}[child_agent] 前缀通知(消息中的 状态 字段标明具体情形);请使用任务ID调用 {subagent_check_result.name} 来读取结果。"
+            f"子智能体完成/失败/被取消时会以 {SYSTEM_PREFIX}[child_agent] 前缀消息唤醒你(消息中的 状态 字段标明具体情形);请使用任务ID调用 {subagent_check_result.name} 来读取结果。"
         )
         info_parts.append(f"使用 {subagent_close.name} 可关闭智能体释放资源。")
         return "\n".join(info_parts)
