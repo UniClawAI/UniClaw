@@ -61,26 +61,36 @@ def _assert_no_chunk_exceeds_size(splitter, chunks: list[str]):
         )
 
 
+def _tail_head_overlap(prev_tail: str, curr: str) -> int:
+    """计算 prev_tail 的后缀与 curr 的前缀的最长公共文本长度(字符级)。
+
+    用于在文本层面验证 overlap。不能用 token id 严格相等来验证:
+    tokenizer 的 BPE 合并受上下文影响, 同一段文本单独编码(作为尾部片段,
+    块首无前文)与作为整个 chunk 开头编码, 可能产生不同的 token id,
+    即使文本完全一致(如 " word" 单独编码与 "word..." 块首编码不同)。
+    """
+    a = prev_tail.strip()
+    b = curr.strip()
+    for ol in range(min(len(a), len(b)), 0, -1):
+        if b.startswith(a[-ol:]):
+            return ol
+    return 0
+
+
 def _assert_overlap_present(splitter, chunks: list[str]):
-    """断言相邻 chunk 之间存在 overlap(当 chunk_overlap > 0)。"""
+    """断言相邻 chunk 之间存在 overlap(当 chunk_overlap > 0)。
+
+    在文本层面验证: 前一个 chunk 的尾部文本应出现在下一个 chunk 的开头
+    (容忍空白差异与部分匹配, 至少重叠 1 个字符)。
+    """
     if splitter.chunk_overlap == 0 or len(chunks) < 2:
         return
     for i in range(len(chunks) - 1):
         prev_tail = splitter._take_tail(chunks[i], splitter.chunk_overlap)
-        curr = chunks[i + 1]
-        # 前一个 chunk 的尾部应该出现在下一个 chunk 的开头附近
-        # 由于分隔符的影响,我们检查 token 级别的重叠
-        prev_tail_tokens = splitter.tokenizer.encode(prev_tail)
-        curr_tokens = splitter.tokenizer.encode(curr)
-        # 至少有一些 overlap tokens
-        overlap_count = 0
-        for j in range(min(len(prev_tail_tokens), len(curr_tokens))):
-            if prev_tail_tokens[-(j + 1)] == curr_tokens[j]:
-                overlap_count += 1
-            else:
-                break
-        assert overlap_count > 0, (
-            f"No token overlap between chunk[{i}] and chunk[{i + 1}]"
+        overlap = _tail_head_overlap(prev_tail, chunks[i + 1])
+        assert overlap > 0, (
+            f"No overlap between chunk[{i}] and chunk[{i + 1}]: "
+            f"tail={prev_tail!r}, next starts={chunks[i + 1][:50]!r}"
         )
 
 
@@ -318,18 +328,16 @@ class TestRecursiveSplitterBugFix:
         assert any("BBB" in c for c in chunks), "BBB should appear in chunks"
 
         # 验证 BBB 所在 chunk 的开头与前一个 chunk 的尾部有 overlap
+        # (文本层面比较, 不用 token id — BPE 编码受上下文影响,
+        # 同一文本作为尾部片段与作为 chunk 开头编码出的 id 可能不同)
         for i, c in enumerate(chunks):
             if "BBB" in c and i > 0:
                 prev_tail = splitter._take_tail(chunks[i - 1], splitter.chunk_overlap)
-                # prev_tail 的 tokens 应该出现在当前 chunk 的开头
-                tail_tokens = splitter.tokenizer.encode(prev_tail)
-                curr_tokens = splitter.tokenizer.encode(c)
-                # 至少第一个 overlap token 应匹配
-                if tail_tokens and curr_tokens:
-                    assert tail_tokens[-1] == curr_tokens[0] or any(
-                        tail_tokens[-j] == curr_tokens[0]
-                        for j in range(1, len(tail_tokens))
-                    ), "Overlap continuity broken at recursive branch boundary"
+                overlap = _tail_head_overlap(prev_tail, c)
+                assert overlap > 0, (
+                    "Overlap continuity broken at recursive branch boundary: "
+                    f"tail={prev_tail!r}, next starts={c[:50]!r}"
+                )
                 break
 
     def test_recursive_with_multiple_long_paragraphs(self):
