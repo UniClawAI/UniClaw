@@ -1499,13 +1499,15 @@ class Session:
         # 例如 70% 档在 63% 预警、85% 档在 76.5% 预警。
         # level 0(50%)仅微压缩(清空可再生工具结果,可重新获取),信息无损,不预警。
         # 预警等级下限: WARN_LEVEL_MIN 之下的等级只做 snip,不触发 LLM 摘要。
-        for i, (threshold, _) in enumerate(PRESSURE_LEVELS):
-            if i < _WARN_LEVEL_MIN:
+        for threshold, level in PRESSURE_LEVELS:
+            if level < _WARN_LEVEL_MIN:
                 continue
-            upper = PRESSURE_LEVELS[i - 1][0] if i > 0 else 1.0
+            upper = next(
+                (t for t, lv in PRESSURE_LEVELS if lv == level + 1), 1.0
+            )
             warn_at = min(threshold, upper) * _COMPACT_WARN_FACTOR
-            if ratio >= warn_at and i not in self._compact_warned_levels:
-                self._compact_warned_levels.add(i)
+            if ratio >= warn_at and level not in self._compact_warned_levels:
+                self._compact_warned_levels.add(level)
                 await self._notify_compact_warning(config, threshold)
 
         level = await get_pressure_level(current_tokens, model)

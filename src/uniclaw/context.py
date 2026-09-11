@@ -266,6 +266,11 @@ async def build_system_prompt(config: AppConfig):
 
     # === 稳定内容(低频变化,最大化缓存前缀命中) ===
 
+    # 会话笔记 — 完全静态内容(紧随基础提示词,置于稳定前缀区最前)
+    from uniclaw.tools.session.notes import get_notes_system_prompt
+
+    system_prompt += f"\n\n{get_notes_system_prompt()}"
+
     # Security — 完全静态内容(放在最前面,最大化缓存命中)
     from uniclaw.tools.security.tools import get_security_system_prompt
 

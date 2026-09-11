@@ -179,3 +179,9 @@ def get_tools() -> list:
 def get_all_tools() -> list:
     """获取所有会话笔记工具(与 get_tools 相同)"""
     return get_tools()
+
+
+def get_notes_system_prompt() -> str:
+    """构建会话笔记系统提示词段(静态内容,置于稳定前缀区以最大化缓存命中)。"""
+    return f"""# 会话笔记
+会话笔记({session_note_add.name} 等 session_note_* 工具)随会话持久化,压缩时正文不丢失。适合记录阶段性成果,如探索/测试结论、关键配置值、路径等,供后续阶段直接取用。"""
