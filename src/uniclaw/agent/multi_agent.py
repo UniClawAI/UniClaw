@@ -528,6 +528,7 @@ class MultiAgent:
         base_system_prompt = get_base_system_prompt(config)
         # 环境段(日期/目录/PID)单独追加在末尾,避免打断稳定前缀缓存
         base_system_prompt += f"\n\n{get_env_system_prompt(config)}"
+        # None 表示不限制工具: 子代理走 search_tools 按需加载扩展工具
         allowed_tools = None
         if agent_def:
             if agent_def.model_name:
@@ -537,16 +538,16 @@ class MultiAgent:
                     else agent_def.model_name
                 )
             if agent_def.tools:
-                allowed_tools = agent_def.tools
+                from uniclaw.tools.registry import ToolRegistry
+
+                # 声明了白名单: 解析为工具对象, _run 中据此硬限制
+                allowed_tools = ToolRegistry.get_instance().resolve_tools(
+                    agent_def.tools
+                )
             if agent_def.system_prompt:
                 base_system_prompt += f"\n\n{agent_def.system_prompt}"
 
-        if not allowed_tools:
-            allowed_tools = await get_tools(config)
-        else:
-            from uniclaw.tools.registry import ToolRegistry
-
-            allowed_tools = ToolRegistry.get_instance().resolve_tools(allowed_tools)
+        # 未声明白名单时 allowed_tools 保持 None: 子代理不限制, 走 search_tools 按需加载
         # 子代理展示可搜索的扩展工具
         from uniclaw.tools.registry import get_registry_system_prompt
 
@@ -1286,7 +1287,16 @@ class MultiAgent:
         is_sub = config.is_sub
         tools = list(await get_core_tools(sub_agent=is_sub))
         if is_sub:
-            ext_names = {t.name for t in allowed_tools}
+            # allowed_tools 非 None 时为白名单; 否则不限制(全集, 走 search_tools 按需加载)
+            if allowed_tools:
+                allowed_names = {t.name for t in allowed_tools}
+                tools = [t for t in tools if t.name in allowed_names]
+                # 专用代理显式声明的扩展工具直接加载,避免通过 search_tools 绕过白名单。
+                loaded_names = {t.name for t in tools}
+                tools.extend(t for t in allowed_tools if t.name not in loaded_names)
+                ext_names = allowed_names
+            else:
+                ext_names = {t.name for t in await get_tools(config)}
             task.allowed_tools_set = {t.name for t in tools} | ext_names
         else:
             task.allowed_tools_set = {t.name for t in await get_tools(config)}
