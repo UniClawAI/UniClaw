@@ -710,6 +710,8 @@ class MultiAgent:
         if config.depth >= config.max_agent_depth:
             task.status = AgentStatus.FAILED
             task.result = f"错误:超过最大深度 ({config.max_agent_depth})"
+            # 补发 EndEvent,否则 WebUI bridge 永不退出、事件无人消费
+            await self.send_event_to_user(EndEvent(depth=config.depth), config)
             return False
         task.status = AgentStatus.RUNNING
         if not config.is_sub:
@@ -1219,10 +1221,16 @@ class MultiAgent:
         # 子代理: 发送 depth>0 的 EndEvent,通知前端子代理完成
         # 主 agent: 发送 depth=0 的 EndEvent,通知 bridge 退出
         await self.send_event_to_user(EndEvent(depth=config.depth), config)
-        # 子代理结束后,帮父 agent 检查:父 agent 已结束且无其他 RUNNING 的 subagent,发 EndEvent(depth=0)
+        # 子代理结束后,帮父 agent 检查:父 agent 已结束且无其他 RUNNING 的 subagent,
+        # 补发 EndEvent(depth=0) 让 WebUI bridge 退出。
+        # 父代理被取消/失败时无人发 depth=0 的 EndEvent(bridge 永不退出),
+        # 所以除 RUNNING 外的终态都要补发。
         if parent_config and not parent_config.has_running_subs():
             parent_task = parent_config.current_agent
-            if parent_task and parent_task.status == AgentStatus.COMPLETED:
+            if parent_task and parent_task.status not in (
+                AgentStatus.RUNNING,
+                AgentStatus.PENDING,
+            ):
                 await self.send_event_to_user(EndEvent(depth=0), parent_config)
 
     @error_catch("agent")
@@ -1238,6 +1246,9 @@ class MultiAgent:
             await self._run(user_message, system_message, config, allowed_tools)
         except asyncio.CancelledError:
             task.status = AgentStatus.CANCELLED
+            # 必须补发 EndEvent,否则 WebUI bridge 不退出,
+            # 后续事件入队无人消费,前端推送从此静默
+            await self.send_event_to_user(EndEvent(depth=config.depth), config)
             raise
         except Exception:
             # 异常时确保状态归位并发 EndEvent,否则 status 卡在 RUNNING:

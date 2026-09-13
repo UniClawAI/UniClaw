@@ -64,6 +64,8 @@ _inputs_lock = asyncio.Lock()
 # 正在运行的 bridge_events 任务:session_id → asyncio.Task(需要锁保护)
 _bridge_tasks: dict[str, asyncio.Task] = {}
 _bridge_tasks_lock = asyncio.Lock()
+# bridge 任务服务的 config:session_id → AppConfig(用于检测会话重载后的 config 失配)
+_bridge_configs: dict[str, AppConfig] = {}
 
 
 @dataclass
@@ -105,9 +107,14 @@ async def get_or_load_session(session_id: str) -> AppConfig:
         task = config.current_agent
         future_alive = task.future is not None and not task.future.done()
         has_pending = not task.user_queue.empty()
-        if future_alive or has_pending or task.status in (
-            AgentStatus.RUNNING,
-            AgentStatus.WAITING,
+        if (
+            future_alive
+            or has_pending
+            or task.status
+            in (
+                AgentStatus.RUNNING,
+                AgentStatus.WAITING,
+            )
         ):
             if task.event_queue is None:
                 task.event_queue = asyncio.Queue()
@@ -625,10 +632,22 @@ async def bridge_events(session_id: str, config: AppConfig):
             )
 
 
+# 单条 WebSocket 消息发送超时(秒)。半死连接(休眠唤醒/网络切换,TCP 未断但对端
+# 不再读数据)会让 send_json 因流控无限阻塞,_broadcast 串行 await 会被其拖死,
+# 导致所有会话的广播全部卡住 — 超时即丢弃该连接。
+_WS_SEND_TIMEOUT = 10
+
+
 async def _safe_send(ws: WebSocket, data: dict):
-    """安全发送 WebSocket 消息,断开时自动从连接池移除。"""
+    """安全发送 WebSocket 消息,断开/超时自动从连接池移除。"""
     try:
-        await ws.send_json(data)
+        await asyncio.wait_for(ws.send_json(data), timeout=_WS_SEND_TIMEOUT)
+    except asyncio.TimeoutError:
+        async with _connected_ws_lock:
+            _connected_ws.discard(ws)
+        get_logger("webui", Path.cwd()).warning(
+            "WebSocket 发送超时(疑似半死连接),已从连接池移除"
+        )
     except (ConnectionResetError, OSError, WebSocketDisconnect):
         async with _connected_ws_lock:
             _connected_ws.discard(ws)
@@ -679,16 +698,26 @@ async def _notify_config_changed(session_id: str):
 
 
 async def _start_bridge(session_id: str, config: AppConfig):
-    """启动 bridge_events 任务(按 session 管理,不绑 WebSocket)。"""
+    """启动 bridge_events 任务(按 session 管理,不绑 WebSocket)。
+
+    若已有 bridge 在运行但服务的是旧 config(会话被 LRU 淘汰后从磁盘重载,
+    event_queue 已换新),旧 bridge 阻塞在旧队列上永远收不到新事件,
+    必须取消后用新 config 重启,否则该会话的推送从此静默。
+    """
     async with _bridge_tasks_lock:
         task = _bridge_tasks.get(session_id)
         if task and not task.done():
-            return  # 已在运行
+            if _bridge_configs.get(session_id) is config:
+                return  # 已在运行且是同一 config
+            # config 失配:旧 bridge 已无意义,取消并重启
+            task.cancel()
         t = asyncio.create_task(bridge_events(session_id, config))
         _bridge_tasks[session_id] = t
+        _bridge_configs[session_id] = config
 
         def _on_bridge_done(done_task: asyncio.Task):
             _bridge_tasks.pop(session_id, None)
+            _bridge_configs.pop(session_id, None)
 
         t.add_done_callback(_on_bridge_done)
         t.add_done_callback(_log_task_error)
