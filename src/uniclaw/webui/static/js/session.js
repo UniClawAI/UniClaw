@@ -793,9 +793,10 @@ const SessionPanel = {
             const lines = [
                 `已用: ${fmt(data.used_tokens)} / ${fmt(data.limit)} (${pct}%)`,
                 `系统提示: ${fmt(data.system_prompt_tokens)}`,
-                `工具: ${fmt(data.tool_tokens)}`,
+                `核心工具: ${fmt(data.core_tool_tokens)}`,
                 `消息: ${fmt(data.message_tokens)}`,
-                `剩余: ${fmt(data.free_tokens)}`,
+                `压缩缓冲: ${fmt(data.autocompact_tokens)}`,
+                `距压缩: ${fmt(data.free_tokens)}`,
             ];
             contextEl.title = lines.join('\n');
         }

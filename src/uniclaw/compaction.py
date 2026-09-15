@@ -10,9 +10,6 @@ logger = logging.getLogger("compaction")
 # 默认上下文长度(当 API 获取失败时使用)
 DEFAULT_CONTEXT_LIMIT = 128000
 
-# 自动压缩触发阈值:当消息 token 超过 context limit 的此比例时触发压缩
-AUTOCOMPACT_THRESHOLD = 0.7
-
 # ── 三级压力阈值 ──────────────────────────────────────────────
 # 每个等级对应不同的压缩策略:
 #   level 0 (50%) — 轻度:仅微压缩(清空旧工具结果)
@@ -23,6 +20,10 @@ PRESSURE_LEVELS: list[tuple[float, int]] = [
     (0.70, 1),
     (0.50, 0),
 ]
+
+# 自动压缩边界: 取 level 1(首次引入 LLM 摘要,开始有信息损失)的阈值。
+# 不参与压缩触发逻辑(那由 PRESSURE_LEVELS 驱动),仅供上下文报告预留缓冲。
+AUTOCOMPACT_THRESHOLD: float = {lv: t for t, lv in PRESSURE_LEVELS}[1]
 
 
 

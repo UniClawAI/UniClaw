@@ -12,7 +12,7 @@ from uniclaw.context import build_system_prompt
 
 logger = logging.getLogger(__name__)
 
-# 自动压缩预留空间比例,与 compaction.AUTOCOMPACT_THRESHOLD 对应
+# 自动压缩预留空间比例,与 compaction.AUTOCOMPACT_THRESHOLD(level 1 阈值)对应
 AUTOCOMPACT_RATIO = 1 - AUTOCOMPACT_THRESHOLD
 BAR_CELLS = 50
 
@@ -28,7 +28,6 @@ class ContextReport:
     model: str
     limit: int
     system_prompt_tokens: int
-    tool_tokens: int
     core_tool_tokens: int
     extended_tool_tokens: int
     skill_tokens: int
@@ -38,9 +37,12 @@ class ContextReport:
 
     @property
     def used_tokens(self) -> int:
+        # extended_tool_tokens(扩展工具摘要)已拼进 system prompt,包含在
+        # system_prompt_tokens 中,不重复计算;核心工具 schema 走 tools=
+        # 参数传输,不在 system prompt 里,需单独计入。
         return (
             self.system_prompt_tokens
-            + self.tool_tokens
+            + self.core_tool_tokens
             + self.skill_tokens
             + self.message_tokens
         )
@@ -144,7 +146,6 @@ async def analyze_context(config: AppConfig) -> ContextReport:
         model=model,
         limit=limit,
         system_prompt_tokens=system_prompt_tokens,
-        tool_tokens=core_tool_tokens + extended_tool_tokens,
         core_tool_tokens=core_tool_tokens,
         extended_tool_tokens=extended_tool_tokens,
         skill_tokens=skill_tokens,
@@ -180,7 +181,7 @@ def format_context_report(report: ContextReport) -> str:
         ("Extended tools (summary only)", report.extended_tool_tokens, "⛁"),
         ("Skills (on-demand, 0 until triggered)", report.skill_tokens, "⛁"),
         ("Messages", report.message_tokens, "⛁"),
-        ("Free space", report.free_tokens, "⛶"),
+        ("Free until autocompact", report.free_tokens, "⛶"),
         ("Autocompact buffer", report.autocompact_tokens, "⛝"),
     ]
     for label, tokens, marker in category_lines:

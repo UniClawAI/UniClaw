@@ -15,7 +15,6 @@ def test_format_context_report_includes_categories_and_breakdowns():
         model="test-model",
         limit=10_000,
         system_prompt_tokens=1_000,
-        tool_tokens=2_000,
         core_tool_tokens=1_500,
         extended_tool_tokens=500,
         skill_tokens=300,

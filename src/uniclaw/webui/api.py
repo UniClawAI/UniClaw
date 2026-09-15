@@ -851,7 +851,7 @@ async def get_context_usage(session_id: str):
             "limit": report.limit,
             "used_tokens": report.used_tokens,
             "system_prompt_tokens": report.system_prompt_tokens,
-            "tool_tokens": report.tool_tokens,
+            "core_tool_tokens": report.core_tool_tokens,
             "message_tokens": report.message_tokens,
             "autocompact_tokens": report.autocompact_tokens,
             "free_tokens": report.free_tokens,
