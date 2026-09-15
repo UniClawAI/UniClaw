@@ -424,7 +424,8 @@ class Tool:
             except (AttributeError, TypeError):
                 pass
 
-        if cancel_event is None:
+        # wait 不是协程函数时视为非标准事件对象(如测试 mock),跳过取消竞争
+        if cancel_event is None or not inspect.iscoroutinefunction(cancel_event.wait):
             return await self.func(**kwargs)
 
         start = time.monotonic()
