@@ -673,7 +673,7 @@ class TestRAGIngest:
         mock_manager = MagicMock()
         mock_manager_class.return_value = mock_manager
         mock_manager.get_existing_hashes.return_value = set()
-        mock_manager.compute_chunk_hashes.return_value = ["h1"]
+        mock_manager.compute_chunk_hashes = AsyncMock(return_value=["h1"])
         mock_manager.delete_by_hashes.return_value = 0
         mock_manager.ingest = AsyncMock(return_value=1)
         mock_manager.get_collection_info.return_value = {"count": 1}
@@ -699,7 +699,7 @@ class TestRAGIngest:
         mock_manager = MagicMock()
         mock_manager_class.return_value = mock_manager
         mock_manager.get_existing_hashes.return_value = set()
-        mock_manager.compute_chunk_hashes.return_value = ["h1", "h2"]
+        mock_manager.compute_chunk_hashes = AsyncMock(return_value=["h1", "h2"])
         mock_manager.delete_by_hashes.return_value = 0
         mock_manager.ingest = AsyncMock(return_value=2)
         mock_manager.get_collection_info.return_value = {"count": 2}
@@ -723,7 +723,7 @@ class TestRAGIngest:
         mock_manager_class.return_value = mock_manager
         # 所有块哈希已存在 → 全部跳过
         mock_manager.get_existing_hashes.return_value = {"h1"}
-        mock_manager.compute_chunk_hashes.return_value = ["h1"]
+        mock_manager.compute_chunk_hashes = AsyncMock(return_value=["h1"])
         mock_manager.get_collection_info.return_value = {"count": 1}
 
         result = await rag_ingest.func(
@@ -746,7 +746,7 @@ class TestRAGIngest:
         mock_manager_class.return_value = mock_manager
         # 旧哈希 old_h1 不在新哈希中 → 应被删除
         mock_manager.get_existing_hashes.return_value = {"old_h1"}
-        mock_manager.compute_chunk_hashes.return_value = ["new_h1"]
+        mock_manager.compute_chunk_hashes = AsyncMock(return_value=["new_h1"])
         mock_manager.delete_by_hashes.return_value = 1
         mock_manager.ingest = AsyncMock(return_value=1)
         mock_manager.get_collection_info.return_value = {"count": 1}
@@ -769,7 +769,7 @@ class TestRAGIngest:
         mock_manager = MagicMock()
         mock_manager_class.return_value = mock_manager
         mock_manager.get_existing_hashes.return_value = set()
-        mock_manager.compute_chunk_hashes.return_value = ["h1"]
+        mock_manager.compute_chunk_hashes = AsyncMock(return_value=["h1"])
         mock_manager.delete_by_hashes.return_value = 0
         mock_manager.generate_chunk_contexts = AsyncMock(
             return_value=["这是一段测试文档"]
