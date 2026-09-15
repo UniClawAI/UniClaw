@@ -1,4 +1,5 @@
 from uniclaw.tools.base import tool, ToolRuntime
+from uniclaw.utils.constants import TOOL_ERROR
 
 
 @tool
@@ -42,7 +43,7 @@ async def AskUserQuestion(
 
     config = tool_runtime.config
     if config and config.current_agent.session.session_type == SessionType.A2A:
-        return "错误:A2A 远程 Agent 模式下无法向用户提问,请自主决策。"
+        return f"{TOOL_ERROR}: A2A 远程 Agent 模式下无法向用户提问,请自主决策。"
 
     from uniclaw.console.ui import get_multi_input
 

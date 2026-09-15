@@ -34,7 +34,7 @@ async def ipython_start(
         info = await mgr.start_kernel(kernel_id, kernel_name)
         return f"IPython 内核 '{kernel_id}' 已启动 (kernel_name={kernel_name})。变量将在多次执行间持久保存。"
     except RuntimeError as e:
-        return f"{TOOL_ERROR}{e}"
+        return f"{TOOL_ERROR}: {e}"
 
 
 @tool
@@ -62,13 +62,13 @@ async def ipython_execute(
         try:
             await mgr.start_kernel(kernel_id)
         except RuntimeError as e:
-            return f"{TOOL_ERROR}自动启动内核失败: {e}"
+            return f"{TOOL_ERROR}: 自动启动内核失败: {e}"
 
     try:
         result = await mgr.execute(code, kernel_id, timeout)
         return result.format()
     except RuntimeError as e:
-        return f"{TOOL_ERROR}{e}"
+        return f"{TOOL_ERROR}: {e}"
 
 
 @tool
@@ -91,7 +91,7 @@ async def ipython_inspect(name: str, kernel_id: str = "default") -> str:
         info = await mgr.inspect_variable(name, kernel_id)
         return info.format()
     except RuntimeError as e:
-        return f"{TOOL_ERROR}{e}"
+        return f"{TOOL_ERROR}: {e}"
 
 
 @tool
@@ -114,7 +114,7 @@ async def ipython_vars(
     try:
         vars_list = await mgr.list_variables(kernel_id, filter_type)
     except RuntimeError as e:
-        return f"{TOOL_ERROR}{e}"
+        return f"{TOOL_ERROR}: {e}"
 
     if not vars_list:
         return "内核中没有用户定义的变量。"
@@ -143,7 +143,7 @@ async def ipython_history(
     try:
         history = await mgr.get_history(kernel_id, last_n)
     except RuntimeError as e:
-        return f"{TOOL_ERROR}{e}"
+        return f"{TOOL_ERROR}: {e}"
 
     if not history:
         return f"内核 '{kernel_id}' 暂无执行历史。"
@@ -172,7 +172,7 @@ async def ipython_stop(kernel_id: str = "default") -> str:
     try:
         return await mgr.stop_kernel(kernel_id)
     except RuntimeError as e:
-        return f"{TOOL_ERROR}{e}"
+        return f"{TOOL_ERROR}: {e}"
 
 
 @tool

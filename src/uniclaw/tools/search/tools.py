@@ -6,6 +6,7 @@ import time
 
 from uniclaw.config import AppConfig
 from uniclaw.tools.base import tool, ToolRuntime
+from uniclaw.utils.constants import TOOL_ERROR
 
 from .base import PLATFORM_ERROR, cache_key, search_cache, search_with_timeout
 from .time_range import parse_time_range
@@ -234,7 +235,7 @@ async def webSearch(
     # 入口统一校验: 空 query 快速失败, 避免透传各平台 (github API 会返回
     # 晦涩的 HTTP 422)
     if not query or not query.strip():
-        return "错误: 搜索关键词不能为空, 请提供 query 参数"
+        return f"{TOOL_ERROR}: 搜索关键词不能为空, 请提供 query 参数"
 
     # 入口统一校验: 非法 time_range 快速失败, 避免每个平台重复报错
     if time_range.strip():

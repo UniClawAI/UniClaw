@@ -121,10 +121,10 @@ async def send_file(
                 bot.reply_file(p, file_name=name)
                 return f"文件已发送: {name}"
             except Exception as e:
-                return f"文件发送失败: {e}"
+                return f"{TOOL_ERROR}: 文件发送失败: {e}"
         else:
             # Console 模式或其他
-            return f"文件发送不支持当前模式: {name}"
+            return f"{TOOL_ERROR}: 文件发送不支持当前模式: {name}"
 
 
 def get_tools(config=None) -> list:

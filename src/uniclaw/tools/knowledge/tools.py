@@ -7,6 +7,7 @@ import json
 from uniclaw.config import AppConfig
 from uniclaw.context import Scope, get_app_dir
 from uniclaw.tools.base import tool, ToolRuntime
+from uniclaw.utils.constants import TOOL_ERROR
 
 from .graph import KnowledgeGraph
 
@@ -63,7 +64,7 @@ def kg_add_entity(
             lines.append("")
 
         if "error" in result:
-            return f"错误: {result['error']}"
+            return f"{TOOL_ERROR}: {result['error']}"
 
         # 重复添加时,如果实体已存在,只显示警告不显示"已添加"
         already_exists = result.get("duplicate_warning", "") and "已存在" in result.get("duplicate_warning", "")
@@ -117,7 +118,7 @@ def kg_add_relation(
         )
 
         if "error" in result:
-            return f"错误: {result['error']}"
+            return f"{TOOL_ERROR}: {result['error']}"
 
         return f"关系已添加: {result['source']} --[{relation}]--> {result['target']}"
     finally:
@@ -147,7 +148,7 @@ def kg_add_alias(
     try:
         result = graph.add_alias(name, type, alias)
         if "error" in result:
-            return f"错误: {result['error']}"
+            return f"{TOOL_ERROR}: {result['error']}"
         return f"别名已添加: {result['entity']} → {result['alias']}"
     finally:
         graph.close()
@@ -184,7 +185,7 @@ def kg_update_entity(
 
         result = graph.update_entity(name, type, **kwargs)
         if "error" in result:
-            return f"错误: {result['error']}"
+            return f"{TOOL_ERROR}: {result['error']}"
         return f"实体 '{result['entity']}' 已更新: {', '.join(result['updated'])}"
     finally:
         graph.close()
@@ -211,7 +212,7 @@ def kg_delete_entity(
     try:
         result = graph.delete_entity(name, type)
         if "error" in result:
-            return f"错误: {result['error']}"
+            return f"{TOOL_ERROR}: {result['error']}"
         return f"实体 '{result['deleted']}' 及其关系已删除。"
     finally:
         graph.close()
@@ -240,7 +241,7 @@ def kg_delete_relation(
     try:
         result = graph.delete_relation(source, target, relation)
         if "error" in result:
-            return f"错误: {result['error']}"
+            return f"{TOOL_ERROR}: {result['error']}"
         return f"关系已删除: {result['deleted']}"
     finally:
         graph.close()
@@ -273,7 +274,7 @@ def kg_merge_entities(
     try:
         result = graph.merge_entities(source, target, source_type, target_type)
         if "error" in result:
-            return f"错误: {result['error']}"
+            return f"{TOOL_ERROR}: {result['error']}"
 
         lines = [f"实体合并完成: '{result['source']}' → '{result['target']}'"]
         lines.append(
@@ -527,7 +528,7 @@ def kg_export(
             graph.visualize(output)
             return f"HTML 可视化已生成: {output}\n请在浏览器中打开查看。"
         else:
-            return f"不支持的文件后缀: {ext}。支持: .json, .md, .html"
+            return f"{TOOL_ERROR}: 不支持的文件后缀: {ext}。支持: .json, .md, .html"
 
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(content, encoding="utf-8")
@@ -591,7 +592,7 @@ async def kg_extract(
         scope: 作用域,"user" 为用户级(跨项目共享),"project" 为项目级(默认)
     """
     if not text and not path:
-        return "错误: 请提供 text 或 path 参数。"
+        return f"{TOOL_ERROR}: 请提供 text 或 path 参数。"
 
     from uniclaw.agent import MultiAgent
     from uniclaw.tools.multi_agent.sub_agent import load_agent_definitions
@@ -629,7 +630,7 @@ async def kg_extract(
         sub_config = config.create_sub_config(name="kg-extract", prompt=prompt)
         agent_def = load_agent_definitions(config.root_dir).get("kg-extract")
         if not agent_def:
-            return "错误: 未找到 'kg-extract' 子智能体定义。"
+            return f"{TOOL_ERROR}: 未找到 'kg-extract' 子智能体定义。"
 
         from uniclaw.agent import AgentStatus
 
@@ -642,24 +643,24 @@ async def kg_extract(
                 inherit_events=True,  # 子智能体事件继承到父级队列,前端可显示执行过程
             )
         except Exception as e:
-            return f"subagent 启动失败: {e}"
+            return f"{TOOL_ERROR}: subagent 启动失败: {e}"
 
         if task.status == AgentStatus.FAILED:
-            return f"subagent 启动失败: {task.result}"
+            return f"{TOOL_ERROR}: subagent 启动失败: {task.result}"
 
         # 等待完成(subagent 的 ToolStartEvent/ThinkingChunkEvent 等
         # 会通过 bridge_events 自动广播到前端,无需在此重复)
         await mgr.wait(task.id, timeout=300)
 
         if task.status == AgentStatus.FAILED:
-            return f"subagent 执行失败: {task.result}"
+            return f"{TOOL_ERROR}: subagent 执行失败: {task.result}"
 
         result_text = task.result or ""
 
         # 解析 JSON
         data = parse_json_from_llm(result_text)
         if not data:
-            return f"subagent 返回的内容无法解析为 JSON:\n{result_text[:500]}"
+            return f"{TOOL_ERROR}: subagent 返回的内容无法解析为 JSON:\n{result_text[:500]}"
 
         entities = data.get("entities", [])
         relations = data.get("relations", [])

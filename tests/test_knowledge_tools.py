@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from uniclaw.context import Scope
 from uniclaw.tools.base import ToolRuntime
+from uniclaw.utils.constants import TOOL_ERROR
 from uniclaw.tools.knowledge.tools import (
     _get_graph,
     get_all_tools,
@@ -178,7 +179,7 @@ class TestAddRelation:
         result = await kg_add_relation(
             "Nonexistent", "Python", "related_to", tool_runtime=ToolRuntime(config=config)
         )
-        assert "错误" in result
+        assert TOOL_ERROR in result
         assert "源实体" in result
         assert "不存在" in result
 
@@ -190,7 +191,7 @@ class TestAddRelation:
         result = await kg_add_relation(
             "Guido", "Nonexistent", "related_to", tool_runtime=ToolRuntime(config=config)
         )
-        assert "错误" in result
+        assert TOOL_ERROR in result
         assert "目标实体" in result
 
 
@@ -212,7 +213,7 @@ class TestAddAlias:
         """实体不存在返回错误。"""
         config = _make_config(tmp_path)
         result = await kg_add_alias("Nonexistent", "X", tool_runtime=ToolRuntime(config=config))
-        assert "错误" in result
+        assert TOOL_ERROR in result
         assert "不存在" in result
 
 
@@ -235,7 +236,7 @@ class TestUpdateEntity:
         """实体不存在返回错误。"""
         config = _make_config(tmp_path)
         result = await kg_update_entity("Nonexistent", description="x", tool_runtime=ToolRuntime(config=config))
-        assert "错误" in result
+        assert TOOL_ERROR in result
         assert "不存在" in result
 
     @pytest.mark.asyncio
@@ -244,7 +245,7 @@ class TestUpdateEntity:
         config = _make_config(tmp_path)
         await kg_add_entity("Python", type="technology", tool_runtime=ToolRuntime(config=config))
         result = await kg_update_entity("Python", tool_runtime=ToolRuntime(config=config))
-        assert "错误" in result
+        assert TOOL_ERROR in result
 
 
 class TestDeleteEntity:
@@ -266,7 +267,7 @@ class TestDeleteEntity:
         """实体不存在返回错误。"""
         config = _make_config(tmp_path)
         result = await kg_delete_entity("Nonexistent", tool_runtime=ToolRuntime(config=config))
-        assert "错误" in result
+        assert TOOL_ERROR in result
         assert "不存在" in result
 
 
@@ -292,7 +293,7 @@ class TestDeleteRelation:
         await kg_add_entity("A", type="concept", tool_runtime=ToolRuntime(config=config))
         await kg_add_entity("B", type="concept", tool_runtime=ToolRuntime(config=config))
         result = await kg_delete_relation("A", "B", "nonexistent", tool_runtime=ToolRuntime(config=config))
-        assert "错误" in result
+        assert TOOL_ERROR in result
         assert "关系不存在" in result
 
 
@@ -320,7 +321,7 @@ class TestMergeEntities:
         config = _make_config(tmp_path)
         await kg_add_entity("B", type="concept", tool_runtime=ToolRuntime(config=config))
         result = await kg_merge_entities("Nonexistent", "B", tool_runtime=ToolRuntime(config=config))
-        assert "错误" in result
+        assert TOOL_ERROR in result
         assert "不存在" in result
 
 
