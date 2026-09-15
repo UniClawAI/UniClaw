@@ -214,14 +214,28 @@ class AppConfig:
         """是否为 WebUI 模式。"""
         return self.display_mode == DisplayMode.WEBUI
 
-    def create_sub_config(self, name: str, prompt: str) -> AppConfig:
-        """创建子代理配置:新 session (同 root_dir),深度+1,复制其他字段。"""
+    def create_sub_config(
+        self, name: str, prompt: str, tool_call_id: str = ""
+    ) -> AppConfig:
+        """创建子代理配置:新 session (同 root_dir),深度+1,复制其他字段。
+
+        Args:
+            name: 子代理名称。
+            prompt: 子代理的任务提示。
+            tool_call_id: 创建该子代理的工具调用 ID(subagent_create 等),
+                用于前端把子代理事件精确关联回对应的工具块。默认为空。
+        """
         from uniclaw.tools.session.session import Session
 
         sub_session = Session(root_dir=self.root_dir)
         from uniclaw.agent import AgentTask
 
-        sub_task = AgentTask(name=name, prompt=prompt, session=sub_session)
+        sub_task = AgentTask(
+            name=name,
+            prompt=prompt,
+            session=sub_session,
+            tool_call_id=tool_call_id,
+        )
         sub_config = AppConfig(
             current_agent=sub_task,
             parent_config=self,

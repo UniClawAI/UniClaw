@@ -302,6 +302,10 @@ async def bridge_events(session_id: str, config: AppConfig):
             queued_task, event = await task.event_queue.get()
             is_subagent = queued_task is not task
             agent_name = queued_task.name if is_subagent else ""
+            # 创建该子代理的工具调用 ID, 前端据此把事件精确挂回对应的工具块
+            creator_tool_call_id = (
+                getattr(queued_task, "tool_call_id", "") if is_subagent else ""
+            )
             get_logger("webui", Path.cwd()).info(
                 f"[{session_id}] 收到事件: {type(event).__name__}"
                 + (f" (来自子智能体: {agent_name})" if is_subagent else "")
@@ -331,6 +335,7 @@ async def bridge_events(session_id: str, config: AppConfig):
                         "event": "subagent_end",
                         "session_id": session_id,
                         "agent_name": agent_name,
+                        "creator_tool_call_id": creator_tool_call_id,
                         "depth": event.depth,
                     }
                 )
@@ -417,6 +422,7 @@ async def bridge_events(session_id: str, config: AppConfig):
                     "session_id": session_id,
                     "is_subagent": is_subagent,
                     "agent_name": agent_name,
+                    "creator_tool_call_id": creator_tool_call_id,
                 }
             )
 
@@ -429,6 +435,7 @@ async def bridge_events(session_id: str, config: AppConfig):
                     "content": event.content,
                     "is_subagent": is_subagent,
                     "agent_name": agent_name,
+                    "creator_tool_call_id": creator_tool_call_id,
                 }
             )
 
@@ -441,6 +448,7 @@ async def bridge_events(session_id: str, config: AppConfig):
                     "content": event.content,
                     "is_subagent": is_subagent,
                     "agent_name": agent_name,
+                    "creator_tool_call_id": creator_tool_call_id,
                 }
             )
             # 语音模式: 流式积累文本,按句子边界触发 TTS
@@ -467,6 +475,7 @@ async def bridge_events(session_id: str, config: AppConfig):
                     "args": event.args,
                     "is_subagent": is_subagent,
                     "agent_name": agent_name,
+                    "creator_tool_call_id": creator_tool_call_id,
                 }
             )
 
@@ -512,6 +521,7 @@ async def bridge_events(session_id: str, config: AppConfig):
                     "cache_discount": event.cache_discount,
                     "is_subagent": is_subagent,
                     "agent_name": agent_name,
+                    "creator_tool_call_id": creator_tool_call_id,
                     "created_at": event.created_at,
                 }
             )
@@ -543,6 +553,7 @@ async def bridge_events(session_id: str, config: AppConfig):
                     "explain": event.explain,
                     "is_subagent": is_subagent,
                     "agent_name": agent_name,
+                    "creator_tool_call_id": creator_tool_call_id,
                 }
             )
 
@@ -570,6 +581,7 @@ async def bridge_events(session_id: str, config: AppConfig):
                     "args": event.args,
                     "is_subagent": is_subagent,
                     "agent_name": agent_name,
+                    "creator_tool_call_id": creator_tool_call_id,
                 }
             )
             await _notify_config_changed(session_id)

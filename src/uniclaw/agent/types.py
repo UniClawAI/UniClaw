@@ -36,6 +36,7 @@ class AgentTask:
     name: str
     prompt: str
     session: Session
+    tool_call_id: str = ""  # 创建本(子)任务的那次工具调用的 ID, 主任务为空
     user_queue: asyncio.Queue = field(default_factory=asyncio.Queue, repr=False)
     status: str = AgentStatus.PENDING
     result: Optional[str] = None

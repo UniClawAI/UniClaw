@@ -627,7 +627,9 @@ async def kg_extract(
 
         # 启动 subagent
         mgr = MultiAgent.get_instance()
-        sub_config = config.create_sub_config(name="kg-extract", prompt=prompt)
+        sub_config = config.create_sub_config(
+            name="kg-extract", prompt=prompt, tool_call_id=tool_runtime.tool_call_id
+        )
         agent_def = load_agent_definitions(config.root_dir).get("kg-extract")
         if not agent_def:
             return f"{TOOL_ERROR}: 未找到 'kg-extract' 子智能体定义。"

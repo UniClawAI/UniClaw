@@ -47,8 +47,10 @@ async def subagent_create(
     config = tool_runtime.config
     # 创建多智能体管理器实例
     mgr = MultiAgent.get_instance()
-    # 创建子智能体配置
-    sub_config = config.create_sub_config(name=name, prompt=prompt)
+    # 创建子智能体配置(tool_call_id 用于前端把子代理事件关联回本次工具块)
+    sub_config = config.create_sub_config(
+        name=name, prompt=prompt, tool_call_id=tool_runtime.tool_call_id
+    )
     # 启动子智能体任务,配置系统提示、智能体定义和隔离模式等参数
     root_dir = config.root_dir
     task = await mgr.start_sub_agent(

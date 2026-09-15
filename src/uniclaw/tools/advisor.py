@@ -63,7 +63,9 @@ async def investigate(query: str, tool_runtime: ToolRuntime = None) -> str:
     from uniclaw.agent import MultiAgent
 
     mgr = MultiAgent.get_instance()
-    sub_config = config.create_sub_config(name="recon", prompt=query)
+    sub_config = config.create_sub_config(
+        name="recon", prompt=query, tool_call_id=tool_runtime.tool_call_id
+    )
     # recon 使用主 agent 的默认模型(非顾问模型)
     if hasattr(config, "_parent_model_name"):
         sub_config.model_name = list(config._parent_model_name)
@@ -153,7 +155,11 @@ async def ask_advisor(
         from uniclaw.agent import MultiAgent, AgentStatus
 
         mgr = MultiAgent.get_instance()
-        sub_config = config.create_sub_config(name="advisor", prompt=user_message)
+        sub_config = config.create_sub_config(
+            name="advisor",
+            prompt=user_message,
+            tool_call_id=tool_runtime.tool_call_id,
+        )
         # 保存主 agent 的默认模型,recon 子代理需要用它
         sub_config._parent_model_name = list(config.model_name)
         sub_config.model_name = [m]
