@@ -156,6 +156,7 @@ const Settings = {
         // 键盘事件
         input.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') {
+                if (Utils.isImeComposing(e)) return;  // IME 组合中: Enter 仅上屏, 不添加自定义模型
                 e.preventDefault();
                 const text = input.value.trim();
                 if (text) {
@@ -583,12 +584,16 @@ const Settings = {
     // ── 保存 ──────────────────────────────────────────────
 
     async save() {
+        // 未加载到配置(接口失败/尚未打开)时禁止保存, 否则会以空表单覆盖写盘
+        if (!this._data) { Utils.showError('设置尚未加载完成, 无法保存'); return; }
         // 收集 providers
         const providers = {};
         const cards = document.querySelectorAll('.settings-provider-card');
+        // 解析每张卡片的最终名称(空时回退到原 dataset.name)
+        const resolvedName = (card) => card.querySelector('.settings-p-name').value.trim() || card.dataset.name;
         for (const card of cards) {
             const oldName = card.dataset.name;
-            const newName = card.querySelector('.settings-p-name').value.trim() || oldName;
+            const newName = resolvedName(card);
             const protocol = card.querySelector('.settings-p-protocol').value;
             const apiKey = card.querySelector('.settings-p-key').value;
             const baseUrl = card.querySelector('.settings-p-url').value.trim();
@@ -599,9 +604,13 @@ const Settings = {
                 return;
             }
 
-            if (newName !== oldName && providers[newName]) {
-                Utils.showError(`Provider 名称 "${newName}" 重复`);
-                return;
+            // 全局重名检查: 不能只查 newName !== oldName — 未改名的 provider 也可能
+            // 被另一张改成同名(静默覆盖)。遍历所有卡片比对最终名称
+            for (const other of cards) {
+                if (other !== card && resolvedName(other) === newName) {
+                    Utils.showError(`Provider 名称 "${newName}" 重复`);
+                    return;
+                }
             }
 
             providers[newName] = {
@@ -671,10 +680,12 @@ const Settings = {
             max_tokens: maxTokens !== '' ? parseInt(maxTokens) : null,
             top_p: topP !== '' ? parseFloat(topP) : null,
             proxy_url: document.getElementById('settings-proxy').value.trim(),
-            GITHUB_TOKEN: document.getElementById('settings-github-token').value || this._data.GITHUB_TOKEN || '',
-            EXA_API_KEY: document.getElementById('settings-exa-key').value || this._data.EXA_API_KEY || '',
-            max_agent_depth: parseInt(document.getElementById('settings-max-depth').value) || 3,
-            permission_timeout: parseInt(document.getElementById('settings-perm-timeout').value) || 300,
+            // 注意:不能写 `value || this._data.xxx` 回退 — 用户清空输入框(想删除密钥)时
+            // 空串会回退成回填的脱敏值 "sk****abcd",后端见 **** 又恢复原密钥,永远删不掉。
+            GITHUB_TOKEN: document.getElementById('settings-github-token').value.trim(),
+            EXA_API_KEY: document.getElementById('settings-exa-key').value.trim(),
+            max_agent_depth: (() => { const n = parseInt(document.getElementById('settings-max-depth').value, 10); return Number.isFinite(n) ? n : 2; })(),
+            permission_timeout: (() => { const n = parseInt(document.getElementById('settings-perm-timeout').value, 10); return Number.isFinite(n) ? n : 300; })(),
             permission_mode: document.getElementById('settings-perm-mode').value || 'auto',
             trusted_ips: document.getElementById('settings-trusted-ips').value
                 .split(/[,,\s]+/)
@@ -753,9 +764,7 @@ const Settings = {
     },
 
     _esc(str) {
-        const div = document.createElement('div');
-        div.textContent = str;
-        return div.innerHTML;
+        return Utils.escapeHtml(String(str ?? ''));
     },
 
     /** 从表单同步最新的 providers 到 this._providers */

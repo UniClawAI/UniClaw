@@ -441,10 +441,35 @@ async def optimize_user_prompt(body: UserPromptOptimize):
 
 
 def _mask_key(key: str) -> str:
-    """脱敏 API key:保留前 4 + 后 4 字符,中间用 **** 替代。"""
-    if not key or len(key) <= 8:
+    """脱敏 API key:保留前 4 + 后 4 字符,中间用 **** 替代。空 key 返回空,避免回填后把字面量 "****" 存成真密钥。"""
+    if not key:
+        return ""
+    if len(key) <= 8:
         return "****"
     return key[:4] + "****" + key[-4:]
+
+
+def _resolve_masked_key(name: str, masked_value: str, original_providers: dict) -> str:
+    """把表单回传的脱敏 key 还原为真实 key,绝不把字面量掩码当成真密钥。
+
+    还原顺序:
+    1. 同名 provider 的磁盘 key 掩码与回传值一致 → 用磁盘 key
+       (优先按名字匹配, 避免短 key 全部掩成 "****" 时掩码碰撞拿到别的 provider 的 key)
+    2. 否则全局按掩码匹配 → 支持 provider 改名后恢复
+       (掩码为完整 "****" 时跳过, 短 key 掩码相同无法区分来源)
+    3. 都落空(掩码陈旧)→ 退回同名 provider 的磁盘 key, 可能为空串, 宁缺毋错
+    """
+    disk = original_providers.get(name) or {}
+    disk_key = disk.get("api_key", "")
+    if disk_key and _mask_key(disk_key) == masked_value:
+        return disk_key
+    # 全掩码 "****" 无法区分来源, 全局扫描会碰撞拿到别的 provider 的 key, 宁缺毋错
+    if masked_value != "****":
+        for p in original_providers.values():
+            orig = (p or {}).get("api_key", "")
+            if orig and _mask_key(orig) == masked_value:
+                return orig
+    return disk_key
 
 
 def _read_settings_raw() -> tuple[Path, dict]:
@@ -531,17 +556,13 @@ async def update_settings(body: SettingsUpdate):
     original_github = original.get("GITHUB_TOKEN", "")
     original_exa = original.get("EXA_API_KEY", "")
 
-    # 恢复脱敏的 API key(通过 masked key 的前4后4字符匹配原始 key)
-    masked_to_original: dict[str, str] = {}
-    for p in original_providers.values():
-        orig_key = p.get("api_key", "")
-        if orig_key:
-            masked_to_original[_mask_key(orig_key)] = orig_key
+    # 恢复脱敏的 API key(优先同名匹配, 避免短 key 掩码碰撞)
     providers = {}
     for name, p in body.providers.items():
         api_key = p.api_key
         if "****" in api_key:
-            api_key = masked_to_original.get(api_key, api_key)
+            # 绝不把字面量 "****" 当成真密钥写盘
+            api_key = _resolve_masked_key(name, api_key, original_providers)
         providers[name] = {
             "name": p.name or name,
             "protocol": p.protocol,
@@ -629,17 +650,13 @@ async def _update_session_settings(body: SettingsUpdate) -> dict:
         # 恢复脱敏的 API key(会话级也需要检测,防止脱敏 key 覆盖原始值)
         _, original = _read_settings_raw()
         original_providers = original.get("providers", {})
-        masked_to_original: dict[str, str] = {}
-        for p in original_providers.values():
-            orig_key = p.get("api_key", "")
-            if orig_key:
-                masked_to_original[_mask_key(orig_key)] = orig_key
 
         resolved_providers = {}
         for name, p in body.providers.items():
             api_key = p.api_key
             if "****" in api_key:
-                api_key = masked_to_original.get(api_key, "")
+                # 与全局分支同逻辑: 优先同名匹配, 未命中退回磁盘 key, 不把掩码当真密钥
+                api_key = _resolve_masked_key(name, api_key, original_providers)
             resolved_providers[name] = ProviderProfile(
                 name=p.name or name,
                 protocol=p.protocol,
@@ -711,17 +728,12 @@ async def list_models(body: dict):
     original_providers = original.get("providers", {})
 
     raw_providers = body.get("providers", {})
-    # 恢复脱敏的 api_key(通过 masked key 的前4后4字符匹配原始 key)
-    masked_to_original: dict[str, str] = {}
-    for p in original_providers.values():
-        orig_key = p.get("api_key", "")
-        if orig_key:
-            masked_to_original[_mask_key(orig_key)] = orig_key
+    # 恢复脱敏的 api_key(与设置保存同一逻辑, 绝不把字面量掩码当成真密钥发给 provider)
     providers: dict[str, dict] = {}
     for name, p in raw_providers.items():
         api_key = p.get("api_key", "")
         if "****" in api_key:
-            api_key = masked_to_original.get(api_key, api_key)
+            api_key = _resolve_masked_key(name, api_key, original_providers)
         providers[name] = {**p, "api_key": api_key}
 
     all_models: list[dict] = []
@@ -1005,104 +1017,72 @@ async def diff_checkpoint(idx: int, root_dir: str):
 # === Git ===
 
 
-@router.get("/git/status")
-async def git_status(root_dir: str):
-    """Git status。"""
+async def _run_git(args: list[str], cwd: str, label: str, timeout: int = 10, combine: bool = True) -> str:
+    """在线程池运行 git 子命令(不阻塞事件循环), 统一错误映射:
+    非零退出 → 400(带 stderr, 含"不是 git 仓库"), 超时 → 504, git 不存在 → 500。
+    combine=False 时只返回 stdout(供按格式解析输出的调用方使用)。"""
+    import asyncio
     import subprocess
 
-    # 验证 root_dir 合法性
-    _validate_path(root_dir, "")
-    try:
-        result = subprocess.run(
-            ["git", "status", "--porcelain"],
-            cwd=root_dir,
+    def _run() -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["git", *args],
+            cwd=cwd,
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=timeout,
         )
-        return {"output": result.stdout}
+
+    try:
+        result = await asyncio.to_thread(_run)
     except subprocess.TimeoutExpired:
         raise HTTPException(status_code=504, detail="Git 命令执行超时")
     except FileNotFoundError:
         raise HTTPException(status_code=500, detail="Git 未安装或不在 PATH 中")
     except Exception as e:
-        get_logger("webui", Path.cwd()).error(f"Git status 失败: {e}")
-        raise HTTPException(status_code=500, detail="Git 命令执行失败")
+        get_logger("webui", Path.cwd()).error(f"{label} 失败: {e}")
+        raise HTTPException(status_code=500, detail=f"{label}失败")
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or f"退出码 {result.returncode}"
+        raise HTTPException(status_code=400, detail=f"{label}失败: {detail}")
+    return result.stdout + result.stderr if combine else result.stdout
+
+
+@router.get("/git/status")
+async def git_status(root_dir: str):
+    """Git status。非 git 仓库会返回 400, 前端据此区分"没有更改"与"不是仓库"。"""
+    _validate_path(root_dir, "")
+    # 前端按 porcelain 逐行解析, stderr 警告(如 CRLF 提示)混入会产生伪造条目
+    output = await _run_git(["status", "--porcelain"], root_dir, "Git status", combine=False)
+    return {"output": output}
 
 
 @router.post("/git/commit")
 async def git_commit(body: GitCommit):
     """Git commit。"""
-    import subprocess
-
-    # 验证 root_dir 合法性
     _validate_path(body.root_dir, "")
-    try:
-        # 暂存文件
-        if body.files:
-            subprocess.run(["git", "add"] + body.files, cwd=body.root_dir, check=True)
-        # 提交
-        result = subprocess.run(
-            ["git", "commit", "-m", body.message],
-            cwd=body.root_dir,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        return {"output": result.stdout + result.stderr}
-    except subprocess.TimeoutExpired:
-        raise HTTPException(status_code=504, detail="Git 命令执行超时")
-    except subprocess.CalledProcessError as e:
-        raise HTTPException(status_code=400, detail=f"Git 命令执行失败: {e.stderr}")
-    except Exception as e:
-        get_logger("webui", Path.cwd()).error(f"Git commit 失败: {e}")
-        raise HTTPException(status_code=500, detail="Git 提交失败")
+    if body.files:
+        await _run_git(["add"] + body.files, body.root_dir, "Git 暂存")
+    output = await _run_git(
+        ["commit", "-m", body.message], body.root_dir, "Git 提交", timeout=30
+    )
+    return {"output": output}
 
 
 @router.post("/git/stage")
 async def git_stage(body: GitStage):
     """Git add。"""
-    import subprocess
-
-    # 验证 root_dir 合法性
     _validate_path(body.root_dir, "")
-    try:
-        result = subprocess.run(
-            ["git", "add"] + body.files,
-            cwd=body.root_dir,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        return {"output": result.stdout + result.stderr}
-    except subprocess.TimeoutExpired:
-        raise HTTPException(status_code=504, detail="Git 命令执行超时")
-    except Exception as e:
-        get_logger("webui", Path.cwd()).error(f"Git stage 失败: {e}")
-        raise HTTPException(status_code=500, detail="Git 暂存失败")
+    output = await _run_git(["add"] + body.files, body.root_dir, "Git 暂存")
+    return {"output": output}
 
 
 @router.post("/git/unstage")
 async def git_unstage(body: GitStage):
     """Git reset。"""
-    import subprocess
-
-    # 验证 root_dir 合法性
     _validate_path(body.root_dir, "")
-    try:
-        result = subprocess.run(
-            ["git", "reset"] + body.files,
-            cwd=body.root_dir,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        return {"output": result.stdout + result.stderr}
-    except subprocess.TimeoutExpired:
-        raise HTTPException(status_code=504, detail="Git 命令执行超时")
-    except Exception as e:
-        get_logger("webui", Path.cwd()).error(f"Git unstage 失败: {e}")
-        raise HTTPException(status_code=500, detail="Git 取消暂存失败")
+    output = await _run_git(["reset"] + body.files, body.root_dir, "Git 取消暂存")
+    return {"output": output}
 
 
 @router.post("/git/ai-commit-message")

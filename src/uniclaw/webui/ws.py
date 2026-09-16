@@ -20,6 +20,7 @@ from uniclaw.agent import (
     MultiAgent,
     PermissionRequestEvent,
     ShellCommandEvent,
+    SlashCommandEvent,
     TextChunkEvent,
     ThinkingChunkEvent,
     ThinkingStartEvent,
@@ -594,6 +595,7 @@ async def bridge_events(session_id: str, config: AppConfig):
                     "event": "shell_running",
                     "session_id": session_id,
                     "command": event.command,
+                    "source": event.source,
                 }
             )
             try:
@@ -625,6 +627,19 @@ async def bridge_events(session_id: str, config: AppConfig):
             )
             event.content = out
             event.return_event.set()
+            continue
+
+        # === 用户斜杠命令(agent 运行时) ===
+        elif isinstance(event, SlashCommandEvent):
+            try:
+                config.spinner.stop(wait_id=queued_task.id)
+            except Exception:
+                # spinner.stop 抛异常不能吞掉 return_event, 否则 agent 永久卡在
+                # await return_event.wait()(bridge 死亡后没人再 set)
+                get_logger("webui", Path.cwd()).warning(
+                    f"[{session_id}] slash 前 spinner.stop 失败"
+                )
+            await _handle_running_slash(event, session_id, config)
             continue
 
         # === 状态事件 ===
@@ -702,6 +717,69 @@ def _make_broadcast_callback(session_id: str):
         )
 
     return _send
+
+
+async def _handle_running_slash(event: SlashCommandEvent, session_id: str, config: AppConfig):
+    """agent 运行期间收到 /command: 在 bridge 协程里直接执行, 并把结果回投给 drain_user_queue。
+
+    此分支不能缺失: drain_user_queue 发出 SlashCommandEvent 后会阻塞等待
+    event.return_event; 若落到 bridge 的 else 未知事件分支则永不 set, agent 卡死到超时。
+    console 与 wechat 都在各自事件循环里处理该事件, WebUI 此前漏实现。
+    handle_slash 通过 config.output_callback 输出 info/warn/err, 这里临时切到广播版
+    (bridge 协程无 ws 引用), 执行完恢复原回调。"""
+    from uniclaw.commands import handle_slash
+
+    prev_callback = getattr(config, "output_callback", None)
+    config.output_callback = _make_broadcast_callback(session_id)
+    try:
+        result = await handle_slash(event.command, config)
+        # handle_slash 返回 str 表示结果需回投给模型(由 drain_user_queue 持久化), True/False 无内容。
+        if isinstance(result, str) and result:
+            # live 广播 user 事件(与回放同源), content 用 handle_slash 原始文本(多为 skill 注入 prompt):
+            # 加前缀会污染 drain_user_queue 持久化的模型输入(skill 指令必须原文注入),
+            # 且模型侧本就按"用户请求"执行 skill。live 与 replay 都渲染为用户气泡, 天然一致。
+            # msg_idx: drain_user_queue 在 return_event 之后才 add_message, 当前 len 即其索引
+            slash_msg_idx = -1
+            try:
+                slash_msg_idx = len(config.current_agent.session._messages)
+            except Exception as e:
+                get_logger("webui", Path.cwd()).debug(
+                    f"获取 slash 消息索引失败: {e}"
+                )
+            await _broadcast({
+                "event": "user",
+                "session_id": session_id,
+                "content": result,
+                "msg_idx": slash_msg_idx,
+            })
+            event.content = result
+        elif result is False:
+            # 运行中收到未知命令: 静默丢弃会让用户以为命令生效了, 给出可见反馈
+            await _broadcast(
+                {
+                    "event": "command_output",
+                    "session_id": session_id,
+                    "content": f"未知命令 {event.command.strip()}, 运行中仅支持部分命令(见 /help)",
+                    "level": "warn",
+                }
+            )
+            event.content = ""
+        else:
+            event.content = ""
+    except Exception as e:
+        get_logger("webui", Path.cwd()).error(f"[{session_id}] 运行中 slash 命令失败: {e}")
+        event.content = ""
+        await _broadcast(
+            {
+                "event": "command_output",
+                "session_id": session_id,
+                "content": f"命令执行失败: {e}",
+                "level": "err",
+            }
+        )
+    finally:
+        config.output_callback = prev_callback
+        event.return_event.set()
 
 
 async def _notify_config_changed(session_id: str):

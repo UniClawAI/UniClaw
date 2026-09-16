@@ -12,6 +12,7 @@ const InputDialog = {
         document.getElementById('input-dialog-confirm').onclick = () => this._respond();
         document.getElementById('input-cancel-countdown').onclick = () => this._cancelCountdown();
         document.getElementById('input-dialog-text').addEventListener('keydown', e => {
+            if (Utils.isImeComposing(e)) return;  // IME 组合中不触发确认
             if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this._respond(); }
         });
         // 拦截 backspace 防止浏览器后退
@@ -50,8 +51,21 @@ const InputDialog = {
     },
 
     closeIfSessionMismatch(targetSid) {
+        // 切会话仅隐藏, 不回应对: 后端 set_active 会重发该请求, 用户切回仍可作答。
+        // 若不重发则靠超时兜底唤醒 future, 与原始设计一致。
         if (this.currentRequest && this.currentRequest.session_id !== targetSid) {
             this._stopCountdown();
+            FloatingWindow.hide('input-dialog-modal');
+            this.currentRequest = null;
+        }
+    },
+
+    /** 会话被删除时调用: 不会再有重发, 用空回答唤醒后端 future 并隐藏。 */
+    abandonFor(sessionId) {
+        const req = this.currentRequest;
+        if (req && req.session_id === sessionId) {
+            this._stopCountdown();
+            WS.send({ type: 'input_response', session_id: req.session_id, id: req.id, value: '' });
             FloatingWindow.hide('input-dialog-modal');
             this.currentRequest = null;
         }

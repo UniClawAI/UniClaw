@@ -258,8 +258,12 @@ const SessionPanel = {
             const r = await fetch(`/api/wechat/bots/${encodeURIComponent(name)}`, { method: 'DELETE' });
             if (r.ok) {
                 Utils.showSuccess('已删除');
-                this._loadWechatBots();
+            } else {
+                // 之前 !r.ok 时静默无提示也不刷新, 用户以为删除成功
+                const d = await r.json().catch(() => ({}));
+                Utils.showError(d.detail || `删除失败 (${r.status})`);
             }
+            this._loadWechatBots();
         } catch (e) {
             Utils.showError('删除失败');
         }
@@ -268,6 +272,11 @@ const SessionPanel = {
     _onSessionDeleted(msg) {
         const sid = msg.session_id;
         if (!sid) return;
+        // 该会话若正挂着弹窗或缓存了待应答请求, 主动唤醒后端 future 并清理。
+        // 走 abandonFor 而非 _respond: 删除后不会有 set_active 重发, 且 _respond 会延迟弹出同会话下一条死请求。
+        if (typeof Permission !== 'undefined') Permission.abandonFor(sid);
+        if (typeof InputDialog !== 'undefined') InputDialog.abandonFor(sid);
+        if (typeof MultiInputDialog !== 'undefined') MultiInputDialog.abandonFor(sid);
         if (this.activeSessionId === sid) {
             this._clearSessionFromUrl();
             this.activeSessionId = null;
@@ -317,14 +326,21 @@ const SessionPanel = {
     async _loadProjects() {
         const saved = localStorage.getItem('uniclaw_projects');
         if (saved) {
-            const data = JSON.parse(saved);
-            // 兼容旧格式(纯数组)和新格式(对象)
-            if (Array.isArray(data)) {
-                data.forEach(dir => { if (!this.projects[dir]) this.projects[dir] = { sessions: [], expanded: true }; });
-            } else {
-                Object.entries(data).forEach(([dir, meta]) => {
-                    if (!this.projects[dir]) this.projects[dir] = { sessions: [], expanded: meta.expanded !== false, created_at: meta.created_at || null };
-                });
+            let data;
+            try {
+                data = JSON.parse(saved);
+            } catch (_) {
+                data = null;  // localStorage 被手动改坏时不应让整侧栏初始化中断
+            }
+            if (data) {
+                // 兼容旧格式(纯数组)和新格式(对象)
+                if (Array.isArray(data)) {
+                    data.forEach(dir => { if (!this.projects[dir]) this.projects[dir] = { sessions: [], expanded: true }; });
+                } else {
+                    Object.entries(data).forEach(([dir, meta]) => {
+                        if (!this.projects[dir]) this.projects[dir] = { sessions: [], expanded: meta.expanded !== false, created_at: meta.created_at || null };
+                    });
+                }
             }
         }
         // 恢复顶级分类展开状态
@@ -681,6 +697,8 @@ const SessionPanel = {
     },
 
     _updateStatusBar(rootDir, sessionId, skipFetch = false) {
+        // 代际守卫: 快速切换会话时, 旧 fetch 回调不得覆盖新会话的状态栏
+        const gen = this._statusGen = (this._statusGen || 0) + 1;
         const shortDir = rootDir === '__free__' ? '自由聊天' : rootDir ? (rootDir.split(/[/\\]/).pop() || rootDir) : '-';
         const pel = document.getElementById('status-project');
         if (pel) { pel.textContent = shortDir; pel.title = rootDir || ''; }
@@ -688,12 +706,15 @@ const SessionPanel = {
         if (sel) sel.textContent = sessionId || '新会话';
         if (!sessionId || skipFetch) {
             const mel = document.getElementById('status-model'); if (mel) mel.textContent = '-';
+            // 切到自由聊天/新建: 作废在途的 context 请求, 否则旧会话响应回来后会把用量条重新填回
+            this._usageGen = (this._usageGen || 0) + 1;
             this._updateContextDisplay(null);
             if (typeof VoiceMode !== 'undefined') VoiceMode.reset();
             return;
         }
-        fetch(`/api/sessions/${sessionId}`).then(r => r.ok ? r.json() : null).then(d => { if (d && sel) sel.textContent = d.title || sessionId; }).catch(() => {});
+        fetch(`/api/sessions/${sessionId}`).then(r => r.ok ? r.json() : null).then(d => { if (d && sel && this._statusGen === gen) sel.textContent = d.title || sessionId; }).catch(() => {});
         fetch(`/api/config?session_id=${sessionId}`).then(r => r.json()).then(d => {
+            if (this._statusGen !== gen) return;
             const mel = document.getElementById('status-model');
             if (mel && d.model_name?.length) mel.textContent = d.model_name[0];
             const pel2 = document.getElementById('status-permission');
@@ -739,15 +760,17 @@ const SessionPanel = {
         const sid = this.activeSessionId;
         if (!sid) return;
         try {
-            await fetch('/api/config', {
+            const r = await fetch('/api/config', {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ session_id: sid, computer_use_enabled: enabled }),
             });
+            // fetch 对非 2xx 不抛异常, 必须查 r.ok, 否则失败也提示"已启用"
+            if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.detail || `HTTP ${r.status}`); }
             Utils.showToast(enabled ? 'Computer Use 已启用 (下条消息生效)' : 'Computer Use 已关闭 (下条消息生效)');
             this._updateStatusBar(this.activeProjectDir, sid);
-        } catch (_) {
-            Utils.showError('切换失败');
+        } catch (e) {
+            Utils.showError(e.message ? `切换失败: ${e.message}` : '切换失败');
         }
     },
 
@@ -755,21 +778,23 @@ const SessionPanel = {
         const sid = this.activeSessionId;
         if (!sid) return;
         try {
-            await fetch('/api/config', {
+            const r = await fetch('/api/config', {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ session_id: sid, explain_mode: enabled }),
             });
+            if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.detail || `HTTP ${r.status}`); }
             Utils.showToast(enabled ? '工具解释模式已开启 (下条消息生效)' : '工具解释模式已关闭 (下条消息生效)');
             this._updateStatusBar(this.activeProjectDir, sid);
-        } catch (_) {
-            Utils.showError('切换失败');
+        } catch (e) {
+            Utils.showError(e.message ? `切换失败: ${e.message}` : '切换失败');
         }
     },
 
     _fetchContextUsage(sid) {
         if (!sid) return;
-        fetch(`/api/context?session_id=${sid}`).then(r => r.ok ? r.json() : null).then(d => { if (d) this._updateContextDisplay(d); }).catch(() => {});
+        const gen = this._usageGen = (this._usageGen || 0) + 1;
+        fetch(`/api/context?session_id=${sid}`).then(r => r.ok ? r.json() : null).then(d => { if (d && this._usageGen === gen) this._updateContextDisplay(d); }).catch(() => {});
     },
 
     _updateContextDisplay(data) {
@@ -907,9 +932,13 @@ const SessionPanel = {
 
     async _onSearch(kw) {
         if (!kw.trim()) { this._render(); return; }
+        // 请求序号守卫: debounce 后仍可能有并发乱序返回, 旧结果不得覆盖新结果
+        const seq = this._searchSeq = (this._searchSeq || 0) + 1;
         try {
             const r = await fetch(`/api/sessions/search?keyword=${encodeURIComponent(kw)}`);
+            if (!r.ok) return;
             const results = await r.json();
+            if (this._searchSeq !== seq) return;
             const tree = document.getElementById('session-tree');
             let html = '<div style="padding:8px 14px;font-size:12px;color:var(--text-3)">搜索结果</div>';
             results.forEach(s => {
@@ -954,7 +983,9 @@ const SessionPanel = {
         localStorage.setItem('uniclaw_projects', JSON.stringify(data));
         localStorage.setItem('uniclaw_category_expanded', JSON.stringify(this.categoryExpanded));
     },
-    _esc(s) { return s.replace(/\\/g, '\\\\').replace(/'/g, "\\'"); },
+    /** 内联 handler 字符串转义: 先做 JS 转义(双引号属性内的单引号串), 再做 HTML 属性转义。
+     *  顺序不能反, 且必须转义 &(否则路径中的 &quot; 会被 HTML 解析器解码成引号逃逸属性) */
+    _esc(s) { return String(s ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/&/g, '&amp;').replace(/"/g, '&quot;'); },
     _now() { const d = new Date(); const pad = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`; },
 
     // 从 mouse/touch 事件中提取坐标

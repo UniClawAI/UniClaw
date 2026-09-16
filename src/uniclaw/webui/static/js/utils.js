@@ -30,7 +30,12 @@ const Utils = {
         if (!text) return '';
         if (typeof marked === 'undefined') return this.escapeHtml(text).replace(/\n/g, '<br>');
         try {
-            return marked.parse(text);
+            const html = marked.parse(text);
+            // 消毒:LLM 输出/历史消息中的原生 HTML(如 <img onerror>)不得执行。
+            // DOMPurify 缺失(CDN 故障)时不能直接返回未消毒的 html(fail-open 等于放弃防护),
+            // 退化为纯文本转义,保证任何路径都不会执行原始 HTML
+            if (typeof DOMPurify !== 'undefined') return DOMPurify.sanitize(html);
+            return this.escapeHtml(text).replace(/\n/g, '<br>');
         } catch (_) {
             return this.escapeHtml(text).replace(/\n/g, '<br>');
         }
@@ -43,7 +48,13 @@ const Utils = {
     escapeHtml(text) {
         const div = document.createElement('div');
         div.textContent = text || '';
-        return div.innerHTML;
+        // textContent→innerHTML 只转义 & < >,不转义引号;补上才能安全用于属性上下文
+        return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    },
+
+    /** IME 组合中按 Enter 应只上屏,不触发提交/选中。所有 Enter 处理器统一用此判断 */
+    isImeComposing(e) {
+        return !!(e.isComposing || e.keyCode === 229);
     },
 
     // ============================================================

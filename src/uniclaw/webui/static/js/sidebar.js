@@ -10,6 +10,7 @@ const Sidebar = {
         document.querySelectorAll('.tab-btn').forEach(btn => { btn.onclick = () => this.switchTab(btn.dataset.tab); });
         const ci = document.getElementById('console-input');
         ci.addEventListener('keydown', e => {
+            if (Utils.isImeComposing(e)) return;  // IME 组合中: Enter 仅上屏, 不执行命令
             if (e.key === 'Enter') { this._execCmd(e.target.value); e.target.value = ''; }
             else if (e.key === 'ArrowUp') { e.preventDefault(); if (this._consoleHistoryIdx < this._consoleHistory.length - 1) { this._consoleHistoryIdx++; e.target.value = this._consoleHistory[this._consoleHistory.length - 1 - this._consoleHistoryIdx]; } }
             else if (e.key === 'ArrowDown') { e.preventDefault(); if (this._consoleHistoryIdx > 0) { this._consoleHistoryIdx--; e.target.value = this._consoleHistory[this._consoleHistory.length - 1 - this._consoleHistoryIdx]; } else { this._consoleHistoryIdx = -1; e.target.value = ''; } }
@@ -62,7 +63,9 @@ const Sidebar = {
     },
 
     _escPath(p) {
-        return p.replace(/\\/g, '/').replace(/'/g, "\\'");
+        // 内联 handler 用单引号包路径: 先做 JS 转义(' -> \'), 再整体做 HTML 属性转义。
+        // 顺序不能反, 否则路径中的 " 会闭合 onclick 属性, </div> 等标签也可逃逸注入
+        return Utils.escapeHtml(p.replace(/\\/g, '/').replace(/'/g, "\\'"));
     },
 
     async _toggleDir(nodeEl, path) {
@@ -286,10 +289,14 @@ const Sidebar = {
         if (!await Utils.confirm(`确定恢复到 checkpoint [${idx}]？`)) return;
         try {
             Utils.showLoading('正在恢复...');
-            await fetch(`/api/checkpoints/${idx}/restore`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ root_dir: rd }) });
+            const r = await fetch(`/api/checkpoints/${idx}/restore`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ root_dir: rd }) });
+            if (!r.ok) throw new Error();
+            // 后端逻辑失败仍返回 200, 结果在 result=[ok, message] 里
+            const d = await r.json().catch(() => null);
+            if (d && Array.isArray(d.result) && d.result[0] === false) throw new Error(d.result[1] || '');
             Utils.showSuccess('恢复成功');
             this._loadCheckpoints();
-        } catch (e) { Utils.showError('恢复失败'); }
+        } catch (e) { Utils.showError(e.message ? `恢复失败: ${e.message}` : '恢复失败'); }
         finally { Utils.hideLoading(); }
     },
 
@@ -299,15 +306,28 @@ const Sidebar = {
         if (!rd) return;
         try {
             const r = await fetch(`/api/git/status?root_dir=${encodeURIComponent(rd)}`);
+            const c = document.getElementById('git-content');
+            if (!r.ok) {
+                // 接口失败不能当成"没有更改", 否则 git 未安装/目录无效时界面误导用户
+                const err = await r.json().catch(() => ({ detail: r.statusText }));
+                c.innerHTML = `<div class="panel-empty" style="color:var(--neon-pink)">${icon('warning')}<div class="panel-empty-text">${Utils.escapeHtml(err.detail || '加载 git 状态失败')}</div></div>`;
+                return;
+            }
             const d = await r.json();
             const lines = (d.output || '').split('\n').filter(l => l.trim());
-            const c = document.getElementById('git-content');
             if (!lines.length) { c.innerHTML = `<div class="panel-empty">${icon("check")}<div class="panel-empty-text">没有更改</div></div>`; return; }
             const staged = [], changes = [];
             for (const line of lines) {
-                const sc = line.substring(0, 2), file = line.substring(3);
-                if (sc[0] !== ' ' && sc[0] !== '?') staged.push({ file, ch: sc[0] });
-                if (sc[1] !== ' ' || sc === '??') changes.push({ file, ch: sc === '??' ? '?' : sc[1] });
+                const sc = line.substring(0, 2);
+                let file = line.substring(3);
+                let oldPath = null;
+                // 仅 R/C 条目格式为 "old -> new"。引号包裹的含空格路径可含 "->", 不能一律按它切分
+                if ((sc[0] === 'R' || sc[0] === 'C') && file.includes(' -> ')) {
+                    oldPath = file.substring(0, file.indexOf(' -> '));
+                    file = file.substring(file.indexOf(' -> ') + 4);
+                }
+                if (sc[0] !== ' ' && sc[0] !== '?') staged.push({ file, ch: sc[0], oldPath });
+                if (sc[1] !== ' ' || sc === '??') changes.push({ file, ch: sc === '??' ? '?' : sc[1], oldPath: null });
             }
             let html = '<div class="git-commit-box"><textarea id="git-commit-msg" class="git-commit-input" rows="2" placeholder="提交消息..."></textarea>';
             html += '<div class="git-commit-actions"><span style="font-size:10px;color:var(--text-3)">Ctrl+Enter 提交</span><span style="flex:1"></span>';
@@ -327,8 +347,10 @@ const Sidebar = {
         const chevronIcon = collapsed ? icon('chevronRight') : icon('chevronDown');
         let html = `<div class="git-section"><div class="git-section-title" onclick="Sidebar._toggleGitSection('${key}')" style="cursor:pointer">${chevronIcon} ${label} <span class="count">${files.length}</span></div>`;
         if (!collapsed) {
-            for (const { file, ch } of files) {
-                html += `<div class="git-file-item"><input type="checkbox" class="git-file-check" value="${Utils.escapeHtml(file)}" ${isStaged ? 'checked' : ''} onchange="Sidebar._toggleStage(this)"/><span class="git-file-status ${ch}">${ch}</span><span class="git-file-name" title="${Utils.escapeHtml(file)}">${Utils.escapeHtml(file)}</span></div>`;
+            for (const { file, ch, oldPath } of files) {
+                // oldPath: 重命名/复制的源路径, 取消暂存时需与新路径一起传给 git reset
+                const oldAttr = oldPath ? ` data-old="${Utils.escapeHtml(oldPath)}"` : '';
+                html += `<div class="git-file-item"><input type="checkbox" class="git-file-check" value="${Utils.escapeHtml(file)}"${oldAttr} ${isStaged ? 'checked' : ''} onchange="Sidebar._toggleStage(this)"/><span class="git-file-status ${ch}">${ch}</span><span class="git-file-name" title="${Utils.escapeHtml(file)}">${Utils.escapeHtml(file)}</span></div>`;
             }
         }
         html += '</div>';
@@ -340,10 +362,15 @@ const Sidebar = {
     async _toggleStage(cb) {
         const rd = SessionPanel.activeProjectDir;
         if (!rd) return;
+        // rename 行带 data-old=源路径: 取消暂存/reset 与重新勾选/add 都要带上源路径,
+        // 否则 reset 漏掉删除、re-stage 漏掉删除, 提交时重命名退化成"新增副本"
+        const files = [cb.value];
+        if (cb.dataset.old) files.push(cb.dataset.old);
         try {
-            await fetch(cb.checked ? '/api/git/stage' : '/api/git/unstage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ root_dir: rd, files: [cb.value] }) });
+            const r = await fetch(cb.checked ? '/api/git/stage' : '/api/git/unstage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ root_dir: rd, files }) });
+            if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.detail || ''); }
             this._loadGitStatus();
-        } catch (e) { Utils.showError('操作失败'); cb.checked = !cb.checked; }
+        } catch (e) { Utils.showError(e.message ? `操作失败: ${e.message}` : '操作失败'); cb.checked = !cb.checked; }
     },
 
     async _gitCommit() {
@@ -352,10 +379,11 @@ const Sidebar = {
         if (!rd || !msg) return;
         const files = Array.from(document.querySelectorAll('.git-file-check:checked')).map(el => el.value);
         try {
-            await fetch('/api/git/commit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ root_dir: rd, message: msg, files }) });
+            const r = await fetch('/api/git/commit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ root_dir: rd, message: msg, files }) });
+            if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.detail || ''); }
             Utils.showSuccess('提交成功');
             this._loadGitStatus();
-        } catch (e) { Utils.showError('提交失败'); }
+        } catch (e) { Utils.showError(e.message ? `提交失败: ${e.message}` : '提交失败'); }
     },
 
     async _aiCommit() {
@@ -430,7 +458,14 @@ const Sidebar = {
                     const btn = document.createElement('button');
                     btn.className = 'monitor-stop';
                     btn.textContent = '停止';
-                    btn.onclick = async () => { try { await fetch(`/api/monitors/${m.id}/stop`, { method: 'POST' }); Utils.showSuccess('已停止'); this._loadMonitors(); } catch (_) { Utils.showError('停止失败'); } };
+                    btn.onclick = async () => {
+                        try {
+                            const r = await fetch(`/api/monitors/${m.id}/stop`, { method: 'POST' });
+                            if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.detail || ''); }
+                            Utils.showSuccess('已停止');
+                            this._loadMonitors();
+                        } catch (e) { Utils.showError(e.message ? `停止失败: ${e.message}` : '停止失败'); }
+                    };
                     card.appendChild(btn);
                 }
                 list.appendChild(card);

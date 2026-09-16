@@ -218,6 +218,7 @@ const Input = {
 
         sendBtn.onclick = () => this.send();
         input.addEventListener('keydown', e => {
+            if (Utils.isImeComposing(e)) return;  // IME 组合中:Enter 仅上屏,不触发选中/发送
             if (this.completionPopup) {
                 if (e.key === 'ArrowDown') { e.preventDefault(); this._completionNav(1); return; }
                 if (e.key === 'ArrowUp') { e.preventDefault(); this._completionNav(-1); return; }

@@ -126,8 +126,16 @@ const App = {
             if (e.key === 'F3') { e.preventDefault(); this._toggleLeftPanel(); }
             if (e.key === 'Escape') {
                 const modals = document.querySelectorAll('.modal-overlay:not(.hidden)');
-                if (modals.length) modals.forEach(m => m.classList.add('hidden'));
-                else {
+                if (modals.length) {
+                    modals.forEach(m => {
+                        // 需应答的弹窗: 按 Escape 等价于拒绝/空答案, 否则后端 Future 会挂满超时。
+                        // 应答方法在 currentRequest 为 null 时会早退不隐藏, 故统一兜底 add('hidden')。
+                        if (m.id === 'permission-modal' && typeof Permission !== 'undefined') Permission._respond(false);
+                        else if (m.id === 'input-dialog-modal' && typeof InputDialog !== 'undefined') InputDialog._respond('');
+                        else if (m.id === 'multi-input-modal' && typeof MultiInputDialog !== 'undefined') MultiInputDialog._timeoutSubmit();
+                        m.classList.add('hidden');
+                    });
+                } else {
                     const sid = SessionPanel.activeSessionId;
                     if (sid) { WS.send({ type: 'cancel', session_id: sid }); Utils.showToast('已发送取消请求'); }
                 }

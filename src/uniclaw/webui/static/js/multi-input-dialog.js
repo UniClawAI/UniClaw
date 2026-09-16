@@ -41,6 +41,7 @@ const MultiInputDialog = {
         this._renderTabs();
         this._renderQuestion();
         this._renderOptions();
+        this._checkCanSubmit();
         const countdownEl = document.getElementById('multi-input-countdown');
         const cancelBtn = document.getElementById('multi-input-cancel-countdown');
         if (msg.countdown_cancelled) {
@@ -60,8 +61,21 @@ const MultiInputDialog = {
     },
 
     closeIfSessionMismatch(targetSid) {
+        // 切会话仅隐藏, 不提交: 后端 set_active 会重发该请求, 用户切回仍可作答。
+        // 在此提交会把"中途离开"变成正式回答(部分选择被模型当成完整答复), 超时路径才用 _timeoutSubmit。
         if (this.currentRequest && this.currentRequest.session_id !== targetSid) {
             this._stopCountdown();
+            FloatingWindow.hide('multi-input-modal');
+            this.currentRequest = null;
+        }
+    },
+
+    /** 会话被删除时调用: 不会再有重发, 用空回答唤醒后端 future 并隐藏。 */
+    abandonFor(sessionId) {
+        const req = this.currentRequest;
+        if (req && req.session_id === sessionId) {
+            this._stopCountdown();
+            WS.send({ type: 'input_response', session_id: req.session_id, id: req.id, value: '' });
             FloatingWindow.hide('multi-input-modal');
             this.currentRequest = null;
         }
@@ -187,6 +201,7 @@ const MultiInputDialog = {
             }
         };
         input.onkeydown = (e) => {
+            if (Utils.isImeComposing(e)) return;  // IME 组合中不触发确认
             if (e.key === 'Enter') {
                 e.preventDefault();
                 this._otherActive = false;
@@ -274,22 +289,8 @@ const MultiInputDialog = {
         btn.style.opacity = allSelected ? '1' : '0.5';
     },
 
-    _submit() {
-        this._stopCountdown();
-        if (!this.currentRequest) return;
-        const allSelected = this._questions.every((q, i) => {
-            const sel = this._selections[i];
-            if (q.multi) {
-                return Array.isArray(sel) && sel.length > 0;
-            }
-            return sel !== undefined;
-        });
-        if (!allSelected) {
-            FloatingWindow.hide('multi-input-modal');
-            this.currentRequest = null;
-            return;
-        }
-
+    /** 从当前选择构造答案字典(跳过未作答的问题) */
+    _buildAnswers() {
         const answers = {};
         this._questions.forEach((q, i) => {
             const sel = this._selections[i];
@@ -307,16 +308,38 @@ const MultiInputDialog = {
                         selectedOpts.push(otherText ? `其他:${otherText}` : '其他');
                     }
                 });
-                answers[label] = selectedOpts;
+                if (selectedOpts.length) answers[label] = selectedOpts;
             } else if (sel !== undefined && sel < options.length) {
                 // 单选:返回单个值
                 answers[label] = options[sel];
-            } else if (sel === options.length) {
+            } else if (sel !== undefined && sel === options.length) {
+                // sel 必须已定义: 未作答时 undefined === 0(无选项)会误入此分支伪造"其他"
                 const otherText = (this._otherTexts[i] || '').trim();
                 answers[label] = otherText ? `其他:${otherText}` : '其他';
             }
         });
+        return answers;
+    },
 
+    _submit() {
+        this._stopCountdown();
+        if (!this.currentRequest) return;
+        const allSelected = this._questions.every((q, i) => {
+            const sel = this._selections[i];
+            if (q.multi) {
+                return Array.isArray(sel) && sel.length > 0;
+            }
+            return sel !== undefined;
+        });
+        if (!allSelected) {
+            // 兜底:未选完时提交按钮本应禁用;若仍触发提交,必须唤醒后端 Future,
+            // 否则 agent 会一直挂到 5 分钟超时
+            Utils.showToast('未选择完所有问题,已作为空回答提交');
+            this._timeoutSubmit();
+            return;
+        }
+
+        const answers = this._buildAnswers();
         const value = JSON.stringify(answers);
         WS.send({
             type: 'input_response',
@@ -329,11 +352,14 @@ const MultiInputDialog = {
     },
 
     _timeoutSubmit() {
-        // 超时直接提交原始请求,不检查是否全部选择,确保后端 Future 能被唤醒
+        // 超时/放弃作答时直接提交,不检查是否全部选择,确保后端 Future 能被唤醒。
+        // 已选部分随空回答一起带回,模型至少能看到用户已给出的信息
         this._stopCountdown();
         if (!this.currentRequest) return;
         const req = this.currentRequest;
-        WS.send({ type: 'input_response', session_id: req.session_id, id: req.id, value: '' });
+        const answers = this._buildAnswers();
+        const value = Object.keys(answers).length ? JSON.stringify(answers) : '';
+        WS.send({ type: 'input_response', session_id: req.session_id, id: req.id, value });
         FloatingWindow.hide('multi-input-modal');
         this.currentRequest = null;
     },

@@ -136,10 +136,27 @@ const Permission = {
     },
 
     closeIfSessionMismatch(targetSid) {
+        // 切会话仅隐藏弹窗, 不回绝: 后端 set_active 会通过 _resend_pending_requests 重发,
+        // 用户切回来仍能作答。回绝会让 agent 误按"用户已拒绝"分支继续跑。
         if (this.currentRequest && this.currentRequest.session_id !== targetSid) {
             this._stopCountdown();
             FloatingWindow.hide('permission-modal');
             this.currentRequest = null;
+        }
+    },
+
+    /** 会话被删除时调用: 该会话不会再有 set_active 重发, 必须唤醒其后端 Future(回绝),
+     *  并丢弃缓存队列 — 不走 _respond(), 避免它 300ms 后弹出同会话的下一条死请求。 */
+    abandonFor(sessionId) {
+        delete this._pendingBySession[sessionId];
+        const req = this.currentRequest;
+        if (req && req.session_id === sessionId) {
+            this._stopCountdown();
+            WS.send({ type: 'permission_response', session_id: req.session_id, id: req.id, approved: false, reason: '', always: false });
+            FloatingWindow.hide('permission-modal');
+            this.currentRequest = null;
+            const modalContent = document.querySelector('#permission-modal .modal-content');
+            if (modalContent) modalContent.classList.remove('perm-alert-deny');
         }
     },
 

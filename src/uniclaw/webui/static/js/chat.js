@@ -36,9 +36,9 @@ const Chat = {
         WS.on('subagent_end', msg => this._onSubagentEnd(msg));
         WS.on('error', msg => this._onError(msg));
         WS.on('interrupted', msg => this._onInterrupted(msg));
+        WS.on('shell_running', msg => this._onShellRunning(msg));
         WS.on('shell_result', msg => this._onShellResult(msg));
         WS.on('command_output', msg => this._onCommandOutput(msg));
-        WS.on('command_result', msg => this._onCommandResult(msg));
         WS.on('spinner_start', msg => this._onSpinner(msg));
         WS.on('spinner_update', msg => this._onSpinner(msg));
         WS.on('spinner_stop', msg => this._onSpinnerStop(msg));
@@ -52,6 +52,10 @@ const Chat = {
     // ============================================================
 
     async loadHistory(sessionId) {
+        // 加载代际: 只有最新一次加载才允许关遮罩。用 sessionId 判断不可靠 —
+        // 会话删除/新建会把 currentSessionId 置空或改指新会话, 在途加载的 finally
+        // 会误判"已过期"而跳过 hideLoading, 遮罩永久卡死(overlay 无引用计数)。
+        const gen = this._loadGen = (this._loadGen || 0) + 1;
         this.currentSessionId = sessionId;
         this.toolBlocks = {};
         this._historyData = null;
@@ -60,10 +64,13 @@ const Chat = {
             Utils.showLoading('加载历史消息...');
             const resp = await fetch(`/api/sessions/${sessionId}`);
             if (!resp.ok) {
+                if (this.currentSessionId !== sessionId) return;
                 const err = await resp.json().catch(() => ({ detail: resp.statusText }));
                 this.clear(); this._appendSystemMessage(`加载失败: ${err.detail || resp.statusText}`); return;
             }
             const data = await resp.json();
+            // 竞态守卫: 快速切换会话时,过期响应不得渲染
+            if (this.currentSessionId !== sessionId) return;
             this._historyData = data.history || null;
             this._compactData = data.messages || null;
             const toggle = document.getElementById('history-toggle');
@@ -76,8 +83,13 @@ const Chat = {
             this._renderCurrentView();
             this._fetchAndRenderTodolist(sessionId);
         } catch (e) {
+            if (this.currentSessionId !== sessionId) return;
             this.clear(); this._appendSystemMessage(`加载失败: ${e.message}`);
-        } finally { Utils.hideLoading(); }
+        } finally {
+            // 有更新的 loadHistory 在途时不能关掉它仍在用的遮罩; 会话删除/新建后
+            // currentSessionId 被置空但 _loadGen 未变, 此时由本次加载负责关遮罩
+            if (this._loadGen === gen) Utils.hideLoading();
+        }
     },
 
     _switchView(view) {
@@ -92,8 +104,9 @@ const Chat = {
     _renderCurrentView() {
         const c = document.getElementById('chat-messages');
         c.innerHTML = '';
-        // 视图整体重建, 丢弃旧 DOM 关联的子代理流式状态
-        this._clearSubagentState();
+        // 视图整体重建, 丢弃旧 DOM 关联的流式/子代理状态, 否则残留的 streamingEl/thinkingEl
+        // 指向已移除节点, 后续 _onText 等会把增量写进"看不见的元素", 界面停止更新
+        this._resetStreamingState();
         this._stopSpinnerTimer();
         const spinner = document.getElementById('spinner-area');
         if (spinner) spinner.innerHTML = '';
@@ -136,7 +149,8 @@ const Chat = {
                 const el = this._appendAssistantMessage('');
                 el.closest('.message').dataset.msgIdx = msgIdx;
                 const body = el.querySelector('.markdown-body');
-                if (msg.reasoning_content) this._appendThinkingBlock(el, msg.reasoning_content, true, body);
+                // 后端 reasoning_content 为空时会填单个空格(Anthropic 协议要求非空),回放时不渲染空思考块
+                if (msg.reasoning_content && msg.reasoning_content.trim()) this._appendThinkingBlock(el, msg.reasoning_content, true, body);
                 if (body && msg.content) {
                     body.innerHTML = Utils.renderMarkdown(msg.content);
                     Utils.addCopyButtons(body);
@@ -364,15 +378,26 @@ const Chat = {
         el.dataset.rawContent = content || '';
         let html = `<div class="msg-avatar user">${icon('send')}</div><div class="msg-body">`;
         if (content) html += `<div class="msg-content"><button class="msg-delete-btn" onclick="Chat._onEditUserMessage(this)" title="删除并重新编辑">${icon('close')}</button><div class="msg-text-aligner"><div class="markdown-body">${Utils.renderMarkdown(content)}</div></div></div>`;
-        html += '<div class="image-grid">';
-        imageUrls.forEach(url => { html += `<img src="${url}" onclick="Chat._showLightbox('${url}')" />`; });
-        html += '</div>';
         html += '</div>';
         el.innerHTML = html;
+        this._appendImageGrid(el.querySelector('.msg-body'), imageUrls);
         c.appendChild(el);
         Utils.addCopyButtons(el);
         this._scrollToBottom();
         return el;
+    },
+
+    /** 把图片网格以 DOM API 挂到 parent 下。url 不拼进 HTML 字符串, 防止逃逸属性注入脚本 */
+    _appendImageGrid(parent, imageUrls) {
+        const grid = document.createElement('div');
+        grid.className = 'image-grid';
+        (imageUrls || []).forEach(url => {
+            const img = document.createElement('img');
+            img.src = url;
+            img.onclick = () => this._showLightbox(url);
+            grid.appendChild(img);
+        });
+        parent.appendChild(grid);
     },
 
     /** 追加带多媒体附件的用户消息 */
@@ -385,34 +410,60 @@ const Chat = {
         let html = `<div class="msg-avatar user">${icon('send')}</div><div class="msg-body">`;
         if (content) html += `<div class="msg-content"><button class="msg-delete-btn" onclick="Chat._onEditUserMessage(this)" title="删除并重新编辑">${icon('close')}</button><div class="msg-text-aligner"><div class="markdown-body">${Utils.renderMarkdown(content)}</div></div></div>`;
 
+        html += '</div>';
+        el.innerHTML = html;
+        const bodyEl = el.querySelector('.msg-body');
+
+        // 顺序保持与原实现一致: 图片 → 视频 → 音频 → 文件
         // 图片网格
-        if (images.length > 0) {
-            html += '<div class="image-grid">';
-            images.forEach(url => { html += `<img src="${url}" onclick="Chat._showLightbox('${url}')" />`; });
-            html += '</div>';
-        }
+        if (images.length > 0) this._appendImageGrid(bodyEl, images);
 
         // 视频
         videos.forEach(url => {
-            html += `<div class="media-attachment"><video controls preload="metadata" style="max-width:300px;max-height:200px;border-radius:var(--r-md)"><source src="${url}"></video></div>`;
+            const wrap = document.createElement('div');
+            wrap.className = 'media-attachment';
+            const video = document.createElement('video');
+            video.controls = true;
+            video.preload = 'metadata';
+            video.style.cssText = 'max-width:300px;max-height:200px;border-radius:var(--r-md)';
+            const vsource = document.createElement('source');
+            vsource.src = url;
+            video.appendChild(vsource);
+            wrap.appendChild(video);
+            bodyEl.appendChild(wrap);
         });
 
         // 音频
         audio.forEach(a => {
-            html += `<div class="media-attachment"><audio controls preload="metadata"><source src="data:audio/${a.format};base64,${a.data}"></audio></div>`;
+            const wrap = document.createElement('div');
+            wrap.className = 'media-attachment';
+            const audioEl = document.createElement('audio');
+            audioEl.controls = true;
+            audioEl.preload = 'metadata';
+            const asource = document.createElement('source');
+            const fmt = String(a.format || '').replace(/[^a-zA-Z0-9]/g, '');
+            asource.src = `data:audio/${fmt};base64,${a.data}`;
+            audioEl.appendChild(asource);
+            wrap.appendChild(audioEl);
+            bodyEl.appendChild(wrap);
         });
 
         // 文件附件
         if (files.length > 0) {
-            html += '<div class="file-attachments">';
+            const fileWrap = document.createElement('div');
+            fileWrap.className = 'file-attachments';
             files.forEach(name => {
-                html += `<div class="file-attachment-item">${Icons.file || '📄'}<span>${Utils.escapeHtml(name)}</span></div>`;
+                const item = document.createElement('div');
+                item.className = 'file-attachment-item';
+                item.innerHTML = Icons.file || '📄';
+                const label = document.createElement('span');
+                label.textContent = name;
+                item.appendChild(label);
+                fileWrap.appendChild(item);
             });
-            html += '</div>';
+            bodyEl.appendChild(fileWrap);
         }
 
-        html += '</div>';
-        el.innerHTML = html;
         c.appendChild(el);
         Utils.addCopyButtons(el);
         this._scrollToBottom();
@@ -528,8 +579,8 @@ const Chat = {
             newText = parsed.new_string || parsed.new_text || '';
         } catch (_) { return `<pre>${Utils.escapeHtml(content)}</pre>`; }
         if (!oldText && !newText) return `<pre>${Utils.escapeHtml(content)}</pre>`;
-        const escOld = Utils.escapeHtml(oldText).replace(/"/g, '&quot;');
-        const escNew = Utils.escapeHtml(newText).replace(/"/g, '&quot;');
+        const escOld = Utils.escapeHtml(oldText);
+        const escNew = Utils.escapeHtml(newText);
         let html = `<div class="tool-diff-toggle" data-diff-old="${escOld}" data-diff-new="${escNew}">`;
         html += `<button class="active" onclick="Chat._switchDiff(this,'unified')">Unified</button>`;
         html += `<button onclick="Chat._switchDiff(this,'split')">Split</button></div>`;
@@ -582,7 +633,9 @@ const Chat = {
 _showLightbox(url) {
         const lb = document.createElement('div');
         lb.className = 'lightbox';
-        lb.innerHTML = `<img src="${url}" />`;
+        const img = document.createElement('img');
+        img.src = url;
+        lb.appendChild(img);
         lb.onclick = () => lb.remove();
         document.body.appendChild(lb);
     },
@@ -592,9 +645,19 @@ _showLightbox(url) {
     // ============================================================
 
     _resetStreamingState() {
+        // 结束/切会话时若还停在思考中, 先收尾(空内容移除, 否则改写标题), 避免残留"思考中..."
+        this._finalizeThinking(this);
         this.streamingEl = null; this.streamingContent = ''; this.streamingBody = null;
         this.thinkingEl = null; this.thinkingContent = '';
         this._clearSubagentState();
+        this._cleanShellPlaceholders();
+    },
+
+    /** 移除 shell 执行占位行: 传 sessionId 只清该会话的(事件级清理); 不传清全部(视图重建/切会话) */
+    _cleanShellPlaceholders(sessionId) {
+        document.querySelectorAll('.shell-running-placeholder').forEach(el => {
+            if (sessionId === undefined || el.dataset.session === sessionId) el.remove();
+        });
     },
 
     _clearSubagentState() {
@@ -760,12 +823,13 @@ _showLightbox(url) {
         this._saveScrollState();
         const el = document.createElement('div');
         el.className = 'system-message';
-        let html = '';
-        if (content) html += `<div style="font-size:var(--text-sm);color:var(--text-3);margin-bottom:4px">${Utils.escapeHtml(content)}</div>`;
-        html += '<div class="image-grid">';
-        imageUrls.forEach(url => { html += `<img src="${url}" onclick="Chat._showLightbox('${url}')" />`; });
-        html += '</div>';
-        el.innerHTML = html;
+        if (content) {
+            const text = document.createElement('div');
+            text.style.cssText = 'font-size:var(--text-sm);color:var(--text-3);margin-bottom:4px';
+            text.textContent = content;
+            el.appendChild(text);
+        }
+        this._appendImageGrid(el, imageUrls);
         c.appendChild(el);
         this._scrollToBottom();
         return el;
@@ -843,6 +907,23 @@ _showLightbox(url) {
         this._scrollToBottom();
     },
 
+    /** 结束一个思考块: 有内容则改写标题为"思考完成 (N字)", 无内容则整块移除。
+     *  非推理模型每轮仍会收到 ThinkingStartEvent 创建空块, 若不移除会显示"思考完成 (0字)",
+     *  而回放路径(_appendThinkingBlock)对空 reasoning_content 会跳过, 造成刷新前后不一致。
+     *  用 trim 判定与回放路径对齐: Anthropic 协议会为空 reasoning 填单个空格, 不 trim 会保留成"1字"。 */
+    _finalizeThinking(st, agentName) {
+        if (!st || !st.thinkingEl) return;
+        if (!st.thinkingContent.trim()) {
+            st.thinkingEl.remove();
+        } else {
+            const label = st.thinkingEl.querySelector('.thinking-label');
+            const prefix = agentName ? `[${agentName}] ` : '';
+            if (label) label.textContent = `${prefix}思考完成 (${st.thinkingContent.length}字)`;
+        }
+        st.thinkingEl = null;
+        st.thinkingContent = '';
+    },
+
     _onText(msg) {
         if (!msg || !this.currentSessionId || msg.session_id !== this.currentSessionId) return;
 
@@ -855,11 +936,7 @@ _showLightbox(url) {
             if (msg.agent_name) st.name = msg.agent_name;
             if (body) {
                 // 完成 thinking 显示
-                if (st.thinkingEl) {
-                    const label = st.thinkingEl.querySelector('.thinking-label');
-                    if (label) label.textContent = `[${msg.agent_name || st.name || 'subagent'}] 思考完成 (${st.thinkingContent.length}字)`;
-                    st.thinkingEl = null; st.thinkingContent = '';
-                }
+                this._finalizeThinking(st, msg.agent_name || st.name || 'subagent');
                 // 创建或更新流式内容区域
                 if (!st.streamingEl) {
                     const el = document.createElement('div');
@@ -877,11 +954,7 @@ _showLightbox(url) {
         }
 
         this._saveScrollState();
-        if (this.thinkingEl) {
-            const label = this.thinkingEl.querySelector('.thinking-label');
-            if (label) label.textContent = `思考完成 (${this.thinkingContent.length}字)`;
-            this.thinkingEl = null; this.thinkingContent = '';
-        }
+        this._finalizeThinking(this);
         if (!this.streamingEl) {
             this.streamingEl = this._appendAssistantMessage('');
             this.streamingBody = this.streamingEl.querySelector('.markdown-body');
@@ -905,11 +978,7 @@ _showLightbox(url) {
         // subagent 的 assistant 事件不需要在主聊天区显示(流式内容已在 tool-block 内渲染)
         if (msg.is_subagent) return;
         // 会话级缓存统计(实时路径;subagent 不回放入主会话历史,故此处跳过以保持一致)
-        if (this.thinkingEl) {
-            const label = this.thinkingEl.querySelector('.thinking-label');
-            if (label) label.textContent = `思考完成 (${this.thinkingContent.length}字)`;
-            this.thinkingEl = null; this.thinkingContent = '';
-        }
+        this._finalizeThinking(this);
         if (!this.streamingEl && (msg.content || msg.tool_calls?.length)) {
             this.streamingEl = this._appendAssistantMessage('');
             this.streamingBody = this.streamingEl.querySelector('.markdown-body');
@@ -962,11 +1031,7 @@ _showLightbox(url) {
             const st = this._subagentState(parentKey);
             if (msg.agent_name) st.name = msg.agent_name;
             // 完成本轮 thinking 显示(与主 agent 的 tool_start 行为一致)
-            if (st.thinkingEl) {
-                const label = st.thinkingEl.querySelector('.thinking-label');
-                if (label) label.textContent = `[${msg.agent_name || st.name || 'subagent'}] 思考完成 (${st.thinkingContent.length}字)`;
-                st.thinkingEl = null; st.thinkingContent = '';
-            }
+            this._finalizeThinking(st, msg.agent_name || st.name || 'subagent');
             const body = this._getSubagentToolBody(parentKey);
             if (body) {
                 // 用 tool_call_id 做唯一 key,和主工具一样存入 toolBlocks
@@ -1002,11 +1067,7 @@ _showLightbox(url) {
             return;
         }
 
-        if (this.thinkingEl) {
-            const label = this.thinkingEl.querySelector('.thinking-label');
-            if (label) label.textContent = `思考完成 (${this.thinkingContent.length}字)`;
-            this.thinkingEl = null; this.thinkingContent = '';
-        }
+        this._finalizeThinking(this);
         const key = msg.tool_call_id ? `${msg.session_id}:${msg.tool_call_id}` : null;
         const existing = key ? this.toolBlocks[key] : null;
         if (existing) {
@@ -1317,20 +1378,38 @@ _showLightbox(url) {
         const st = key ? this._subagentStates[key] : null;
         if (!st) return;
         // 完成 subagent 的 thinking 显示
-        if (st.thinkingEl) {
-            const label = st.thinkingEl.querySelector('.thinking-label');
-            if (label) label.textContent = `[${msg.agent_name || st.name || 'subagent'}] 思考完成 (${st.thinkingContent.length}字)`;
-            st.thinkingEl = null; st.thinkingContent = '';
-        }
+        this._finalizeThinking(st, msg.agent_name || st.name || 'subagent');
         // 清理 subagent 流式状态(但保留 _subagentToolId 以便后续 tool_end 清理)
         st.streamingEl = null;
         st.streamingContent = '';
     },
-    _onError(msg) { if (!msg || msg.session_id !== this.currentSessionId) return; this._appendSystemMessage(`❌ ${msg.message}`); },
-    _onInterrupted(msg) { if (!msg || msg.session_id !== this.currentSessionId) return; this._resetStreamingState(); this._appendSystemMessage(`⏹️ ${msg.message || '已中断'}`); },
+    // 协议错误(如缺 root_dir/session_id)不带 session_id,需放行才能显示
+    _onError(msg) { if (!msg || (msg.session_id && msg.session_id !== this.currentSessionId)) return; this._appendSystemMessage(`❌ ${msg.message}`); },
+    _onInterrupted(msg) { if (!msg || (msg.session_id && msg.session_id !== this.currentSessionId)) return; this._resetStreamingState(); this._appendSystemMessage(`⏹️ ${msg.message || '已中断'}`); },
+
+    // agent 运行期间用户 !cmd:后端先发 shell_running 再发 shell_result,
+    // 执行期插入占位行,结果到达后原位替换,避免长时间命令看似界面卡死
+    _onShellRunning(msg) {
+        if (!msg || msg.source === 'console' || msg.session_id !== this.currentSessionId) return;
+        const c = document.getElementById('chat-messages');
+        this._saveScrollState();
+        // 只清理本会话的占位行: _broadcast 是跨会话的, 别的会话可能有多个并行占位行, 不能误删
+        this._cleanShellPlaceholders(msg.session_id);
+        this._removeWelcomeScreen();
+        const el = document.createElement('div');
+        el.className = 'system-message shell-running-placeholder';
+        el.dataset.session = msg.session_id || '';
+        el.appendChild(this._shellCmdLine(msg.command || '', true));
+        c.appendChild(el);
+        this._scrollToBottom();
+    },
 
     _onShellResult(msg) {
-        if (msg.source === 'console' || !msg || msg.session_id !== this.currentSessionId) return;
+        if (!msg || !msg.session_id) return;
+        // 只移除同一会话的占位行: _broadcast 跨会话, 其他会话正在执行的占位行不能被误删。
+        // console 源不会创建占位行(_onShellRunning 已守卫), 无需在此清理
+        this._cleanShellPlaceholders(msg.session_id);
+        if (msg.source === 'console' || msg.session_id !== this.currentSessionId) return;
         const el = this._renderShellResult(msg.command || '', msg.output || '');
         if (el && msg.msg_idx >= 0) el.dataset.msgIdx = msg.msg_idx;
     },
@@ -1345,13 +1424,36 @@ _showLightbox(url) {
         return el;
     },
 
+    /** shell 命令行元素(占位行与结果行共用), textContent 赋值天然免疫注入 */
+    _shellCmdLine(cmd, running) {
+        const row = document.createElement('div');
+        row.style.cssText = 'font-family:var(--font-mono);font-size:var(--text-sm);text-align:left;max-width:900px;margin:0 auto';
+        const line = document.createElement('div');
+        line.style.cssText = 'color:var(--neon-cyan);margin-bottom:2px';
+        line.textContent = `$ ${cmd}`;
+        if (running) {
+            line.style.color = 'var(--text-3)';
+            const spin = document.createElement('span');
+            spin.style.color = 'var(--neon-cyan)';
+            spin.textContent = ' ⚙ 执行中…';
+            line.appendChild(spin);
+        }
+        row.appendChild(line);
+        return row;
+    },
+
     _renderShellResult(cmd, output) {
         const c = document.getElementById('chat-messages');
         this._saveScrollState();
+        this._removeWelcomeScreen();
         const el = document.createElement('div');
         el.className = 'system-message';
         el.dataset.shellMsg = '1'; // 标记:对应后端一条 user 消息,计算删除数量时需计入
-        el.innerHTML = `<div style="font-family:var(--font-mono);font-size:var(--text-sm);text-align:left;max-width:900px;margin:0 auto"><div style="color:var(--neon-cyan);margin-bottom:2px">$ ${Utils.escapeHtml(cmd)}</div><pre style="margin:0;white-space:pre-wrap;background:var(--bg-inset);padding:8px 12px;border-radius:var(--r-sm)">${Utils.escapeHtml(output)}</pre></div>`;
+        el.appendChild(this._shellCmdLine(cmd, false));
+        const pre = document.createElement('pre');
+        pre.style.cssText = 'margin:0;white-space:pre-wrap;background:var(--bg-inset);padding:8px 12px;border-radius:var(--r-sm);text-align:left;max-width:900px;margin:0 auto';
+        pre.textContent = output;
+        el.appendChild(pre);
         c.appendChild(el);
         this._scrollToBottom();
         return el;
@@ -1369,17 +1471,6 @@ _showLightbox(url) {
         this._scrollToBottom();
     },
 
-    _onCommandResult(msg) {
-        if (!msg || msg.session_id !== this.currentSessionId || !msg.output) return;
-        const c = document.getElementById('chat-messages');
-        this._saveScrollState();
-        const el = document.createElement('div');
-        el.className = 'system-message';
-        el.innerHTML = `<div style="font-family:var(--font-mono);font-size:var(--text-sm)"><div style="color:var(--text-3);margin-bottom:2px">/${Utils.escapeHtml(msg.command || '')}</div><pre style="margin:0;white-space:pre-wrap">${Utils.escapeHtml(msg.output)}</pre></div>`;
-        c.appendChild(el);
-        this._scrollToBottom();
-    },
-
     _spinnerTimer: null,
     _spinnerChars: ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'],
 
@@ -1391,6 +1482,7 @@ _showLightbox(url) {
             line = document.createElement('div');
             line.className = 'spinner-content';
             line.dataset.wid = msg.wait_id;
+            line.dataset.session = msg.session_id || '';
             line.dataset.frame = '0';
             line.dataset.text = msg.text;
             line.dataset.startTime = Date.now().toString();
@@ -1401,10 +1493,14 @@ _showLightbox(url) {
     },
 
     _onSpinnerStop(msg) {
-        if (!msg || msg.session_id !== this.currentSessionId) return;
+        if (!msg) return;
         const area = document.getElementById('spinner-area');
-        const line = area.querySelector(`[data-wid="${msg.wait_id}"]`);
-        if (line) line.remove();
+        // spinner 事件是跨会话广播的, 不能按当前会话守卫(否则其他会话的 stop 被吞, 行永久残留)。
+        // wait_id 全局唯一可直接定位; 同时顺带清理不属于当前会话的遗留行(那些行只可能是切会话残留)
+        const current = this.currentSessionId;
+        area.querySelectorAll('.spinner-content').forEach(el => {
+            if (el.dataset.wid === msg.wait_id || el.dataset.session !== current) el.remove();
+        });
         if (!area.children.length) this._stopSpinnerTimer();
     },
 
