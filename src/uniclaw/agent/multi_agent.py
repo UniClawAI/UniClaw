@@ -1362,21 +1362,11 @@ class MultiAgent:
                         errors.append(err_msg)
                         if i < len(model_list) - 1:
                             # 还有 fallback 模型,通知用户并继续
-                            await self.send_event_to_user(
-                                TextChunkEvent(
-                                    f"\n⚠️ 模型 {err_msg}\n尝试 fallback 模型...\n"
-                                ),
-                                config,
-                            )
+                            await warn(f"模型 {err_msg}，尝试 fallback 模型...", config)
                         else:
                             # 所有模型都失败了
                             detail = "\n  - ".join(errors)
-                            await self.send_event_to_user(
-                                TextChunkEvent(
-                                    f"\n⚠️ 所有模型请求失败:\n  - {detail}\n"
-                                ),
-                                config,
-                            )
+                            await err(f"所有模型请求失败:\n  - {detail}", config)
                 if resp is None:
                     break
 
