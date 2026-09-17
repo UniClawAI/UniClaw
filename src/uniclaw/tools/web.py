@@ -97,7 +97,10 @@ async def webFetch(
             )
             text = re.sub(r"<[^>]+>", " ", text)
             text = re.sub(r"[ \t]+", " ", text)
-            text = re.sub(r"\n{3,}", "\n\n", text)
+            # 先归一化连续换行,再压缩为空行(段落间最多保留一个空行)
+            text = re.sub(r"\n{2,}", "\n", text)
+            text = re.sub(r" *\n *", "\n", text)
+            text = re.sub(r"\n{2,}", "\n\n", text)
             text = text.strip()
 
         # 正文为空时明确提示;有内容但被截断时,由 truncate_text_by_tokens 附上截断 token 数
