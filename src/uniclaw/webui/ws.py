@@ -222,11 +222,14 @@ def _log_task_error(task: asyncio.Task):
 
 
 async def _broadcast(data: dict):
-    """向所有已连接的 WebSocket 广播消息(前端按 session_id 过滤)。"""
+    """向所有已连接的 WebSocket 并行广播消息(前端按 session_id 过滤)。
+
+    并行发送:避免单个慢/半死连接阻塞其余连接(串行时一个10s超时会延迟所有连接)。
+    """
     async with _connected_ws_lock:
         targets = list(_connected_ws)
-    for w in targets:
-        await _safe_send(w, data)
+    if targets:
+        await asyncio.gather(*(_safe_send(w, data) for w in targets))
 
 
 async def _resend_pending_requests(session_id: str):
@@ -306,10 +309,6 @@ async def bridge_events(session_id: str, config: AppConfig):
             # 创建该子代理的工具调用 ID, 前端据此把事件精确挂回对应的工具块
             creator_tool_call_id = (
                 getattr(queued_task, "tool_call_id", "") if is_subagent else ""
-            )
-            get_logger("webui", Path.cwd()).info(
-                f"[{session_id}] 收到事件: {type(event).__name__}"
-                + (f" (来自子智能体: {agent_name})" if is_subagent else "")
             )
         except Exception as e:
             get_logger("webui", Path.cwd()).error(

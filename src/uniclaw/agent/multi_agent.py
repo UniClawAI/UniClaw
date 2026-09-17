@@ -649,6 +649,21 @@ class MultiAgent:
             finally:
                 if task.status == AgentStatus.WAITING:
                     task.status = AgentStatus.COMPLETED
+                # notify_parent 的子代理:在 _notify_parent(即 wake_agent)之后
+                # 补发 EndEvent(depth=0)。wake_agent 会重启 bridge,新 bridge
+                # 先消费子代理结果,再读到此 EndEvent 正常退出。
+                # (同步子代理不走这里,其 EndEvent(depth=0) 由 _run_cleanup 处理)
+                if (
+                    notify_parent
+                    and config.parent_config is not None
+                    and not config.parent_config.has_running_subs()
+                ):
+                    _ptask = config.parent_config.current_agent
+                    if _ptask and _ptask.status not in (
+                        AgentStatus.RUNNING,
+                        AgentStatus.PENDING,
+                    ):
+                        await self.send_event_to_user(EndEvent(depth=0), config.parent_config)
                 if task.worktree_path:
                     try:
                         await remove_worktree(
@@ -1226,7 +1241,16 @@ class MultiAgent:
         # 补发 EndEvent(depth=0) 让 WebUI bridge 退出。
         # 父代理被取消/失败时无人发 depth=0 的 EndEvent(bridge 永不退出),
         # 所以除 RUNNING 外的终态都要补发。
-        if parent_config and not parent_config.has_running_subs():
+        #
+        # 但 notify_parent=True 的子代理跳过:因为 _run_proc 会在 _notify_parent
+        # (wake_agent)之后再发 EndEvent(depth=0),确保 bridge 先消费完子代理结果
+        # 再退出。如果这里提前发,bridge 会立即退出,wake_agent 创建的新 bridge
+        # 启动时读到残留旧事件,导致前端显示过期内容。
+        if (
+            parent_config
+            and not task.notify_parent
+            and not parent_config.has_running_subs()
+        ):
             parent_task = parent_config.current_agent
             if parent_task and parent_task.status not in (
                 AgentStatus.RUNNING,
