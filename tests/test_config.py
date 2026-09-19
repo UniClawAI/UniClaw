@@ -125,6 +125,70 @@ class TestAppConfig:
             assert sub_config.model_name == ["gpt-4"]
             assert sub_config.parent_agent == mock_agent
 
+    def test_create_sub_config_with_tool_call_id(self):
+        """create_sub_config 应将 tool_call_id 传递给 AgentTask。"""
+        from uniclaw.config import ProviderProfile
+
+        config = AppConfig()
+        mock_session = MagicMock()
+        mock_session.root_dir = Path("/test/root")
+        mock_agent = MagicMock()
+        mock_agent.session = mock_session
+        config.current_agent = mock_agent
+        config.providers = {
+            "test": ProviderProfile(
+                name="test",
+                protocol="openai",
+                api_key="test-key",
+                base_url="https://api.test.com/v1",
+            )
+        }
+        config.model_name = ["gpt-4"]
+
+        with (
+            patch("uniclaw.tools.session.session.Session") as MockSession,
+            patch("uniclaw.agent.AgentTask") as MockAgentTask,
+        ):
+            MockSession.return_value = MagicMock()
+            MockAgentTask.return_value = MagicMock()
+
+            config.create_sub_config("child", "prompt", tool_call_id="call_abc123")
+
+            # 验证 AgentTask 接收到了 tool_call_id
+            MockAgentTask.assert_called_once()
+            assert MockAgentTask.call_args.kwargs["tool_call_id"] == "call_abc123"
+
+    def test_create_sub_config_tool_call_id_default_empty(self):
+        """不传 tool_call_id 时,默认为空字符串。"""
+        from uniclaw.config import ProviderProfile
+
+        config = AppConfig()
+        mock_session = MagicMock()
+        mock_session.root_dir = Path("/test/root")
+        mock_agent = MagicMock()
+        mock_agent.session = mock_session
+        config.current_agent = mock_agent
+        config.providers = {
+            "test": ProviderProfile(
+                name="test",
+                protocol="openai",
+                api_key="test-key",
+                base_url="https://api.test.com/v1",
+            )
+        }
+        config.model_name = ["gpt-4"]
+
+        with (
+            patch("uniclaw.tools.session.session.Session") as MockSession,
+            patch("uniclaw.agent.AgentTask") as MockAgentTask,
+        ):
+            MockSession.return_value = MagicMock()
+            MockAgentTask.return_value = MagicMock()
+
+            config.create_sub_config("child", "prompt")
+
+            assert MockAgentTask.call_args.kwargs["tool_call_id"] == ""
+
 
 class TestGetConfigPath:
     """get_config_path 函数测试"""
