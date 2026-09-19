@@ -69,8 +69,8 @@
     color: var(--orange);
 }
 .perm-mode.accept-all {
-    background: var(--accent-dim);
-    color: var(--accent-bright);
+    background: var(--red-dim);
+    color: var(--red);
 }
 .perm-mode.plan {
     background: var(--accent-dim);
