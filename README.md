@@ -76,6 +76,7 @@
 
 - [安装](#-安装)
 - [快速开始](#-快速开始)
+- [Docker 部署](#-docker-部署)
 - [配置说明](#-配置说明)
 - [使用指南](#-使用指南)
 - [WebUI 模式](#-webui-模式)
@@ -335,6 +336,54 @@ UniClaw 使用工作空间概念管理文件访问范围：
 /add_dir D:/projects/other-project  # 添加额外工作空间目录
 /add_dir                             # 查看当前工作空间目录列表
 ```
+
+## 🐳 Docker 部署
+
+UniClaw 提供官方 Dockerfile,支持容器化部署 WebUI 模式。
+
+### 快速构建和运行
+
+```bash
+# 构建镜像
+docker build -t uniclaw .
+
+# 运行容器(默认端口 8082,仅挂载配置文件,会话等数据隔离在容器内)
+docker run -d --name uniclaw \
+  -p 8082:8082 \
+  -v ~/.UniClaw/settings.json:/root/.UniClaw/settings.json \
+  uniclaw
+```
+
+> 💡 仅挂载 `settings.json` 共享 API 密钥等配置,容器内的会话、记忆、检查点等数据与宿主机隔离,避免路径和数据混杂。
+
+### 自定义配置
+
+```bash
+# 指定环境变量
+docker run -d --name uniclaw \
+  -p 8082:8082 \
+  -v ~/.UniClaw/settings.json:/root/.UniClaw/settings.json \
+  -e HTTPS_PROXY=http://host.docker.internal:7890 \
+  uniclaw
+
+# 使用自定义端口
+docker run -d --name uniclaw \
+  -p 9090:9090 \
+  -v ~/.UniClaw/settings.json:/root/.UniClaw/settings.json \
+  uniclaw uv run uniclaw --mode webui --host 0.0.0.0 --port 9090
+```
+
+### Dockerfile 特性
+
+- 基于 `python:3.14-slim`,镜像体积精简
+- 使用 `uv` 管理依赖,构建速度快
+- 预装 Playwright Chromium 浏览器(用于浏览器自动化工具)
+- 仅安装生产依赖,排除开发工具
+- 构建完成后自动清理编译工具链,减小最终镜像大小
+
+> 💡 **提示**: Docker 部署默认以 WebUI 模式启动,监听 `0.0.0.0:8082`。HTTPS 默认启用(自签名证书),可通过 `--no-ssl` 参数禁用。
+
+---
 
 ## ⚙️ 配置说明
 
@@ -906,6 +955,7 @@ UniClaw 提供了丰富的内置工具,AI 助手可以自动调用这些工具�
 工具基础设施：
 - **`base.py`** — 自定义 `@tool` 装饰器,自动生成 OpenAI function calling schema,自动排除 `tool_runtime` 注入参数;`ToolRuntime` 运行时上下文 dataclass(含 `config` / `tool_call_id` / `stream_writer`),工具函数声明 `tool_runtime: ToolRuntime = None` 形参即可获取配置、调用 ID 和流式输出能力(`await tool_runtime.stream(content)`)
 - **`registry.py`** — 工具注册表,BM25 搜索索引,核心/扩展工具分层管理
+- **异步工具取消** — 异步工具执行与任务的 `cancel_event` 竞争;用户按 ESC 或中断时,工具任务自动通过 `asyncio.wait` 取消,无需工具自身检查取消状态;同步工具不受影响
 
 #### 文件系统工具
 
@@ -1116,6 +1166,9 @@ http_download(
 - **browser_switch_page** - 切换到指定标签页
 - **browser_list_pages** - 列出所有标签页
 
+**外部浏览器连接：**
+- **connect_over_cdp** - 通过 CDP (Chrome DevTools Protocol) 连接到已运行的外部浏览器(默认端点 `http://localhost:9222`),无需启动新的浏览器实例,可复用已登录的浏览器会话
+
 #### 记忆系统工具 🧠
 
 - **memory_save** - 保存持久化记忆(支持用户偏好、项目信息、反馈等)
@@ -1136,7 +1189,7 @@ http_download(
 - **subagent_list_definitions** - 查看所有可用的智能体类型定义
 - **subagent_get_definition** - 查看指定子智能体类型的详细定义(系统提示词、工具列表等)
 
-> 💡 **提示**: 多智能体系统采用全异步架构,允许为不同任务创建专门的助手,实现更精细的任务分工。支持智能体间的异步通信和结果传递,可通过 `keep_alive` 模式保持智能体持续运行并接收新指令。支持 worktree 隔离模式(`isolation=True`),子智能体在独立的 git 分支上工作,避免文件冲突。支持事件继承(`inherit_events=True`),子智能体的工具调用、思考过程等事件会自动广播到父级队列,前端可实时显示执行进度。子智能体完成后会自动通知父智能体,支持唤醒代理机制确保父任务及时处理子任务结果。
+> 💡 **提示**: 多智能体系统采用全异步架构,允许为不同任务创建专门的助手,实现更精细的任务分工。支持智能体间的异步通信和结果传递,可通过 `keep_alive` 模式保持智能体持续运行并接收新指令。支持 worktree 隔离模式(`isolation=True`),子智能体在独立的 git 分支上工作,避免文件冲突。支持事件继承(`inherit_events=True`),子智能体的工具调用、思考过程等事件会自动广播到父级队列,前端可实时显示执行进度。子智能体完成后会自动通知父智能体,支持唤醒代理机制确保父任务及时处理子任务结果。子智能体定义支持 `tools` 白名单字段(在 YAML frontmatter 中声明),限制子智能体只能使用指定工具;未声明时则像主智能体一样通过 `search_tools` 按需发现扩展工具。
 
 #### 技能系统
 
@@ -1567,6 +1620,9 @@ async def shutdown():
 UniClaw/
 ├── pyproject.toml          # 项目配置(依赖、入口、构建)
 ├── .python-version         # Python 版本锁定(本地开发用 3.14,最低要求 3.11)
+├── Dockerfile              # Docker 容器化部署(python:3.14-slim + uv + Playwright)
+├── .dockerignore           # Docker 构建忽略规则
+├── LICENSE                 # MIT 许可证
 ├── tests/                  # 测试用例(位于仓库根目录)
 │
 └── src/uniclaw/            # 📦 包根目录
@@ -1689,7 +1745,7 @@ UniClaw/
     │   ├── security/       # 安全检查和权限管理 🔒
     │   ├── scheduler/      # 调度器 ⏰(会话关联 + monitor 监控类型)
     │   ├── skill/          # 技能系统(加载/执行/内置技能)
-    │   ├── multi_agent/    # 多智能体(全异步 + worktree 隔离)
+    │   ├── multi_agent/    # 多智能体(全异步 + worktree 隔离 + 工具白名单)
     │   ├── mcp/            # MCP 集成 🔌
     │   ├── memory/         # 记忆系统(FTS5 检索 + 自动整合 + 自动保存) 🧠
     │   ├── knowledge/      # 知识图谱(实体/关系管理 + 自动提取 + 可视化) 🗺️
@@ -2916,6 +2972,38 @@ A: 常见排查步骤:
 4. 检查工具名是否与内置工具重名(调用 `list_builtin_tools` 查看)
 5. 检查 Python 语法是否正确
 6. 查看日志中的 warning 信息获取具体错误原因
+
+### Q: 如何使用 Docker 部署 UniClaw？
+
+A: UniClaw 提供官方 Dockerfile,支持容器化部署：
+
+```bash
+# 构建镜像
+docker build -t uniclaw .
+
+# 运行(仅挂载配置文件,会话等数据隔离在容器内)
+docker run -d --name uniclaw \
+  -p 8082:8082 \
+  -v ~/.UniClaw/settings.json:/root/.UniClaw/settings.json \
+  uniclaw
+```
+
+Dockerfile 基于 `python:3.14-slim`,使用 `uv` 管理依赖,预装 Playwright Chromium 浏览器。默认以 WebUI 模式启动,监听 `0.0.0.0:8082`。
+
+**注意**: 首次运行需要配置 API 密钥。建议先通过挂载目录准备好 `~/.UniClaw/settings.json` 再启动容器。
+
+### Q: 如何连接外部浏览器进行自动化操作？
+
+A: 使用 `connect_over_cdp` 工具通过 CDP (Chrome DevTools Protocol) 连接到已运行的浏览器：
+
+1. 启动 Chrome/Chromium 时添加远程调试参数：
+   ```bash
+   chrome --remote-debugging-port=9222
+   ```
+2. AI 调用 `connect_over_cdp(endpoint="http://localhost:9222")` 连接
+3. 连接后可复用已登录的浏览器会话,无需重新登录网站
+
+适用于需要操作已认证页面、复用浏览器状态的场景。
 
 ## 📄 许可证
 
