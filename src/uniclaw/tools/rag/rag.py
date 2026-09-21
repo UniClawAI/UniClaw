@@ -12,6 +12,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from uniclaw.utils.jev import is_available, select_many, JevAPIError, JevConfigError
+
 from rank_bm25 import BM25Okapi
 
 from uniclaw.console.ui import err
@@ -860,22 +862,105 @@ class RAGManager:
     async def _rerank(
         self, query: str, candidates: list[dict], top_k: int, intent: str = ""
     ) -> list[dict]:
-        """重排序:LLM 评分 + 余弦距离混合排序。
+        """重排序:Jev 或 LLM 评分 + 余弦距离混合排序。
 
         Args:
             query: 查询文本
             candidates: 候选文档列表
             top_k: 返回结果数
-            intent: 搜索意图描述,描述当前想要搜索什么样的数据,供 LLM 判断
-                相关性参考。可为空字符串。
+            intent: 搜索意图描述,描述当前想要搜索什么样的数据,供评分参考。可为空字符串。
 
         Returns:
             重排序后的文档列表
         """
+        # 获取 LLM/Jev 评分: 优先 Jev, 失败或不可用时回退 LLM
+        relevance_scores = None
+        if is_available():
+            try:
+                relevance_scores = await self._rerank_via_jev(query, candidates, intent)
+            except (JevAPIError, JevConfigError) as e:
+                err(f"Jev 重排序失败, 回退 LLM: {e}")
+            except Exception as e:
+                err(f"Jev 重排序异常, 回退 LLM: {e}")
+        if relevance_scores is None:
+            relevance_scores = await self._rerank_via_llm(query, candidates, intent)
+
+        # 余弦相似度: 仅向量召回的候选才有 distance,纯 BM25 召回的用 RRF 归一化分数作代理
+        cosine_sim = []
+        for c in candidates:
+            channels = c.get("retrieval_channels", [])
+            if "vector" in channels:
+                cosine_sim.append(1 - c.get("distance", 0))
+            elif "rrf_score" in c:
+                cosine_sim.append(c["rrf_score"])
+            else:
+                cosine_sim.append(0.0)
+
+        # BM25 分数已在 _bm25_search 中归一化到 [0, 1]
+        has_bm25 = any(c.get("bm25_score", 0) > 0 for c in candidates)
+
+        # 混合排序
+        combined = []
+        for i, c in enumerate(candidates):
+            bm25 = c.get("bm25_score", 0.0)
+            if relevance_scores and has_bm25:
+                score = 0.5 * relevance_scores[i] + 0.3 * cosine_sim[i] + 0.2 * bm25
+            elif relevance_scores:
+                score = 0.6 * relevance_scores[i] + 0.4 * cosine_sim[i]
+            elif has_bm25:
+                score = 0.6 * cosine_sim[i] + 0.4 * bm25
+            else:
+                score = cosine_sim[i]
+            c["rerank_score"] = score
+            c["cosine_similarity"] = cosine_sim[i]
+            if relevance_scores:
+                c["llm_score"] = relevance_scores[i]
+            combined.append(c)
+
+        combined.sort(key=lambda x: x["rerank_score"], reverse=True)
+        return combined[:top_k]
+
+    async def _rerank_via_jev(
+        self, query: str, candidates: list[dict], intent: str
+    ) -> list[float]:
+        """通过 Jev select_many 评分候选文档相关性。
+
+        Returns:
+            list[float]: 每个候选的相关性分数 [0, 1], 与 candidates 一一对应。
+        """
+        options = {}
+        for i, c in enumerate(candidates):
+            content = c["content"][:200]
+            options[str(i)] = content
+
+        state = f"查询: {query}"
+        if intent:
+            state += f"\n搜索意图: {intent}"
+
+        results = await select_many(
+            state=state,
+            instruction="这个文档是否与查询相关。关注文档内容是否包含查询所需的信息。",
+            options=options,
+        )
+        # noul 直接作为相关性分数 [0, 1]
+        scores = [0.0] * len(candidates)
+        for key, noul_result in results.items():
+            idx = int(key)
+            if 0 <= idx < len(candidates):
+                scores[idx] = noul_result.noul
+        return scores
+
+    async def _rerank_via_llm(
+        self, query: str, candidates: list[dict], intent: str
+    ) -> list[float] | None:
+        """通过 LLM 评分候选文档相关性(原有方案)。
+
+        Returns:
+            list[float] | None: 每个候选的相关性分数 [0, 1], 失败返回 None。
+        """
         from uniclaw.provider.fallback import achat
         from uniclaw.tools.session.session import Session
 
-        # 构建候选文档列表
         docs_text = ""
         for i, c in enumerate(candidates):
             content = c["content"]
@@ -898,8 +983,6 @@ class RAGManager:
 
         session = Session()
         session.add_user_message(content=user_message)
-
-        llm_scores = None
         try:
             from uniclaw.utils.format import parse_json_from_llm
 
@@ -921,43 +1004,7 @@ class RAGManager:
                     and all(isinstance(s, dict) and s.get("index") == i for i, s in enumerate(scores))
                 ):
                     score_values = [s.get("score", 0) for s in scores]
-                    # 归一化到 [0, 1] (分数范围 0-100,钳制到合法区间)
-                    llm_scores = [max(0.0, min(1.0, float(s) / 100)) for s in score_values]
+                    return [max(0.0, min(1.0, float(s) / 100)) for s in score_values]
         except Exception:
             pass
-
-        # 余弦相似度: 仅向量召回的候选才有 distance,纯 BM25 召回的用 RRF 归一化分数作代理
-        cosine_sim = []
-        for c in candidates:
-            channels = c.get("retrieval_channels", [])
-            if "vector" in channels:
-                cosine_sim.append(1 - c.get("distance", 0))
-            elif "rrf_score" in c:
-                cosine_sim.append(c["rrf_score"])
-            else:
-                cosine_sim.append(0.0)
-
-        # BM25 分数已在 _bm25_search 中归一化到 [0, 1]
-        has_bm25 = any(c.get("bm25_score", 0) > 0 for c in candidates)
-
-        # 混合排序
-        combined = []
-        for i, c in enumerate(candidates):
-            bm25 = c.get("bm25_score", 0.0)
-            if llm_scores and has_bm25:
-                # LLM + 向量 + BM25,权重 0.5:0.3:0.2
-                score = 0.5 * llm_scores[i] + 0.3 * cosine_sim[i] + 0.2 * bm25
-            elif llm_scores:
-                score = 0.6 * llm_scores[i] + 0.4 * cosine_sim[i]
-            elif has_bm25:
-                score = 0.6 * cosine_sim[i] + 0.4 * bm25
-            else:
-                score = cosine_sim[i]
-            c["rerank_score"] = score
-            c["cosine_similarity"] = cosine_sim[i]
-            if llm_scores:
-                c["llm_score"] = llm_scores[i]
-            combined.append(c)
-
-        combined.sort(key=lambda x: x["rerank_score"], reverse=True)
-        return combined[:top_k]
+        return None
