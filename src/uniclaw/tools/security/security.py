@@ -5,9 +5,10 @@ from datetime import datetime
 from pathlib import Path
 
 from uniclaw.config import AppConfig
-from uniclaw.console.ui import warn
+from uniclaw.console.ui import warn, err
 from uniclaw.tools.mcp.tools import mcp_list_servers
 from uniclaw.tools.shell import Bash
+from uniclaw.utils.jev import is_available, yes_no, JevAPIError, JevConfigError
 from uniclaw.utils.message import MessageRole
 
 # 无需权限提示即可安全运行的前缀
@@ -624,7 +625,7 @@ async def llm_safe_check(tc: dict, config: AppConfig) -> tuple[bool, str]:
     args = tc_args(tc)
     tool_desc = await _get_tool_desc(name)
 
-    # 获取当前工作空间
+    # 构建环境上下文(Jev 和 LLM 共用)
     root_dir = config.root_dir
     extra = list(config.workspace)
     extra_text = ""
@@ -633,6 +634,35 @@ async def llm_safe_check(tc: dict, config: AppConfig) -> tuple[bool, str]:
             extra.append(root_dir)
         extra_lines = "\n".join(f"  - {d}" for d in extra)
         extra_text = f"- 当前空间目录:\n{extra_lines}\n"
+
+    # 用户注入的安全策略
+    try:
+        custom_safety_policies = _load_llm_safe_prompt(root_dir)
+    except Exception:
+        custom_safety_policies = ""
+
+    # Jev 前置快筛: 判断安全则直接放行, 不安全则继续 LLM 获取详细解释
+    if is_available():
+        try:
+            args_desc = ", ".join(f"{k}={v!r}" for k, v in args.items()) if args else "(无参数)"
+            env_desc = f"平台: {platform.system()}, 目录: {root_dir or '未设置'}"
+            if extra_text:
+                env_desc += f"\n{extra_text.rstrip()}"
+            state = f"工具: {name}\n功能: {tool_desc}\n参数: {args_desc}\n{env_desc}"
+            if custom_safety_policies:
+                state += f"\n安全策略: {custom_safety_policies}"
+            result = await yes_no(
+                state=state,
+                question="这个工具调用是否可以安全执行？",
+                true_desc="只读、搜索、列出内容等无害操作,不涉及数据破坏或系统修改",
+                false_desc="涉及文件删除、系统修改、敏感数据泄露等风险",
+            )
+            if result.noul > 0.5:
+                return True, "Jev 安全检查通过"
+        except (JevAPIError, JevConfigError) as e:
+            err(f"Jev 安全检查失败, 降级为 LLM: {e}")
+        except Exception as e:
+            err(f"Jev 安全检查异常: {e}")
 
     system_prompt = f"""你是一个工具调用安全分析专家。分析以下工具调用是否可以安全地自动执行(无需用户确认)。
 
@@ -671,9 +701,8 @@ explanation 要求:
 
 只返回 JSON,不要用 markdown 包裹:
 {{"is_safe": true/false,  "explanation": "简要中文解释"}}"""
-    injected_prompt = _load_llm_safe_prompt(root_dir)
-    if injected_prompt:
-        system_prompt += f"\n\n# ⚠️ 用户自定义安全策略(最高优先级)\n以下是由用户主动配置的安全审核规则,必须严格遵守。当用户策略与默认规则冲突时,以用户策略为准:\n{injected_prompt}"
+    if custom_safety_policies:
+        system_prompt += f"\n\n# ⚠️ 用户自定义安全策略(最高优先级)\n以下是由用户主动配置的安全审核规则,必须严格遵守。当用户策略与默认规则冲突时,以用户策略为准:\n{custom_safety_policies}"
 
     if name == Bash.name:
         command = args.get("command", "")
