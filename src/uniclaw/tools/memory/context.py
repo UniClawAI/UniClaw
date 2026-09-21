@@ -1,9 +1,9 @@
-import json
 import math
 from pathlib import Path
 import time
 from uniclaw.config import AppConfig
 from uniclaw.context import Scope
+from uniclaw.utils.format import parse_json_from_llm
 from uniclaw.utils.jev import is_available, select_many, JevAPIError, JevConfigError
 from .memory import Memory
 from uniclaw.utils.truncation import truncate_text_by_lines
@@ -149,7 +149,9 @@ async def _select_memories_via_llm(
         )
     finally:
         config.spinner.stop(wait_id=wait_id)
-    parsed = json.loads(ai_message.content)
+    parsed = parse_json_from_llm(ai_message.content)
+    if not parsed or "indices" not in parsed:
+        return []
     indices = [int(i) for i in parsed["indices"]]
     indices = indices[:max_results]
     return [

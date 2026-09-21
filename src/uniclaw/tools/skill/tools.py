@@ -1,9 +1,9 @@
-import json
 from pathlib import Path
 from uniclaw.tools.base import tool, ToolRuntime
 from uniclaw.utils.constants import TOOL_ERROR
 from uniclaw.context import APP_NAME
 from uniclaw.provider.fallback import achat
+from uniclaw.utils.format import parse_json_from_llm
 from uniclaw.utils.jev import is_available, select_many, JevAPIError, JevConfigError
 from .loader import SkillDef, load_skills, find_skill
 
@@ -179,7 +179,9 @@ async def _suggest_via_llm(
         content = resp.content
     finally:
         config.spinner.stop(wait_id=wait_id)
-    skill_names = json.loads(content)
+    skill_names = parse_json_from_llm(content)
+    if not isinstance(skill_names, list):
+        return []
     by_name = {skill.name: skill for skill in all_skills}
     return [by_name[name] for name in skill_names if name in by_name]
 
