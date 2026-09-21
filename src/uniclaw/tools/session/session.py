@@ -743,9 +743,9 @@ class Session:
     history: list[UserMessage | AIMessage | ToolCallMessage] = field(
         default_factory=list
     )
-    _compact_count: int = field(
+    _compact_end: int = field(
         default=0, repr=False
-    )  # _messages 开头的压缩摘要消息数 (0 或 2)
+    )  # 压缩区域结束索引:_messages[:_compact_end] 为压缩区,_messages[_compact_end:] 为 recent
     _compact_warned_levels: set[int] = field(
         default_factory=set, repr=False
     )  # 已注入过"写遗言"预警的压力等级 (0/1/2)
@@ -980,7 +980,7 @@ class Session:
         version = data.get("version", 1)
         if version >= 2:
             # 新格式: compacted + messages 重建 history
-            compact_count = data.get("compact_count", 0)
+            compact_count = data.get("compact_end", data.get("compact_count", 0))
             compacted_data = data.get("compacted", [])
             compacted_msgs = []
             for message in compacted_data:
@@ -994,7 +994,7 @@ class Session:
             # history = compacted + 最近消息(跳过 _messages 开头的摘要)
             recent_msgs = session._messages[compact_count:]
             session.history = compacted_msgs + recent_msgs
-            session._compact_count = compact_count
+            session._compact_end = compact_count
         else:
             # 旧格式: history 字段直接恢复
             history_data = data.get("history")
@@ -1009,7 +1009,7 @@ class Session:
                     elif role == MessageRole.TOOL:
                         session.history.append(ToolCallMessage.from_dict(message))
                 # history 和 messages 长度相同 → 未压缩,否则 → 已压缩
-                session._compact_count = (
+                session._compact_end = (
                     0 if len(history_data) == len(messages_data) else 2
                 )
         # 加载会话笔记
@@ -1080,7 +1080,7 @@ class Session:
         )
         root_dir = str(self.root_dir) if self.root_dir else None
         # 计算 history 中的旧消息数(压缩前的部分)
-        recent_count = len(self._messages) - self._compact_count
+        recent_count = len(self._messages) - self._compact_end
         old_count = max(0, len(self.history) - recent_count)
         data = {
             "session_id": self.id,
@@ -1096,7 +1096,7 @@ class Session:
             "total_output_tokens": total_output_tokens,
             "api_calls": api_calls,
             "version": 2,
-            "compact_count": self._compact_count,
+            "compact_end": self._compact_end,
             "compacted": [m.to_dict() for m in self.history[:old_count]],
             "messages": self.to_messages(),
             "session_notes": [n.to_dict() for n in self.session_notes],
@@ -1203,7 +1203,8 @@ class Session:
             )
             title = resp.content.strip()
         except Exception as e:
-            logger.debug("LLM 生成标题失败,使用回退方案: %s", e)
+            from uniclaw.console.ui import warn
+            await warn(f"LLM 生成标题失败,使用回退方案: {e}", config)
             title = self._fallback_title()
 
         return title
@@ -1390,13 +1391,15 @@ class Session:
                 temperature=0.2,
             )
         except Exception as e:
-            logger.warning("对话压缩失败,保留原消息: %s", e)
+            from uniclaw.console.ui import warn
+            await warn(f"对话压缩失败,保留原消息: {e}", config)
             return
         finally:
             config.spinner.stop(wait_id=wait_id)
 
         if not resp.content or not resp.content.strip():
-            logger.warning("对话压缩返回空摘要,保留原消息")
+            from uniclaw.console.ui import warn
+            await warn("对话压缩返回空摘要,保留原消息", config)
             return
 
         self._messages.clear()
@@ -1433,7 +1436,7 @@ class Session:
             )
         )
         self._messages.extend(recent)
-        self._compact_count = 2
+        self._compact_end = 2
         self._compact_warned_levels.clear()  # 重置预警状态,下个压缩周期可再次预警
 
     def _find_split_point(self, keep_ratio: float = 0.3) -> int:
@@ -1477,8 +1480,8 @@ class Session:
 
         三级压缩策略:
         - level 0 (50%): 仅微压缩(清空旧工具结果)
-        - level 1 (70%): 微压缩 + LLM 结构化摘要
-        - level 2 (85%): 微压缩 + 更激进的 LLM 摘要
+        - level 1 (70%): Jev 智能压缩(优先),失败则回退 LLM 摘要
+        - level 2 (85%): 更激进的 Jev/LLM 压缩
 
         压缩前预警:每跨过一个压力阈值,在其 *_COMPACT_WARN_FACTOR 比例处通过
         wake_agent 注入一次"写遗言"提示,让 LLM 在压缩发生前把关键信息存入会话笔记。
@@ -1520,13 +1523,37 @@ class Session:
         if self.estimate_tokens(model) <= limit * PRESSURE_LEVELS[-1][0]:
             return True
 
-        # level 1+: LLM 结构化摘要 (keep_ratio=0.3)
-        await self.compact(config, keep_ratio=0.3)
+        # level 1+: 尝试 Jev 智能压缩,失败则回退 LLM 摘要
+        from uniclaw.jev_compact import JevCompactConfig, JevCompactSkip, jev_compact
+
+        jev_config = JevCompactConfig(
+            keep_call_threshold=0.5,
+            keep_result_threshold=0.7,
+        )
+        try:
+            jev_result = await jev_compact(self, jev_config, keep_ratio=0.3)
+            jev_done = True
+            from uniclaw.console.ui import info
+            await info(
+                f"Jev 压缩: {jev_result.total_pairs} 配对, "
+                f"保留 {jev_result.kept}, 修改/删除 {jev_result.modified}",
+                config,
+            )
+        except (JevCompactSkip, Exception) as e:
+            from uniclaw.console.ui import warn
+            await warn(f"Jev 压缩跳过: {e}", config)
+            jev_done = False
+
+        if not jev_done:
+            # Jev 失败,回退 LLM 摘要
+            await self.compact(config, keep_ratio=0.3)
+
         if self.estimate_tokens(model) <= limit * PRESSURE_LEVELS[1][0]:
             return True
 
-        # level 2: 更激进的摘要 (keep_ratio=0.15)
+        # level 2: LLM 摘要(确定性压缩,保证释放空间)
         await self.compact(config, keep_ratio=0.15)
+
         return True
 
     async def _notify_compact_warning(self, config: AppConfig, threshold: float) -> None:
@@ -1550,7 +1577,8 @@ class Session:
 
             await wake_agent(message, config)
         except Exception as e:
-            logger.warning("注入压缩预警失败: %s", e)
+            from uniclaw.console.ui import warn
+            await warn(f"注入压缩预警失败: {e}", config)
 
     def build_context_summary(
         self,

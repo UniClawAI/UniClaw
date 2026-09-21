@@ -61,7 +61,7 @@ def _make_session() -> Session:
         AIMessage(content="已经修复"),
         UserMessage(content="下一步"),
     ]
-    s._compact_count = 1
+    s._compact_end = 1
     return s
 
 
@@ -79,7 +79,7 @@ def _make_compacted_session() -> Session:
         UserMessage(content=f"{SUMMARY_PREFIX}\n数据库迁移"),
         AIMessage(content="已阅读之前的对话摘要,继续当前任务。", model_name=""),
     ] + s._messages[6:]
-    s._compact_count = 2
+    s._compact_end = 2
     return s
 
 
@@ -345,7 +345,7 @@ class TestCountRecentMessages:
     """_count_recent_messages 单元测试。"""
 
     def test_after_real_compact(self):
-        """真实 compact 后,最近消息数为 len(_messages) - _compact_count。"""
+        """真实 compact 后,最近消息数为 len(_messages) - _compact_end。"""
         from uniclaw.tools.session.recall import _count_recent_messages
 
         s = _make_compacted_session()
@@ -358,7 +358,7 @@ class TestCountRecentMessages:
         from uniclaw.tools.session.recall import _count_recent_messages
 
         s = Session()
-        s._compact_count = 0
+        s._compact_end = 0
         s._messages = [
             UserMessage(content=f"{SUMMARY_PREFIX}\n旧摘要"),
             AIMessage(content="回复", model_name=""),

@@ -19,13 +19,13 @@ if TYPE_CHECKING:
 def _count_recent_messages(session: Session) -> int:
     """计算 _messages 中非摘要消息的条数(即保留的最近消息)。
 
-    优先按 _compact_count 计算:摘要对(用户摘要 + 助手确认)固定占头部,
+    优先按 _compact_end 计算:压缩区域(摘要 + Jev 保留的旧消息)固定占头部,
     不应计入最近消息。仅当头部不是标准摘要格式时回退到前缀扫描
     (兼容旧格式或摘要头被删除的会话)。
     """
     from uniclaw.tools.session.session import SUMMARY_PREFIX, UserMessage
 
-    compact_count = session._compact_count
+    compact_count = session._compact_end
     if compact_count > 0:
         head = session._messages[:compact_count]
         if any(

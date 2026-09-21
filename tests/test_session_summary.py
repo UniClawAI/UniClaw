@@ -155,12 +155,15 @@ def _mock_config() -> SimpleNamespace:
     return SimpleNamespace(
         spinner=SimpleNamespace(start=lambda msg: "wait-id", stop=lambda wait_id: None),
         model_name=["gpt-4o", "gpt-4o-mini"],
+        root_config=None,
+        output_callback=None,
+        display_mode="console",
     )
 
 
 @pytest.mark.asyncio
 async def test_compact_prepends_summary_pair():
-    """压缩后头部为摘要 user/assistant 消息对,_compact_count=2。"""
+    """压缩后头部为摘要 user/assistant 消息对,_compact_end=2。"""
     s = _make_filled_session()
     with (
         patch(
@@ -177,7 +180,7 @@ async def test_compact_prepends_summary_pair():
     assert isinstance(s._messages[0], UserMessage)
     assert SUMMARY_PREFIX in s._messages[0].content
     assert isinstance(s._messages[1], AIMessage)
-    assert s._compact_count == 2
+    assert s._compact_end == 2
 
 
 @pytest.mark.asyncio
@@ -201,7 +204,7 @@ async def test_compact_appends_recall_hint_to_summary():
     assert "历史上下文" in summary_content
     # 提示拼进摘要内容,不新增消息,头部仍为摘要对
     assert len(s._messages) == 4
-    assert s._compact_count == 2
+    assert s._compact_end == 2
 
 
 @pytest.mark.asyncio
@@ -266,7 +269,7 @@ async def test_compact_keeps_messages_on_failure():
         await s.compact(_mock_config())
 
     assert s._messages == before
-    assert s._compact_count == 0
+    assert s._compact_end == 0
 
 
 @pytest.mark.asyncio
@@ -301,4 +304,4 @@ async def test_compact_split_zero_noop():
         await s.compact(_mock_config())
 
     mock_achat.assert_not_called()
-    assert s._compact_count == 0
+    assert s._compact_end == 0
