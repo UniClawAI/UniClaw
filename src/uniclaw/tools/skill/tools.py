@@ -109,10 +109,10 @@ async def _suggest_skills(
             return await _suggest_via_jev(task_description, all_skills, max_results)
         except (JevAPIError, JevConfigError) as e:
             from uniclaw.console.ui import err
-            err(f"Jev skill 推荐失败,回退 LLM: {e}")
+            await err(f"Jev skill 推荐失败,回退 LLM: {e}")
         except Exception as e:
             from uniclaw.console.ui import err
-            err(f"Jev skill 推荐异常,回退 LLM: {e}")
+            await err(f"Jev skill 推荐异常,回退 LLM: {e}")
     return await _suggest_via_llm(task_description, all_skills, max_results, config)
 
 

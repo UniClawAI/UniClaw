@@ -80,10 +80,10 @@ async def ai_select_memories(
             return await _select_memories_via_jev(query, memories, max_results)
         except (JevAPIError, JevConfigError) as e:
             from uniclaw.console.ui import err
-            err(f"Jev 记忆搜索失败,回退 LLM: {e}")
+            await err(f"Jev 记忆搜索失败,回退 LLM: {e}")
         except Exception as e:
             from uniclaw.console.ui import err
-            err(f"Jev 记忆搜索异常,回退 LLM: {e}")
+            await err(f"Jev 记忆搜索异常,回退 LLM: {e}")
     return await _select_memories_via_llm(query, memories, max_results, config)
 
 

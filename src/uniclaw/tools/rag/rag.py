@@ -879,9 +879,9 @@ class RAGManager:
             try:
                 relevance_scores = await self._rerank_via_jev(query, candidates, intent)
             except (JevAPIError, JevConfigError) as e:
-                err(f"Jev 重排序失败, 回退 LLM: {e}")
+                await err(f"Jev 重排序失败, 回退 LLM: {e}")
             except Exception as e:
-                err(f"Jev 重排序异常, 回退 LLM: {e}")
+                await err(f"Jev 重排序异常, 回退 LLM: {e}")
         if relevance_scores is None:
             relevance_scores = await self._rerank_via_llm(query, candidates, intent)
 

@@ -660,9 +660,9 @@ async def llm_safe_check(tc: dict, config: AppConfig) -> tuple[bool, str]:
             if result.noul > 0.5:
                 return True, "Jev 安全检查通过"
         except (JevAPIError, JevConfigError) as e:
-            err(f"Jev 安全检查失败, 降级为 LLM: {e}")
+            await err(f"Jev 安全检查失败, 降级为 LLM: {e}")
         except Exception as e:
-            err(f"Jev 安全检查异常: {e}")
+            await err(f"Jev 安全检查异常: {e}")
 
     system_prompt = f"""你是一个工具调用安全分析专家。分析以下工具调用是否可以安全地自动执行(无需用户确认)。
 
