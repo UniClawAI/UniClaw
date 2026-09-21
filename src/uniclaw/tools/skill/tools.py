@@ -1,10 +1,10 @@
 import json
 from pathlib import Path
-from typing import Optional, List
 from uniclaw.tools.base import tool, ToolRuntime
 from uniclaw.utils.constants import TOOL_ERROR
 from uniclaw.context import APP_NAME
 from uniclaw.provider.fallback import achat
+from uniclaw.utils.jev import is_available, select_many, JevAPIError, JevConfigError
 from .loader import SkillDef, load_skills, find_skill
 
 # ── 活跃 skill 工具白名单 ─────────────────────────────────────
@@ -83,14 +83,75 @@ async def skill_suggest(
         return "没有可用的技能。"
 
     total = len(all_skills_list)
-    all_skills = "\n\n".join([skill_summary(skill) for skill in all_skills_list])
     if total <= max_results:
-        return f"共 {total} 个可用技能,全部推荐:\n\n{all_skills}"
+        all_skills = "\n\n".join([skill_summary(skill) for skill in all_skills_list])
+        return f"共 {total} 个可用技能,\n\n{all_skills}"
+
+    skills = await _suggest_skills(task_description, all_skills_list, max_results, config)
+    if not skills:
+        return f"共 {total} 个可用技能,但没有与当前任务匹配的技能。"
+
+    lines = [f"共 {total} 个可用技能,以下 {len(skills)} 个与当前任务相关:\n"]
+    for skill in skills:
+        lines.append(skill_summary(skill))
+    return "\n".join(lines)
+
+
+async def _suggest_skills(
+    task_description: str,
+    all_skills: list[SkillDef],
+    max_results: int,
+    config,
+) -> list[SkillDef]:
+    """根据任务描述选择匹配的 skill。Jev 可用时优先使用,否则回退 LLM。"""
+    if is_available():
+        try:
+            return await _suggest_via_jev(task_description, all_skills, max_results)
+        except (JevAPIError, JevConfigError) as e:
+            from uniclaw.console.ui import err
+            err(f"Jev skill 推荐失败,回退 LLM: {e}")
+        except Exception as e:
+            from uniclaw.console.ui import err
+            err(f"Jev skill 推荐异常,回退 LLM: {e}")
+    return await _suggest_via_llm(task_description, all_skills, max_results, config)
+
+
+async def _suggest_via_jev(
+    task_description: str,
+    all_skills: list[SkillDef],
+    max_results: int,
+) -> list[SkillDef]:
+    """通过 Jev select_many 选择匹配的 skill。"""
+    by_name = {skill.name: skill for skill in all_skills}
+    options = {name: skill_summary(skill) for name, skill in by_name.items()}
+    results = await select_many(
+        state=task_description,
+        instruction="这个技能是否能帮助完成该任务。关注技能的描述、触发词和使用时机。",
+        options=options,
+    )
+    # noul > 0.5 视为选中,按 noul 降序取 top max_results
+    matched = [
+        (name, noul_result.noul)
+        for name, noul_result in results.items()
+        if noul_result.noul > 0.5 and name in by_name
+    ]
+    matched.sort(key=lambda x: x[1], reverse=True)
+    return [by_name[name] for name, _ in matched[:max_results]]
+
+
+async def _suggest_via_llm(
+    task_description: str,
+    all_skills: list[SkillDef],
+    max_results: int,
+    config,
+) -> list[SkillDef]:
+    """通过 LLM 选择匹配的 skill(原有方案)。"""
+    all_skills_text = "\n\n".join([skill_summary(skill) for skill in all_skills])
     system_prompt = f"""
 你是skill顾问,一个skill推荐系统。
-共有 {total} 个可用技能,已掌握以下全部技能:
+共有 {len(all_skills)} 个可用技能,已掌握以下全部技能:
 
-{all_skills}
+{all_skills_text}
 
 请根据用户的任务描述,
 从中推荐最多 {max_results} 个最适合的技能。
@@ -119,22 +180,13 @@ async def skill_suggest(
     finally:
         config.spinner.stop(wait_id=wait_id)
     skill_names = json.loads(content)
-    skills = [find_skill(root_dir, skill_name) for skill_name in skill_names]
-    skills = [skill for skill in skills if skill is not None]
-    if not skills:
-        return f"共 {total} 个可用技能,但没有与当前任务匹配的技能。"
-
-    # 构建格式化的技能列表输出
-    lines = [f"共 {total} 个可用技能,以下 {len(skills)} 个与当前任务相关:\n"]
-    for skill in skills:
-        lines.append(skill_summary(skill))
-
-    return "\n".join(lines)
+    by_name = {skill.name: skill for skill in all_skills}
+    return [by_name[name] for name in skill_names if name in by_name]
 
 
 # @tool
 def skill_list(
-    skill_name: Optional[str] = None, tool_runtime: ToolRuntime = None
+    skill_name: str | None = None, tool_runtime: ToolRuntime = None
 ) -> str:
     """获取可用技能的列表信息。
 
