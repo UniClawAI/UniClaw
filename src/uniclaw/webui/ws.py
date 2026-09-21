@@ -1476,6 +1476,11 @@ async def web_input(prompt: str, title: str = "输入", config=None) -> str:
     session_id = config.current_agent.session.id
     if not session_id:
         return ""
+    # 子代理提问时路由到主会话: 前端弹窗按当前活动会话过滤,
+    # 子代理的 session 在前端没有界面, 不提升则请求被静默丢弃。
+    root = config.root_config
+    if root is not None:
+        session_id = root.current_agent.session.id
     req_id = f"input_{uuid.uuid4().hex[:8]}"
     _created_at = int(time.time())
     _timeout = config.permission_timeout if config else 300
@@ -1526,6 +1531,11 @@ async def web_multi_input(
     session_id = config.current_agent.session.id
     if not session_id:
         return ""
+    # 子代理提问时路由到主会话: 前端弹窗按当前活动会话过滤,
+    # 子代理的 session 在前端没有界面, 不提升则请求被静默丢弃。
+    root = config.root_config
+    if root is not None:
+        session_id = root.current_agent.session.id
     req_id = f"input_{uuid.uuid4().hex[:8]}"
     _created_at = int(time.time())
     _timeout = config.permission_timeout if config else 300

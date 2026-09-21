@@ -179,13 +179,13 @@ async def get_tools(config) -> list:
         *ipython_get_tools(),
         *registry_get_tools(),
         *mcp_tools,
+        *ask_get_tools(),
     ]
     if not config.is_sub:
         tools.extend(
             [
                 *plan_get_tools(),
                 *todolist_get_tools(),
-                *ask_get_tools(),
                 *security_get_tools(),
                 *hooks_get_tools(),
                 *computer_use_get_tools(config),
