@@ -4,6 +4,7 @@ from pathlib import Path
 import time
 from uniclaw.config import AppConfig
 from uniclaw.context import Scope
+from uniclaw.utils.jev import is_available, select_many, JevAPIError, JevConfigError
 from .memory import Memory
 from uniclaw.utils.truncation import truncate_text_by_lines
 from uniclaw.utils.message import MessageRole
@@ -73,6 +74,49 @@ MEMORY_SYSTEM_PROMPT = """\
 async def ai_select_memories(
     query: str, memories: list, max_results: int, config: AppConfig
 ):
+    """AI 语义搜索记忆。Jev 可用时优先使用,否则回退 LLM。"""
+    if is_available():
+        try:
+            return await _select_memories_via_jev(query, memories, max_results)
+        except (JevAPIError, JevConfigError) as e:
+            from uniclaw.console.ui import err
+            err(f"Jev 记忆搜索失败,回退 LLM: {e}")
+        except Exception as e:
+            from uniclaw.console.ui import err
+            err(f"Jev 记忆搜索异常,回退 LLM: {e}")
+    return await _select_memories_via_llm(query, memories, max_results, config)
+
+
+def _memory_summary(memory) -> str:
+    """构建记忆摘要,供 Jev 判断相关性。"""
+    return f"[{memory.type}] {memory.name}: {memory.description}"
+
+
+async def _select_memories_via_jev(
+    query: str, memories: list, max_results: int
+) -> list[dict]:
+    """通过 Jev select_many 选择相关记忆。"""
+    by_name = {memory.name: memory for memory in memories}
+    options = {memory.name: _memory_summary(memory) for memory in memories}
+    results = await select_many(
+        state=query,
+        instruction="这条记忆是否与查询相关。关注记忆的名称和描述。",
+        options=options,
+    )
+    # noul > 0.5 视为相关,按 noul 降序取 top max_results
+    matched = [
+        (name, noul_result.noul)
+        for name, noul_result in results.items()
+        if noul_result.noul > 0.5 and name in by_name
+    ]
+    matched.sort(key=lambda x: x[1], reverse=True)
+    return [_build_memory_result(by_name[name]) for name, _ in matched[:max_results]]
+
+
+async def _select_memories_via_llm(
+    query: str, memories: list, max_results: int, config: AppConfig
+) -> list[dict]:
+    """通过 LLM 选择相关记忆(原有方案)。"""
     text_lines = []
     for i, memory in enumerate(memories):
         text_line = f"{i}:[{memory.type}] {memory.name} {memory.description}"
@@ -108,31 +152,29 @@ async def ai_select_memories(
     parsed = json.loads(ai_message.content)
     indices = [int(i) for i in parsed["indices"]]
     indices = indices[:max_results]
-    results = []
-    for i in indices:
-        if i < 0 or i >= len(memories):
-            continue
-        memory = memories[i]
-        mtime_s = Path(memory.filename).stat().st_mtime
+    return [
+        _build_memory_result(memories[i])
+        for i in indices
+        if 0 <= i < len(memories)
+    ]
 
-        results.append(
-            {
-                "name": memory.name,
-                "description": memory.description,
-                "type": memory.type,
-                "scope": memory.scope_name,
-                "content": memory.content,
-                "filename": memory.filename,
-                "mtime_s": mtime_s,
-                "freshness_text": memory_freshness_text(mtime_s),
-                "confidence": memory.confidence,
-                "source": memory.source,
-                "memory": memory,
-                # "created": memory.created,
-                # "last_used_at": memory.last_used_at,
-            }
-        )
-    return results
+
+def _build_memory_result(memory) -> dict:
+    """从 Memory 对象构建结果 dict。"""
+    mtime_s = Path(memory.filename).stat().st_mtime
+    return {
+        "name": memory.name,
+        "description": memory.description,
+        "type": memory.type,
+        "scope": memory.scope_name,
+        "content": memory.content,
+        "filename": memory.filename,
+        "mtime_s": mtime_s,
+        "freshness_text": memory_freshness_text(mtime_s),
+        "confidence": memory.confidence,
+        "source": memory.source,
+        "memory": memory,
+    }
 
 
 def memory_freshness_text(mtime_s: float) -> str:
