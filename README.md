@@ -31,6 +31,7 @@
 - 📋 **任务清单**: 任务分解与跟踪,支持自动进度管理和状态流转
 - ⏰ **定时任务**: 支持创建和管理周期性或一次性定时任务,支持会话关联和 monitor 监控类型(命令退出码触发 agent)
 - 🔄 **后台进程**: 启动和管理后台进程(异步实现),支持输入/输出流控制
+- 🎯 **Jev 结构化决策**: 集成 TypeSafe SDK 提供快速、低成本的 AI 结构化决策能力(select_one/select_many/yes_no/rate),应用于记忆语义搜索、安全快速筛选、RAG 文档重排序、技能智能推荐、上下文智能压缩等场景,Jev 不可用时自动回退到 LLM
 - 🛡️ **死循环检测**: 自动检测 AI 连续相同工具调用,智能打破循环并引导换策略
 - 💾 **自动保存**: 会话和记忆在对话结束时自动持久化,数据不丢失
 - 🪝 **Hook 系统**: 事件驱动的 Shell 命令钩子,支持会话和工具调用生命周期事件
@@ -1173,10 +1174,10 @@ http_download(
 
 - **memory_save** - 保存持久化记忆(支持用户偏好、项目信息、反馈等)
 - **memory_delete** - 删除指定的记忆条目
-- **memory_search** - 智能搜索相关记忆(SQLite FTS5 全文检索,支持增量索引和相对分数过滤)
+- **memory_search** - 智能搜索相关记忆(SQLite FTS5 全文检索,支持增量索引和相对分数过滤;优先使用 Jev AI 语义搜索,不可用时回退到 LLM)
 - **memory_list** - 列出所有可用的记忆条目
 
-> 💡 **提示**: 记忆系统会自动在对话中加载相关记忆,帮助 AI 更好地理解上下文和用户偏好。
+> 💡 **提示**: 记忆系统会自动在对话中加载相关记忆,帮助 AI 更好地理解上下文和用户偏好。设置环境变量 `TYPESAFE_API_KEY` 后可启用 Jev 语义搜索,获得更快、更精准的记忆检索。
 
 #### 多智能体工具 👥
 
@@ -1193,7 +1194,7 @@ http_download(
 
 #### 技能系统
 
-- **skill_suggest** - 根据当前任务智能推荐合适的技能,返回技能总数和推荐数量
+- **skill_suggest** - 根据当前任务智能推荐合适的技能,返回技能总数和推荐数量(优先使用 Jev select_many 进行技能匹配,不可用时回退到 LLM)
 - **skill_read** - 读取指定技能的详细内容
 
 **内置技能**:
@@ -1394,8 +1395,8 @@ http_download(
 - **rag_search** - 在指定集合中语义检索,返回最相关的文档片段
   - 支持 `score_threshold` 过滤低相关度结果
   - 支持 `top_k` 控制返回数量
-  - 多路召回(向量语义 + BM25 关键词)+ RRF 融合 + LLM 重排序
-  - 支持 `intent` 搜索意图参数:传入非空意图描述时自动启用 LLM 重排序,提升相关性判断
+  - 多路召回(向量语义 + BM25 关键词)+ RRF 融合 + Jev/LLM 重排序(优先使用 Jev,不可用时回退到 LLM)
+  - 支持 `intent` 搜索意图参数:传入非空意图描述时自动启用重排序,提升相关性判断
   - 支持 `where` 元数据过滤(按 source/filename/suffix/chunk_index/created_at 筛选)
 - **rag_list_collections** - 列出所有 RAG 集合及其统计信息(文档数量、描述等)
 - **rag_delete_collection** - 删除指定集合及其所有文档
@@ -1443,7 +1444,7 @@ http_download(
 - **edit_llm_safe_prompt** - 编辑 LLM 安全提示词
 - **clear_llm_safe_prompt** - 清除 LLM 安全提示词
 
-> 💡 **提示**: 安全工具用于管理 LLM 安全审查机制,防止提示词注入攻击。核心的 `llm_safe_check` 函数会对工具调用进行 AI 驱动的安全审查。
+> 💡 **提示**: 安全工具用于管理 LLM 安全审查机制,防止提示词注入攻击。核心的 `llm_safe_check` 函数会对工具调用进行 AI 驱动的安全审查。设置环境变量 `TYPESAFE_API_KEY` 后启用 Jev 快速安全筛选,在 LLM 分析前进行高效预判。
 
 #### 对话管理工具 💬
 
@@ -1803,6 +1804,7 @@ UniClaw/
     │   ├── tokenize.py     # 分词(BM25 索引用,支持驼峰/下划线子词分割)
     │   ├── truncation.py   # 基于 token 的文本截取
     │   ├── wakeup.py       # wake_agent 异步唤醒机制(插件/后台任务用)
+    │   ├── jev.py          # Jev 结构化决策模块(TypeSafe SDK 封装,提供 choice/score/noul/batch 原语)
     │   └── ...             # git, format, cache, logger, frontmatter 等
     │
     ├── ilink_bot/          # iLink Bot 微信协议客户端
@@ -1834,7 +1836,7 @@ UniClaw/
   - **LRU + 能量机制**: 每个扩展工具初始 30 点能量,每轮对话 -1,被调用或搜索命中恢复满能量,归零自动卸载;最多同时加载 25 个扩展工具,超出时按 LRU 顺序淘汰能量最低者
   - 搜索结果自动注入到当前任务的可用工具集
   - 按类别组织: 系统管理、计算机操作、多智能体、任务清单、进程监控、会话管理、定时任务、MCP 管理、安全管理、Hook 管理、沙箱、浏览器、知识图谱、顾问、下载、RAG、IPython、微信、文件、帮助、通知等
-  - **可用性跟踪**: 各模块 `get_tools()` 检测依赖(Docker/Everything/embedding_model 等),不可用的工具记录到 `config.unavailable_tool_reasons` 并附带原因;`search_tools` 搜索到不可用工具时自动提示"当前不可用(未启用或无权限)"及原因,避免 AI 做无效调用
+  - **可用性跟踪**: 各模块 `get_tools()` 检测依赖(Docker/Everything/embedding_model 等),不可用的工具记录到 `config.unavailable_tool_reasons` 并附带原因;`search_tools` 搜索到不可用工具时自动提示"当前不可用(未启用或无权限)"及原因,避免 AI 做无效调用。Jev 相关功能检测 `TYPESAFE_API_KEY` 环境变量
 
 **工作流程**: AI 需要使用非常用工具时 → 调用 `search_tools(query)` → BM25 匹配 → 工具自动加载(若超过上限则淘汰 LRU 端能量最低的工具) → 下一轮即可调用。已加载工具每轮能量-1,被调用/搜索命中恢复满,归零自动卸载。
 
@@ -1855,6 +1857,32 @@ UniClaw/
 - **多模态降级**: 主模型不支持多模态时自动使用 `multimodal_model_name` 重试
 - **代理兼容**: 自动检测 Google API / OpenRouter API 并适配 `extra_body` 参数
 - **请求超时**: 所有 LLM 请求默认 180 秒超时,`stream()`/`chat()` 等接口的 `timeout` 参数可覆盖客户端默认值
+
+### Jev 结构化决策
+
+基于 TypeSafe SDK 的 AI 结构化决策模块(`src/uniclaw/utils/jev.py`),提供快速、低成本的决策能力,已集成到多个子系统：
+
+**核心原语**:
+- `choice` - 从选项中选一个(返回选择结果、概率分布、置信度)
+- `score` - 量表评级(支持等级间插值)
+- `noul` - 是否判断(返回 0~1 概率)
+- `batch` - 批量决策(一次调用处理多个问题)
+
+**通用模式函数**:
+- `select_one` - 单选(从选项中选择最合适的一个)
+- `select_many` - 多选(从选项中选择所有符合条件的)
+- `yes_no` - 是/否判断
+- `rate` - 量表评级
+- `multi_judge` - 多评委投票(多个模型独立评判后汇总)
+
+**已集成场景**:
+- **记忆搜索**: AI 语义搜索,优先使用 Jev 进行相关性判断
+- **安全检查**: 快速安全筛选,在 LLM 分析前进行高效预判
+- **RAG 重排序**: 文档相关性评分,优化混合排序策略
+- **技能推荐**: 智能技能匹配,从候选技能中选择最合适的
+- **上下文压缩**: 智能评估工具调用价值,保留高价值内容、删除低价值内容,减少有损摘要
+
+**配置**: 设置 `TYPESAFE_API_KEY` 环境变量即可启用(注意:这是环境变量,不是 settings.json 配置项)。Jev 不可用时自动回退到 LLM,保证功能始终可用。
 
 ### 工作流程
 
@@ -1894,8 +1922,10 @@ Session 维护两条平行的消息列表：
 | 级别 | 压力阈值 | 策略 |
 |------|----------|------|
 | Level 0 | 50% | 轻度:清除可再生的工具结果(Read/Grep/Glob/webFetch/webSearch) |
-| Level 1 | 70% | 中度:清除 + LLM 结构化摘要(保留 30% 近期消息) |
-| Level 2 | 85% | 重度:清除 + 激进 LLM 摘要(保留 15% 近期消息) |
+| Level 1 | 70% | 中度:优先 Jev 智能压缩(保留高价值工具调用,删除低价值的),失败时回退 LLM 摘要(保留 30% 近期消息) |
+| Level 2 | 85% | 重度:LLM 激进摘要(保留 15% 近期消息) |
+
+**Jev 智能压缩**(Level 1):使用 TypeSafe AI 的 noul 评分批量评估每个工具调用/结果的价值,高分保留完整、中分保留调用截断结果、低分删除。文本消息(user/assistant)永远原样保留,实现"智能删除"而非"有损总结"。需配置 `TYPESAFE_API_KEY` 环境变量。
 
 压缩后的摘要包含：当前意图、下一步操作、涉及文件、已完成/未完成任务、关键决策、错误信息,以及用于检索的主题关键词。
 
@@ -2972,6 +3002,44 @@ A: 常见排查步骤:
 4. 检查工具名是否与内置工具重名(调用 `list_builtin_tools` 查看)
 5. 检查 Python 语法是否正确
 6. 查看日志中的 warning 信息获取具体错误原因
+
+### Q: Jev 结构化决策是什么？如何配置？
+
+A: Jev 是基于 TypeSafe SDK 的 AI 结构化决策模块,提供快速、低成本的决策能力：
+
+**核心功能**:
+- **select_one/select_many**: 从选项中选择一个或多个最合适的
+- **yes_no**: 是/否判断(返回 0~1 概率)
+- **rate**: 量表评级(支持等级间插值)
+- **multi_judge**: 多评委投票(多个模型独立评判后汇总)
+
+**已集成场景**:
+- 记忆搜索: AI 语义搜索,更快更精准
+- 安全检查: 快速安全筛选,在 LLM 分析前预判
+- RAG 重排序: 文档相关性评分,优化排序策略
+- 技能推荐: 智能技能匹配,选择最合适的技能
+- 上下文压缩: 智能评估工具调用价值,减少有损摘要
+
+**配置方法**:
+设置环境变量 `TYPESAFE_API_KEY` 即可启用:
+```bash
+# Linux/macOS
+export TYPESAFE_API_KEY=your_typesafe_api_key
+
+# Windows (PowerShell)
+$env:TYPESAFE_API_KEY="your_typesafe_api_key"
+
+# Windows (CMD)
+set TYPESAFE_API_KEY=your_typesafe_api_key
+```
+
+**优势**:
+- 响应速度快(比 LLM 快 10-100 倍)
+- 成本低(结构化决策比完整 LLM 调用便宜)
+- 结果稳定(相同输入产生一致输出)
+- 自动回退: Jev 不可用时自动使用 LLM,保证功能始终可用
+
+> 💡 **提示**: Jev 适用于需要快速、低成本决策的场景。对于需要复杂推理的任务,仍建议使用完整的 LLM 调用。
 
 ### Q: 如何使用 Docker 部署 UniClaw？
 
