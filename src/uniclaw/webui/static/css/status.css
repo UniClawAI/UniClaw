@@ -222,7 +222,7 @@
     max-height: 66.67vh;
 }
 #permission-modal .modal-body {
-    overflow-y: auto;
+    overflow-y: visible;
 }
 .perm-tool-name {
     font-family: var(--font-mono);
@@ -241,7 +241,6 @@
     color: var(--text-1);
     overflow-x: auto;
     max-height: 200px;
-    width: max-content;
     overflow-y: auto;
 }
 .perm-explanation {
