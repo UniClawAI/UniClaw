@@ -110,6 +110,71 @@ def classify_error(e: Exception) -> ErrorCategory:
     return ErrorCategory.UNKNOWN
 
 
+# ── 网络/厂商错误识别(用于日志降噪) ────────────────────────────
+# 常见网络传输层与模型 SDK 异常的模块根名(按 __module__ 判断,避免 import SDK)
+_EXTERNAL_ERROR_MODULES = frozenset(
+    {
+        "openai",
+        "anthropic",
+        "httpx",
+        "httpcore",
+        "aiohttp",
+        "urllib3",
+        "requests",
+        "socket",
+        "ssl",
+        "http",
+        "urllib",
+    }
+)
+
+# 类名关键词兜底(小写子串匹配)
+_EXTERNAL_ERROR_KEYWORDS = (
+    "apierror",
+    "apistatus",
+    "apiconnection",
+    "httperror",
+    "httpstatus",
+    "statuserror",
+    "badrequest",
+    "ratelimit",
+    "connection",
+    "connecterror",
+    "timeout",
+    "network",
+    "socket",
+    "sslerror",
+    "certificate",
+    "gaierror",
+    "protocolerror",
+)
+
+
+def is_network_or_provider_error(e: Exception) -> bool:
+    """判断是否为网络错误或模型厂商 API 错误。
+
+    这类错误属于预期内的外部故障(断网、限流、厂商 5xx 等),调用方通常只需
+    re-raise 交给 fallback/UI 提示,不必再记录完整 traceback 刷日志。
+
+    判定顺序:已知错误分类 -> 内置网络异常 -> 异常类所在模块 -> 类名关键词。
+
+    Args:
+        e: 待判断的异常。
+
+    Returns:
+        bool: 是网络或模型厂商错误返回 True,否则返回 False。
+    """
+    if classify_error(e) is not ErrorCategory.UNKNOWN:
+        return True
+    if isinstance(e, (ConnectionError, TimeoutError)):
+        return True
+    module_root = (type(e).__module__ or "").partition(".")[0]
+    if module_root in _EXTERNAL_ERROR_MODULES:
+        return True
+    name = _class_name(e)
+    return any(kw in name for kw in _EXTERNAL_ERROR_KEYWORDS)
+
+
 # ── 各分类的重试参数 ──────────────────────────────────────────────
 # 每类最大重试次数(0 = 不重试,直接回退下一模型)
 _MAX_RETRIES: dict[ErrorCategory, int] = {

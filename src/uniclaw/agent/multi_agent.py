@@ -14,6 +14,7 @@ from uniclaw.agent.types import AgentStatus, AgentTask
 from uniclaw.tools.registry import search_tools
 from uniclaw.utils.constants import SYSTEM_PREFIX, TOOL_ERROR
 from uniclaw.provider import astream
+from uniclaw.provider.error_classifier import is_network_or_provider_error
 from uniclaw.tools.session.session import StreamChunk
 from uniclaw.tools import get_core_tools, get_tools
 from uniclaw.utils.message import MessageRole, extract_text
@@ -787,9 +788,11 @@ class MultiAgent:
                 await self.send_event_to_user(InterruptedEvent(), config)
                 return None
             return resp
-        except Exception:
-            error_traceback = traceback.format_exc()
-            get_logger("agent", task.session.root_dir).error(error_traceback)
+        except Exception as e:
+            # 网络错误/模型厂商 API 错误属预期内外部故障(fallback 层会 warn/err 提示),不写日志
+            if not is_network_or_provider_error(e):
+                error_traceback = traceback.format_exc()
+                get_logger("agent", task.session.root_dir).error(error_traceback)
             raise  # 向上抛出异常,由调用方处理 fallback
 
     async def _process_response(self, resp, task, config: AppConfig):
