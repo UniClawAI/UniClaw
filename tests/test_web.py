@@ -1,11 +1,9 @@
-"""webFetch 工具测试:验证元数据头部和 HTML 清理逻辑。"""
+"""webFetch 工具测试:验证元数据头部、HTML 清理逻辑和代理参数。"""
 
-import re
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from uniclaw.tools.base import ToolRuntime
 from uniclaw.tools.web import webFetch
 
 
@@ -44,7 +42,7 @@ async def test_web_fetch_html_includes_metadata():
         mock_cls.return_value.__aenter__.return_value = _mock_client(
             _FakeResponse(html, "text/html; charset=utf-8")
         )
-        result = await webFetch("https://example.com", tool_runtime=ToolRuntime())
+        result = await webFetch("https://example.com")
 
     assert "HTTP 200" in result
     assert "text/html" in result
@@ -67,7 +65,7 @@ async def test_web_fetch_html_strips_scripts_and_styles():
         mock_cls.return_value.__aenter__.return_value = _mock_client(
             _FakeResponse(html, "text/html")
         )
-        result = await webFetch("https://example.com", tool_runtime=ToolRuntime())
+        result = await webFetch("https://example.com")
 
     assert "alert" not in result
     assert ".x{}" not in result
@@ -82,29 +80,11 @@ async def test_web_fetch_raw_keeps_html():
         mock_cls.return_value.__aenter__.return_value = _mock_client(
             _FakeResponse(html, "text/html")
         )
-        result = await webFetch("https://example.com", raw=True, tool_runtime=ToolRuntime())
+        result = await webFetch("https://example.com", raw=True)
 
     assert result.startswith("HTTP 200")
     assert "<p>Raw</p>" in result
     assert "<b>Bold</b>" in result
-
-
-@pytest.mark.asyncio
-async def test_web_fetch_tiny_max_tokens_reports_truncation():
-    """max_tokens 小到装不下正文时,应提示截断而非误报为空。"""
-    html = (
-        "<html><body><p>Some real content here that is much longer and will "
-        "definitely exceed five tokens</p></body></html>"
-    )
-    with patch("uniclaw.tools.web.httpx.AsyncClient") as mock_cls:
-        mock_cls.return_value.__aenter__.return_value = _mock_client(
-            _FakeResponse(html, "text/html")
-        )
-        result = await webFetch("https://example.com", max_tokens=5, tool_runtime=ToolRuntime())
-
-    assert "HTTP 200" in result
-    assert "截断" in result
-    assert "网页内容为空" not in result
 
 
 @pytest.mark.asyncio
@@ -115,7 +95,7 @@ async def test_web_fetch_empty_body_reports_empty():
         mock_cls.return_value.__aenter__.return_value = _mock_client(
             _FakeResponse(html, "text/html")
         )
-        result = await webFetch("https://example.com", tool_runtime=ToolRuntime())
+        result = await webFetch("https://example.com")
 
     assert "网页内容为空" in result
 
@@ -128,7 +108,7 @@ async def test_web_fetch_json_passes_through():
         mock_cls.return_value.__aenter__.return_value = _mock_client(
             _FakeResponse(payload, "application/json")
         )
-        result = await webFetch("https://api.example.com", tool_runtime=ToolRuntime())
+        result = await webFetch("https://api.example.com")
 
     assert "HTTP 200" in result
     assert '"key": "value"' in result
@@ -143,55 +123,49 @@ async def test_web_fetch_error_returns_tool_error():
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=mock_response)
         mock_cls.return_value.__aenter__.return_value = mock_client
-        result = await webFetch("https://example.com", tool_runtime=ToolRuntime())
+        result = await webFetch("https://example.com")
 
     assert result.startswith("[TOOL_ERROR]")
 
 
 @pytest.mark.asyncio
-async def test_web_fetch_respects_max_tokens():
-    """max_tokens 应限制返回体长度,并在截断时标注已截断 token 数。"""
-    html = f"<html><body>{'<p>word</p>' * 100}</body></html>"
+async def test_web_fetch_returns_full_content_without_truncation():
+    """webFetch 不做截断,长正文完整返回(agent 层统一截取)。"""
+    html = f"<html><body>{'<p>word</p>' * 200}</body></html>"
     with patch("uniclaw.tools.web.httpx.AsyncClient") as mock_cls:
         mock_cls.return_value.__aenter__.return_value = _mock_client(
             _FakeResponse(html, "text/html")
         )
-        result = await webFetch("https://example.com", max_tokens=100, tool_runtime=ToolRuntime())
-
-    assert "HTTP 200" in result
-    assert "已截断" in result
-    # 截断提示形如 "[已截断 N 个tokens]",N 为被截掉的 token 数(> 0)
-    m = re.search(r"\[已截断 (\d+) 个tokens\]", result)
-    assert m, f"缺少截断 token 数提示,实际输出: {result[:200]}"
-    assert int(m.group(1)) > 0
-
-
-@pytest.mark.asyncio
-async def test_web_fetch_raw_truncation_notice():
-    """raw=True 截断时同样标注已截断 token 数。"""
-    html = "<html><body>" + "<p>word</p>" * 200 + "</body></html>"
-    with patch("uniclaw.tools.web.httpx.AsyncClient") as mock_cls:
-        mock_cls.return_value.__aenter__.return_value = _mock_client(
-            _FakeResponse(html, "text/html")
-        )
-        result = await webFetch(
-            "https://example.com", raw=True, max_tokens=100, tool_runtime=ToolRuntime()
-        )
-
-    assert result.startswith("HTTP 200")
-    assert "已截断" in result
-
-
-@pytest.mark.asyncio
-async def test_web_fetch_no_truncation_no_notice():
-    """内容未超限时不出现截断提示。"""
-    html = "<html><body><p>Short content</p></body></html>"
-    with patch("uniclaw.tools.web.httpx.AsyncClient") as mock_cls:
-        mock_cls.return_value.__aenter__.return_value = _mock_client(
-            _FakeResponse(html, "text/html")
-        )
-        result = await webFetch("https://example.com", tool_runtime=ToolRuntime())
+        result = await webFetch("https://example.com")
 
     assert "HTTP 200" in result
     assert "已截断" not in result
-    assert "Short content" in result
+    assert result.count("word") == 200
+
+
+@pytest.mark.asyncio
+async def test_web_fetch_default_direct_no_proxy():
+    """默认 proxy=None 时客户端不配置代理(直连)。"""
+    html = "<html><body><p>Hi</p></body></html>"
+    with patch("uniclaw.tools.web.httpx.AsyncClient") as mock_cls:
+        mock_cls.return_value.__aenter__.return_value = _mock_client(
+            _FakeResponse(html, "text/html")
+        )
+        result = await webFetch("https://example.com")
+
+    assert "HTTP 200" in result
+    assert mock_cls.call_args.kwargs.get("proxy") is None
+
+
+@pytest.mark.asyncio
+async def test_web_fetch_explicit_proxy_passed_through():
+    """显式传入 proxy 时应透传给 httpx 客户端。"""
+    html = "<html><body><p>Hi</p></body></html>"
+    with patch("uniclaw.tools.web.httpx.AsyncClient") as mock_cls:
+        mock_cls.return_value.__aenter__.return_value = _mock_client(
+            _FakeResponse(html, "text/html")
+        )
+        result = await webFetch("https://example.com", proxy="http://127.0.0.1:7890")
+
+    assert "HTTP 200" in result
+    assert mock_cls.call_args.kwargs.get("proxy") == "http://127.0.0.1:7890"

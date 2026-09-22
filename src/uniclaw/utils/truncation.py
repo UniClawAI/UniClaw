@@ -113,7 +113,7 @@ def truncate_text_by_tokens(text: str, max_tokens: int = 12000) -> str:
 
     与 truncate_text 不同,本函数只保留开头部分,并在末尾追加
     "...[已截断 N 个tokens]..." 提示,让调用方知道还有多少内容没读到。
-    适合工具返回内容受上下文窗口约束的场景(如 webFetch 的 max_tokens)。
+    适合工具返回内容受上下文窗口约束的场景。
 
     Args:
         text (str): 需要截断的原始文本内容

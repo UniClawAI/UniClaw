@@ -11,7 +11,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from uniclaw.tools.base import ToolRuntime
 from uniclaw.tools.web import webFetch
 
 
@@ -44,7 +43,7 @@ async def _fetch(html: str, raw: bool = False) -> str:
         mock_cls.return_value.__aenter__.return_value = _mock_client(
             _FakeResponse(html, "text/html; charset=utf-8")
         )
-        return await webFetch("https://example.com", raw=raw, tool_runtime=ToolRuntime())
+        return await webFetch("https://example.com", raw=raw)
 
 
 # ── 连续换行归一化 ─────────────────────────────────────────
@@ -116,6 +115,76 @@ class TestRawModeNoCleanup:
         result = await _fetch(html, raw=True)
         assert "<p>A</p>" in result
         assert "<br>" in result
+
+
+# ── 非正文内容丢弃 ─────────────────────────────────────────
+
+
+class TestHiddenBlocksDropped:
+    """textarea/template/svg 等非可见内容应整块丢弃(不淹没正文)。"""
+
+    @pytest.mark.asyncio
+    async def test_textarea_escaped_css_dropped(self):
+        """百度首页模式:textarea 中 HTML 转义的 CSS 不应进入正文。"""
+        html = (
+            "<html><body>"
+            '<textarea id="s_is_result_css" style="display:none;">'
+            "&lt;style data-for=&quot;result&quot; &gt;"
+            "html{font-size:100px}body{color:#333}"
+            "&lt;/style&gt;"
+            "</textarea>"
+            "<p>Real content</p>"
+            "</body></html>"
+        )
+        result = await _fetch(html)
+        assert "Real content" in result
+        assert "font-size" not in result
+        assert "data-for" not in result
+
+    @pytest.mark.asyncio
+    async def test_template_and_svg_dropped(self):
+        """template/svg 整块丢弃。"""
+        html = (
+            "<html><body>"
+            "<template><p>tpl junk</p></template>"
+            "<svg><path d='M0 0'/><text>svg junk</text></svg>"
+            "<p>Visible</p>"
+            "</body></html>"
+        )
+        result = await _fetch(html)
+        assert "Visible" in result
+        assert "tpl junk" not in result
+        assert "svg junk" not in result
+
+    @pytest.mark.asyncio
+    async def test_html_comments_dropped(self):
+        """HTML 注释不应出现在正文。"""
+        html = "<html><body><!-- STATUS OK --><p>Text</p></body></html>"
+        result = await _fetch(html)
+        assert "Text" in result
+        assert "STATUS OK" not in result
+
+
+# ── HTML 实体解码 ──────────────────────────────────────────
+
+
+class TestEntityDecoding:
+    """HTML 实体应解码为可读字符,nbsp 归一为空格。"""
+
+    @pytest.mark.asyncio
+    async def test_common_entities_decoded(self):
+        html = (
+            "<html><body><p>Tom &amp; Jerry &lt;3 &quot;q&quot; &#39;s</p></body></html>"
+        )
+        result = await _fetch(html)
+        assert "Tom & Jerry <3 \"q\" 's" in result
+
+    @pytest.mark.asyncio
+    async def test_nbsp_normalized_to_space(self):
+        html = "<html><body><p>A&nbsp;B</p></body></html>"
+        result = await _fetch(html)
+        assert "A B" in result
+        assert "\xa0" not in result
 
 
 # ── 综合场景 ───────────────────────────────────────────────
