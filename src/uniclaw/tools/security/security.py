@@ -30,16 +30,12 @@ _SAFE_PREFIXES = (
     "printf",
     # 时间与日期
     "date",
-    "time",
     # 命令查找与类型
     "which",
     "type",
     "where ",
     "command -v",
-    # 环境变量
-    "env",
-    "printenv",
-    "set",
+    # 环境变量 — env/printenv/set 均不放行: env 可包装任意命令, set/printenv 全量导出密钥
     # 系统信息
     "uname",
     "hostname",
@@ -55,7 +51,9 @@ _SAFE_PREFIXES = (
     "git branch",
     "git remote",
     "git stash list",
-    "git tag",
+    # git tag 裸调用带参数即创建 tag, 只放行列举形态
+    "git tag -l",
+    "git tag --list",
     "git reflog",
     "git blame",
     "git shortlog",
@@ -71,20 +69,26 @@ _SAFE_PREFIXES = (
     "fd ",
     "locate ",
     # 编程语言解释器(仅限安全子命令)
-    "python -m pytest",
-    "python -m pip",
-    "python -m uv",
+    # 不放行: pytest/mypy 会执行项目配置注入的代码(conftest.py / mypy.ini plugins),
+    # uv 的核心能力是 uv run, pip 仅保留只读子命令(pip install 执行 setup.py 即 RCE)
     "python -m black",
-    "python -m mypy",
     "python -m ruff",
     "python -m py_compile",
-    "python3 -m pytest",
-    "python3 -m pip",
-    "python3 -m uv",
+    "python -m pip list",
+    "python -m pip show",
+    "python -m pip freeze",
+    "python -m pip check",
+    "python -m pip index versions",
+    "python -m pip --version",
     "python3 -m black",
-    "python3 -m mypy",
     "python3 -m ruff",
     "python3 -m py_compile",
+    "python3 -m pip list",
+    "python3 -m pip show",
+    "python3 -m pip freeze",
+    "python3 -m pip check",
+    "python3 -m pip index versions",
+    "python3 -m pip --version",
     # Python 包管理(只读)
     "pip show",
     "pip list",
@@ -104,10 +108,9 @@ _SAFE_PREFIXES = (
     "cargo tree",
     "cargo search",
     "cargo doc --no-deps",
-    # 磁盘与文件系统
+    # 磁盘与文件系统(mount 可挂载远程/任意文件系统,不放行)
     "df ",
     "du ",
-    "mount",
     "lsblk",
     # 内存与进程
     "free ",
@@ -117,10 +120,9 @@ _SAFE_PREFIXES = (
     # 网络诊断(只读)
     "ping -c",
     "ping -n",
+    # curl/wget 只允许无副作用形态: -s/-S/-o 可 POST 外传数据、写盘下载
     "curl -I",
     "curl --head",
-    "curl -s",
-    "wget -S",
     "wget --spider",
     "nslookup",
     "dig",
@@ -155,15 +157,61 @@ _SAFE_PREFIXES = (
     # 日志查看
     "journalctl --no-pager",
     "dmesg",
-    # Windows 特定命令
+    # Windows 特定命令(wmic process call create 可任意创建进程, 不放行)
     "tasklist",
-    "wmic ",
     "systeminfo",
     "driverquery",
 )
 
 
-_CHAIN_OPERATORS = (";", "&&", "||", "|", "`", "$(", "\n")
+# 拒绝包含 shell 元字符的命令(最高优先级,不可被用户规则覆盖):
+# 命令链接/后台(; & | && ||),命令替换(` $( ),重定向与进程替换(> <),多行(\n \r)
+_CHAIN_OPERATORS = (";", "&", "|", "`", "$(", ">", "<", "\n", "\r")
+
+# 命令中出现即拒绝的高危子串(优先级同 _CHAIN_OPERATORS,不可被用户规则覆盖)。
+# 覆盖白名单前缀之下的执行/写盘/破坏动作,例如 find -exec、git branch -d。
+_UNSAFE_SUBSTRINGS = (
+    # find: 执行命令(-exec/-execdir/-ok/-okdir)、删除、写文件(-fprint*)
+    " -exec",
+    " -ok",
+    " -delete",
+    " -fprint",
+    " -fls",
+    # git: 破坏性子命令(白名单只放行 git branch/git remote/git reflog 等只读形态)
+    "branch -d",
+    "branch -D",
+    "branch -m",
+    "branch -M",
+    "branch -f",
+    "branch -c",
+    "branch -C",
+    "remote add",
+    "remote remove",
+    "remote rm",
+    "remote rename",
+    "remote set-url",
+    "remote set-head",
+    "remote set-branches",
+    "remote prune",
+    "remote update",
+    "reflog delete",
+    "reflog expire",
+    "reflog recreate",
+    # git show/diff 与 curl 的 --output 写文件(ruff --output-format 不受影响)
+    " --output=",
+    " --output ",
+    # ip 配置修改(ip addr/ip route 只读查询仍放行)
+    "addr add",
+    "addr del",  # 覆盖 addr delete
+    "addr flush",
+    "addr replace",
+    "addr change",
+    "route add",
+    "route del",  # 覆盖 route delete
+    "route replace",
+    "route change",
+    "route flush",
+)
 
 
 def is_safe_tool(name: str) -> bool:
@@ -477,13 +525,18 @@ def is_safe_tool(name: str) -> bool:
 def is_safe_bash(cmd: str, root_dir: Path | None) -> bool:
     """如果命令是只读的且从不需要权限提示,则返回 True。
 
-    拒绝包含 shell 链式操作符(;、&&、||、|、反引号、$(…))的命令
-    — 这些可能在安全前缀后执行任意代码。
+    拒绝包含 shell 链式/重定向操作符(;、&、|、>、<、反引号、$(…)、
+    进程替换 <())的命令 — 这些可能在安全前缀后执行任意代码或写文件;
+    也拒绝白名单前缀之下的高危动作(find -exec、git branch -d 等)。
     """
     c = cmd.strip()
 
-    # 先拒绝任何链接多个命令的危险操作符(最高优先级,不可被用户规则覆盖)
+    # 先拒绝任何链接多个命令/重定向写文件的危险操作符(最高优先级,不可被用户规则覆盖)
     if any(op in c for op in _CHAIN_OPERATORS):
+        return False
+
+    # 再拒绝白名单前缀下的执行/写盘/破坏动作(同样不可被用户规则覆盖)
+    if any(p in c for p in _UNSAFE_SUBSTRINGS):
         return False
 
     # 再检查用户自定义的持久化规则
