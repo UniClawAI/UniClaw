@@ -400,13 +400,16 @@ async def bridge_events(session_id: str, config: AppConfig):
 
             if response["approved"]:
                 event.content = True
-                # "始终允许":将规则持久化
+                # "始终允许":将规则持久化(Bash 只存命令前缀,不能存成 tool 规则)
                 if response.get("always") and config.root_dir:
                     try:
-                        from uniclaw.tools.security.security import add_permission_rule
+                        from uniclaw.tools.security.security import (
+                            save_always_allow_rule,
+                        )
 
-                        tool_name = tc_name(event.tool_call)
-                        add_permission_rule("tool", tool_name, Path(config.root_dir))
+                        save_always_allow_rule(
+                            tc_name(event.tool_call), _ta, config.root_dir
+                        )
                     except Exception as e:
                         get_logger("webui", Path.cwd()).warning(
                             f"持久化权限规则失败: {e}"

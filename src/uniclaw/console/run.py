@@ -362,18 +362,13 @@ async def ask_permission_interactive(
     text = (await tui.tui_input(prompt_text, title=title)).strip()
 
     if text.lower() == "a":
-        from uniclaw.tools.security import add_permission_rule, extract_bash_prefix
+        from uniclaw.tools.security import save_always_allow_rule
 
-        root_dir = config.root_dir
         tool_name = tool_call.get("name", "") if tool_call else ""
-        if tool_name == Bash.name:
-            command = tool_call.get("args", {}).get("command", "")
-            pattern = extract_bash_prefix(command)
-            add_permission_rule("bash", pattern, root_dir)
-            await ok(f"✅ 已保存规则: 始终允许 {Bash.name} '{pattern}'", config)
-        elif tool_name:
-            add_permission_rule("tool", tool_name, root_dir)
-            await ok(f"✅ 已保存规则: 始终允许工具 '{tool_name}'", config)
+        tool_args = tool_call.get("args", {}) if tool_call else {}
+        saved = save_always_allow_rule(tool_name, tool_args, config.root_dir)
+        if saved:
+            await ok(f"✅ 已保存规则: 始终允许 {saved}", config)
         return True
 
     if text.lower() == "y":

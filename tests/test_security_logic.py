@@ -21,6 +21,7 @@ from uniclaw.tools.security import (
     is_safe_tool,
     list_permission_rules,
     remove_permission_rule,
+    save_always_allow_rule,
 )
 
 # ── is_safe_bash ──────────────────────────────────────────────
@@ -185,6 +186,29 @@ class TestPermissionRules:
         add_permission_rule("bash", "make", None)
         assert not (tmp_path / "rules.json").exists()
 
+    def test_add_rule_empty_pattern_ignored(self, tmp_path, monkeypatch):
+        """空 pattern 拒绝写入 — startswith("") 会匹配一切命令。"""
+        monkeypatch.setattr(
+            "uniclaw.tools.security.security._rules_path",
+            lambda root_dir: tmp_path / "rules.json",
+        )
+        add_permission_rule("bash", "", tmp_path)
+        add_permission_rule("bash", "   ", tmp_path)
+        assert list_permission_rules(tmp_path) == []
+        assert check_saved_bash_rule("rm -rf /", tmp_path) is False
+
+    def test_check_saved_bash_rule_ignores_empty_pattern(self, tmp_path, monkeypatch):
+        """规则文件中已存在的空 pattern 不参与匹配。"""
+        monkeypatch.setattr(
+            "uniclaw.tools.security.security._rules_path",
+            lambda root_dir: tmp_path / "rules.json",
+        )
+        (tmp_path / "rules.json").write_text(
+            json.dumps({"rules": [{"type": "bash", "pattern": ""}]}),
+            encoding="utf-8",
+        )
+        assert check_saved_bash_rule("rm -rf /", tmp_path) is False
+
     def test_remove_rule(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
             "uniclaw.tools.security.security._rules_path",
@@ -284,9 +308,72 @@ class TestIsSafeTool:
         assert is_safe_tool("Edit") is False
         assert is_safe_tool("Bash") is False
 
+    def test_scheduler_mutating_tools_not_safe(self):
+        """定时任务写操作可投递 shell/py 定时任意代码执行,必须走权限确认。"""
+        assert is_safe_tool("schedule_create") is False
+        assert is_safe_tool("schedule_update") is False
+        assert is_safe_tool("schedule_remove") is False
+        assert is_safe_tool("schedule_toggle") is False
+
+    def test_scheduler_list_is_safe(self):
+        """schedule_list 只读,免审。"""
+        assert is_safe_tool("schedule_list") is True
+
     def test_unknown_tool(self):
         assert is_safe_tool("totally_unknown_tool") is False
 
     def test_case_sensitive(self):
         """工具名判定大小写敏感。"""
         assert is_safe_tool("read") is False
+
+
+# ── save_always_allow_rule ────────────────────────────────────
+
+
+class TestSaveAlwaysAllowRule:
+    """「始终允许」规则持久化: Bash 只存命令前缀,不能存成 tool 规则。"""
+
+    def _patch_rules(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "uniclaw.tools.security.security._rules_path",
+            lambda root_dir: tmp_path / "rules.json",
+        )
+
+    def test_bash_stores_prefix_rule(self, tmp_path, monkeypatch):
+        """Bash 只保存 bash 前缀规则 — 存成 tool:Bash 会放行任意命令。"""
+        self._patch_rules(tmp_path, monkeypatch)
+        saved = save_always_allow_rule(
+            "Bash", {"command": "make build"}, tmp_path
+        )
+        assert saved == "Bash 'make'"
+        rules = list_permission_rules(tmp_path)
+        assert rules[0]["type"] == "bash"
+        assert rules[0]["pattern"] == "make"
+        # 关键回归: 不得出现 tool:Bash 规则(曾导致任意命令免审)
+        assert not check_saved_tool_rule("Bash", tmp_path)
+        assert is_safe_bash("make build", tmp_path) is True
+        assert is_safe_bash("rm -rf /", tmp_path) is False
+
+    def test_bash_compound_prefix(self, tmp_path, monkeypatch):
+        self._patch_rules(tmp_path, monkeypatch)
+        save_always_allow_rule("Bash", {"command": "git push origin main"}, tmp_path)
+        rules = list_permission_rules(tmp_path)
+        assert rules[0]["type"] == "bash"
+        assert rules[0]["pattern"] == "git push"
+
+    def test_bash_empty_command_no_rule(self, tmp_path, monkeypatch):
+        self._patch_rules(tmp_path, monkeypatch)
+        assert save_always_allow_rule("Bash", {"command": ""}, tmp_path) is None
+        assert save_always_allow_rule("Bash", {}, tmp_path) is None
+        assert list_permission_rules(tmp_path) == []
+
+    def test_other_tool_stores_tool_rule(self, tmp_path, monkeypatch):
+        self._patch_rules(tmp_path, monkeypatch)
+        saved = save_always_allow_rule("Write", {"file_path": "a.txt"}, tmp_path)
+        assert saved == "'Write'"
+        assert check_saved_tool_rule("Write", tmp_path) is True
+
+    def test_empty_tool_name_noop(self, tmp_path, monkeypatch):
+        self._patch_rules(tmp_path, monkeypatch)
+        assert save_always_allow_rule("", {"command": "ls"}, tmp_path) is None
+        assert save_always_allow_rule("Write", {}, None) is None

@@ -203,12 +203,7 @@ def is_safe_tool(name: str) -> bool:
         memory_list,
         memory_search,
     )
-    from uniclaw.tools.scheduler.tools import (
-        schedule_create,
-        schedule_list,
-        schedule_remove,
-        schedule_toggle,
-    )
+    from uniclaw.tools.scheduler.tools import schedule_list
     from uniclaw.tools.skill.tools import skill_suggest, skill_read
     from uniclaw.tools.sleep import sleep_timer, wait
     from uniclaw.tools.plan import enter_plan_mode, exit_plan_mode
@@ -351,10 +346,7 @@ def is_safe_tool(name: str) -> bool:
         memory_list.name,
         memory_search.name,
         # ── 定时任务 ──
-        schedule_create.name,
         schedule_list.name,
-        schedule_remove.name,
-        schedule_toggle.name,
         # ── 技能 ──
         skill_suggest.name,
         skill_read.name,
@@ -799,8 +791,43 @@ def extract_bash_prefix(command: str) -> str:
     return parts[0]
 
 
+def save_always_allow_rule(
+    tool_name: str, args: dict | None, root_dir: Path | None
+) -> str | None:
+    """保存「始终允许」持久化规则,供 Console/WebUI/微信权限弹窗共用。
+
+    Bash 只保存命令前缀为 bash 规则 — 若按工具名保存为 tool 规则,
+    check_saved_tool_rule("Bash") 会放行任意命令(含 rm -rf)。
+    其他工具按工具名保存为 tool 规则。
+
+    Args:
+        tool_name: 工具名称。
+        args: 工具调用参数,Bash 时用于提取命令前缀。
+        root_dir: 规则存放根目录。为 None 时不保存。
+
+    Returns:
+        str | None: 已保存规则的描述(如 "Bash 'make'");无需保存时返回 None。
+    """
+    if not tool_name or root_dir is None:
+        return None
+    from uniclaw.tools.shell import Bash
+
+    if tool_name == Bash.name:
+        pattern = extract_bash_prefix((args or {}).get("command", ""))
+        if not pattern:
+            return None
+        add_permission_rule("bash", pattern, root_dir)
+        return f"{Bash.name} '{pattern}'"
+    add_permission_rule("tool", tool_name, root_dir)
+    return f"'{tool_name}'"
+
+
 def add_permission_rule(rule_type: str, pattern: str, root_dir: Path | None):
     if root_dir is None:
+        return
+    pattern = pattern.strip()
+    if not pattern:
+        # 空 pattern 经 startswith 匹配一切命令,拒绝写入
         return
     with _RULES_LOCK:
         rules = _load_rules(root_dir)
@@ -846,7 +873,10 @@ def check_saved_bash_rule(command: str, root_dir: Path | None) -> bool:
     """
     rules = _load_rules(root_dir)
     command = command.strip()
-    return any(r["type"] == "bash" and command.startswith(r["pattern"]) for r in rules)
+    return any(
+        r["type"] == "bash" and r["pattern"] and command.startswith(r["pattern"])
+        for r in rules
+    )
 
 
 def check_saved_tool_rule(tool_name: str, root_dir: Path | None) -> bool:
