@@ -1541,10 +1541,8 @@ class Session:
         """
         from uniclaw.jev_compact import JevCompactConfig, jev_compact
 
-        jev_config = JevCompactConfig(
-            keep_call_threshold=0.5,
-            keep_result_threshold=0.7,
-        )
+        # 阈值在 JevCompactConfig 默认值中调好,这里不重复字面量
+        jev_config = JevCompactConfig()
         try:
             jev_result = await jev_compact(
                 self, jev_config, keep_ratio=keep_ratio, focus=focus
@@ -1561,7 +1559,8 @@ class Session:
 
         await info(
             f"Jev 压缩: {jev_result.total_pairs} 配对, "
-            f"完整保留 {jev_result.kept}, 改写/删除 {jev_result.modified}",
+            f"完整保留 {jev_result.kept}, 改写/删除 {jev_result.modified}, "
+            f"释放约 {jev_result.tokens_saved} token",
             config,
         )
         return True

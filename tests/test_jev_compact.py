@@ -130,6 +130,16 @@ class TestCollectToolPairs:
         assert pairs[2].tool_call_id == "tc_003"
         assert pairs[2].tool_name == "Edit"
 
+    def test_result_irreplaceable_flag(self):
+        """可再生工具(Read/Grep)标记 False,不可重跑取回的 Edit 标记 True。"""
+        session = _make_session_with_tool_calls()
+        pairs = collect_tool_pairs(session._messages)
+        by_id = {p.tool_call_id: p for p in pairs}
+
+        assert by_id["tc_001"].result_irreplaceable is False  # Read 可重跑
+        assert by_id["tc_002"].result_irreplaceable is False  # Grep 可重跑
+        assert by_id["tc_003"].result_irreplaceable is True  # Edit 无法取回原文
+
     def test_no_tool_calls(self):
         """没有工具调用时返回空列表。"""
         session = Session()
@@ -500,7 +510,8 @@ class TestFilterOldMessages:
 
         for p in pairs:
             p.keep_call = 0.8
-            p.keep_result = 0.3
+            # 低于两个 keep_result 阈值(可再生 0.7 / 不可再生 0.3),三个配对都降级
+            p.keep_result = 0.2
 
         filtered, kept, modified = filter_old_messages(old_msgs, pairs, config)
         # kept/modified 互斥: 截断只计入 modified
@@ -608,6 +619,84 @@ class TestFilterOldMessages:
         assert len(filtered) == len(old_msgs)
 
 
+# ── 阈值策略 ──────────────────────────────────────────────────
+
+
+class TestThresholdPolicy:
+    """阈值按误留/误删代价不对称设定的回归测试。"""
+
+    def test_config_defaults_reflect_cost_asymmetry(self):
+        """调用便宜删了疼 → 低阈值;可再生结果可重跑 → 高阈值;不可再生 → 显著更低。"""
+        config = JevCompactConfig()
+        assert config.keep_call_threshold == 0.3
+        assert config.keep_result_threshold == 0.7
+        assert config.keep_result_threshold_irreplaceable == 0.3
+        assert config.keep_result_threshold_irreplaceable < config.keep_result_threshold
+
+    def test_ambiguous_call_is_kept_not_deleted(self):
+        """keep_call 落在模糊带 [0.3, 0.5) 时保留调用(stub 结果),不再整对删除。"""
+        session = _make_session_with_tool_calls()
+        old_msgs = session._messages[:8]
+        pairs = collect_tool_pairs(old_msgs)
+        for p in pairs:
+            p.keep_call = 0.4  # 旧阈值 0.5 下会被整对删除
+            p.keep_result = 0.1
+
+        filtered, kept, modified = filter_old_messages(old_msgs, pairs, JevCompactConfig())
+        assert kept == 0
+        assert modified == 3
+        # 三个调用全部保留为 stub,没有整对删除
+        tool_msgs = [m for m in filtered if isinstance(m, ToolCallMessage)]
+        assert len(tool_msgs) == 3
+        for tm in tool_msgs:
+            assert "结果已省略" in tm.content
+
+    def test_irreplaceable_result_kept_at_lower_threshold(self):
+        """不可再生结果 keep_result=0.5(<0.7 但 >=0.3)必须保全文。"""
+        msgs = [
+            _make_user_msg("看下截图"),
+            _make_ai_msg(tool_calls=[_make_tc("ReadMedia", "tc_m")]),
+            _make_tool_msg(
+                "ReadMedia",
+                "tc_m",
+                [
+                    MultimodalBlock(
+                        type=MultimodalType.image_url,
+                        image_url={"url": "data:image/png;base64,xxxx"},
+                    )
+                ],
+            ),
+        ]
+        pairs = collect_tool_pairs(msgs)
+        assert pairs[0].result_irreplaceable is True
+        pairs[0].keep_call = 0.5
+        pairs[0].keep_result = 0.5
+
+        filtered, kept, modified = filter_old_messages(msgs, pairs, JevCompactConfig())
+        assert kept == 1
+        assert modified == 0
+        assert len(filtered) == len(msgs)
+
+    def test_replaceable_result_stubbed_at_same_score(self):
+        """可再生结果同样 0.5 分(<0.7)降为占位 — 两个阈值的差异必须生效。"""
+        session = _make_session_with_tool_calls()
+        old_msgs = session._messages[:8]
+        pairs = collect_tool_pairs(old_msgs)
+        for p in pairs:
+            p.keep_call, p.keep_result = 0.9, 0.9
+        pairs[0].keep_result = 0.5  # Read,可重跑取回
+
+        assert pairs[0].result_irreplaceable is False
+        filtered, kept, modified = filter_old_messages(old_msgs, pairs, JevCompactConfig())
+        assert kept == 2
+        assert modified == 1
+
+        read_stub = [
+            m for m in filtered if isinstance(m, ToolCallMessage) and m.name == "Read"
+        ][0]
+        assert "结果已省略" in read_stub.content
+
+
 # ── jev_compact 集成测试 ──────────────────────────────────────
 
 
@@ -690,6 +779,7 @@ class TestJevCompact:
         assert result.total_pairs == 3
         assert result.kept == 0
         assert result.modified == 3
+        assert result.tokens_saved > 0
 
         # 验证:summary 在 filtered_old 之后
         # 结构: [filtered_old...] + [summary_user, summary_ai] + [recent...]

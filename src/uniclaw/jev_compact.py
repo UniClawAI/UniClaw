@@ -36,6 +36,8 @@ class JevCompactResult:
     """被改写(结果降为占位)或整对删除的配对数。与 kept 互斥。"""
     filtered_old_count: int
     """过滤后的 old 消息数。"""
+    tokens_saved: int = 0
+    """压缩释放的 token 估算值(before - after)。接近 0 说明判官普遍给高分、本次几乎没压下东西。"""
 
 
 # ── 配置与数据结构 ────────────────────────────────────────────
@@ -43,12 +45,20 @@ class JevCompactResult:
 
 @dataclass
 class JevCompactConfig:
-    """Jev 压缩配置。"""
+    """Jev 压缩配置。
 
-    keep_call_threshold: float = 0.5
-    """noul >= 此值时保留工具调用。"""
+    阈值按误留/误删代价的不对称性设定:
+    - 工具调用一行约 30 token,留错只是浪费,删错是叙事永久断裂 → 低阈值,删除是例外
+    - 工具结果可达数千 token,可再生结果(Read/Grep 等)stub 后可重跑取回,
+      不可再生结果(多媒体/用户答复/副作用回执)stub 即永久丢失 → 分设两个阈值
+    """
+
+    keep_call_threshold: float = 0.3
+    """noul >= 此值时保留工具调用。低于此值整对删除 — 仅限判官明确视为可抹除的探索性调用。"""
     keep_result_threshold: float = 0.7
-    """noul >= 此值时保留工具结果原文。"""
+    """可再生结果的 noul >= 此值时保留原文(否则降为占位)。可重跑取回,允许偏激进。"""
+    keep_result_threshold_irreplaceable: float = 0.5
+    """不可再生结果(多媒体/不可重跑工具)的 keep_result 阈值 — 显著更低,不确定时优先保全文。"""
     max_state_tokens: int = 25_000
     """Jev state token 上限(Jev 请求限制约32k)。"""
     max_tool_input_chars: int = 500
@@ -72,6 +82,8 @@ class ToolPairScore:
     """结果文本字符数(多媒体块不计入,见 result_has_media)。"""
     result_has_media: bool = False
     """结果是否包含多媒体块(图片/音频/视频),此类结果通常无法重新获取。"""
+    result_irreplaceable: bool = False
+    """结果是否不可再生(含多媒体,或工具不可重跑取回) — 决定用哪个 keep_result 阈值。"""
     keep_call: float = 1.0
     """Jev noul 评分: 是否保留调用。未评分时默认 1.0(保留,fail-safe)。"""
     keep_result: float = 1.0
@@ -138,6 +150,12 @@ def collect_tool_pairs(
     if not messages:
         return []
 
+    # 可再生工具(Session.COMPACTABLE_TOOLS)的结果可通过重跑取回,
+    # 其余(含多媒体)stub 后即永久丢失,评分时走更低的 keep_result 阈值
+    from uniclaw.tools.session.session import Session
+
+    compactable = Session.COMPACTABLE_TOOLS
+
     # 建立 tool_call_id -> (ai_msg_idx, tool_call_idx, tool_call) 索引
     tc_index: dict[str, tuple[int, int, dict]] = {}
     for i in range(len(messages)):
@@ -160,17 +178,21 @@ def collect_tool_pairs(
         ai_idx, tc_idx, tc = tc_index[msg.tool_call_id]
         func = tc.get("function", {})
         result_chars, result_has_media = _result_metrics(msg.content)
+        tool_name = func.get("name", msg.name or "")
 
         pairs.append(
             ToolPairScore(
                 ai_msg_idx=ai_idx,
                 tool_call_idx=tc_idx,
                 tool_call_id=msg.tool_call_id,
-                tool_name=func.get("name", msg.name or ""),
+                tool_name=tool_name,
                 tool_args=func.get("arguments", msg.args or {}),
                 result_msg_idx=i,
                 result_chars=result_chars,
                 result_has_media=result_has_media,
+                result_irreplaceable=(
+                    result_has_media or tool_name not in compactable
+                ),
             )
         )
 
@@ -421,7 +443,8 @@ def filter_old_messages(
 
     对每个工具配对:
     - keep_result >= threshold → 完整保留调用+结果
-    - keep_call >= threshold → 保留调用,结果替换为占位符
+      (不可再生结果用 keep_result_threshold_irreplaceable,可再生结果用 keep_result_threshold)
+    - keep_call >= keep_call_threshold → 保留调用,结果替换为占位符
     - 否则 → 删除调用+结果
 
     文本消息(user/assistant 无工具调用)始终保留。
@@ -449,7 +472,13 @@ def filter_old_messages(
     modified = 0
 
     for pair in pairs:
-        if pair.keep_result >= config.keep_result_threshold:
+        # 不可再生结果显著更容易保全文 — stub 即永久丢失
+        result_threshold = (
+            config.keep_result_threshold_irreplaceable
+            if pair.result_irreplaceable
+            else config.keep_result_threshold
+        )
+        if pair.keep_result >= result_threshold:
             kept += 1
             continue
 
@@ -579,6 +608,7 @@ async def jev_compact(
         )
 
     # 6. 过滤 old 消息(保留高分工具配对,丢弃低分的)
+    tokens_before = session.estimate_tokens()
     filtered_old, kept, modified = filter_old_messages(
         old_msgs, pairs, compact_config
     )
@@ -625,10 +655,12 @@ async def jev_compact(
     ]
     session._compact_end = len(filtered_old) + 2
     session._compact_warned_levels.clear()
+    tokens_saved = max(0, tokens_before - session.estimate_tokens())
 
     return JevCompactResult(
         total_pairs=len(pairs),
         kept=kept,
         modified=modified,
         filtered_old_count=len(filtered_old),
+        tokens_saved=tokens_saved,
     )
