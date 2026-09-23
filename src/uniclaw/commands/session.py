@@ -11,8 +11,8 @@ from uniclaw.utils.message import MessageRole
 async def cmd_compact(args: str, config: AppConfig) -> bool:
     """手动压缩对话历史
 
-    通过移除或摘要化旧消息来减少上下文长度,优化 Token 使用。
-    支持可选的聚焦参数,保留与特定主题相关的消息。
+    Jev 智能压缩优先(按价值保留/删除工具配对),失败则回退 LLM 摘要,
+    与自动压缩走同一条链路。支持可选的聚焦参数,保留与特定主题相关的消息。
 
     Args:
         args: 可选的聚焦关键词,用于保留相关消息
@@ -27,7 +27,7 @@ async def cmd_compact(args: str, config: AppConfig) -> bool:
     model_name = config.model_name[0] if config.model_name else ""
     before = task.session.estimate_tokens(model_name)
     await info("正在压缩对话历史...", config)
-    await task.session.compact(config, focus=focus)
+    await task.session.smart_compact(config, focus=focus)
     after = task.session.estimate_tokens(model_name)
     saved = before - after
     await ok(

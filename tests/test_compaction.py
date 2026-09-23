@@ -8,6 +8,19 @@ import pytest
 
 from uniclaw.compaction import get_context_limit, get_pressure_level, PRESSURE_LEVELS, DEFAULT_CONTEXT_LIMIT
 
+
+@pytest.fixture(autouse=True)
+def _silence_ui():
+    """屏蔽 UI 输出 — console.ui 需要完整 AppConfig(含 root_config),
+    而本文件用 SimpleNamespace 作 config,不 mock 会在打印时崩溃。"""
+    with (
+        patch("uniclaw.console.ui.info", new_callable=AsyncMock),
+        patch("uniclaw.console.ui.warn", new_callable=AsyncMock),
+        patch("uniclaw.console.ui.err", new_callable=AsyncMock),
+        patch("uniclaw.console.ui.ok", new_callable=AsyncMock),
+    ):
+        yield
+
 # ── get_context_limit 测试 ──────────────────────────────────
 
 

@@ -1,6 +1,8 @@
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
+
+import pytest
 
 from uniclaw.tools.base import ToolRuntime
 from uniclaw.tools.security import (
@@ -12,6 +14,16 @@ from uniclaw.tools.security import (
 )
 from uniclaw.tools.security.tools import _save_llm_safe_prompt
 from uniclaw.spinner import BaseSpinner
+
+
+@pytest.fixture(autouse=True)
+def _disable_jev_precheck():
+    """屏蔽 Jev 安全快筛 — 本文件测的是 LLM 路径,
+    不屏蔽则 TYPESAFE_API_KEY 存在时会走 Jev 并打真实 API。"""
+    with patch(
+        "uniclaw.tools.security.security.is_available", return_value=False
+    ):
+        yield
 
 
 class _MockSpinner(BaseSpinner):

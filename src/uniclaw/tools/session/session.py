@@ -1475,6 +1475,49 @@ class Session:
                 snipped = len(content) - half - quarter
                 msg.content = f"{content[:half]}\n[... {snipped} 个字符已省略 ...]\n{content[-quarter:]}"
 
+    async def smart_compact(
+        self, config: AppConfig, focus: str = "", keep_ratio: float = 0.3
+    ) -> bool:
+        """Jev 智能压缩优先,失败则回退 LLM 摘要。
+
+        供自动压缩(maybe_compact level 1+)与手动 /compact 共用,
+        保证两条路径行为一致。
+
+        Args:
+            config: 应用配置。
+            focus: 聚焦主题(可选),提示压缩时优先保留相关内容。
+            keep_ratio: 保留最近消息的比例。
+
+        Returns:
+            bool: True 表示 Jev 压缩成功,False 表示已回退 LLM 摘要。
+        """
+        from uniclaw.jev_compact import JevCompactConfig, jev_compact
+
+        jev_config = JevCompactConfig(
+            keep_call_threshold=0.5,
+            keep_result_threshold=0.7,
+        )
+        try:
+            jev_result = await jev_compact(
+                self, jev_config, keep_ratio=keep_ratio, focus=focus
+            )
+        except Exception as e:
+            # 任何 Jev 失败(不可用/网络/配额)都回退 LLM,不影响压缩链路
+            from uniclaw.console.ui import warn
+
+            await warn(f"Jev 压缩跳过: {e}", config)
+            await self.compact(config, focus=focus, keep_ratio=keep_ratio)
+            return False
+
+        from uniclaw.console.ui import info
+
+        await info(
+            f"Jev 压缩: {jev_result.total_pairs} 配对, "
+            f"保留 {jev_result.kept}, 修改/删除 {jev_result.modified}",
+            config,
+        )
+        return True
+
     async def maybe_compact(self, config: AppConfig) -> bool:
         """根据上下文长度阈值判断是否需要执行消息压缩。
 
@@ -1524,30 +1567,7 @@ class Session:
             return True
 
         # level 1+: 尝试 Jev 智能压缩,失败则回退 LLM 摘要
-        from uniclaw.jev_compact import JevCompactConfig, jev_compact
-
-        jev_config = JevCompactConfig(
-            keep_call_threshold=0.5,
-            keep_result_threshold=0.7,
-        )
-        try:
-            jev_result = await jev_compact(self, jev_config, keep_ratio=0.3)
-            jev_done = True
-            from uniclaw.console.ui import info
-            await info(
-                f"Jev 压缩: {jev_result.total_pairs} 配对, "
-                f"保留 {jev_result.kept}, 修改/删除 {jev_result.modified}",
-                config,
-            )
-        except Exception as e:
-            # 任何 Jev 失败(不可用/网络/配额)都回退 LLM,不影响压缩链路
-            from uniclaw.console.ui import warn
-            await warn(f"Jev 压缩跳过: {e}", config)
-            jev_done = False
-
-        if not jev_done:
-            # Jev 失败,回退 LLM 摘要
-            await self.compact(config, keep_ratio=0.3)
+        await self.smart_compact(config, keep_ratio=0.3)
 
         if self.estimate_tokens(model) <= limit * PRESSURE_LEVELS[1][0]:
             return True

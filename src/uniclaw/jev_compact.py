@@ -223,7 +223,9 @@ def build_jev_state(
 # ── 问题构建 ──────────────────────────────────────────────────
 
 
-def build_batch_questions(pairs: list[ToolPairScore]) -> dict[str, dict]:
+def build_batch_questions(
+    pairs: list[ToolPairScore], focus: str = ""
+) -> dict[str, dict]:
     """构建 Jev batch 问题。
 
     每个工具配对生成 2 个 noul 问题:
@@ -232,11 +234,14 @@ def build_batch_questions(pairs: list[ToolPairScore]) -> dict[str, dict]:
 
     Args:
         pairs: 工具配对列表。
+        focus: 聚焦主题(可选)。非空时提示 Jev 优先保留与该主题相关的内容,
+            与 LLM 摘要的 focus 参数语义对齐。
 
     Returns:
         Jev batch questions 字典。
     """
     questions: dict[str, dict] = {}
+    focus_hint = f" 与「{focus}」相关的内容更应保留。" if focus else ""
 
     for pair in pairs:
         call_qid = f"call_{pair.tool_call_id}"
@@ -248,6 +253,7 @@ def build_batch_questions(pairs: list[ToolPairScore]) -> dict[str, dict]:
                 f"根据对话上下文,这个工具调用是否应该保留在历史记录中? "
                 f"工具: {pair.tool_name}。 "
                 f"如果知道这个调用曾经执行过(连同其参数)对理解助手后续行为仍有意义,则应保留。"
+                f"{focus_hint}"
             ),
         }
         questions[result_qid] = {
@@ -257,6 +263,7 @@ def build_batch_questions(pairs: list[ToolPairScore]) -> dict[str, dict]:
                 f"工具: {pair.tool_name}, 结果大小: {pair.result_chars} 字符。 "
                 f"只有当结果的精确内容仍然必需时(如代码片段、错误信息、具体数据值)才应保留。"
                 f"如果只需知道工具曾被调用即可,请回答否。"
+                f"{focus_hint}"
             ),
         }
 
@@ -350,6 +357,7 @@ async def jev_compact(
     session: Session,
     compact_config: JevCompactConfig | None = None,
     keep_ratio: float = 0.3,
+    focus: str = "",
 ) -> JevCompactResult:
     """Jev 智能压缩主入口。
 
@@ -362,6 +370,7 @@ async def jev_compact(
         session: Session 实例。
         compact_config: JevCompactConfig 配置,为 None 时使用默认值。
         keep_ratio: 保留最近消息的比例(用于 _find_split_point)。
+        focus: 聚焦主题(可选),提示 Jev 优先保留与该主题相关的内容。
 
     Returns:
         JevCompactResult 压缩结果。
@@ -398,7 +407,7 @@ async def jev_compact(
         max_tokens=compact_config.max_state_tokens,
         max_tool_input=compact_config.max_tool_input_chars,
     )
-    questions = build_batch_questions(pairs)
+    questions = build_batch_questions(pairs, focus=focus)
 
     # 4. 调用 Jev batch
     result = await batch(state=state, questions=questions)

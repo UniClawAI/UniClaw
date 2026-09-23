@@ -101,7 +101,7 @@ async def cmd_help(_args: str, config: AppConfig) -> bool:
   /btw <问题>            - 侧问题:不打断当前对话提问
   /name [名称]          - 为会话命名(无参数自动生成)
   /clear, /cls          - 清空当前对话历史并清屏
-  /compact [关键词]      - 压缩上下文,优化 Token 使用
+  /compact [关键词]      - 压缩上下文(Jev 优先,失败回退 LLM 摘要)
   /export [路径]         - 导出当前会话到文件(Markdown/JSON)
   /resume [ID]           - 恢复会话(无参数交互式选择)
   /resume list           - 列出所有历史对话

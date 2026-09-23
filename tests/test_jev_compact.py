@@ -258,6 +258,43 @@ class TestBuildBatchQuestions:
         questions = build_batch_questions([])
         assert questions == {}
 
+    def test_focus_hint_included(self):
+        """focus 非空时,问题指令应包含聚焦提示。"""
+        pairs = [
+            ToolPairScore(
+                ai_msg_idx=1,
+                tool_call_idx=0,
+                tool_call_id="tc_001",
+                tool_name="Read",
+                tool_args={},
+                result_msg_idx=2,
+                result_chars=100,
+            ),
+        ]
+        questions = build_batch_questions(pairs, focus="网络错误")
+
+        assert len(questions) == 2
+        for q in questions.values():
+            assert "网络错误" in q["instructions"]
+
+    def test_no_focus_hint_by_default(self):
+        """focus 为空时,问题指令不含聚焦提示。"""
+        pairs = [
+            ToolPairScore(
+                ai_msg_idx=1,
+                tool_call_idx=0,
+                tool_call_id="tc_001",
+                tool_name="Read",
+                tool_args={},
+                result_msg_idx=2,
+                result_chars=100,
+            ),
+        ]
+        questions = build_batch_questions(pairs)
+
+        for q in questions.values():
+            assert "更应保留" not in q["instructions"]
+
 
 # ── filter_old_messages 测试 ──────────────────────────────────
 
