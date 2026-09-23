@@ -1524,7 +1524,7 @@ class Session:
             return True
 
         # level 1+: 尝试 Jev 智能压缩,失败则回退 LLM 摘要
-        from uniclaw.jev_compact import JevCompactConfig, JevCompactSkip, jev_compact
+        from uniclaw.jev_compact import JevCompactConfig, jev_compact
 
         jev_config = JevCompactConfig(
             keep_call_threshold=0.5,
@@ -1539,7 +1539,8 @@ class Session:
                 f"保留 {jev_result.kept}, 修改/删除 {jev_result.modified}",
                 config,
             )
-        except (JevCompactSkip, Exception) as e:
+        except Exception as e:
+            # 任何 Jev 失败(不可用/网络/配额)都回退 LLM,不影响压缩链路
             from uniclaw.console.ui import warn
             await warn(f"Jev 压缩跳过: {e}", config)
             jev_done = False
