@@ -1,5 +1,6 @@
 from __future__ import annotations
 import base64
+import copy
 import hashlib
 import logging
 import numpy as np
@@ -1439,8 +1440,47 @@ class Session:
         self._compact_end = 2
         self._compact_warned_levels.clear()  # 重置预警状态,下个压缩周期可再次预警
 
+    def _align_split_to_tool_pairs(self, split: int) -> int:
+        """将分割点前移,避免切断 tool_call/tool_result 配对。
+
+        若 old 侧某 AIMessage 的工具结果落在 recent 侧,压缩重建后
+        会出现悬空 tool_calls(或孤儿 tool_result),LLM API 会拒绝
+        这种序列。此时把该 AIMessage 整体划入 recent 侧。
+
+        Args:
+            split: 候选分割点。
+
+        Returns:
+            int: 对齐到工具配对边界后的分割点。
+        """
+        if split <= 0 or split >= len(self._messages):
+            return split
+
+        result_idx: dict[str, int] = {}
+        for i, msg in enumerate(self._messages):
+            if isinstance(msg, ToolCallMessage) and msg.tool_call_id:
+                result_idx[msg.tool_call_id] = i
+
+        # 前移可能连锁切断更早的配对,需迭代收敛
+        while True:
+            move_to = None
+            for i in range(split):
+                msg = self._messages[i]
+                if not isinstance(msg, AIMessage) or not msg.tool_calls:
+                    continue
+                for tc in msg.tool_calls:
+                    ridx = result_idx.get(tc.get("id", ""))
+                    if ridx is not None and ridx >= split:
+                        move_to = i
+                        break
+                if move_to is not None:
+                    break
+            if move_to is None:
+                return split
+            split = move_to
+
     def _find_split_point(self, keep_ratio: float = 0.3) -> int:
-        """查找分割点使最近部分约占总 token 的 keep_ratio。"""
+        """查找分割点使最近部分约占总 token 的 keep_ratio(对齐工具配对边界)。"""
         if not self._messages:
             return 0
         keep_ratio = max(0.0, min(1.0, keep_ratio))
@@ -1450,13 +1490,17 @@ class Session:
         for i in range(len(self._messages) - 1, -1, -1):
             running += self._messages[i].estimate_tokens()
             if running >= target:
-                return i
+                return self._align_split_to_tool_pairs(i)
         return 0
 
     def snip_old_tool_results(
         self, max_chars: int = 2000, preserve_last_n_turns: int = 6
     ) -> None:
-        """压缩旧工具结果:可再生工具清空,不可再生工具截断。"""
+        """压缩旧工具结果:可再生工具清空,不可再生工具截断。
+
+        改写通过复制消息完成 — `_messages` 与 `history` 共享消息对象,
+        原地修改会破坏 history 归档(recall 检索/会话存档依赖原文)。
+        """
         cutoff = max(0, len(self._messages) - preserve_last_n_turns)
         for i in range(cutoff):
             msg = self._messages[i]
@@ -1467,13 +1511,17 @@ class Session:
                 continue
             if msg.name in self.COMPACTABLE_TOOLS:
                 # 可再生工具:清空结果,保留工具名和参数信息
-                msg.content = f"[{msg.name} 结果已清除,可重新执行获取]"
+                new_msg = copy.copy(msg)
+                new_msg.content = f"[{msg.name} 结果已清除,可重新执行获取]"
+                self._messages[i] = new_msg
             elif len(content) > max_chars:
                 # 不可再生工具:截断(保留头尾)
                 half = max_chars // 2
                 quarter = max_chars // 4
                 snipped = len(content) - half - quarter
-                msg.content = f"{content[:half]}\n[... {snipped} 个字符已省略 ...]\n{content[-quarter:]}"
+                new_msg = copy.copy(msg)
+                new_msg.content = f"{content[:half]}\n[... {snipped} 个字符已省略 ...]\n{content[-quarter:]}"
+                self._messages[i] = new_msg
 
     async def smart_compact(
         self, config: AppConfig, focus: str = "", keep_ratio: float = 0.3
@@ -1513,7 +1561,7 @@ class Session:
 
         await info(
             f"Jev 压缩: {jev_result.total_pairs} 配对, "
-            f"保留 {jev_result.kept}, 修改/删除 {jev_result.modified}",
+            f"完整保留 {jev_result.kept}, 改写/删除 {jev_result.modified}",
             config,
         )
         return True
