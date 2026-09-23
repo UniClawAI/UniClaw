@@ -1,7 +1,7 @@
 """Jev 智能压缩模块测试
 
 覆盖 jev_compact.py 的核心函数: collect_tool_pairs, build_jev_state,
-build_batch_questions, apply_decisions, jev_compact。
+build_batch_questions, filter_old_messages, jev_compact。
 """
 
 from types import SimpleNamespace
