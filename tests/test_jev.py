@@ -16,10 +16,15 @@ from uniclaw.utils.jev import (
     JevConfigError,
     NoulResult,
     ScoreResult,
+    _check_state_budget,
     _classify_answer,
     _parse_choice,
     _parse_noul,
     _parse_score,
+    _question_tokens,
+    _split_questions,
+    _state_text,
+    batch,
     is_available,
 )
 
@@ -49,6 +54,28 @@ def _make_score_answer(score: float, probabilities: dict, confidence: float):
 def _make_response(answers: dict):
     """构造模拟的 system_one 响应。"""
     return SimpleNamespace(answers=answers)
+
+
+def _make_noul_qdef(instructions: str = "是否保留?") -> dict:
+    """构造 noul 问题定义。"""
+    return {"type": "noul", "instructions": instructions}
+
+
+class _FakeSystemOneClient:
+    """模拟 AsyncTypeSafeClient:记录 system_one 调用,按 question_id 返回 noul 答案。"""
+
+    def __init__(self):
+        self.calls: list[tuple] = []  # (state, questions)
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return False
+
+    async def system_one(self, state, questions):
+        self.calls.append((state, questions))
+        return _make_response({qid: _make_noul_answer(0.5) for qid in questions})
 
 
 def _make_config(
@@ -226,6 +253,149 @@ class TestExceptions:
     def test_jev_api_error_without_status(self):
         err = JevAPIError("超时")
         assert err.status_code is None
+
+
+# ── batch 预算/分片测试 ──────────────────────────────────
+
+
+class TestStateAndQuestionTokens:
+    """state/问题 token 估算与预算检查辅助函数测试"""
+
+    def test_state_text_str(self):
+        assert _state_text("abc") == "abc"
+
+    def test_state_text_dict(self):
+        assert '"a"' in _state_text({"a": 1})
+
+    def test_question_tokens_includes_criteria(self):
+        small = _question_tokens("q1", _make_noul_qdef("短"))
+        big = _question_tokens(
+            "q1",
+            {
+                "type": "choice",
+                "instructions": "短",
+                "criteria": {f"k{i}": "描述" * 50 for i in range(20)},
+            },
+        )
+        assert big > small
+
+    def test_check_state_budget_passes_when_fits(self):
+        tokens = _check_state_budget("短 state", max_question_tokens=10)
+        assert tokens > 0
+
+    def test_check_state_budget_accepts_dict_state(self):
+        tokens = _check_state_budget({"task": "写文件"}, max_question_tokens=10)
+        assert tokens > 0
+
+    def test_check_state_budget_raises_when_state_too_large(self, monkeypatch):
+        # 压低预算而不是堆大文本 — 重复 ASCII 会被 BPE 合并,token 量不可控
+        monkeypatch.setattr("uniclaw.utils.jev.STATE_WITH_LONGEST_TOKENS", 100)
+        monkeypatch.setattr("uniclaw.utils.jev.BUDGET_USAGE", 1.0)
+        with pytest.raises(JevAPIError, match="超出 Jev 预算"):
+            _check_state_budget("这是一段待评估的对话内容。" * 20, max_question_tokens=0)
+
+    def test_check_state_budget_raises_when_question_too_large(self):
+        with pytest.raises(JevAPIError, match="超出 Jev 预算"):
+            _check_state_budget("state", max_question_tokens=10_000_000)
+
+
+class TestSplitQuestions:
+    """_split_questions 分组逻辑测试"""
+
+    def test_single_chunk_when_fits(self, monkeypatch):
+        monkeypatch.setattr("uniclaw.utils.jev.TOTAL_BUDGET_TOKENS", 10_000)
+        qs = {"a": _make_noul_qdef(), "b": _make_noul_qdef()}
+        chunks = _split_questions(qs, {"a": 10, "b": 10}, state_tokens=5)
+        assert len(chunks) == 1
+        assert list(chunks[0]) == ["a", "b"]
+
+    def test_splits_when_over_budget(self, monkeypatch):
+        monkeypatch.setattr("uniclaw.utils.jev.TOTAL_BUDGET_TOKENS", 50)
+        monkeypatch.setattr("uniclaw.utils.jev.BUDGET_USAGE", 1.0)
+        qs = {f"q{i}": _make_noul_qdef() for i in range(4)}
+        tokens = {f"q{i}": 20 for i in range(4)}
+        # budget = 50 - 5 = 45 → 每组最多 2 题
+        chunks = _split_questions(qs, tokens, state_tokens=5)
+        assert [list(c) for c in chunks] == [["q0", "q1"], ["q2", "q3"]]
+
+    def test_oversized_question_gets_own_chunk(self, monkeypatch):
+        monkeypatch.setattr("uniclaw.utils.jev.TOTAL_BUDGET_TOKENS", 50)
+        monkeypatch.setattr("uniclaw.utils.jev.BUDGET_USAGE", 1.0)
+        qs = {
+            "big": _make_noul_qdef(),
+            "s1": _make_noul_qdef(),
+            "s2": _make_noul_qdef(),
+        }
+        tokens = {"big": 500, "s1": 10, "s2": 10}
+        chunks = _split_questions(qs, tokens, state_tokens=5)
+        assert [list(c) for c in chunks] == [["big"], ["s1", "s2"]]
+
+
+class TestBatchBudget:
+    """batch() 分片请求与 state 兜底测试"""
+
+    @pytest.mark.asyncio
+    @patch("uniclaw.utils.jev._create_client")
+    async def test_single_call_when_small(self, mock_create):
+        fake = _FakeSystemOneClient()
+        mock_create.return_value = fake
+        result = await batch(
+            state="短 state",
+            questions={"q1": _make_noul_qdef(), "q2": _make_noul_qdef()},
+        )
+        assert len(fake.calls) == 1
+        assert set(result.answers) == {"q1", "q2"}
+        assert result.answers["q1"].noul == 0.5
+
+    @pytest.mark.asyncio
+    @patch("uniclaw.utils.jev._create_client")
+    async def test_splits_and_merges_answers(self, mock_create, monkeypatch):
+        monkeypatch.setattr("uniclaw.utils.jev.TOTAL_BUDGET_TOKENS", 80)
+        monkeypatch.setattr("uniclaw.utils.jev.STATE_WITH_LONGEST_TOKENS", 10_000)
+        monkeypatch.setattr("uniclaw.utils.jev.BUDGET_USAGE", 1.0)
+        fake = _FakeSystemOneClient()
+        mock_create.return_value = fake
+        questions = {
+            f"q{i}": _make_noul_qdef("判断此项是否保留。" * 20) for i in range(4)
+        }
+        result = await batch(state="state", questions=questions)
+        assert len(fake.calls) > 1
+        assert set(result.answers) == set(questions)
+        # 每题恰好出现在一个分组中,无重复无遗漏
+        sent = [qid for _, qs in fake.calls for qid in qs]
+        assert sorted(sent) == sorted(questions)
+
+    @pytest.mark.asyncio
+    @patch("uniclaw.utils.jev._create_client")
+    async def test_oversized_state_raises_without_call(self, mock_create, monkeypatch):
+        monkeypatch.setattr("uniclaw.utils.jev.STATE_WITH_LONGEST_TOKENS", 100)
+        monkeypatch.setattr("uniclaw.utils.jev.BUDGET_USAGE", 1.0)
+        fake = _FakeSystemOneClient()
+        mock_create.return_value = fake
+        long_state = "这是一段远超预算的对话内容。" * 50
+        with pytest.raises(JevAPIError, match="超出 Jev 预算"):
+            await batch(state=long_state, questions={"q1": _make_noul_qdef()})
+        # 预算检查在建连之前,未发出任何请求
+        assert mock_create.call_count == 0
+        assert fake.calls == []
+
+    @pytest.mark.asyncio
+    @patch("uniclaw.utils.jev._create_client")
+    async def test_dict_state_preserved_when_fits(self, mock_create):
+        fake = _FakeSystemOneClient()
+        mock_create.return_value = fake
+        state = {"task": "写文件", "count": 3}
+        await batch(state=state, questions={"q1": _make_noul_qdef()})
+        assert fake.calls[0][0] == state
+
+    @pytest.mark.asyncio
+    @patch("uniclaw.utils.jev._create_client")
+    async def test_api_error_wrapped(self, mock_create):
+        fake = _FakeSystemOneClient()
+        fake.system_one = AsyncMock(side_effect=RuntimeError("boom"))
+        mock_create.return_value = fake
+        with pytest.raises(JevAPIError, match="Batch 调用失败"):
+            await batch(state="s", questions={"q1": _make_noul_qdef()})
 
 
 # ── RAG 重排序 Jev 集成测试 ──────────────────────────────

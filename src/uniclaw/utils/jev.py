@@ -23,6 +23,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 import os
 from dataclasses import dataclass
 from typing import Any
@@ -34,6 +36,8 @@ from typesafe_sdk import (
     NoulCriteria,
     Score,
 )
+
+from uniclaw.utils.tokens import count_tokens
 
 
 # ── 异常类型 ──────────────────────────────────────────────────
@@ -176,6 +180,24 @@ def _classify_answer(qid: str, answer) -> ChoiceResult | ScoreResult | NoulResul
         raise JevAPIError(f"未知 answer 类型 (qid={qid}): {type(answer)}")
 
 
+# ── 请求预算 ──────────────────────────────────────────────────
+#
+# Jev (jev-1.13) 的输入限制,超限服务端返回 400 max_tokens_exceeded:
+# - state 与全部 questions 合计约 64k token
+# - state 与最长单个 question 合计约 32k token
+# batch() 据此自动分片(问题超总量拆多组请求);state 超预算直接报错,
+# 不截断 — 截断后的评估质量无法保证,由调用方回退 LLM。
+
+TOTAL_BUDGET_TOKENS = 64_000
+"""state 与全部 questions 合计 token 上限。"""
+
+STATE_WITH_LONGEST_TOKENS = 32_000
+"""state 与最长单个 question 合计 token 上限。"""
+
+BUDGET_USAGE = 0.85
+"""预算折算系数 — count_tokens 为 cl100k 估算,与 Jev 真实 tokenizer 有偏差,留余量。"""
+
+
 # ── 底层原语 ──────────────────────────────────────────────────
 
 
@@ -312,6 +334,80 @@ async def noul(
     return _parse_noul(response.answers[question_id])
 
 
+def _state_text(state: str | dict) -> str:
+    """state 序列化为文本,用于 token 估算。"""
+    if isinstance(state, str):
+        return state
+    return json.dumps(state, ensure_ascii=False, default=str)
+
+
+def _question_tokens(qid: str, qdef: dict) -> int:
+    """估算单个问题占用的 token(instructions + criteria + id 与结构开销)。"""
+    parts = [str(qdef.get("instructions") or "")]
+    criteria = qdef.get("criteria")
+    if criteria is not None:
+        parts.append(json.dumps(criteria, ensure_ascii=False, default=str))
+    return count_tokens("\n".join(parts)) + count_tokens(qid) + 8
+
+
+def _check_state_budget(state: str | dict, max_question_tokens: int = 0) -> int:
+    """检查 state 与最长问题是否装进 Jev 预算,超限抛 JevAPIError。
+
+    不做截断 — 截断后的 state 评估质量无法保证,宁可让调用方回退 LLM。
+
+    Args:
+        state: 待评估内容(str 或 JSON 对象)。
+        max_question_tokens: 本次请求中最长问题的估算 token 数。
+
+    Returns:
+        int: state 的估算 token 数。
+
+    Raises:
+        JevAPIError: state + 最长问题超出 STATE_WITH_LONGEST_TOKENS 预算。
+    """
+    budget = int(STATE_WITH_LONGEST_TOKENS * BUDGET_USAGE)
+    state_tokens = count_tokens(_state_text(state))
+    if state_tokens + max_question_tokens > budget:
+        raise JevAPIError(
+            f"state 超出 Jev 预算: state 约 {state_tokens} token + "
+            f"最长问题约 {max_question_tokens} token > 上限 {budget} token, "
+            f"截断无法保证评估质量,请回退 LLM"
+        )
+    return state_tokens
+
+
+def _split_questions(
+    sdk_questions: dict[str, Any],
+    question_tokens: dict[str, int],
+    state_tokens: int,
+) -> list[dict[str, Any]]:
+    """按 token 预算把问题切成若干组,每组一次 system_one 请求(state 相同)。
+
+    Args:
+        sdk_questions: 全部 SDK 问题对象,按插入顺序切分。
+        question_tokens: question_id -> 估算 token 数。
+        state_tokens: state 的估算 token 数(每组请求都要重发)。
+
+    Returns:
+        list[dict[str, Any]]: 问题分组,至少一组;单个问题超预算时独占一组。
+    """
+    budget = int(TOTAL_BUDGET_TOKENS * BUDGET_USAGE) - state_tokens
+    chunks: list[dict[str, Any]] = []
+    current: dict[str, Any] = {}
+    used = 0
+    for qid, qobj in sdk_questions.items():
+        cost = question_tokens.get(qid, 0)
+        if current and used + cost > budget:
+            chunks.append(current)
+            current = {}
+            used = 0
+        current[qid] = qobj
+        used += cost
+    if current:
+        chunks.append(current)
+    return chunks
+
+
 async def batch(
     state: str | dict,
     questions: dict[str, dict],
@@ -325,6 +421,10 @@ async def batch(
 
     Jev 的核心优势:多个问题在一次请求中并行评估,成本接近单个问题,
     速度几乎不增加(官方:13 问题 batch 比逐个快 10x,便宜 12x)。
+
+    问题总量超过 Jev 预算时自动拆成多组并行请求(state 原样重发)后合并答案,
+    对调用方透明(见 TOTAL_BUDGET_TOKENS)。state 超预算时不截断,
+    直接抛 JevAPIError — 截断后的 state 评估质量无法保证,由调用方回退 LLM。
 
     Args:
         state: 待评估的内容。
@@ -343,7 +443,7 @@ async def batch(
 
     Raises:
         JevConfigError: TYPESAFE_API_KEY 未配置。
-        JevAPIError: API 调用失败。
+        JevAPIError: API 调用失败,或 state 超出 Jev 预算。
     """
     # 构建 SDK 问题对象
     sdk_questions: dict[str, Any] = {}
@@ -367,15 +467,42 @@ async def batch(
         else:
             raise ValueError(f"未知问题类型: {qtype!r},支持 choice/score/noul")
 
+    # 预算检查:state + 最长单题装不进 32k 就报错回退;能装下则按总量切分问题
+    question_tokens = {
+        qid: _question_tokens(qid, qdef) for qid, qdef in questions.items()
+    }
+    max_q = max(question_tokens.values(), default=0)
+    state_tokens = _check_state_budget(state, max_q)
+    chunks = _split_questions(sdk_questions, question_tokens, state_tokens)
+    if not chunks:
+        # 空问题原样透传给 SDK 报 "At least one question is required.",保持既有报错行为
+        chunks = [{}]
+
     async with _create_client(api_key, model, base_url, timeout) as client:
         try:
-            response = await client.system_one(state=state, questions=sdk_questions)
+            if len(chunks) == 1:
+                responses = [
+                    await client.system_one(state=state, questions=chunks[0])
+                ]
+            else:
+                responses = list(
+                    await asyncio.gather(
+                        *(
+                            client.system_one(state=state, questions=chunk)
+                            for chunk in chunks
+                        )
+                    )
+                )
         except Exception as e:
             raise JevAPIError(f"Batch 调用失败: {e}") from e
 
+    merged: dict[str, Any] = {}
+    for response in responses:
+        merged.update(response.answers)
+
     answers = {}
     for qid in questions:
-        answers[qid] = _classify_answer(qid, response.answers[qid])
+        answers[qid] = _classify_answer(qid, merged[qid])
     return BatchResult(answers=answers)
 
 
