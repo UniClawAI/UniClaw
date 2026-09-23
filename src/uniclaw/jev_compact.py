@@ -58,7 +58,7 @@ class JevCompactConfig:
     keep_result_threshold: float = 0.7
     """可再生结果的 noul >= 此值时保留原文(否则降为占位)。可重跑取回,允许偏激进。"""
     keep_result_threshold_irreplaceable: float = 0.5
-    """不可再生结果(多媒体/不可重跑工具)的 keep_result 阈值 — 显著更低,不确定时优先保全文。"""
+    """不可再生结果(多媒体/不可重跑工具)的 keep_result 阈值 — 低于可再生结果,不确定时优先保全文。"""
     max_state_tokens: int = 25_000
     """Jev state token 上限(Jev 请求限制约32k)。"""
     max_tool_input_chars: int = 500
@@ -248,6 +248,9 @@ def build_jev_state(
     工具参数截断到 max_tool_input 字符。使用 token 计算控制总大小。
 
     预算不足时从最旧内容开始丢弃(靠近分割点的较新消息优先保留),
+    选取结果是"从最新往旧的连续后缀"— 遇到装不下的组即停止,更旧的一律丢弃,
+    不允许中间挖洞。judge 的 keepCall 判断依赖后续上下文(是否被后续调用取代、
+    是否影响后续决策),较新的内容缺席而更旧的内容反而在场会导致误判删除。
     且 [tool_call #N] / [tool_result #N] 标签行与所属配对同进同出 —
     只对实际出现在 state 中的配对提问(见返回值 visible_nums),
     避免问题引用不存在的 #N 标签。
@@ -337,12 +340,14 @@ def build_jev_state(
     budget = max(0, max_tokens - header_tokens)
     used = 0
     selected: list[_Segment] = []
-    # 越新(组序越大)越优先 — 预算不足时先丢最旧的内容
+    # 越新(组序越大)越优先 — 取从最新往旧的连续后缀,装不下即停:
+    # 若跳过中间只收更旧的小单元,会挖出时间空洞,残缺叙事误导 judge
     for _, segs in sorted(units, key=lambda u: u[0], reverse=True):
         cost = sum(s.tokens + 1 for s in segs)
-        if used + cost <= budget:
-            selected.extend(segs)
-            used += cost
+        if used + cost > budget:
+            break
+        selected.extend(segs)
+        used += cost
 
     visible_nums = frozenset(s.pair_num for s in selected if s.pair_num is not None)
     # 按原始顺序输出,保持对话时序

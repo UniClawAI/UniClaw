@@ -185,6 +185,37 @@ async def test_level0_snip_only():
 
 
 @pytest.mark.asyncio
+async def test_level0_snip_insufficient_skips_deep_compact():
+    """level 0 且 snip 不够时也不做深度压缩。
+
+    Jev 保守保留常落在 (50%, 70%],若 level 0 触发深度压缩,
+    每轮工具循环都会重复触发(Jev 调用 + 净增一对摘要消息)且不收敛。
+    """
+    # snip 后 65000 仍 > 64000 — 旧行为会落到 smart_compact,新行为应直接返回
+    session = _make_session([70000, 65000])
+    session.smart_compact = AsyncMock()
+    config = SimpleNamespace(model_name="gpt-4o")
+    result = await session.maybe_compact(config)
+    assert result is True
+    session.smart_compact.assert_not_called()
+    session.compact.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_force_runs_full_chain_below_threshold():
+    """force(CONTEXT_OVERFLOW 恢复)忽略等级门槛,走完微压缩 + 深度压缩 + LLM 兜底。"""
+    session = _make_session([10000])  # 低于 50%,正常路径不做任何压缩
+    session.smart_compact = AsyncMock()
+    config = SimpleNamespace(model_name="gpt-4o")
+    result = await session.maybe_compact(config, force=True)
+    assert result is True
+    session.snip_old_tool_results.assert_called_once()
+    session.smart_compact.assert_called_once()
+    session.compact.assert_called_once()
+    assert session.compact.call_args.kwargs.get("keep_ratio") == 0.15
+
+
+@pytest.mark.asyncio
 async def test_level1_full_compact():
     """token 数在 70-85% 时,snip + LLM 摘要。"""
     # 96000 > 89600 → level 1; snip 后仍 > 64000 → compact

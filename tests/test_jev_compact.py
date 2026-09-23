@@ -256,6 +256,33 @@ class TestBuildJevState:
         assert "消息编号 19" in state
         assert "消息编号 00" not in state
 
+    def test_budget_selection_is_contiguous_suffix(self):
+        """预算不足时选取必须是从最新往旧的连续后缀,不允许中间挖洞。
+
+        judge 的 keepCall 判断依赖后续上下文(是否被后续调用取代、是否影响后续决策)。
+        单元大小不均时,贪心"装不下就跳过继续装更旧的"会留下
+        "旧的在场、中间缺席"的时间空洞 — 此用例专门钉死该行为。
+        """
+        msgs = [
+            _make_user_msg("旧的小消息 " + "x" * 20),
+            _make_user_msg("中间的大消息 " + "y" * 400),
+            _make_user_msg("新的中消息 " + "z" * 80),
+        ]
+        # 预算约容纳两条小/中消息:贪心挖洞时会出现 old=在 mid=不在
+        state, _ = build_jev_state(msgs, [], max_tokens=220, max_tool_input=500)
+
+        in_old = "旧的小消息" in state
+        in_mid = "中间的大消息" in state
+        in_new = "新的中消息" in state
+
+        assert in_new, "最新内容必须优先入选"
+        assert not (in_old and not in_mid), (
+            f"时间空洞: 旧的在场而中间缺席 (old={in_old}, mid={in_mid}, new={in_new})"
+        )
+        assert not (in_mid and not in_new), (
+            f"时间空洞: 中间在场而最新缺席 (old={in_old}, mid={in_mid}, new={in_new})"
+        )
+
     def test_pair_labels_are_atomic(self):
         """[tool_call #N] 与 [tool_result #N] 同进同出,不出现半截配对。"""
         session = _make_session_with_tool_calls()
@@ -630,7 +657,7 @@ class TestThresholdPolicy:
         config = JevCompactConfig()
         assert config.keep_call_threshold == 0.3
         assert config.keep_result_threshold == 0.7
-        assert config.keep_result_threshold_irreplaceable == 0.3
+        assert config.keep_result_threshold_irreplaceable == 0.5
         assert config.keep_result_threshold_irreplaceable < config.keep_result_threshold
 
     def test_ambiguous_call_is_kept_not_deleted(self):
@@ -652,7 +679,10 @@ class TestThresholdPolicy:
             assert "结果已省略" in tm.content
 
     def test_irreplaceable_result_kept_at_lower_threshold(self):
-        """不可再生结果 keep_result=0.5(<0.7 但 >=0.3)必须保全文。"""
+        """不可再生结果 keep_result=0.5(不确定带 [0.5, 0.7),低于 0.7)必须保全文。
+
+        阈值若高于 0.5,此处会被 stub — 多媒体/不可重跑结果即永久丢失。
+        """
         msgs = [
             _make_user_msg("看下截图"),
             _make_ai_msg(tool_calls=[_make_tc("ReadMedia", "tc_m")]),

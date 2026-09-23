@@ -1565,13 +1565,17 @@ class Session:
         )
         return True
 
-    async def maybe_compact(self, config: AppConfig) -> bool:
+    async def maybe_compact(self, config: AppConfig, force: bool = False) -> bool:
         """根据上下文长度阈值判断是否需要执行消息压缩。
 
         三级压缩策略:
         - level 0 (50%): 仅微压缩(清空旧工具结果)
         - level 1 (70%): Jev 智能压缩(优先),失败则回退 LLM 摘要
         - level 2 (85%): 更激进的 Jev/LLM 压缩
+
+        force=True 时忽略压力等级门槛,强制走完整压缩链(微压缩 + Jev + LLM 摘要兜底)。
+        供 CONTEXT_OVERFLOW 重试路径使用 — estimate_tokens 是估算值,可能低于
+        API 真实计数,已确认溢出时不能只凭估算值决定压不压。
 
         压缩前预警:每跨过一个压力阈值,在其 *_COMPACT_WARN_FACTOR 比例处通过
         wake_agent 注入一次"写遗言"提示,让 LLM 在压缩发生前把关键信息存入会话笔记。
@@ -1605,21 +1609,29 @@ class Session:
 
         level = await get_pressure_level(current_tokens, model)
 
-        if level < 0:
+        if level < 0 and not force:
             return False
 
         # level 0+: 微压缩 — 清空可再生工具结果
         self.snip_old_tool_results()
-        if self.estimate_tokens(model) <= limit * PRESSURE_LEVELS[-1][0]:
+        if not force and self.estimate_tokens(model) <= limit * PRESSURE_LEVELS[-1][0]:
             return True
 
-        # level 1+: 尝试 Jev 智能压缩,失败则回退 LLM 摘要
+        # level 0 到此为止,深度压缩只在 level 1+ 触发:
+        # Jev 保守保留(文本消息全保留/fail-safe 全留)常落在 (50%, 70%],
+        # 若 level 0 也深度压缩,每轮工具循环都会重复触发(Jev 调用 + 净增一对
+        # 摘要消息)却始终压不回 50% 以下,token 不降反升。
+        if level < 1 and not force:
+            return True
+
+        # level 1+ / force: 尝试 Jev 智能压缩,失败则回退 LLM 摘要
         await self.smart_compact(config, keep_ratio=0.3)
 
-        if self.estimate_tokens(model) <= limit * PRESSURE_LEVELS[1][0]:
+        if not force and self.estimate_tokens(model) <= limit * PRESSURE_LEVELS[1][0]:
             return True
 
-        # level 2: LLM 摘要(确定性压缩,保证释放空间)
+        # 仍超阈值(或 force): LLM 摘要兜底(确定性压缩,保证释放空间)—
+        # Jev 不动文本消息,文本为主的会话可能压不动,不能就此收手
         await self.compact(config, keep_ratio=0.15)
 
         return True

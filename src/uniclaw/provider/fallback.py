@@ -111,7 +111,8 @@ def chat(
                     last_error = e
                     break
                 if cat == ErrorCategory.CONTEXT_OVERFLOW:
-                    _run_async(session.maybe_compact(config))
+                    # force:已确认溢出,估算值不可信,强制走完整压缩链
+                    _run_async(session.maybe_compact(config, force=True))
                 delay = get_backoff_delay(cat, attempt + 1)
                 if delay > 0:
                     time.sleep(delay)
@@ -194,7 +195,8 @@ async def achat(
                     last_error = e
                     break
                 if cat == ErrorCategory.CONTEXT_OVERFLOW:
-                    await session.maybe_compact(config)
+                    # force:已确认溢出,估算值不可信,强制走完整压缩链
+                    await session.maybe_compact(config, force=True)
                 delay = get_backoff_delay(cat, attempt + 1)
                 if delay > 0:
                     await asyncio.sleep(delay)
