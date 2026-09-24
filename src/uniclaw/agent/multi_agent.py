@@ -15,7 +15,7 @@ from uniclaw.tools.registry import search_tools
 from uniclaw.utils.constants import SYSTEM_PREFIX, TOOL_ERROR
 from uniclaw.provider import astream
 from uniclaw.provider.error_classifier import is_network_or_provider_error
-from uniclaw.tools.session.session import StreamChunk
+from uniclaw.tools.session.session import StreamChunk, maybe_time_notice
 from uniclaw.tools import get_core_tools, get_tools
 from uniclaw.utils.message import MessageRole, extract_text
 from dataclasses import dataclass, field
@@ -664,7 +664,9 @@ class MultiAgent:
                         AgentStatus.RUNNING,
                         AgentStatus.PENDING,
                     ):
-                        await self.send_event_to_user(EndEvent(depth=0), config.parent_config)
+                        await self.send_event_to_user(
+                            EndEvent(depth=0), config.parent_config
+                        )
                 if task.worktree_path:
                     try:
                         await remove_worktree(
@@ -738,6 +740,11 @@ class MultiAgent:
                 config=config,
                 task=task,
             )
+        # 时间感知: 与上次真实用户发言间隔过久或跨天时,先注入当前时间告知
+        notice = maybe_time_notice(task.session)
+        if notice:
+            task.session.add_message(MessageRole.USER, notice)
+            await self.send_event_to_user(UserEvent(notice), config)
         task.session.add_message(MessageRole.USER, user_message)
         await self.send_event_to_user(UserEvent(user_message), config)
         return True

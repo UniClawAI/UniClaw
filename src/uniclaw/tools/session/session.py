@@ -5,7 +5,7 @@ import hashlib
 import logging
 import numpy as np
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import StrEnum
 import json
 from pathlib import Path
@@ -13,6 +13,7 @@ from typing import Any, TYPE_CHECKING
 import uuid
 
 logger = logging.getLogger("session")
+from uniclaw.utils.constants import SYSTEM_PREFIX
 from uniclaw.utils.message import MessageRole
 from uniclaw.utils.tokens import get_encoder, count_tokens
 from uniclaw.provider.types import Usage
@@ -704,16 +705,110 @@ class SessionType(StrEnum):
 _UNSET = object()
 
 
+# ── 时间感知 ──────────────────────────────────────────────
+
+# 与上次真实用户发言的间隔达到该阈值时,注入当前时间告知
+TIME_NOTICE_GAP = timedelta(hours=1)
+
+_WEEKDAY_CN = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")
+
+
+def _normalize_datetime(value: Any) -> datetime | None:
+    """把 created_at 归一化为 datetime,无法识别返回 None。"""
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError:
+            return None
+    return None
+
+
+def get_last_user_spoke_at(session: Session) -> datetime | None:
+    """返回最近一条真实用户发言的时间,跳过 [system] 注入消息。
+
+    找到真实用户消息但其时间戳缺失或非法时返回 None —
+    无法判断间隔时宁可不注入,也不误报。
+
+    Args:
+        session: 当前会话,从 _messages 末尾向前扫描。
+
+    Returns:
+        datetime | None: 最近真实用户发言的时刻;无真实用户发言时返回 None。
+    """
+    for message in reversed(session._messages):
+        if not isinstance(message, UserMessage):
+            continue
+        if message.to_content().strip().startswith(SYSTEM_PREFIX):
+            continue
+        return _normalize_datetime(message.created_at)
+    return None
+
+
+def _format_gap(delta: timedelta) -> str:
+    """把时间间隔格式化为 "X 天 X 小时 X 分" (零值部分省略)。"""
+    total_minutes = max(0, int(delta.total_seconds() // 60))
+    if total_minutes < 1:
+        return "不足 1 分"
+    days, rem = divmod(total_minutes, 24 * 60)
+    hours, minutes = divmod(rem, 60)
+    parts = []
+    if days:
+        parts.append(f"{days} 天")
+    if hours:
+        parts.append(f"{hours} 小时")
+    if minutes:
+        parts.append(f"{minutes} 分")
+    return " ".join(parts)
+
+
+def maybe_time_notice(session: Session, now: datetime | None = None) -> str | None:
+    """长时间未对话或跨天后,生成时间告知文本;无需注入时返回 None。
+
+    标记"对话断档后重开":仅在新一轮 run 入口 (_run_init) 调用 —
+    运行中插话 (drain_user_queue) 时上下文仍在持续更新,无需告知。
+    触发条件:距上次真实用户发言 >= TIME_NOTICE_GAP,或已跨自然日。
+
+    Args:
+        session: 当前会话,扫描其中最近的真实用户发言时间。
+        now: 当前时刻,默认 datetime.now()。测试可注入固定值。
+
+    Returns:
+        str | None: 以 SYSTEM_PREFIX 开头的时间告知文本;不需注入时返回 None。
+    """
+    now = now or datetime.now()
+    last = get_last_user_spoke_at(session)
+    if last is None:
+        return None
+    gap = now - last
+    crossed_day = now.date() != last.date()
+    if gap < TIME_NOTICE_GAP and not crossed_day:
+        return None
+    weekday = _WEEKDAY_CN[now.weekday()]
+    line = (
+        f"{SYSTEM_PREFIX}(时间)当前时间:{now.strftime('%Y-%m-%d %H:%M')} {weekday};"
+        f"距上次用户发言已过 {_format_gap(gap)}"
+    )
+    if crossed_day:
+        line += "(已跨天)"
+    return line + "。"
+
+
 @dataclass
 class SessionNote:
     """会话笔记 — 单条笔记条目,随会话持久化,压缩时摘要注入。"""
 
-    name: str          # 唯一标识,简短名称
-    description: str   # 一句话摘要
-    content: str       # 完整内容
+    name: str  # 唯一标识,简短名称
+    description: str  # 一句话摘要
+    content: str  # 完整内容
 
     def to_dict(self) -> dict:
-        return {"name": self.name, "description": self.description, "content": self.content}
+        return {
+            "name": self.name,
+            "description": self.description,
+            "content": self.content,
+        }
 
     @classmethod
     def from_dict(cls, data: dict) -> "SessionNote":
@@ -760,7 +855,6 @@ class Session:
         browser_get_attribute,
         browser_get_elements,
         browser_get_url,
-        
         browser_get_title,
         browser_get_value,
         browser_get_count,
@@ -956,7 +1050,9 @@ class Session:
             role = message.get("role")
             ca = BaseMessage._parse_created_at(message)
             if role == MessageRole.USER:
-                session.add_user_message(content=message.get("content", ""), created_at=ca)
+                session.add_user_message(
+                    content=message.get("content", ""), created_at=ca
+                )
             elif role == MessageRole.ASSISTANT:
                 session.add_assistant_message(
                     content=message.get("content", ""),
@@ -1114,10 +1210,15 @@ class Session:
                 parts.append(s)
         return "\n".join(parts)
 
-    def add_user_message(self, content: str | list[dict, Any], created_at: datetime | None = _UNSET) -> None:
+    def add_user_message(
+        self, content: str | list[dict, Any], created_at: datetime | None = _UNSET
+    ) -> None:
         if isinstance(content, list) and content and isinstance(content[0], dict):
             content = [MultimodalBlock.from_dict(block) for block in content]
-        user_message = UserMessage(content=content, created_at=created_at if created_at is not _UNSET else datetime.now())
+        user_message = UserMessage(
+            content=content,
+            created_at=created_at if created_at is not _UNSET else datetime.now(),
+        )
         self._messages.append(user_message)
         self.history.append(user_message)
 
@@ -1205,6 +1306,7 @@ class Session:
             title = resp.content.strip()
         except Exception as e:
             from uniclaw.console.ui import warn
+
             await warn(f"LLM 生成标题失败,使用回退方案: {e}", config)
             title = self._fallback_title()
 
@@ -1393,6 +1495,7 @@ class Session:
             )
         except Exception as e:
             from uniclaw.console.ui import warn
+
             await warn(f"对话压缩失败,保留原消息: {e}", config)
             return
         finally:
@@ -1400,6 +1503,7 @@ class Session:
 
         if not resp.content or not resp.content.strip():
             from uniclaw.console.ui import warn
+
             await warn("对话压缩返回空摘要,保留原消息", config)
             return
 
@@ -1599,9 +1703,7 @@ class Session:
         for threshold, level in PRESSURE_LEVELS:
             if level < _WARN_LEVEL_MIN:
                 continue
-            upper = next(
-                (t for t, lv in PRESSURE_LEVELS if lv == level + 1), 1.0
-            )
+            upper = next((t for t, lv in PRESSURE_LEVELS if lv == level + 1), 1.0)
             warn_at = min(threshold, upper) * _COMPACT_WARN_FACTOR
             if ratio >= warn_at and level not in self._compact_warned_levels:
                 self._compact_warned_levels.add(level)
@@ -1636,7 +1738,9 @@ class Session:
 
         return True
 
-    async def _notify_compact_warning(self, config: AppConfig, threshold: float) -> None:
+    async def _notify_compact_warning(
+        self, config: AppConfig, threshold: float
+    ) -> None:
         """通过 wake_agent 注入压缩前"写遗言"提示。
 
         压缩可能由后台任务触发,当前 agent 可能不在运行,因此走统一唤醒通道:
@@ -1658,6 +1762,7 @@ class Session:
             await wake_agent(message, config)
         except Exception as e:
             from uniclaw.console.ui import warn
+
             await warn(f"注入压缩预警失败: {e}", config)
 
     def build_context_summary(
