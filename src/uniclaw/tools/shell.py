@@ -610,17 +610,16 @@ async def search_files_with_everything(
         >>> result = search_files_with_everything("test_*.py", max_results=20, path_filter="./tests")
     """
 
-    # 构建带参数的完整搜索命令
-    search_cmd = "es"
-
+    # argv 直传 es.exe,不经 shell 解释,query/path_filter 中的引号、& 等不会被拼进命令行
+    args = ["es"]
     if path_filter:
-        search_cmd += f' -path "{path_filter}"'
+        args += ["-path", path_filter]
     if max_results:
-        search_cmd += f" -n {max_results}"
-    search_cmd += f' "{query}"'
+        args += ["-n", str(max_results)]
+    args.append(query)
 
-    proc = await asyncio.create_subprocess_shell(
-        search_cmd,
+    proc = await asyncio.create_subprocess_exec(
+        *args,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )

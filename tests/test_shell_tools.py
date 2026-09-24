@@ -406,29 +406,38 @@ class TestEverything:
         return proc
 
     @pytest.mark.asyncio
-    @patch("uniclaw.tools.shell.asyncio.create_subprocess_shell", new_callable=AsyncMock)
-    async def test_basic(self, mock_shell):
+    @patch("uniclaw.tools.shell.asyncio.create_subprocess_exec", new_callable=AsyncMock)
+    async def test_basic(self, mock_exec):
         """基本搜索。"""
-        mock_shell.return_value = self._make_proc(stdout=b"output")
+        mock_exec.return_value = self._make_proc(stdout=b"output")
         result = await search_files_with_everything("readme")
         assert result == "output"
-        assert mock_shell.await_args.args[0] == 'es "readme"'
+        assert mock_exec.await_args.args == ("es", "readme")
 
     @pytest.mark.asyncio
-    @patch("uniclaw.tools.shell.asyncio.create_subprocess_shell", new_callable=AsyncMock)
-    async def test_path_filter(self, mock_shell):
+    @patch("uniclaw.tools.shell.asyncio.create_subprocess_exec", new_callable=AsyncMock)
+    async def test_path_filter(self, mock_exec):
         """路径过滤。"""
-        mock_shell.return_value = self._make_proc()
+        mock_exec.return_value = self._make_proc()
         await search_files_with_everything("config", path_filter="D:/Projects")
-        assert mock_shell.await_args.args[0] == 'es -path "D:/Projects" "config"'
+        assert mock_exec.await_args.args == ("es", "-path", "D:/Projects", "config")
 
     @pytest.mark.asyncio
-    @patch("uniclaw.tools.shell.asyncio.create_subprocess_shell", new_callable=AsyncMock)
-    async def test_max_results(self, mock_shell):
+    @patch("uniclaw.tools.shell.asyncio.create_subprocess_exec", new_callable=AsyncMock)
+    async def test_max_results(self, mock_exec):
         """限制结果数。"""
-        mock_shell.return_value = self._make_proc()
+        mock_exec.return_value = self._make_proc()
         await search_files_with_everything("*.py", max_results=10)
-        assert mock_shell.await_args.args[0] == 'es -n 10 "*.py"'
+        assert mock_exec.await_args.args == ("es", "-n", "10", "*.py")
+
+    @pytest.mark.asyncio
+    @patch("uniclaw.tools.shell.asyncio.create_subprocess_exec", new_callable=AsyncMock)
+    async def test_metachars_not_shell_interpreted(self, mock_exec):
+        """query/path_filter 含引号与 shell 元字符时按单参数透传,不会拼进命令行。"""
+        mock_exec.return_value = self._make_proc()
+        evil = 'x" & del C:\\Windows\\a.txt & echo "'
+        await search_files_with_everything(evil, path_filter=evil)
+        assert mock_exec.await_args.args == ("es", "-path", evil, evil)
 
     @pytest.mark.asyncio
     @patch("uniclaw.tools.shell.asyncio.create_subprocess_exec", side_effect=FileNotFoundError)
