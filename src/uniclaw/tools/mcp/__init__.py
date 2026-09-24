@@ -3,6 +3,7 @@ import asyncio
 import json
 import httpx
 import threading
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -14,6 +15,7 @@ from uniclaw.utils.constants import TOOL_ERROR
 
 if TYPE_CHECKING:
     from uniclaw.config import AppConfig
+    from uniclaw.tools.base import ToolRuntime
 
 
 @asynccontextmanager
@@ -84,24 +86,183 @@ async def _connect_mcp(connection: dict):
         raise ValueError(f"不支持的传输类型: {transport}")
 
 
-def _make_mcp_caller(server_name: str, tool_name: str, connection: dict):
-    """创建 MCP 工具的异步调用闭包。每次调用时建立连接、执行、断开。"""
+# 持久会话闲置回收阈值(秒):超过该时长无调用即回收连接。
+# 只按闲置判定,不查磁盘 — 会话可能尚未落盘(首轮未保存/A2A 内存态),
+# 按磁盘存在性判定会误杀活跃连接、丢失有状态 server 的登录态。
+# 会话显式删除由 SessionManager.delete_session 走 close_session_persistent_sessions。
+PERSISTENT_SESSION_IDLE_TIMEOUT = 1800
 
-    async def _call(**kwargs) -> str:
+
+class _PersistentSession:
+    """持久化 MCP 会话:连接由独立后台任务持有,跨工具调用复用。
+
+    仅当 mcp.json 中该 server 配置了 "persistent": true 时使用。
+    连接的建立/销毁都在同一个后台任务内完成,规避 anyio cancel scope 跨任务问题。
+    """
+
+    def __init__(self, server_name: str, connection: dict):
+        self._server_name = server_name
+        self._connection = connection
+        self._session = None
+        self._init_error: Exception | None = None
+        self._task: asyncio.Task | None = None
+        self._close_signal: asyncio.Event | None = None
+        self._ready: asyncio.Event | None = None
+        self._lock = asyncio.Lock()
+        self._last_used: float = time.monotonic()
+        self._in_flight: int = 0
+
+    def _is_alive(self) -> bool:
+        """连接已建立且持有任务仍在运行。"""
+        return (
+            self._session is not None and self._task is not None and not self._task.done()
+        )
+
+    @property
+    def is_busy(self) -> bool:
+        """是否有调用正在进行中。"""
+        return self._in_flight > 0
+
+    @property
+    def idle_seconds(self) -> float:
+        return time.monotonic() - self._last_used
+
+    async def get_session(self):
+        """获取活跃的 ClientSession,必要时建立连接。"""
+        if self._is_alive():
+            self._last_used = time.monotonic()
+            return self._session
+
+        async with self._lock:
+            if self._is_alive():
+                self._last_used = time.monotonic()
+                return self._session
+
+            if self._task is not None and not self._task.done() and self._ready is not None:
+                # 建连进行中:复用同一 ready 等待,避免并发冷启动互相拆台
+                ready = self._ready
+            else:
+                await self._cleanup()
+                self._init_error = None
+                ready = asyncio.Event()
+                self._ready = ready
+                self._close_signal = asyncio.Event()
+                self._task = asyncio.create_task(
+                    self._runner(ready),
+                    name=f"mcp-persistent-{self._server_name}",
+                )
+
+        await ready.wait()
+        self._last_used = time.monotonic()
+        if self._session is None:
+            raise self._init_error or RuntimeError(
+                f"MCP 持久会话 '{self._server_name}' 启动失败"
+            )
+        return self._session
+
+    async def _runner(self, ready: asyncio.Event):
+        """持有连接的后台任务:建连 -> 等待关闭信号 -> 在同一任务内销毁。"""
+        from mcp import ClientSession
+
+        close_signal = self._close_signal
+        try:
+            async with _connect_mcp(self._connection) as (read, write):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    self._session = session
+                    ready.set()
+                    await close_signal.wait()
+        except Exception as e:
+            self._init_error = e
+        finally:
+            self._session = None
+            ready.set()  # 确保等待者不被挂起
+
+    async def call_tool(self, tool_name: str, arguments: dict):
+        self._in_flight += 1
+        self._last_used = time.monotonic()
+        try:
+            session = await self.get_session()
+            try:
+                return await session.call_tool(tool_name, arguments=arguments)
+            except Exception:
+                # 连接可能已失效,废弃会话让下次重建;不自动重试,避免副作用工具重复执行
+                await self.close()
+                raise
+        finally:
+            self._in_flight -= 1
+            self._last_used = time.monotonic()
+
+    async def close(self):
+        async with self._lock:
+            await self._cleanup()
+
+    async def _cleanup(self):
+        if self._close_signal is not None:
+            self._close_signal.set()
+        if self._task is not None:
+            try:
+                await asyncio.wait_for(self._task, timeout=5)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                self._task.cancel()
+                try:
+                    await self._task
+                except (asyncio.CancelledError, Exception):
+                    pass
+            except Exception:
+                pass
+            self._task = None
+        self._session = None
+        self._close_signal = None
+        self._ready = None
+
+
+def _get_session_key(tool_runtime: ToolRuntime | None) -> str:
+    """从 tool_runtime 提取会话级 key:沿 parent_config 链取根会话 ID。
+
+    同一对话的主/子代理共享同一 key,跨对话隔离。
+    """
+    if tool_runtime is None or tool_runtime.config is None:
+        return "_default"
+    cfg = tool_runtime.config
+    while cfg.parent_config is not None:
+        cfg = cfg.parent_config
+    agent = cfg.current_agent
+    if agent is not None and agent.session.id:
+        return agent.session.id
+    return f"_cfg_{id(cfg)}"
+
+
+def _make_mcp_caller(server_name: str, tool_name: str, connection: dict):
+    """创建 MCP 工具的异步调用闭包。
+
+    默认每次调用时建立连接、执行、断开。
+    当 connection 配置了 "persistent": true 时,复用持久会话(按会话隔离)。
+    """
+    is_persistent = connection.get("persistent", False)
+
+    async def _call(tool_runtime: ToolRuntime | None = None, **kwargs) -> str:
         from mcp import ClientSession
 
         try:
-            async with _connect_mcp(connection) as (read, write):
-                async with ClientSession(read, write) as session:
-                    await session.initialize()
-                    result = await session.call_tool(tool_name, arguments=kwargs)
-                    parts = []
-                    for block in result.content:
-                        if hasattr(block, "text"):
-                            parts.append(block.text)
-                        else:
-                            parts.append(str(block))
-                    return "\n".join(parts) if parts else "(无输出)"
+            if is_persistent:
+                session_key = _get_session_key(tool_runtime)
+                ps = MCPManager.get_instance().get_persistent_session(
+                    session_key, server_name, connection
+                )
+                result = await ps.call_tool(tool_name, arguments=kwargs)
+            else:
+                async with _connect_mcp(connection) as (read, write):
+                    async with ClientSession(read, write) as session:
+                        await session.initialize()
+                        result = await session.call_tool(tool_name, arguments=kwargs)
+            parts = []
+            for block in result.content:
+                if hasattr(block, "text"):
+                    parts.append(block.text)
+                else:
+                    parts.append(str(block))
+            return "\n".join(parts) if parts else "(无输出)"
         except Exception as e:
             return f"{TOOL_ERROR}: {e}"
 
@@ -164,6 +325,8 @@ class MCPManager:
         self._registered_mcp_names: set[str] = (
             set()
         )  # 已注册到 ToolRegistry 的 MCP 工具名
+        self._persistent_sessions: dict[tuple[str, str], _PersistentSession] = {}
+        self._last_orphan_sweep: float = 0.0
 
     @classmethod
     def get_instance(cls) -> "MCPManager":
@@ -240,6 +403,7 @@ class MCPManager:
             return False
         del self._config["servers"][name]
         await self.save_config()
+        await self.close_server_persistent_sessions(name)
         await self.refresh(config)
         return True
 
@@ -253,6 +417,7 @@ class MCPManager:
         connection["enabled"] = old.get("enabled", True)
         self._config["servers"][name] = connection
         await self.save_config()
+        await self.close_server_persistent_sessions(name)  # 连接配置可能已变,强制重建
         await self.refresh(config)
         return True
 
@@ -264,6 +429,8 @@ class MCPManager:
             return False
         self._config["servers"][name]["enabled"] = enabled
         await self.save_config()
+        if not enabled:
+            await self.close_server_persistent_sessions(name)
         await self.refresh(config)
         return True
 
@@ -309,6 +476,67 @@ class MCPManager:
         self._client = True
         return self._client
 
+    def get_persistent_session(
+        self, session_key: str, server_name: str, connection: dict
+    ) -> _PersistentSession:
+        """获取(或创建)指定 (会话, server) 的持久会话包装器。"""
+        self._schedule_orphan_sweep()
+        key = (session_key, server_name)
+        if key not in self._persistent_sessions:
+            self._persistent_sessions[key] = _PersistentSession(server_name, connection)
+        return self._persistent_sessions[key]
+
+    def _schedule_orphan_sweep(self):
+        """节流调度闲置持久连接回收,不阻塞调用方。"""
+        now = time.monotonic()
+        if now - self._last_orphan_sweep < 60:
+            return
+        self._last_orphan_sweep = now
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(self.sweep_orphaned_persistent_sessions())
+        except RuntimeError:
+            pass
+
+    async def sweep_orphaned_persistent_sessions(self):
+        """回收长期闲置的持久连接(兜底;会话显式删除由 delete_session 清理)。
+
+        只按闲置时间判定,不查磁盘:首轮会话尚未落盘、A2A 会话永不落盘,
+        用 load_session 判存活会把仍在使用的连接当孤儿杀掉。
+        """
+        if not self._persistent_sessions:
+            return
+        for key, ps in list(self._persistent_sessions.items()):
+            try:
+                if ps.is_busy or ps.idle_seconds < PERSISTENT_SESSION_IDLE_TIMEOUT:
+                    continue
+                if self._persistent_sessions.get(key) is not ps:
+                    continue
+                self._persistent_sessions.pop(key, None)
+                await ps.close()
+            except Exception:
+                continue
+
+    async def close_server_persistent_sessions(self, server_name: str):
+        """关闭指定 server 在所有会话中的持久连接。"""
+        keys = [k for k in self._persistent_sessions if k[1] == server_name]
+        for key in keys:
+            ps = self._persistent_sessions.pop(key)
+            await ps.close()
+
+    async def close_session_persistent_sessions(self, session_key: str):
+        """关闭指定会话的所有持久连接。"""
+        keys = [k for k in self._persistent_sessions if k[0] == session_key]
+        for key in keys:
+            ps = self._persistent_sessions.pop(key)
+            await ps.close()
+
+    async def close_all_persistent_sessions(self):
+        """关闭所有持久会话。"""
+        for key in list(self._persistent_sessions.keys()):
+            ps = self._persistent_sessions.pop(key)
+            await ps.close()
+
     async def get_mcp_tools(self) -> list:
         if not self._initialized:
             await self.refresh()
@@ -335,6 +563,7 @@ class MCPManager:
 
     async def refresh(self, config: AppConfig | None = None):
         """重新初始化客户端以加载最新配置"""
+        await self.close_all_persistent_sessions()  # 配置可能已变,旧会话作废
         await self.init_client(config)
         # MCP 工具变更后,重新注册到 ToolRegistry 以更新 BM25 索引
         self._reregister_mcp_tools()

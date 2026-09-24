@@ -39,6 +39,7 @@ async def mcp_add_server(
     headers: dict[str, str] | None = None,
     cwd: str | None = None,
     timeout: float | None = None,
+    persistent: bool = False,
     tool_runtime: ToolRuntime = None,
 ) -> str:
     """
@@ -57,6 +58,9 @@ async def mcp_add_server(
         headers: [仅sse/streamable_http] HTTP 请求头字典(dict[str, str])
         cwd: [仅stdio] 工作目录路径(str)
         timeout: [仅sse/streamable_http] 超时时间(float,秒)
+        persistent: 是否启用持久会话(bool)。默认 false,每次工具调用独立建连。
+            设为 true 时连接跨调用复用,适合有状态 server(需先登录再查询等)或
+            stdio 型 server 以避免反复冷启动。副作用工具失败时不会自动重试。
 
     Returns:
         str: 操作结果信息
@@ -86,6 +90,8 @@ async def mcp_add_server(
 
     # 构建连接配置
     connection = {"transport": transport}
+    if persistent:
+        connection["persistent"] = True
 
     if transport == MCPTransport.stdio:
         if not command:
@@ -212,7 +218,9 @@ async def mcp_list_servers(tool_runtime: ToolRuntime = None) -> str:
         else:
             detail = s.get("url", "")
 
-        lines.append(f"  [{status}] {name} ({transport})")
+        persistent = s.get("persistent", False)
+        flag = ",持久会话" if persistent else ""
+        lines.append(f"  [{status}] {name} ({transport}{flag})")
         if detail:
             lines.append(f"    {detail}")
 

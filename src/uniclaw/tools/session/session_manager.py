@@ -89,9 +89,28 @@ class SessionManager:
             if path.exists():
                 path.unlink()
             cls._save_metadata(metadata)
+            cls._cleanup_mcp_persistent(session_id)
             return True
         except OSError:
             return False
+
+    @classmethod
+    def _cleanup_mcp_persistent(cls, session_id: str) -> None:
+        """清理被删除会话的 MCP 持久连接(fire-and-forget,不阻塞删除)。"""
+        try:
+            import asyncio
+
+            from uniclaw.tools.mcp import MCPManager
+
+            loop = asyncio.get_running_loop()
+            loop.create_task(
+                MCPManager.get_instance().close_session_persistent_sessions(session_id)
+            )
+        except RuntimeError:
+            # 无运行中的事件循环(如单测同步调用),跳过清理
+            pass
+        except Exception:
+            pass
 
     @classmethod
     def search_sessions(cls, keyword: str) -> list:
