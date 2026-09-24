@@ -1,12 +1,12 @@
 """
-Docker 沙箱工具全面测试
+Docker 容器工具全面测试
 需要 Docker 环境才能运行
 """
 
 import asyncio
 import pytest
 
-from uniclaw.tools.sandbox.tools import (
+from uniclaw.tools.docker.tools import (
     DockerCreate,
     DockerExec,
     DockerStart,
@@ -21,14 +21,14 @@ from uniclaw.tools.sandbox.tools import (
     get_tools,
     get_all_tools,
 )
-from uniclaw.tools.sandbox.manager import SandboxManager
-from uniclaw.tools.sandbox.models import ContainerInfo, ContainerStatus
+from uniclaw.tools.docker.manager import DockerManager
+from uniclaw.tools.docker.models import ContainerInfo, ContainerStatus
 
 
 def _is_docker_available() -> bool:
     """同步检查 Docker 是否可用"""
     try:
-        manager = SandboxManager.get_instance()
+        manager = DockerManager.get_instance()
         return asyncio.run(manager.check_docker()) is None
     except Exception:
         return False
@@ -64,7 +64,7 @@ class TestDockerCreate:
         """基本创建"""
         result = asyncio.run(DockerCreate.func(image="python:3-slim"))
         assert "创建成功" in result
-        assert "uniclaw-sandbox-" in result
+        assert "uniclaw-docker-" in result
         name = _extract_container_name(result)
         asyncio.run(DockerRemove.func(name=name))
 

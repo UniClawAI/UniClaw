@@ -230,7 +230,7 @@ def is_safe_tool(name: str) -> bool:
     from uniclaw.tools.fs import Read, Glob, ConvertToMarkdown
     from uniclaw.tools.shell import Grep, search_files_with_everything
     from uniclaw.tools.media import ReadMedia
-    from uniclaw.tools.sandbox.tools import (
+    from uniclaw.tools.docker.tools import (
         DockerCreate,
         DockerExec,
         DockerStart,

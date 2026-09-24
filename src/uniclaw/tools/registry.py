@@ -137,7 +137,7 @@ def _build_extended_keywords() -> dict[str, list[str]]:
         clear_llm_safe_prompt,
     )
     from .hooks.tools import hook_docs, hook_read, hook_add, hook_remove
-    from .sandbox.tools import (
+    from .docker.tools import (
         DockerCreate,
         DockerExec,
         DockerStart,
@@ -663,13 +663,11 @@ def _build_extended_keywords() -> dict[str, list[str]]:
         hook_add.name: ["添加钩子", "add hook", "创建钩子", "create hook"],
         hook_remove.name: ["删除钩子", "remove hook", "移除钩子"],
         DockerCreate.name: [
-            "沙箱",
-            "sandbox",
             "Docker",
-            "创建容器",
-            "docker create",
             "容器",
             "container",
+            "创建容器",
+            "docker create",
         ],
         DockerExec.name: [
             "执行命令",
@@ -1516,7 +1514,7 @@ def _build_tool_categories() -> dict[str, str]:
         clear_llm_safe_prompt,
     )
     from .hooks.tools import hook_docs, hook_read, hook_add, hook_remove
-    from .sandbox.tools import (
+    from .docker.tools import (
         DockerCreate,
         DockerExec,
         DockerStart,
@@ -1708,17 +1706,17 @@ def _build_tool_categories() -> dict[str, str]:
         hook_read.name: "Hook管理",
         hook_add.name: "Hook管理",
         hook_remove.name: "Hook管理",
-        DockerCreate.name: "沙箱",
-        DockerExec.name: "沙箱",
-        DockerStart.name: "沙箱",
-        DockerStop.name: "沙箱",
-        DockerRemove.name: "沙箱",
-        DockerList.name: "沙箱",
-        DockerPull.name: "沙箱",
-        DockerSearch.name: "沙箱",
-        DockerImages.name: "沙箱",
-        DockerRemoveImage.name: "沙箱",
-        DockerBuild.name: "沙箱",
+        DockerCreate.name: "Docker",
+        DockerExec.name: "Docker",
+        DockerStart.name: "Docker",
+        DockerStop.name: "Docker",
+        DockerRemove.name: "Docker",
+        DockerList.name: "Docker",
+        DockerPull.name: "Docker",
+        DockerSearch.name: "Docker",
+        DockerImages.name: "Docker",
+        DockerRemoveImage.name: "Docker",
+        DockerBuild.name: "Docker",
         sleep_timer.name: "睡眠/等待",
         wait.name: "睡眠/等待",
         ReadMedia.name: "媒体",

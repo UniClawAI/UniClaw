@@ -1,4 +1,4 @@
-"""Docker 沙箱数据模型。"""
+"""Docker 数据模型。"""
 
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -15,7 +15,7 @@ class ContainerStatus(StrEnum):
 class ContainerInfo:
     """运行中的容器信息。"""
 
-    name: str  # uniclaw-sandbox-<uuid8>
+    name: str  # uniclaw-docker-<uuid8>
     image: str
     network: bool
     volumes: list[str] = field(default_factory=list)  # ["host:container", ...]

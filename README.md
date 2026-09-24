@@ -97,7 +97,7 @@
 
 - Python 3.11 或更高版本
 - uv 包管理器
-- 可选：Docker(用于代码沙箱功能)、Everything(Windows 文件搜索加速)
+- 可选：Docker(用于 Docker 容器工具)、Everything(Windows 文件搜索加速)
 
 ```bash
 # 安装项目依赖
@@ -185,7 +185,7 @@ uv add <package-name>
 uv add --dev <package-name>
 
 # 运行测试
-uv run pytest tests/ -v -m 'not slow' -n auto   # 日常测试(并行,排除 Docker 沙箱等耗时任务)
+uv run pytest tests/ -v -m 'not slow' -n auto   # 日常测试(并行,排除 Docker 测试等耗时任务)
 uv run pytest tests/ -v                          # 全量测试(串行)
 
 # 更新依赖
@@ -1002,7 +1002,7 @@ UniClaw 提供了丰富的内置工具,AI 助手可以自动调用这些工具�
 - **ReadMedia** - 读取媒体文件(图片/音频/视频)并以多模态方式发送给 LLM 进行分析,支持本地路径和网络 URL
 - **GenerateImage** - AI 文生图工具(需配置 `image_model`),支持自定义尺寸(如 `"2K"`, `"1024x1024"`),可保存为文件或直接返回多模态数据供 AI 分析
 
-#### Docker 沙箱工具
+#### Docker 容器工具
 
 完整的 Docker 容器与镜像生命周期管理(需要 Docker 环境)：
 
@@ -1023,7 +1023,7 @@ UniClaw 提供了丰富的内置工具,AI 助手可以自动调用这些工具�
 
 **安全限制：** 默认禁止网络访问、内存限制 256MB、CPU 限制 1 核、禁止提权
 
-> ⚠️ **环境依赖**：Grep 需要 ripgrep 或 grep；search_files_with_everything 需要 Everything (es.exe)；Docker 沙箱工具需要 Docker；IPython 工具需要 `ipykernel`(已包含在项目依赖中)。启动时会自动检测环境,不可用的工具会被禁用并提示原因。
+> ⚠️ **环境依赖**：Grep 需要 ripgrep 或 grep；search_files_with_everything 需要 Everything (es.exe)；Docker 容器工具需要 Docker；IPython 工具需要 `ipykernel`(已包含在项目依赖中)。启动时会自动检测环境,不可用的工具会被禁用并提示原因。
 
 #### IPython 工具
 
@@ -1729,9 +1729,9 @@ UniClaw/
     │   │   ├── m3u8.py     # M3U8/HLS 核心解析引擎(AES-128 解密 + 合并)
     │   │   └── m3u8_tools.py # M3U8 下载工具定义
     │   ├── media.py        # 多媒体(ReadMedia 多模态 + GenerateImage 文生图)
-    │   ├── sandbox/        # 代码沙箱(Docker 容器/镜像管理)
+    │   ├── docker/         # Docker 容器/镜像管理
     │   │   ├── tools.py    # 工具定义(DockerCreate/Exec/Pull/Build 等)
-    │   │   ├── manager.py  # 沙箱管理器(容器生命周期跟踪)
+    │   │   ├── manager.py  # Docker 管理器(容器生命周期跟踪)
     │   │   └── models.py   # 数据模型
     │   ├── plan.py         # 计划模式(enter/exit)
     │   ├── sleep.py        # 异步等待
@@ -1836,7 +1836,7 @@ UniClaw/
   - 基于 BM25 算法搜索,支持中英文关键词 + 语义同义词
   - **LRU + 能量机制**: 每个扩展工具初始 30 点能量,每轮对话 -1,被调用或搜索命中恢复满能量,归零自动卸载;最多同时加载 25 个扩展工具,超出时按 LRU 顺序淘汰能量最低者
   - 搜索结果自动注入到当前任务的可用工具集
-  - 按类别组织: 系统管理、计算机操作、多智能体、任务清单、进程监控、会话管理、定时任务、MCP 管理、安全管理、Hook 管理、沙箱、浏览器、知识图谱、顾问、下载、RAG、IPython、微信、文件、帮助、通知等
+  - 按类别组织: 系统管理、计算机操作、多智能体、任务清单、进程监控、会话管理、定时任务、MCP 管理、安全管理、Hook 管理、Docker、浏览器、知识图谱、顾问、下载、RAG、IPython、微信、文件、帮助、通知等
   - **可用性跟踪**: 各模块 `get_tools()` 检测依赖(Docker/Everything/embedding_model 等),不可用的工具记录到 `config.unavailable_tool_reasons` 并附带原因;`search_tools` 搜索到不可用工具时自动提示"当前不可用(未启用或无权限)"及原因,避免 AI 做无效调用。Jev 相关功能检测 `TYPESAFE_API_KEY` 环境变量
 
 **工作流程**: AI 需要使用非常用工具时 → 调用 `search_tools(query)` → BM25 匹配 → 工具自动加载(若超过上限则淘汰 LRU 端能量最低的工具) → 下一轮即可调用。已加载工具每轮能量-1,被调用/搜索命中恢复满,归零自动卸载。

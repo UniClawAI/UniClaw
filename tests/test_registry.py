@@ -406,7 +406,7 @@ class TestKeywordsCategories:
         """已知类别。"""
         categories = _build_tool_categories()
         assert categories["kg_search"] == "知识图谱"
-        assert categories["DockerCreate"] == "沙箱"
+        assert categories["DockerCreate"] == "Docker"
         assert categories["browser_start"] == "浏览器"
         assert categories["ipython_execute"] == "IPython"
 

@@ -1,4 +1,4 @@
-"""Docker 沙箱工具 — 容器与镜像的完整生命周期管理。"""
+"""Docker 容器工具 — 容器与镜像的完整生命周期管理。"""
 
 import time
 
@@ -60,9 +60,9 @@ async def DockerCreate(
             if ":" not in port:
                 return f"{TOOL_ERROR}: 端口格式错误 '{port}',应为 '主机端口:容器端口'"
 
-    from .manager import SandboxManager
+    from .manager import DockerManager
 
-    manager = SandboxManager.get_instance()
+    manager = DockerManager.get_instance()
     return await manager.create_container(
         image=image.strip(),
         network=network,
@@ -100,9 +100,9 @@ async def DockerExec(
     if not command.strip():
         return f"{TOOL_ERROR}: 命令不能为空"
 
-    from .manager import SandboxManager
+    from .manager import DockerManager
 
-    manager = SandboxManager.get_instance()
+    manager = DockerManager.get_instance()
     return await manager.exec_in_container(
         name=name.strip(),
         command=command.strip(),
@@ -125,9 +125,9 @@ async def DockerStop(name: str) -> str:
     if not name.strip():
         return f"{TOOL_ERROR}: 容器名不能为空"
 
-    from .manager import SandboxManager
+    from .manager import DockerManager
 
-    manager = SandboxManager.get_instance()
+    manager = DockerManager.get_instance()
     return await manager.stop_container(name.strip())
 
 
@@ -145,9 +145,9 @@ async def DockerStart(name: str) -> str:
     if not name.strip():
         return f"{TOOL_ERROR}: 容器名不能为空"
 
-    from .manager import SandboxManager
+    from .manager import DockerManager
 
-    manager = SandboxManager.get_instance()
+    manager = DockerManager.get_instance()
     return await manager.start_container(name.strip())
 
 
@@ -167,9 +167,9 @@ async def DockerRemove(name: str) -> str:
     if not name.strip():
         return f"{TOOL_ERROR}: 容器名不能为空"
 
-    from .manager import SandboxManager
+    from .manager import DockerManager
 
-    manager = SandboxManager.get_instance()
+    manager = DockerManager.get_instance()
     return await manager.remove_container(name.strip())
 
 
@@ -184,9 +184,9 @@ async def DockerList() -> str:
     Returns:
         str: 容器列表
     """
-    from .manager import SandboxManager
+    from .manager import DockerManager
 
-    manager = SandboxManager.get_instance()
+    manager = DockerManager.get_instance()
     return await manager.list_containers()
 
 
@@ -207,9 +207,9 @@ async def DockerPull(image: str) -> str:
     if not image.strip():
         return f"{TOOL_ERROR}: 镜像名不能为空"
 
-    from .manager import SandboxManager
+    from .manager import DockerManager
 
-    manager = SandboxManager.get_instance()
+    manager = DockerManager.get_instance()
     return await manager.pull_image(image.strip())
 
 
@@ -223,9 +223,9 @@ async def DockerImages() -> str:
     Returns:
         str: 镜像列表
     """
-    from .manager import SandboxManager
+    from .manager import DockerManager
 
-    manager = SandboxManager.get_instance()
+    manager = DockerManager.get_instance()
     return await manager.list_images()
 
 
@@ -244,9 +244,9 @@ async def DockerSearch(keyword: str, limit: int = 10) -> str:
     if not keyword.strip():
         return f"{TOOL_ERROR}: 搜索关键词不能为空"
 
-    from .manager import SandboxManager
+    from .manager import DockerManager
 
-    manager = SandboxManager.get_instance()
+    manager = DockerManager.get_instance()
     return await manager.search_image(keyword.strip(), limit=limit)
 
 
@@ -267,9 +267,9 @@ async def DockerRemoveImage(image: str, force: bool = False) -> str:
     if not image.strip():
         return f"{TOOL_ERROR}: 镜像名不能为空"
 
-    from .manager import SandboxManager
+    from .manager import DockerManager
 
-    manager = SandboxManager.get_instance()
+    manager = DockerManager.get_instance()
     return await manager.remove_image(image.strip(), force=force)
 
 
@@ -295,9 +295,9 @@ async def DockerBuild(
     if not tag.strip():
         return f"{TOOL_ERROR}: 镜像标签不能为空"
 
-    from .manager import SandboxManager
+    from .manager import DockerManager
 
-    manager = SandboxManager.get_instance()
+    manager = DockerManager.get_instance()
     return await manager.build_image(
         path=path.strip(),
         tag=tag.strip(),
@@ -323,7 +323,7 @@ _ALL_TOOLS = [
 
 
 async def get_tools(config: AppConfig = None) -> list:
-    """获取沙箱工具列表(根据 Docker 可用性动态返回,带缓存)。"""
+    """获取 Docker 工具列表(根据 Docker 可用性动态返回,带缓存)。"""
     now = time.monotonic()
     if (
         _docker_cache["result"] is not None
@@ -331,9 +331,9 @@ async def get_tools(config: AppConfig = None) -> list:
     ):
         return _docker_cache["result"]
 
-    from .manager import SandboxManager
+    from .manager import DockerManager
 
-    manager = SandboxManager.get_instance()
+    manager = DockerManager.get_instance()
     docker_err = await manager.check_docker()
     if docker_err:
         if config:
@@ -353,5 +353,5 @@ async def get_tools(config: AppConfig = None) -> list:
 
 
 def get_all_tools() -> list:
-    """获取所有沙箱工具(无条件返回)。"""
+    """获取所有 Docker 工具(无条件返回)。"""
     return list(_ALL_TOOLS)

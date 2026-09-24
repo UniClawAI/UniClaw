@@ -93,7 +93,7 @@ async def cmd_doctor(_args: str, config: AppConfig) -> bool:
     # Docker
     async def _docker():
         if not shutil.which("docker"):
-            raise FileNotFoundError("Docker 未安装(沙箱功能不可用)")
+            raise FileNotFoundError("Docker 未安装(Docker 工具不可用)")
         proc = await asyncio.create_subprocess_exec(
             "docker",
             "info",
@@ -102,7 +102,7 @@ async def cmd_doctor(_args: str, config: AppConfig) -> bool:
         )
         await asyncio.wait_for(proc.communicate(), timeout=5)
         if proc.returncode != 0:
-            raise RuntimeError("Docker 未运行(沙箱功能不可用)")
+            raise RuntimeError("Docker 未运行(Docker 工具不可用)")
         return "Docker 运行中"
 
     await _check(_docker())

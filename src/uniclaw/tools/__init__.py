@@ -19,9 +19,9 @@ from .memory.tools import (
     get_all_tools as memory_get_all_tools,
 )
 from .media import get_tools as media_get_tools, get_all_tools as media_get_all_tools
-from .sandbox import (
-    get_tools as sandbox_get_tools,
-    get_all_tools as sandbox_get_all_tools,
+from .docker import (
+    get_tools as docker_get_tools,
+    get_all_tools as docker_get_all_tools,
 )
 from .scheduler.tools import (
     get_tools as scheduler_get_tools,
@@ -157,7 +157,7 @@ async def get_tools(config) -> list:
         *web_browse_get_tools(),
         *memory_get_tools(),
         *media_get_tools(config),
-        *await sandbox_get_tools(config),
+        *await docker_get_tools(config),
         *scheduler_get_tools(),
         sleep_wait,  # wait 子代理可用
         *process_get_tools(),
@@ -218,7 +218,7 @@ async def get_all_tools() -> list:
         *web_browse_get_all_tools(),
         *memory_get_all_tools(),
         *media_get_all_tools(),
-        *sandbox_get_all_tools(),
+        *docker_get_all_tools(),
         *scheduler_get_all_tools(),
         *sleep_get_all_tools(),
         *process_get_all_tools(),

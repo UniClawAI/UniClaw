@@ -1,4 +1,4 @@
-"""Docker 沙箱管理器 — 封装所有 Docker 操作。"""
+"""Docker 容器管理器 — 封装所有 Docker 操作。"""
 
 from __future__ import annotations
 
@@ -15,16 +15,16 @@ from .models import ContainerInfo, ContainerStatus
 logger = logging.getLogger(__name__)
 
 
-class SandboxManager:
-    """Docker 沙箱管理器(单例),管理容器和镜像的完整生命周期。"""
+class DockerManager:
+    """Docker 管理器(单例),管理容器和镜像的完整生命周期。"""
 
-    _instance: "SandboxManager | None" = None
+    _instance: "DockerManager | None" = None
 
     def __init__(self):
         self._containers: dict[str, ContainerInfo] = {}  # name → ContainerInfo
 
     @classmethod
-    def get_instance(cls) -> "SandboxManager":
+    def get_instance(cls) -> "DockerManager":
         if cls._instance is None:
             cls._instance = cls()
         return cls._instance
@@ -87,7 +87,7 @@ class SandboxManager:
                 return f"{TOOL_ERROR}: 拉取镜像 {image} 失败: {stderr.strip()}"
 
         # 生成唯一容器名
-        name = f"uniclaw-sandbox-{uuid.uuid4().hex[:8]}"
+        name = f"uniclaw-docker-{uuid.uuid4().hex[:8]}"
 
         # 构建 docker create 命令
         cmd = ["docker", "create", "--name", name]
