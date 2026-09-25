@@ -20,11 +20,11 @@ class TestMCPTransport:
         assert MCPTransport.stdio == "stdio"
         assert MCPTransport.sse == "sse"
         assert MCPTransport.streamable_http == "streamable_http"
-        assert MCPTransport.websocket == "websocket"
 
     def test_transport_count(self):
-        """共 4 种传输类型。"""
-        assert len(MCPTransport) == 4
+        """共 3 种传输类型(mcp 2.x 已移除 websocket)。"""
+        assert len(MCPTransport) == 3
+        assert not hasattr(MCPTransport, "websocket")
 
 
 class TestMCPToolsRegistration:

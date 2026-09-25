@@ -185,12 +185,11 @@ async def _mcp_interactive_input(config: AppConfig) -> dict | None:
   [1] stdio (本地进程)
   [2] sse (Server-Sent Events)
   [3] streamable_http (HTTP Streamable)
-  [4] websocket (WebSocket)
 
 请输入编号: """
     choice = (await get_input(prompt, config=config)).strip()
 
-    transport_map = {"1": "stdio", "2": "sse", "3": "streamable_http", "4": "websocket"}
+    transport_map = {"1": "stdio", "2": "sse", "3": "streamable_http"}
     transport = transport_map.get(choice)
     if not transport:
         await err("无效选择", config)
@@ -256,13 +255,6 @@ async def _mcp_interactive_input(config: AppConfig) -> dict | None:
                 connection["timeout"] = float(timeout_str)
             except ValueError:
                 pass
-
-    elif transport == "websocket":
-        url = (await get_input("请输入 WebSocket URL: ", config=config)).strip()
-        if not url:
-            await err("URL 不能为空", config)
-            return None
-        connection["url"] = url
 
     return connection
 

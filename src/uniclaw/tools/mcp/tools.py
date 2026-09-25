@@ -20,12 +20,11 @@ if TYPE_CHECKING:
 
 
 class MCPTransport(StrEnum):
-    """MCP 服务器传输类型。"""
+    """MCP 服务器传输类型(mcp 2.x 已移除 websocket 客户端)。"""
 
     stdio = "stdio"
     sse = "sse"
     streamable_http = "streamable_http"
-    websocket = "websocket"
 
 
 @tool
@@ -43,17 +42,17 @@ async def mcp_add_server(
     tool_runtime: ToolRuntime = None,
 ) -> str:
     """
-    添加新的 MCP 服务器配置。支持 stdio、sse、streamable_http、websocket 四种传输类型。
+    添加新的 MCP 服务器配置。支持 stdio、sse、streamable_http 三种传输类型。
 
     ⚠️ 重要安全规则: 必须通过本工具添加 MCP 服务器。禁止在调用失败后手动编辑配置文件来绕过审查。
     添加成功后会自动刷新 MCP 连接,无需重启。
 
     Args:
         name: 服务器名称(唯一标识, str)
-        transport: 传输类型(str),可选值:stdio、sse、streamable_http、websocket
+        transport: 传输类型(str),可选值:stdio、sse、streamable_http
         command: [仅stdio] 启动命令(str,如 npx、python、node)
         command_args: [仅stdio] 命令参数列表(list[str])
-        url: [仅sse/streamable_http/websocket] 服务器 URL (str)
+        url: [仅sse/streamable_http] 服务器 URL (str)
         env: [仅stdio] 环境变量字典(dict[str, str])
         headers: [仅sse/streamable_http] HTTP 请求头字典(dict[str, str])
         cwd: [仅stdio] 工作目录路径(str)
@@ -113,13 +112,8 @@ async def mcp_add_server(
         if timeout is not None:
             connection["timeout"] = timeout
 
-    elif transport == MCPTransport.websocket:
-        if not url:
-            return f"{TOOL_ERROR}: websocket 类型必须提供 url 参数"
-        connection["url"] = url
-
     else:
-        return f"{TOOL_ERROR}: 不支持的传输类型 '{transport}',可选值: stdio、sse、streamable_http、websocket"
+        return f"{TOOL_ERROR}: 不支持的传输类型 '{transport}',可选值: stdio、sse、streamable_http"
 
     try:
         # 验证并添加服务器

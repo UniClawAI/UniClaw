@@ -1,7 +1,7 @@
 """tools/mcp/tools.py 参数校验分支测试。
 
 mock MCPManager,只测工具函数的参数校验与错误信息拼装:
-- mcp_add_server: 重复名/stdio 缺 command/sse 缺 url/websocket 缺 url/成功路径
+- mcp_add_server: 重复名/stdio 缺 command/sse 缺 url/websocket 已移除/成功路径
 - mcp_remove_server / mcp_toggle_server: 不存在/成功
 - mcp_list_servers: 空列表/条目渲染
 """
@@ -98,20 +98,14 @@ class TestAddServer:
         assert connection["headers"] == {"Authorization": "Bearer x"}
         assert connection["timeout"] == 30.0
 
-    async def test_websocket_requires_url(self, manager):
-        result = await mcp_add_server.func(
-            name="ws", transport="websocket", url=None, tool_runtime=ToolRuntime(config=None)
-        )
-        assert TOOL_ERROR in result
-        assert "url" in result
-
-    async def test_websocket_success(self, manager):
+    async def test_websocket_rejected(self, manager):
+        """mcp 2.x 已移除 websocket 客户端,该传输直接拒绝。"""
         result = await mcp_add_server.func(
             name="ws", transport="websocket", url="ws://localhost:9000", tool_runtime=ToolRuntime(config=None)
         )
-        assert "成功" in result
-        connection = manager.add_server.await_args.args[1]
-        assert connection["transport"] == "websocket"
+        assert TOOL_ERROR in result
+        assert "不支持的传输类型" in result
+        manager.add_server.assert_not_called()
 
     async def test_add_failure_returns_error(self, manager):
         manager.add_server.side_effect = ValueError("连接验证失败")
