@@ -45,6 +45,7 @@
 - 💭 **实时反馈**: 显示思考过程、工具调用详情和 Token 使用情况
 - ♾️ **无限上下文**: 双列表存储(活跃上下文 + 完整历史) + 三级自动压缩(50%/70%/85%) + 按需历史召回,对话永不失忆;工具调用消息按内容哈希去重,重复结果自动折叠节省上下文
 - 📝 **会话笔记**: 笔记随会话持久化,压缩时自动注入摘要,避免关键信息丢失;支持增删改查操作
+- 🕐 **时间感知**: 与上次发言间隔超过 1 小时或跨天后继续对话时,自动注入当前时间与间隔提示,帮助 AI 感知对话断档(运行中插话不触发)
 - 📊 **上下文管理**: 自动监控和管理对话上下文长度,三级压力策略自动压缩(50%/70%/85%)
 - 🎯 **目标模式**: 设置目标停止条件,agent 停止时用独立 judge 模型评估是否达成,未达标则自动继续工作
 - 🌐 **平台搜索**: 支持 GitHub/arXiv/Stack Overflow/Hacker News/B站等多平台并发搜索
@@ -60,7 +61,7 @@
 - 🔨 **工具插件锻造**: `/tool-plugin-forge` 技能一键生成工具插件,自动捕获意图 → 检查重名 → 生成代码 → 真实加载验证,支持耗时任务异步唤醒模式
 - 🎯 **技能系统**: 可扩展的技能机制,支持自定义任务模板和工作流
 - 🎨 **主题定制**: 内置 uniclaw-theme 技能,支持自定义 WebUI 主题颜色、字体和样式
-- 🔌 **MCP 集成**: 支持 Model Context Protocol,异步命令管理,可连接多种外部工具服务
+- 🔌 **MCP 集成**: 支持 Model Context Protocol(mcp 2.x),异步命令管理,支持持久会话连接复用和多模态结果,可连接多种外部工具服务
 - 🌉 **A2A 远程代理**: 支持 Agent2Agent 协议,可调用外部 A2A Agent 或将 UniClaw 暴露为 A2A 端点,实现多 Agent 协作
 - ⏱️ **异步等待**: sleep_timer 工具支持延时唤醒,不阻塞主线程
 - 📸 **Git 检查点**: 自动创建 git stash 检查点,支持一键回滚 AI 的文件编辑,智能处理 .gitignore,不污染 git 历史
@@ -1224,7 +1225,10 @@ http_download(
 
 #### MCP 工具 🔌
 
-通过 MCP (Model Context Protocol) 连接外部工具服务,支持 stdio、sse、streamable_http、websocket 四种协议。MCP 命令管理已转换为异步实现,提升响应性能。
+通过 MCP (Model Context Protocol) 连接外部工具服务,支持 stdio、sse、streamable_http 三种协议(基于 mcp 2.x SDK)。MCP 命令管理已转换为异步实现,提升响应性能。
+
+- **持久会话**: 服务器配置 `"persistent": true` 后连接跨工具调用复用,适合有状态服务(需先登录再查询)或 stdio 型服务以避免反复冷启动,闲置 30 分钟自动回收
+- **多模态结果**: MCP 工具返回的图片/音频/视频内容块会自动转换为多模态消息供 AI 直接分析,超大媒体自动降级为文本占位
 
 使用 `/mcp` 命令管理 MCP 服务器：
 
@@ -2126,7 +2130,7 @@ rag_delete_collection(collection="old-docs")
 
 ## 🔌 MCP 集成
 
-UniClaw 支持通过 MCP (Model Context Protocol) 连接外部工具服务,扩展 AI 的能力。
+UniClaw 支持通过 MCP (Model Context Protocol) 连接外部工具服务,扩展 AI 的能力。基于 mcp 2.x SDK 实现。
 
 ### 支持的协议
 
@@ -2135,7 +2139,8 @@ UniClaw 支持通过 MCP (Model Context Protocol) 连接外部工具服务,扩�
 | stdio | 本地进程通信 | 本地工具服务 |
 | sse | Server-Sent Events | 远程 HTTP 服务 |
 | streamable_http | HTTP Streamable | 远程 HTTP 服务 |
-| websocket | WebSocket | 实时双向通信 |
+
+> ⚠️ websocket 传输在 mcp 2.x 中已被移除,不再支持。历史配置中的 websocket 服务器会在连接时报错,请改用上述三种协议之一。
 
 ### 内置 MCP 服务器
 
@@ -2196,6 +2201,8 @@ AI 会自动调用 `mcp_add_server` 工具完成配置,并刷新工具列表。
 | `mcp_toggle_server` | 启用/禁用服务器 | `mcp_toggle_server(name="fs", enabled=False)` |
 | `mcp_list_servers` | 列出所有服务器及其工具 | `mcp_list_servers()` - 返回每个服务器的工具数量和工具描述 |
 
+`mcp_add_server` 可选参数:`env`/`cwd`(stdio 环境变量与工作目录)、`headers`/`timeout`(HTTP 类认证与超时)、`persistent`(是否启用持久会话,见下文)。
+
 **mcp_list_servers 工具输出示例：**
 
 ```
@@ -2231,6 +2238,7 @@ MCP 配置存储在 `~/.UniClaw/mcp.json`：
       "transport": "stdio",
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-filesystem", "D:/code"],
+      "persistent": true,
       "enabled": true
     },
     "remote-api": {
@@ -2261,6 +2269,29 @@ HTTP 类协议通过 `headers` 传递认证信息：
   "timeout": 15
 }
 ```
+
+### 持久会话 🔁
+
+默认情况下每次工具调用都会独立建连、执行、断开。对需要保持登录状态的服务(如先 `login` 再 `query`)或 stdio 型服务(冷启动慢),可在配置中设置 `"persistent": true` 启用持久会话：
+
+- **连接复用**: 同一对话内跨工具调用复用同一连接,主代理与子代理共享
+- **会话隔离**: 不同对话之间相互隔离,各自持有独立连接
+- **自动回收**: 超过 30 分钟无调用自动回收连接;删除会话时同步清理对应持久连接
+- **注意**: 有副作用的工具调用失败时不会自动重试,以免重复执行副作用
+
+### 多模态结果
+
+MCP 工具返回的媒体内容块会被自动转换为 UniClaw 的多模态消息,供 AI 直接分析：
+
+| MCP 内容块 | 转换结果 |
+|-----------|---------|
+| `image` | 图片消息(`image_url` data URI) |
+| `audio` | 音频消息(`input_audio` data URI) |
+| `video` | 视频消息(`video_url` data URI) |
+| `resource` | 文本资源转文本,二进制资源按媒体类型转换 |
+| `resource_link` | 文本占位(显示名称与 MIME 类型) |
+
+> 💡 超出尺寸上限的媒体(图片 20MB / 音频 25MB / 视频 100MB)会降级为文本占位,避免撑爆上下文。
 
 ### 命令参考
 
@@ -2652,7 +2683,8 @@ A:
 1. 检查配置是否正确(URL、命令路径等)
 2. 确认服务器是否正在运行
 3. 检查网络连接和防火墙设置
-4. 查看日志获取详细错误信息
+4. 确认传输类型是 stdio/sse/streamable_http 之一(websocket 已在 mcp 2.x 中移除,不再支持)
+5. 查看日志获取详细错误信息
 
 ### Q: 如何使用斜杠命令？
 
