@@ -740,11 +740,14 @@ class MultiAgent:
                 config=config,
                 task=task,
             )
-        # 时间感知: 与上次真实用户发言间隔过久或跨天时,先注入当前时间告知
-        notice = maybe_time_notice(task.session)
-        if notice:
-            task.session.add_message(MessageRole.USER, notice)
-            await self.send_event_to_user(UserEvent(notice), config)
+        # 时间感知: 与上次真实用户发言间隔过久或跨天时,先注入当前时间告知。
+        # 系统通知唤醒(监控/定时任务等)不算用户开口,不注入
+        is_system_msg = extract_text(user_message).strip().startswith(SYSTEM_PREFIX)
+        if not is_system_msg:
+            notice = maybe_time_notice(task.session)
+            if notice:
+                task.session.add_message(MessageRole.USER, notice)
+                await self.send_event_to_user(UserEvent(notice), config)
         task.session.add_message(MessageRole.USER, user_message)
         await self.send_event_to_user(UserEvent(user_message), config)
         return True
