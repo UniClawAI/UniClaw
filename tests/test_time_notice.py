@@ -62,6 +62,20 @@ class TestGetLastUserSpokeAt:
         session = _session_with_user("hello", (NOW - timedelta(hours=2)).isoformat())
         assert get_last_user_spoke_at(session) == NOW - timedelta(hours=2)
 
+    def test_aware_datetime_normalized(self):
+        """带时区的 datetime 归一化为 naive 本地时间,不再与 now() 相减报错。"""
+        local_tz = datetime.now().astimezone().tzinfo
+        aware = datetime(2026, 9, 24, 12, 0, 0, tzinfo=local_tz)
+        session = _session_with_user("hello", aware)
+        assert get_last_user_spoke_at(session) == datetime(2026, 9, 24, 12, 0, 0)
+
+    def test_aware_iso_string_normalized(self):
+        """ISO 字符串带 UTC 偏移 / Z 后缀,归一化后是 naive 本地时间。"""
+        for raw in ("2026-09-24T07:00:00+00:00", "2026-09-24T07:00:00Z"):
+            session = _session_with_user("hello", raw)
+            got = get_last_user_spoke_at(session)
+            assert got is not None and got.tzinfo is None
+
 
 class TestMaybeTimeNotice:
     def test_no_user_message(self):
@@ -87,6 +101,25 @@ class TestMaybeTimeNotice:
         assert "周四" in notice
         assert "2 小时 15 分" in notice
         assert "已跨天" not in notice
+
+    def test_aware_timestamp_no_crash(self):
+        """created_at 带时区不抛 TypeError,间隔按本地时间正确计算。"""
+        local_tz = datetime.now().astimezone().tzinfo
+        session = _session_with_user(
+            "hello", datetime(2026, 9, 24, 12, 0, 0, tzinfo=local_tz)
+        )
+        notice = maybe_time_notice(session, now=NOW)
+        assert notice is not None
+        assert "3 小时" in notice
+
+    def test_aware_now_parameter(self):
+        """测试注入的 now 带时区时同样归一化,不抛 TypeError。"""
+        local_tz = datetime.now().astimezone().tzinfo
+        session = _session_with_user("hello", NOW - timedelta(hours=2))
+        aware_now = datetime(2026, 9, 24, 15, 0, 0, tzinfo=local_tz)
+        notice = maybe_time_notice(session, now=aware_now)
+        assert notice is not None
+        assert "2 小时" in notice
 
     def test_cross_day_short_gap(self):
         """跨自然日但间隔不足 1 小时 → 仍注入。"""

@@ -714,14 +714,21 @@ _WEEKDAY_CN = ("周一", "周二", "周三", "周四", "周五", "周六", "周�
 
 
 def _normalize_datetime(value: Any) -> datetime | None:
-    """把 created_at 归一化为 datetime,无法识别返回 None。"""
-    if isinstance(value, datetime):
-        return value
+    """把 created_at 归一化为 naive 本地时间 datetime,无法识别返回 None。
+
+    带时区的 ISO 字符串或 datetime 会先换算到本地时区再去掉 tzinfo —
+    maybe_time_notice 用 datetime.now() (naive) 做差,混用 aware 值会抛
+    TypeError: can't subtract offset-naive and offset-aware datetimes。
+    """
     if isinstance(value, str):
         try:
-            return datetime.fromisoformat(value)
+            value = datetime.fromisoformat(value)
         except ValueError:
             return None
+    if isinstance(value, datetime):
+        if value.tzinfo is not None:
+            return value.astimezone().replace(tzinfo=None)
+        return value
     return None
 
 
@@ -777,7 +784,8 @@ def maybe_time_notice(session: Session, now: datetime | None = None) -> str | No
     Returns:
         str | None: 以 SYSTEM_PREFIX 开头的时间告知文本;不需注入时返回 None。
     """
-    now = now or datetime.now()
+    # now 与 last 都归一化为 naive 本地时间,避免 aware/naive 混用相减报错
+    now = _normalize_datetime(now) or datetime.now()
     last = get_last_user_spoke_at(session)
     if last is None:
         return None
