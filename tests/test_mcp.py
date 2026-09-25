@@ -156,3 +156,124 @@ class TestPersistentSession:
         assert ("sess-a", "srv") in mgr._persistent_sessions
         assert ("sess-b", "srv") in mgr._persistent_sessions
         assert ("sess-c", "srv") not in mgr._persistent_sessions
+
+
+class _Blk:
+    """轻量 MCP content 块替身,只带转换函数会读到的字段。"""
+
+    def __init__(self, type, **kw):
+        self.type = type
+        for k, v in kw.items():
+            setattr(self, k, v)
+
+    def __repr__(self):  # pragma: no cover - 用于确认不再走 str() 倾泻
+        return f"<Blk {self.type}>"
+
+
+class TestMcpBlocksToContent:
+    """_mcp_blocks_to_content / _mcp_media_block 的块转换。"""
+
+    def test_pure_text_returns_str(self):
+        """纯文本结果保持 str,不影响既有调用方。"""
+        from uniclaw.tools.mcp import _mcp_blocks_to_content
+
+        out = _mcp_blocks_to_content(
+            [_Blk("text", text="hello"), _Blk("text", text="world")]
+        )
+        assert out == "hello\nworld"
+
+    def test_empty_returns_placeholder(self):
+        from uniclaw.tools.mcp import _mcp_blocks_to_content
+
+        assert _mcp_blocks_to_content([]) == "(无输出)"
+
+    def test_image_becomes_data_uri_block(self):
+        """图片转成 OpenAI image_url 块,data URI 带原始 MIME。"""
+        from uniclaw.tools.mcp import _mcp_blocks_to_content
+
+        out = _mcp_blocks_to_content(
+            [
+                _Blk("text", text="[截图]"),
+                _Blk("image", data="aGVsbG8=", mimeType="image/png"),
+            ]
+        )
+        assert isinstance(out, list)
+        assert out[0] == {"type": "text", "text": "[截图]"}
+        assert out[1] == {
+            "type": "image_url",
+            "image_url": {"url": "data:image/png;base64,aGVsbG8="},
+        }
+
+    def test_audio_block(self):
+        from uniclaw.tools.mcp import _mcp_blocks_to_content
+
+        out = _mcp_blocks_to_content([_Blk("audio", data="QQ==", mimeType="audio/mpeg")])
+        assert out[0]["type"] == "input_audio"
+        assert out[0]["input_audio"]["data"] == "data:audio/mpeg;base64,QQ=="
+
+    def test_video_arrives_as_resource_blob(self):
+        """MCP 无 VideoContent,视频只能以 resource blob 到来,应转成 video_url 块。"""
+        from uniclaw.tools.mcp import _mcp_blocks_to_content
+
+        out = _mcp_blocks_to_content(
+            [
+                _Blk(
+                    "resource",
+                    resource=_Blk("blob", blob="Qg==", mimeType="video/mp4"),
+                )
+            ]
+        )
+        assert out[0]["type"] == "video_url"
+        assert out[0]["video_url"]["url"] == "data:video/mp4;base64,Qg=="
+
+    def test_resource_text_and_blob(self):
+        """EmbeddedResource: 文本资源进 text,图片 blob 进 image_url。"""
+        from uniclaw.tools.mcp import _mcp_blocks_to_content
+
+        out = _mcp_blocks_to_content(
+            [
+                _Blk("resource", resource=_Blk("text", text="resource body")),
+                _Blk(
+                    "resource",
+                    resource=_Blk("blob", blob="aGVsbG8=", mimeType="image/jpeg"),
+                ),
+            ]
+        )
+        assert out[0] == {"type": "text", "text": "resource body"}
+        assert out[1]["image_url"]["url"] == "data:image/jpeg;base64,aGVsbG8="
+
+    def test_resource_link_placeholder(self):
+        from uniclaw.tools.mcp import _mcp_blocks_to_content
+
+        out = _mcp_blocks_to_content(
+            [_Blk("resource_link", name="doc.pdf", uri="file://doc.pdf")]
+        )
+        assert out == "[resource_link: doc.pdf (unknown)]"
+
+    def test_unknown_block_does_not_dump_repr(self):
+        """未知块类型只留类型占位,不把 repr(含 base64)倾泻进上下文。"""
+        from uniclaw.tools.mcp import _mcp_blocks_to_content
+
+        out = _mcp_blocks_to_content([_Blk("weird", data="U0VDUkVU")])
+        assert out == "[weird]"
+        assert "U0VDUkVU" not in out
+
+    def test_oversized_media_degrades_to_text(self):
+        """超限媒体降级为文本占位,避免撑爆上下文。"""
+        from uniclaw.tools.mcp import _mcp_media_block
+
+        # base64 长度 * 3/4 = 原始字节;28MB base64 ≈ 21MB 原始,超过 image 20MB 上限
+        huge = "A" * (28 * 1024 * 1024)
+        blk = _mcp_media_block("image/png", huge)
+        assert blk["type"] == "text"
+        assert "内容过大" in blk["text"]
+
+    def test_media_mixed_returns_list(self):
+        """含媒体块时返回 list,multi_agent 的多模态分支才会触发。"""
+        from uniclaw.tools.mcp import _mcp_blocks_to_content
+
+        out = _mcp_blocks_to_content(
+            [_Blk("image", data="aGVsbG8=", mimeType="image/png")]
+        )
+        assert isinstance(out, list)
+        assert any(b.get("type") in ("image_url", "input_audio", "video_url") for b in out)

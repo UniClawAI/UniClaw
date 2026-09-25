@@ -217,6 +217,90 @@ class _PersistentSession:
         self._ready = None
 
 
+# MCP 媒体块的 base64 尺寸上限(按原始字节估算),对齐 tools/media.py 的 SIZE_LIMITS
+_MM_SIZE_LIMITS = {
+    "image": 20 * 1024 * 1024,
+    "audio": 25 * 1024 * 1024,
+    "video": 100 * 1024 * 1024,
+}
+
+
+def _mcp_media_block(mime_type: str, b64: str) -> dict:
+    """把 MCP 的 base64 媒体数据转成 OpenAI 风格的多模态块。
+
+    与 tools/media.py 的输出形状保持一致(图片走 image_url 的 data URI,
+    音频走 input_audio 的 data URI,视频走 video_url),这样 multi_agent 的
+    多模态分支和 MultimodalBlock.from_dict 都能直接识别。
+
+    超出尺寸上限或 MIME 前缀无法识别时降级为文本占位,避免撑爆上下文。
+    """
+    kind = (mime_type or "").split("/", 1)[0]
+    if not b64 or kind not in _MM_SIZE_LIMITS:
+        return {"type": "text", "text": f"[{mime_type or 'unknown'}: 不支持的媒体内容]"}
+
+    raw_bytes = (len(b64) * 3) // 4
+    if raw_bytes > _MM_SIZE_LIMITS[kind]:
+        return {
+            "type": "text",
+            "text": f"[{mime_type}: 内容过大({raw_bytes // 1024} KB),已省略]",
+        }
+
+    data_uri = f"data:{mime_type};base64,{b64}"
+    if kind == "image":
+        return {"type": "image_url", "image_url": {"url": data_uri}}
+    if kind == "video":
+        return {
+            "type": "video_url",
+            "video_url": {"url": data_uri},
+            "fps": 2,
+            "media_resolution": "default",
+        }
+    return {"type": "input_audio", "input_audio": {"data": data_uri}}
+
+
+def _mcp_blocks_to_content(blocks) -> str | list[dict]:
+    """把 MCP 的 content 块列表转成 UniClaw 工具结果。
+
+    纯文本结果返回 str(保持既有调用方行为);含图片/音频/视频时返回多模态块
+    列表,由 multi_agent 的多模态分支拆成 TOOL 文本 + USER 媒体消息。
+    """
+    parts: list[dict] = []
+    for block in blocks:
+        btype = getattr(block, "type", None)
+        if btype == "text":
+            parts.append({"type": "text", "text": getattr(block, "text", "")})
+        elif btype in ("image", "audio"):
+            parts.append(
+                _mcp_media_block(
+                    getattr(block, "mimeType", "") or "",
+                    getattr(block, "data", "") or "",
+                )
+            )
+        elif btype == "resource":
+            res = getattr(block, "resource", None)
+            text = getattr(res, "text", None)
+            if text is not None:
+                parts.append({"type": "text", "text": text})
+            else:
+                parts.append(
+                    _mcp_media_block(
+                        getattr(res, "mimeType", "") or "",
+                        getattr(res, "blob", "") or "",
+                    )
+                )
+        elif btype == "resource_link":
+            name = getattr(block, "name", "") or getattr(block, "uri", "")
+            mime = getattr(block, "mimeType", "") or "unknown"
+            parts.append({"type": "text", "text": f"[resource_link: {name} ({mime})]"})
+        else:
+            # 未知块类型只留类型占位,避免 pydantic repr 把 base64 原样倾泻进上下文
+            parts.append({"type": "text", "text": f"[{btype or 'unknown'}]"})
+
+    if not any(p.get("type") != "text" for p in parts):
+        return "\n".join(p["text"] for p in parts) if parts else "(无输出)"
+    return parts
+
+
 def _get_session_key(tool_runtime: ToolRuntime | None) -> str:
     """从 tool_runtime 提取会话级 key:沿 parent_config 链取根会话 ID。
 
@@ -241,7 +325,7 @@ def _make_mcp_caller(server_name: str, tool_name: str, connection: dict):
     """
     is_persistent = connection.get("persistent", False)
 
-    async def _call(tool_runtime: ToolRuntime | None = None, **kwargs) -> str:
+    async def _call(tool_runtime: ToolRuntime | None = None, **kwargs) -> str | list:
         from mcp import ClientSession
 
         try:
@@ -256,13 +340,7 @@ def _make_mcp_caller(server_name: str, tool_name: str, connection: dict):
                     async with ClientSession(read, write) as session:
                         await session.initialize()
                         result = await session.call_tool(tool_name, arguments=kwargs)
-            parts = []
-            for block in result.content:
-                if hasattr(block, "text"):
-                    parts.append(block.text)
-                else:
-                    parts.append(str(block))
-            return "\n".join(parts) if parts else "(无输出)"
+            return _mcp_blocks_to_content(result.content)
         except Exception as e:
             return f"{TOOL_ERROR}: {e}"
 
