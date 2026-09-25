@@ -18,11 +18,24 @@ if TYPE_CHECKING:
     from uniclaw.tools.base import ToolRuntime
 
 
+def _flat_error(e: BaseException) -> str:
+    """把异常压平成一行可读文本。
+
+    anyio 的 TaskGroup 失败会包装成 ExceptionGroup,str() 只显示
+    "unhandled errors in a TaskGroup (1 sub-exception)",真实原因藏在
+    子异常里 — 递归展开后拼接,避免报错无法定位。
+    """
+    if isinstance(e, BaseExceptionGroup) and e.exceptions:
+        return "; ".join(_flat_error(sub) for sub in e.exceptions)
+    return str(e) or type(e).__name__
+
+
 @asynccontextmanager
 async def _connect_mcp(connection: dict):
     """根据 transport 类型建立 MCP 连接,统一返回 (read, write) 流。
 
-    支持 stdio / sse / streamable_http / websocket 四种协议。
+    基于 mcp 2.x:支持 stdio / sse / streamable_http 三种传输。
+    mcp 2.x 已移除 websocket 客户端,websocket 配置会直接报错。
     """
     transport = connection.get("transport", "stdio")
 
@@ -66,7 +79,7 @@ async def _connect_mcp(connection: dict):
                 async with streamable_http_client(
                     url=connection["url"],
                     http_client=http_client,
-                ) as (read, write, _get_session_id):
+                ) as (read, write):
                     yield read, write
             except RuntimeError as e:
                 # asyncio.run() 关闭期间, 存活的 async generator 会被强制 aclose,
@@ -77,10 +90,10 @@ async def _connect_mcp(connection: dict):
                 raise
 
     elif transport == "websocket":
-        from mcp.client.websocket import websocket_client
-
-        async with websocket_client(url=connection["url"]) as (read, write):
-            yield read, write
+        raise RuntimeError(
+            "websocket 传输不可用: mcp 2.x 已移除 websocket 客户端,"
+            "请改用 sse 或 streamable_http"
+        )
 
     else:
         raise ValueError(f"不支持的传输类型: {transport}")
@@ -272,7 +285,7 @@ def _mcp_blocks_to_content(blocks) -> str | list[dict]:
         elif btype in ("image", "audio"):
             parts.append(
                 _mcp_media_block(
-                    getattr(block, "mimeType", "") or "",
+                    getattr(block, "mime_type", ""),
                     getattr(block, "data", "") or "",
                 )
             )
@@ -284,13 +297,13 @@ def _mcp_blocks_to_content(blocks) -> str | list[dict]:
             else:
                 parts.append(
                     _mcp_media_block(
-                        getattr(res, "mimeType", "") or "",
+                        getattr(res, "mime_type", ""),
                         getattr(res, "blob", "") or "",
                     )
                 )
         elif btype == "resource_link":
             name = getattr(block, "name", "") or getattr(block, "uri", "")
-            mime = getattr(block, "mimeType", "") or "unknown"
+            mime = getattr(block, "mime_type", "") or "unknown"
             parts.append({"type": "text", "text": f"[resource_link: {name} ({mime})]"})
         else:
             # 未知块类型只留类型占位,避免 pydantic repr 把 base64 原样倾泻进上下文
@@ -342,7 +355,7 @@ def _make_mcp_caller(server_name: str, tool_name: str, connection: dict):
                         result = await session.call_tool(tool_name, arguments=kwargs)
             return _mcp_blocks_to_content(result.content)
         except Exception as e:
-            return f"{TOOL_ERROR}: {e}"
+            return f"{TOOL_ERROR}: {_flat_error(e)}"
 
     _call.__name__ = f"{server_name}_{tool_name}"
     _call.__qualname__ = _call.__name__
@@ -375,7 +388,10 @@ async def _discover_tools_async(server_name: str, connection: dict) -> list[Tool
             tools_result = await session.list_tools()
             for mcp_tool in tools_result.tools:
                 full_name = f"{server_name}_{mcp_tool.name}"
-                schema = mcp_tool.inputSchema or {"type": "object", "properties": {}}
+                schema = getattr(mcp_tool, "input_schema", None) or {
+                    "type": "object",
+                    "properties": {},
+                }
                 caller = _make_mcp_caller(server_name, mcp_tool.name, connection)
                 tools.append(
                     Tool(
@@ -429,7 +445,7 @@ class MCPManager:
                 if "servers" not in self._config:
                     self._config["servers"] = {}
             except (json.JSONDecodeError, IOError) as e:
-                await err(f"加载 MCP 配置失败: {e}", config)
+                await err(f"加载 MCP 配置失败: {e}", config, e=e)
                 self._config = {"servers": {}}
         # exa: 无论文件是首次创建还是已存在, 都确保 URL 带上最新的 API Key
         _ensure_exa_api_key(self._config, config)
@@ -541,11 +557,13 @@ class MCPManager:
                 await ok(
                     f"MCP [{server_name}] 连接成功,发现 {len(tools)} 个工具", config
                 )
-            except asyncio.TimeoutError:
-                await err(f"MCP [{server_name}] 连接超时", config)
+            except asyncio.TimeoutError as e:
+                await err(f"MCP [{server_name}] 连接超时", config, e=e)
                 self.server2tools[server_name] = []
             except Exception as e:
-                await err(f"MCP [{server_name}] 连接失败: {e}", config)
+                await err(
+                    f"MCP [{server_name}] 连接失败: {_flat_error(e)}", config, e=e
+                )
                 self.server2tools[server_name] = []
 
         await asyncio.gather(
@@ -632,11 +650,11 @@ class MCPManager:
             )
             await ok(f"连接验证成功,发现 {len(tools)} 个工具", config)
             return True
-        except asyncio.TimeoutError:
-            await err(f"连接验证超时({timeout}秒)", config)
+        except asyncio.TimeoutError as e:
+            await err(f"连接验证超时({timeout}秒)", config, e=e)
             return False
         except Exception as e:
-            await err(f"连接验证失败: {e}", config)
+            await err(f"连接验证失败: {_flat_error(e)}", config, e=e)
             return False
 
     async def refresh(self, config: AppConfig | None = None):

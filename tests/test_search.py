@@ -63,14 +63,14 @@ def _patch_bilibili(mock_response):
 def _make_mcp_tool(name="search", props=None):
     """构造一个模拟的 MCP 工具对象 (list_tools 返回, 仅需 name 字段)。
 
-    props: 可选的 inputSchema.properties 字典, 供 exa time_range 门控测试使用;
+    props: 可选的 input_schema.properties 字典, 供 exa time_range 门控测试使用;
     不传时保持 MagicMock 默认行为 (迭代为空 -> 视为无属性)。
     """
     tool = MagicMock()
     tool.name = name
     tool.description = "Exa search"
     if props is not None:
-        tool.inputSchema = {"properties": props}
+        tool.input_schema = {"properties": props}
     return tool
 
 
@@ -172,7 +172,7 @@ def _patch_all_with_github(github_mock):
 def _patch_exa_capture(captured, props=None):
     """patch exa MCP 接口并捕获 call_tool 的 arguments 到 captured 字典。
 
-    props: 工具 inputSchema.properties 字典; None 时用 MagicMock 默认行为
+    props: 工具 input_schema.properties 字典; None 时用 MagicMock 默认行为
     (迭代为空 -> 视为 schema 未声明任何属性)。
     """
     server = {

@@ -11,7 +11,7 @@ from enum import StrEnum
 
 from uniclaw.tools.base import tool, ToolRuntime
 from uniclaw.utils.constants import TOOL_ERROR
-from . import MCPManager
+from . import MCPManager, _flat_error
 from uniclaw.console.ui import info, ok
 from typing import TYPE_CHECKING
 
@@ -133,7 +133,7 @@ async def mcp_add_server(
     except ValueError as e:
         return f"{TOOL_ERROR}: {str(e)}"
     except Exception as e:
-        return f"{TOOL_ERROR}: {e}"
+        return f"{TOOL_ERROR}: {_flat_error(e)}"
 
 
 @tool
@@ -158,7 +158,7 @@ async def mcp_remove_server(name: str, tool_runtime: ToolRuntime = None) -> str:
         tools_count = len(await manager.get_mcp_tools())
         return f"成功！已删除服务器 '{name}',当前共加载 {tools_count} 个 MCP 工具"
     except Exception as e:
-        return f"{TOOL_ERROR}: {e}"
+        return f"{TOOL_ERROR}: {_flat_error(e)}"
 
 
 @tool
@@ -185,7 +185,7 @@ async def mcp_toggle_server(name: str, enabled: bool = True, tool_runtime: ToolR
         tools_count = len(await manager.get_mcp_tools())
         return f"成功！已{action}服务器 '{name}',当前共加载 {tools_count} 个 MCP 工具"
     except Exception as e:
-        return f"{TOOL_ERROR}: {e}"
+        return f"{TOOL_ERROR}: {_flat_error(e)}"
 
 
 @tool

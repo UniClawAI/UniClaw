@@ -3,6 +3,7 @@ from __future__ import annotations
 import inspect
 import uuid
 import sys
+import traceback
 from enum import StrEnum
 import threading
 import time
@@ -211,7 +212,19 @@ async def warn(msg: str, config: AppConfig = None):
         print(clr(f"Warning: {msg}", C.YELLOW))
 
 
-async def err(msg: str, config: AppConfig = None):
+async def err(msg: str, config: AppConfig = None, e: Exception = None):
+    """输出错误信息。
+
+    Args:
+        msg: 错误摘要,展示给用户。
+        config: 配置对象,决定输出通道与日志目录。默认 None。
+        e: 异常对象,完整堆栈写入 _log_dir_for 对应的 logs 目录供排查,
+            不展示给用户。默认 None 不写日志。
+    """
+    if e is not None:
+        get_logger("console.ui", config.root_dir if config else None).error(
+            "%s\n%s", msg, "".join(traceback.format_exception(e))
+        )
     cb = _get_callback(config)
     if cb:
         if inspect.iscoroutinefunction(cb):

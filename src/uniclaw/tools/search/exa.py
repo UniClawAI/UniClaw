@@ -301,7 +301,7 @@ async def search(
                 )
             _exa_cache["tool"] = tool_name
             # 记录远端工具 schema 支持的参数名 (小写), 供 time_range 门控
-            schema = getattr(tool_obj, "inputSchema", None) or {}
+            schema = getattr(tool_obj, "input_schema", None) or {}
             _exa_cache["tool_props"] = {
                 p.lower() for p in (schema.get("properties") or {})
             }

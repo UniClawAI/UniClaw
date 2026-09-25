@@ -92,7 +92,7 @@ async def _mcp_list(manager, config: AppConfig) -> bool:
     Returns:
         bool: 始终返回 True
     """
-    servers = await manager.list_servers()
+    servers = await manager.list_servers(config)
     if not servers:
         await warn("暂无 MCP 服务器配置", config)
         await info("使用 /mcp add <名称> 添加服务器", config)
@@ -136,7 +136,7 @@ async def _mcp_add(
         await err("请指定服务器名称: /mcp add <名称> [JSON]", config)
         return True
 
-    if await manager.get_server(name):
+    if await manager.get_server(name, config):
         await err(f"服务器 '{name}' 已存在", config)
         return True
 
@@ -158,14 +158,14 @@ async def _mcp_add(
 
     try:
         await info("正在验证连接...", config)
-        manager.add_server(name, connection)
+        await manager.add_server(name, connection, config=config)
     except ValueError as e:
         await err(str(e), config)
         return False
 
     await ok(f"✓ 已添加 MCP 服务器: {name}", config)
     await info("正在刷新 MCP 工具...", config)
-    manager.refresh()
+    await manager.refresh(config)
     tools_count = len(await manager.get_mcp_tools())
     await ok(f"✓ 已加载 {tools_count} 个 MCP 工具", config)
     return True
@@ -280,7 +280,7 @@ async def _mcp_remove(manager, name: str, config: AppConfig = None) -> bool:
     if not name:
         await err("请指定服务器名称: /mcp remove <名称>", config)
         return True
-    if not await manager.get_server(name):
+    if not await manager.get_server(name, config):
         await err(f"服务器 '{name}' 不存在", config)
         return True
 
@@ -296,9 +296,9 @@ async def _mcp_remove(manager, name: str, config: AppConfig = None) -> bool:
             await info("已取消", config)
             return True
 
-    manager.remove_server(name)
+    await manager.remove_server(name, config)
     await ok(f"✓ 已删除服务器: {name}", config)
-    manager.refresh()
+    await manager.refresh(config)
     return True
 
 
@@ -315,7 +315,7 @@ async def _mcp_show(manager, name: str, config: AppConfig) -> bool:
     if not name:
         await err("请指定服务器名称: /mcp show <名称>", config)
         return True
-    server = await manager.get_server(name)
+    server = await manager.get_server(name, config)
     if not server:
         await err(f"服务器 '{name}' 不存在", config)
         return True
@@ -357,7 +357,7 @@ async def _mcp_edit(
     if not name:
         await err("请指定服务器名称: /mcp edit <名称> [JSON]", config)
         return True
-    server = await manager.get_server(name)
+    server = await manager.get_server(name, config)
     if not server:
         await err(f"服务器 '{name}' 不存在", config)
         return True
@@ -365,10 +365,10 @@ async def _mcp_edit(
     await info(f"正在编辑服务器 '{name}'", config)
     old_connection = {k: v for k, v in server.items() if k not in ("name", "enabled")}
     old_enabled = server.get("enabled", True)
-    manager.remove_server(name)
+    await manager.remove_server(name, config)
 
     try:
-        result = await _mcp_add(manager, name, json_str)
+        result = await _mcp_add(manager, name, json_str, config)
         if not result:
             raise Exception("添加失败")
         return True
@@ -376,8 +376,10 @@ async def _mcp_edit(
         await err(f"MCP 服务器编辑失败,尝试恢复旧配置: {e}", config)
         # 恢复旧配置(跳过验证)
         try:
-            manager.add_server(name, old_connection, old_enabled, skip_validation=True)
-            manager.refresh()
+            await manager.add_server(
+                name, old_connection, old_enabled, skip_validation=True, config=config
+            )
+            await manager.refresh(config)
             await warn("已恢复原配置", config)
         except Exception as e:
             await err(f"恢复原配置失败: {e}", config)
@@ -401,14 +403,14 @@ async def _mcp_toggle(
         cmd = "enable" if enabled else "disable"
         await err(f"请指定服务器名称: /mcp {cmd} <名称>", config)
         return True
-    if not await manager.get_server(name):
+    if not await manager.get_server(name, config):
         await err(f"服务器 '{name}' 不存在", config)
         return True
 
     action = "启用" if enabled else "禁用"
-    manager.toggle_server(name, enabled)
+    await manager.toggle_server(name, enabled, config)
     await ok(f"✓ 已{action}服务器: {name}", config)
-    manager.refresh()
+    await manager.refresh(config)
     return True
 
 
@@ -447,7 +449,7 @@ async def _mcp_refresh(manager, config: AppConfig = None) -> bool:
         bool: 始终返回 True
     """
     await info("正在刷新 MCP 工具...", config)
-    manager.refresh()
+    await manager.refresh(config)
     tools_count = len(await manager.get_mcp_tools())
     await ok(f"✓ 已加载 {tools_count} 个 MCP 工具", config)
     return True
