@@ -5,6 +5,7 @@
 - 通过 Jev batch noul 问题批量评分每个 tool_use + tool_result 配对
 - 按配对决策:完整保留 / 仅保留调用 / 删除调用+结果
 - 通过对齐工具配对的分割点拆分 old/recent,只对 old 部分评分
+- 小结果配对(result_chars < min_result_chars)不参与评分,原样保留
 """
 
 from __future__ import annotations
@@ -36,6 +37,8 @@ class JevCompactResult:
     """被改写(结果降为占位)或整对删除的配对数。与 kept 互斥。"""
     filtered_old_count: int
     """过滤后的 old 消息数。"""
+    skipped_small: int = 0
+    """因结果过小而未参与评分的配对数(原样保留,不计入 total_pairs)。"""
     tokens_saved: int = 0
     """压缩释放的 token 估算值(before - after)。接近 0 说明判官普遍给高分、本次几乎没压下东西。"""
 
@@ -63,6 +66,9 @@ class JevCompactConfig:
     """Jev state token 上限(Jev 请求限制约32k)。"""
     max_tool_input_chars: int = 500
     """state 中工具参数截断长度(字符)。"""
+    min_result_chars: int = 500
+    """工具结果文本字符数低于此值的配对不参与评分/压缩,原样保留 —
+    小结果 stub 后省不下几个 token,却要冒误删叙事的风险。"""
 
 
 @dataclass
@@ -550,8 +556,9 @@ async def jev_compact(
 
     使用 Jev batch noul 评分来决定哪些工具调用/结果可以删除。
     文本消息(user/assistant)永远原样保留。
+    小结果配对(result_chars < min_result_chars,多媒体结果除外)不参与评分,原样保留。
 
-    流程: split → 对 old 部分评分/过滤 → 重建 _messages = filtered_old + [summary] + recent
+    流程: split → 过滤小结果配对 → 对 old 部分评分/过滤 → 重建 _messages = filtered_old + [summary] + recent
 
     Args:
         session: Session 实例。
@@ -582,10 +589,21 @@ async def jev_compact(
     recent_msgs = session._messages[split:]
 
     # 2. 收集 old 部分的工具配对
-    pairs = collect_tool_pairs(old_msgs)
+    all_pairs = collect_tool_pairs(old_msgs)
 
-    if not pairs:
+    if not all_pairs:
         raise JevCompactSkip("没有可评分的工具配对")
+
+    # 小结果配对不参与评分/压缩: stub 后省不下几个 token,却要冒误删叙事的风险。
+    # 多媒体结果的 token 开销在媒体块上而非文本字符数,不受此阈值限制,始终参与。
+    pairs = [
+        p
+        for p in all_pairs
+        if p.result_has_media or p.result_chars >= compact_config.min_result_chars
+    ]
+    skipped_small = len(all_pairs) - len(pairs)
+    if not pairs:
+        raise JevCompactSkip("没有值得压缩的工具配对(结果均过小)")
 
     # 3. 构建 state 和问题(state 只容纳可见配对,问题也只为可见配对生成)
     state, visible_nums = build_jev_state(
@@ -621,8 +639,11 @@ async def jev_compact(
     # 7. 重建 _messages = filtered_old + [summary] + recent
     summary_text = (
         f"[Jev 压缩] 已通过 Jev 智能评分处理 {len(pairs)} 个工具配对: "
-        f"完整保留 {kept} 个,改写/删除 {modified} 个。文本消息全部保留。"
+        f"完整保留 {kept} 个,改写/删除 {modified} 个。"
     )
+    if skipped_small:
+        summary_text += f"另有 {skipped_small} 个小结果配对原样保留(未参与评分)。"
+    summary_text += "文本消息全部保留。"
 
     # 与 LLM 摘要(compact())同构:追加历史检索提示与会话笔记快照
     from uniclaw.tools.session.recall import get_recall_hint
@@ -667,5 +688,6 @@ async def jev_compact(
         kept=kept,
         modified=modified,
         filtered_old_count=len(filtered_old),
+        skipped_small=skipped_small,
         tokens_saved=tokens_saved,
     )

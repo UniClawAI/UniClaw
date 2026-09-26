@@ -659,6 +659,7 @@ class TestThresholdPolicy:
         assert config.keep_result_threshold == 0.7
         assert config.keep_result_threshold_irreplaceable == 0.5
         assert config.keep_result_threshold_irreplaceable < config.keep_result_threshold
+        assert config.min_result_chars == 500
 
     def test_ambiguous_call_is_kept_not_deleted(self):
         """keep_call 落在模糊带 [0.3, 0.5) 时保留调用(stub 结果),不再整对删除。"""
@@ -786,9 +787,10 @@ class TestJevCompact:
         session = _make_session_with_tool_calls()
         config = MagicMock()
 
-        # Mock batch 返回:所有配对都低分(删除)
+        # Mock batch 返回:所有被评分配对都低分(删除)
+        # tc_003(Edit "编辑成功")结果过小,不参与评分,原样保留
         mock_answers = {}
-        for tc_id in ["tc_001", "tc_002", "tc_003"]:
+        for tc_id in ["tc_001", "tc_002"]:
             mock_answers[f"call_{tc_id}"] = NoulResult(noul=0.1)
             mock_answers[f"result_{tc_id}"] = NoulResult(noul=0.1)
 
@@ -806,9 +808,10 @@ class TestJevCompact:
             result = await jev_compact(session)
 
         assert isinstance(result, JevCompactResult)
-        assert result.total_pairs == 3
+        assert result.total_pairs == 2
         assert result.kept == 0
-        assert result.modified == 3
+        assert result.modified == 2
+        assert result.skipped_small == 1
         assert result.tokens_saved > 0
 
         # 验证:summary 在 filtered_old 之后
@@ -889,9 +892,10 @@ class TestJevCompact:
         ):
             result = await jev_compact(session)
 
-        assert result.total_pairs == 3
-        assert result.kept == 3
+        assert result.total_pairs == 2
+        assert result.kept == 2
         assert result.modified == 0
+        assert result.skipped_small == 1
 
     @pytest.mark.asyncio
     async def test_summary_uses_summary_prefix_and_recall_hint(self):
@@ -995,6 +999,144 @@ class TestJevCompact:
             m.content for m in session.history if isinstance(m, ToolCallMessage)
         ]
         assert after_tool_contents == orig_tool_contents
+
+
+# ── 小结果配对跳过 ─────────────────────────────────────────────
+
+
+class TestSmallResultSkip:
+    """小结果配对不参与评分/压缩 — stub 省不下几个 token,却要冒误删叙事的风险。"""
+
+    def test_config_default_min_result_chars(self):
+        """默认阈值 500 字符 — 小结果不值得评分压缩。"""
+        assert JevCompactConfig().min_result_chars == 500
+
+    @pytest.mark.asyncio
+    async def test_small_result_pair_not_scored_not_modified(self):
+        """小结果配对不提问、不改写;大结果配对正常评分删除。"""
+        from uniclaw.utils.jev import BatchResult, NoulResult
+
+        session = Session()
+        session._messages = [
+            _make_user_msg("读文件并改文件"),
+            _make_ai_msg(
+                tool_calls=[
+                    _make_tc("Read", "tc_big", {"file_path": "a.py"}),
+                    _make_tc("Edit", "tc_small", {"file_path": "b.py"}),
+                ]
+            ),
+            _make_tool_msg("Read", "tc_big", "x" * 2000),
+            _make_tool_msg("Edit", "tc_small", "编辑成功"),
+            _make_ai_msg(content="完成"),
+            _make_user_msg("继续"),
+            _make_ai_msg(content="好"),
+            _make_user_msg("再来"),
+            _make_ai_msg(content="好的"),
+        ]
+        session.history = list(session._messages)
+
+        mock_batch = AsyncMock(
+            return_value=BatchResult(
+                answers={
+                    "call_tc_big": NoulResult(noul=0.1),
+                    "result_tc_big": NoulResult(noul=0.1),
+                }
+            )
+        )
+
+        with (
+            patch("uniclaw.utils.jev.is_available", return_value=True),
+            patch.object(Session, "_find_split_point", return_value=5),
+            patch("uniclaw.utils.jev.batch", mock_batch),
+        ):
+            result = await jev_compact(session)
+
+        # 小结果配对不生成问题
+        questions = mock_batch.call_args.kwargs["questions"]
+        assert "call_tc_big" in questions
+        assert "call_tc_small" not in questions
+        assert "result_tc_small" not in questions
+
+        assert result.total_pairs == 1
+        assert result.skipped_small == 1
+        assert result.modified == 1
+
+        # 小结果原样保留
+        small = [
+            m
+            for m in session._messages
+            if isinstance(m, ToolCallMessage) and m.tool_call_id == "tc_small"
+        ]
+        assert len(small) == 1
+        assert small[0].content == "编辑成功"
+
+    @pytest.mark.asyncio
+    async def test_all_small_pairs_raises_skip(self):
+        """配对全是小结果时不调用 Jev,直接跳过回退。"""
+        session = Session()
+        session._messages = [
+            _make_user_msg("改个文件"),
+            _make_ai_msg(tool_calls=[_make_tc("Edit", "tc_small")]),
+            _make_tool_msg("Edit", "tc_small", "ok"),
+            _make_ai_msg(content="完成"),
+            _make_user_msg("继续"),
+            _make_ai_msg(content="好"),
+        ]
+
+        mock_batch = AsyncMock()
+        with (
+            patch("uniclaw.utils.jev.is_available", return_value=True),
+            patch.object(Session, "_find_split_point", return_value=3),
+            patch("uniclaw.utils.jev.batch", mock_batch),
+        ):
+            with pytest.raises(JevCompactSkip):
+                await jev_compact(session)
+
+        mock_batch.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_media_result_scored_even_with_small_text(self):
+        """多媒体结果的 token 开销在媒体块上,文本字符数不达阈值也照常评分。"""
+        from uniclaw.utils.jev import BatchResult, NoulResult
+
+        session = Session()
+        session._messages = [
+            _make_user_msg("看下截图"),
+            _make_ai_msg(tool_calls=[_make_tc("ReadMedia", "tc_m")]),
+            _make_tool_msg(
+                "ReadMedia",
+                "tc_m",
+                [
+                    MultimodalBlock(
+                        type=MultimodalType.image_url,
+                        image_url={"url": "data:image/png;base64,xxxx"},
+                    )
+                ],
+            ),
+            _make_ai_msg(content="图里是登录页"),
+            _make_user_msg("继续"),
+            _make_ai_msg(content="好"),
+        ]
+
+        mock_batch = AsyncMock(
+            return_value=BatchResult(
+                answers={
+                    "call_tc_m": NoulResult(noul=0.1),
+                    "result_tc_m": NoulResult(noul=0.1),
+                }
+            )
+        )
+
+        with (
+            patch("uniclaw.utils.jev.is_available", return_value=True),
+            patch.object(Session, "_find_split_point", return_value=3),
+            patch("uniclaw.utils.jev.batch", mock_batch),
+        ):
+            result = await jev_compact(session)
+
+        assert result.total_pairs == 1
+        assert result.skipped_small == 0
+        assert result.modified == 1
 
 
 # ── 多媒体结果 (问题5) ─────────────────────────────────────────
@@ -1126,8 +1268,8 @@ class TestSplitPointAlignment:
                     _make_tc("Read", "tc_b", {"file_path": "b.py"}),
                 ]
             ),
-            _make_tool_msg("Read", "tc_a", "content-a"),
-            _make_tool_msg("Read", "tc_b", "content-b"),
+            _make_tool_msg("Read", "tc_a", "content-a " * 50),
+            _make_tool_msg("Read", "tc_b", "content-b " * 50),
             _make_ai_msg(content="读完了"),
         ]
         return session

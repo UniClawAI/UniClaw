@@ -1669,9 +1669,13 @@ class Session:
 
         from uniclaw.console.ui import info
 
+        skipped_note = (
+            f", 小结果跳过 {jev_result.skipped_small}" if jev_result.skipped_small else ""
+        )
         await info(
             f"Jev 压缩: {jev_result.total_pairs} 配对, "
-            f"完整保留 {jev_result.kept}, 改写/删除 {jev_result.modified}, "
+            f"完整保留 {jev_result.kept}, 改写/删除 {jev_result.modified}"
+            f"{skipped_note}, "
             f"释放约 {jev_result.tokens_saved} token",
             config,
         )
