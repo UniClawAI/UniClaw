@@ -29,7 +29,7 @@ async def cmd_cwd(args: str, config: AppConfig) -> bool:
             task.session.root_dir = target_path
             await ok(f"工作目录已切换到: {target_path}", config)
         except Exception as e:
-            await err(str(e), config)
+            await err(str(e), config, e=e)
     return True
 
 

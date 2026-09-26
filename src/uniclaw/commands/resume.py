@@ -89,7 +89,7 @@ async def cmd_resume(args: str, config: AppConfig) -> bool:
                 f"确定要删除会话 {session_id}?(y/n):", title="删除对话", config=config
             )
         except Exception as e:
-            await err(f"获取删除确认输入失败: {e}", config)
+            await err(f"获取删除确认输入失败: {e}", config, e=e)
             return True
         if answer.strip().lower() != "y":
             await warn("已取消删除", config)
@@ -103,7 +103,7 @@ async def cmd_resume(args: str, config: AppConfig) -> bool:
 
                     await notify_session_deleted(session_id, config.root_dir)
                 except Exception as e:
-                    await err(f"通知前端会话删除失败: {e}", config)
+                    await err(f"通知前端会话删除失败: {e}", config, e=e)
         else:
             await err(f"删除失败或未找到会话: {session_id}", config)
         return True
@@ -119,7 +119,7 @@ async def cmd_resume(args: str, config: AppConfig) -> bool:
         try:
             results = SessionManager.search_sessions(keyword)
         except Exception as exc:
-            await err(f"搜索失败: {exc}", config)
+            await err(f"搜索失败: {exc}", config, e=exc)
             return True
         if not results:
             await warn(f"未找到包含 {keyword!r} 的对话", config)
@@ -172,7 +172,7 @@ async def cmd_resume(args: str, config: AppConfig) -> bool:
 
         choice = await get_input(prompt_text, title="恢复会话", config=config)
     except Exception as e:
-        await err(f"获取会话选择输入失败: {e}", config)
+        await err(f"获取会话选择输入失败: {e}", config, e=e)
         return True
     if not choice:
         return True
@@ -218,7 +218,7 @@ async def _restore_session(session: Session, task: AgentTask, config: AppConfig 
 
             await notify_session_switched(session.id, old_session_id)
         except Exception as e:
-            await err(f"通知前端会话切换失败: {e}", config)
+            await err(f"通知前端会话切换失败: {e}", config, e=e)
     else:
         # Console 模式:替换 session,清屏后回放历史消息
         task.session = session
@@ -231,7 +231,7 @@ async def _restore_session(session: Session, task: AgentTask, config: AppConfig 
                 messages = task.session.to_history_messages()
                 tui.replay_messages(messages)
         except Exception as e:
-            await err(f"回放历史消息失败: {e}", config)
+            await err(f"回放历史消息失败: {e}", config, e=e)
 
 
 async def _handle_fork(args: str, task: AgentTask, config: AppConfig):
@@ -341,7 +341,7 @@ async def _pick_fork_point(session: Session, config: AppConfig) -> int | None:
 
         choice = await get_input("\n".join(lines), title="选择分叉点", config=config)
     except Exception as e:
-        await err(f"获取分叉点选择输入失败: {e}", config)
+        await err(f"获取分叉点选择输入失败: {e}", config, e=e)
         return None
     if not choice:
         return None

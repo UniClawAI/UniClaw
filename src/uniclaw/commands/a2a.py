@@ -19,16 +19,26 @@ async def cmd_a2a(args: str, config) -> bool:
     values = parts[1:]
     if action == "start":
         if not config.is_webui:
-            await warn("A2A 服务仅复用 WebUI HTTP 服务;请在 WebUI 模式中执行 /a2a start。", config)
+            await warn(
+                "A2A 服务仅复用 WebUI HTTP 服务;请在 WebUI 模式中执行 /a2a start。",
+                config,
+            )
             return True
         try:
             service = manager.enable_service(config, values[0] if values else "")
-            await ok("A2A 端点已在当前 WebUI 服务中启用:/.well-known/agent-card.json 和 /a2a", config)
+            await ok(
+                "A2A 端点已在当前 WebUI 服务中启用:/.well-known/agent-card.json 和 /a2a",
+                config,
+            )
             await warn(f"Bearer Token(请安全保存):{service['token']}", config)
         except Exception as exc:
-            await err(f"A2A 服务启动失败:{exc}", config)
+            await err(f"A2A 服务启动失败:{exc}", config, e=exc)
     elif action == "stop":
-        await (ok("A2A 端点已禁用", config) if manager.disable_service() else warn("A2A 端点未启用", config))
+        await (
+            ok("A2A 端点已禁用", config)
+            if manager.disable_service()
+            else warn("A2A 端点未启用", config)
+        )
     elif action == "status":
         status = manager.service_status()
         if status:
@@ -37,7 +47,11 @@ async def cmd_a2a(args: str, config) -> bool:
             await info("A2A 端点未启用", config)
     elif action == "list":
         agents = await manager.list_agents()
-        await info("\n".join(f"- {x['name']}: {x['url']}" for x in agents) or "尚未添加外部 A2A 服务", config)
+        await info(
+            "\n".join(f"- {x['name']}: {x['url']}" for x in agents)
+            or "尚未添加外部 A2A 服务",
+            config,
+        )
     elif action == "add" and len(values) >= 2:
         name, url = values[:2]
         token = values[2] if len(values) > 2 else ""
@@ -46,19 +60,28 @@ async def cmd_a2a(args: str, config) -> bool:
             await manager.add_agent(name, url, token)
             await ok(f"已添加 A2A 服务 {name}({card.get('name', name)})", config)
         except Exception as exc:
-            await err(f"无法添加 A2A 服务:{exc}", config)
+            await err(f"无法添加 A2A 服务:{exc}", config, e=exc)
     elif action == "remove" and values:
-        await (ok(f"已删除 A2A 服务 {values[0]}", config) if await manager.remove_agent(values[0]) else warn("A2A 服务不存在", config))
+        await (
+            ok(f"已删除 A2A 服务 {values[0]}", config)
+            if await manager.remove_agent(values[0])
+            else warn("A2A 服务不存在", config)
+        )
     elif action == "test" and values:
         remote = await manager.get_agent(values[0])
         if not remote:
             await err("A2A 服务不存在", config)
         else:
             try:
-                card = await A2AClient(remote["url"], remote.get("token", "")).get_card()
+                card = await A2AClient(
+                    remote["url"], remote.get("token", "")
+                ).get_card()
                 await ok(f"连接成功:{card.get('name', values[0])}", config)
             except Exception as exc:
-                await err(f"连接失败:{exc}", config)
+                await err(f"连接失败:{exc}", config, e=exc)
     else:
-        await info("用法:/a2a start [token] | stop | status | list | add <name> <url> [token] | remove <name> | test <name>", config)
+        await info(
+            "用法:/a2a start [token] | stop | status | list | add <name> <url> [token] | remove <name> | test <name>",
+            config,
+        )
     return True

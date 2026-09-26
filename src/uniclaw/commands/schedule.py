@@ -153,7 +153,7 @@ async def _schedule_add(scheduler, args_str: str, config: AppConfig) -> bool:
     try:
         task_id = scheduler.add_task(name, schedule, action)
     except ValueError as e:
-        await err(str(e), config)
+        await err(str(e), config, e=e)
         return True
 
     await ok(f"✓ 已添加定时任务: {task_id} ({schedule})", config)

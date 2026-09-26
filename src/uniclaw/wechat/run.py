@@ -356,7 +356,7 @@ def make_handler():
             print(f"[微信] 已回复 [{user_id}]: {reply[:50]}...")
 
         except Exception as e:
-            await err(f"[微信] 处理消息失败: {e}", config)
+            await err(f"[微信] 处理消息失败: {e}", config, e=e)
             try:
                 bot.reply_text(f"处理出错: {e}")
             except Exception as e2:

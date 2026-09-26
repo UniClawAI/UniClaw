@@ -43,7 +43,7 @@ async def cmd_doctor(_args: str, config: AppConfig) -> bool:
             await warn(f"  ⚠️  {e}", config)
             warn_count += 1
         except Exception as e:
-            await err(f"  ❌ {e}", config)
+            await err(f"  ❌ {e}", config, e=e)
             fail_count += 1
 
     # Python

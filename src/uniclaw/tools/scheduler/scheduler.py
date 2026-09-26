@@ -254,7 +254,7 @@ class Scheduler:
             try:
                 await self._check_and_run_tasks(config)
             except Exception as e:
-                await err(f"[scheduler] 调度器检查失败: {e}", config)
+                await err(f"[scheduler] 调度器检查失败: {e}", config, e=e)
             try:
                 await asyncio.wait_for(self._stop_event.wait(), timeout=10)
             except asyncio.TimeoutError:
@@ -396,7 +396,7 @@ class Scheduler:
                 await warn(f"未知的 action 类型: {action_type}", config)
 
         except Exception as e:
-            await err(f"任务 {name} 执行失败: {e}", config)
+            await err(f"任务 {name} 执行失败: {e}", config, e=e)
 
     async def _exec_shell(self, cmd: str, task: Task, config: AppConfig | None = None):
         """执行 shell 命令。"""

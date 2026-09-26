@@ -72,7 +72,7 @@ async def cmd_btw(args: str, config: AppConfig) -> bool:
             )
 
     except Exception as e:
-        await err(f"侧问题回答失败: {e}", config)
+        await err(f"侧问题回答失败: {e}", config, e=e)
     finally:
         config.spinner.stop(wait_id=wait_id)
 

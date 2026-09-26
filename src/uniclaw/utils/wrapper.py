@@ -88,7 +88,7 @@ async def _await_with_error_catch(coro, name, fun, args, kwargs):
                         config = arg
                         break
             err_msg = str(e) if str(e) else type(e).__name__
-            await err(f"{fun.__name__} 失败: {err_msg}", config=config)
+            await err(f"{fun.__name__} 失败: {err_msg}", config=config, e=e)
         except Exception as e:
             get_logger(
                 "wrapper", task.session.root_dir if task else Path.cwd()

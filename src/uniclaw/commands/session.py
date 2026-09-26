@@ -64,7 +64,7 @@ async def cmd_clear(_args: str, config: AppConfig) -> bool:
 
             await SessionManager.save_session(config)
         except Exception as e:
-            await err(str(e), config)
+            await err(str(e), config, e=e)
         await info("会话已清除,可以开始新的对话了。", config)
     else:
         from uniclaw.console.run import TUIApp
@@ -195,7 +195,7 @@ async def cmd_export(args: str, config: AppConfig) -> bool:
             config,
         )
     except Exception as e:
-        await err(f"导出失败: {e}", config)
+        await err(f"导出失败: {e}", config, e=e)
         return False
 
     return True

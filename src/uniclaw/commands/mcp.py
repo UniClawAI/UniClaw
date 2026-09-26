@@ -145,7 +145,7 @@ async def _mcp_add(
         try:
             connection = json.loads(json_str)
         except json.JSONDecodeError as e:
-            await err(f"JSON 格式错误: {e}", config)
+            await err(f"JSON 格式错误: {e}", config, e=e)
             return False
         if "transport" not in connection:
             await err("配置必须包含 'transport' 字段", config)
@@ -160,7 +160,7 @@ async def _mcp_add(
         await info("正在验证连接...", config)
         await manager.add_server(name, connection, config=config)
     except ValueError as e:
-        await err(str(e), config)
+        await err(str(e), config, e=e)
         return False
 
     await ok(f"✓ 已添加 MCP 服务器: {name}", config)
@@ -365,7 +365,7 @@ async def _mcp_edit(
             raise Exception("添加失败")
         return True
     except Exception as e:
-        await err(f"MCP 服务器编辑失败,尝试恢复旧配置: {e}", config)
+        await err(f"MCP 服务器编辑失败,尝试恢复旧配置: {e}", config, e=e)
         # 恢复旧配置(跳过验证)
         try:
             await manager.add_server(
@@ -374,7 +374,7 @@ async def _mcp_edit(
             await manager.refresh(config)
             await warn("已恢复原配置", config)
         except Exception as e:
-            await err(f"恢复原配置失败: {e}", config)
+            await err(f"恢复原配置失败: {e}", config, e=e)
         return True
 
 

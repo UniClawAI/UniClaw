@@ -95,7 +95,7 @@ async def do_restart(config: AppConfig) -> None:
         launcher.request_shutdown()
 
     except Exception as e:
-        await err(f"[restart] 重启流程异常: {type(e).__name__}: {e}", config)
+        await err(f"[restart] 重启流程异常: {type(e).__name__}: {e}", config, e=e)
         # 重启失败时尝试唤醒 agent 告知结果并解除调度锁
         try:
             from uniclaw.utils.wakeup import wake_agent

@@ -607,7 +607,7 @@ class MultiAgent:
                 except Exception as e:
                     await warn(f"通知父 agent 失败(子代理 {task.name}): {e}", config)
 
-        async def _run_proc(user_message, system_prompt, config, task: AgentTask):
+        async def _run_proc(user_message, system_prompt, config: AppConfig):
             try:
                 task.user_queue.put_nowait(user_message)
                 while not task.cancel_event.is_set():
@@ -637,7 +637,11 @@ class MultiAgent:
             except Exception as e:
                 task.result = f"任务处理失败:{str(e)}"
                 task.status = AgentStatus.FAILED
-                await err(f"子代理 {task.name} 执行失败: {e}\n{traceback.format_exc()}")
+                await err(
+                    f"子代理 {task.name} 执行失败: {e}\n{traceback.format_exc()}",
+                    config,
+                    e=e,
+                )
                 # 失败也通知父 agent,避免父 agent 永远等不到结果
                 await _notify_parent(f"此子智能体执行失败:{e}")
             finally:
@@ -670,7 +674,7 @@ class MultiAgent:
                         await warn(f"移除工作树失败(子代理 {task.name}): {e}", config)
 
         task.future = asyncio.create_task(
-            _run_proc(user_message, system_prompt, config, task)
+            _run_proc(user_message, system_prompt, config)
         )
 
         # 兜底回调:防止未来某条路径绕过 try/except,异常被静默吞掉直到 GC
@@ -1303,7 +1307,7 @@ class MultiAgent:
         except Exception as e:
             from uniclaw.console.ui import err
 
-            await err(f"创建检查点失败(已跳过): {e}", config=config)
+            await err(f"创建检查点失败(已跳过): {e}", config=config, e=e)
         await self.send_event_to_user(CheckpointEndEvent(), config)
         if system_message is None:
             system_message = await build_system_prompt(config)
@@ -1366,7 +1370,7 @@ class MultiAgent:
                         else:
                             # 所有模型都失败了
                             detail = "\n  - ".join(errors)
-                            await err(f"所有模型请求失败:\n  - {detail}", config)
+                            await err(f"所有模型请求失败:\n  - {detail}", config, e=e)
                 if resp is None:
                     break
 
