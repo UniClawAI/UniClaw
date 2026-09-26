@@ -5,7 +5,7 @@ truncation 模块的单元测试
 import re
 
 import pytest
-from uniclaw.utils.tokens import count_tokens
+from uniclaw.utils.tokens import count_tokens, slice_by_tokens
 from uniclaw.utils.truncation import (
     truncate_text,
     truncate_text_by_lines,
@@ -330,6 +330,82 @@ class TestTruncateTextByLines:
         matches = re.findall(line_pattern, result)
         for match in matches:
             assert len(match) == len("This is line number 000 with enough content")
+
+    # ==================== 回归测试(历史 bug) ====================
+
+    def test_single_long_line_truncated_count_not_negative(self):
+        """测试单行超长文本:被截断行数不应为负"""
+        text = "x" * 5000
+
+        result = truncate_text_by_lines(text, max_tokens=100)
+
+        m = re.search(r"\[截断了(-?\d+)行,", result)
+        assert m is not None
+        assert int(m.group(1)) == 1
+
+    def test_tail_not_lost_when_slice_is_single_partial_line(self):
+        """测试尾部切片仅含半行+行尾时不应整体丢失"""
+        text = "F" * 200 + "\n" + "M" * 3000 + "\n" + "Y" * 300 + "\n"
+
+        result = truncate_text_by_lines(text, max_tokens=200, keep_ratio=0.4)
+
+        marker_end = result.find("个tokens]...\n")
+        assert marker_end > 0
+        tail = result[marker_end + len("个tokens]...\n") :]
+        assert "Y" * 10 in tail
+
+    def test_crlf_line_endings_preserved(self):
+        """测试 CRLF 行尾不被 rstrip 破坏"""
+        text = "abc\r\ndef\r\n" + "M" * 5000 + "\r\ntail\r\n"
+
+        result = truncate_text_by_lines(text, max_tokens=200, keep_ratio=0.4)
+
+        assert "abc\r\ndef\r\n" in result
+
+    def test_front_trailing_spaces_preserved(self):
+        """测试前部行尾空白不被剥离"""
+        text = "keep me   \n" + "M" * 5000 + "\n" + "tail\n"
+
+        result = truncate_text_by_lines(text, max_tokens=200, keep_ratio=0.4)
+
+        assert "keep me   " in result
+
+    def test_zero_max_tokens_does_not_keep_content(self):
+        """测试 max_tokens=0 时不应保留任何正文(历史 bug:尾部全文保留)"""
+        text = "\n".join([f"Line {i:03d}" for i in range(10)])
+
+        result = truncate_text_by_lines(text, max_tokens=0, keep_ratio=0.4)
+
+        assert "[截断了" in result
+        assert "Line 000" not in result
+        assert "Line 009" not in result
+
+    def test_huge_keep_ratio_no_overlapping_content(self):
+        """测试 keep_ratio 过大时前后段不重叠(历史 bug:内容重复)"""
+        lines = [f"Line {i:03d}\n" for i in range(200)]
+        text = "".join(lines)
+
+        result = truncate_text_by_lines(text, max_tokens=300, keep_ratio=8.0)
+
+        found = re.findall(r"Line \d{3}", result)
+        assert len(found) == len(set(found))
+
+
+class TestSliceByTokens:
+    """slice_by_tokens 边界行为的测试类"""
+
+    def test_zero_tokens_from_end_returns_empty(self):
+        """测试 max_tokens=0 时取尾部应返回空串(历史 bug: tokens[-0:] 返回全文)"""
+        assert slice_by_tokens("AAA\nBBB\nCCC", 0, from_end=True) == ""
+
+    def test_zero_tokens_from_start_returns_empty(self):
+        """测试 max_tokens=0 时取头部应返回空串"""
+        assert slice_by_tokens("AAA\nBBB\nCCC", 0, from_end=False) == ""
+
+    def test_negative_tokens_returns_empty(self):
+        """测试负数 max_tokens 应返回空串"""
+        assert slice_by_tokens("AAA\nBBB\nCCC", -5, from_end=True) == ""
+        assert slice_by_tokens("AAA\nBBB\nCCC", -5, from_end=False) == ""
 
 
 class TestTruncateTextByTokens:

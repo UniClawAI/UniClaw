@@ -66,12 +66,15 @@ def slice_by_tokens(text: str, max_tokens: int, from_end: bool = False) -> str:
 
     Args:
         text: 原始文本
-        max_tokens: 要保留的 token 数
+        max_tokens: 要保留的 token 数。小于等于 0 时返回空串
+            (注意 tokens[-0:] 等于 tokens[0:], 会意外返回全文)。
         from_end: False 取前 N 个 token,True 取后 N 个 token
 
     Returns:
         截取后的文本。tiktoken 不可用时按字符近似截取。
     """
+    if max_tokens <= 0:
+        return ""
     encoder = get_encoder()
     if encoder is None:
         # fallback: 按字符近似
