@@ -897,7 +897,11 @@ async def list_files(root_dir: str, path: str = "", recursive: bool = False):
             files = [i for i in all_items if i.is_file()]
             dirs = [i for i in all_items if i.is_dir()]
             # 按 .gitignore 规则过滤文件(含隐藏文件)
-            from uniclaw.utils.gitignore import get_not_ignored_files, is_ignored_by_gitignore
+            from uniclaw.utils.gitignore import (
+                get_not_ignored_files,
+                is_ignored_by_gitignore,
+            )
+
             visible_files = set(get_not_ignored_files(files))
             visible_dirs = [d for d in dirs if not is_ignored_by_gitignore([d])]
             for item in visible_dirs + sorted(visible_files):
@@ -1017,7 +1021,9 @@ async def diff_checkpoint(idx: int, root_dir: str):
 # === Git ===
 
 
-async def _run_git(args: list[str], cwd: str, label: str, timeout: int = 10, combine: bool = True) -> str:
+async def _run_git(
+    args: list[str], cwd: str, label: str, timeout: int = 10, combine: bool = True
+) -> str:
     """在线程池运行 git 子命令(不阻塞事件循环), 统一错误映射:
     非零退出 → 400(带 stderr, 含"不是 git 仓库"), 超时 → 504, git 不存在 → 500。
     combine=False 时只返回 stdout(供按格式解析输出的调用方使用)。"""
@@ -1043,7 +1049,11 @@ async def _run_git(args: list[str], cwd: str, label: str, timeout: int = 10, com
         get_logger("webui", Path.cwd()).error(f"{label} 失败: {e}")
         raise HTTPException(status_code=500, detail=f"{label}失败")
     if result.returncode != 0:
-        detail = result.stderr.strip() or result.stdout.strip() or f"退出码 {result.returncode}"
+        detail = (
+            result.stderr.strip()
+            or result.stdout.strip()
+            or f"退出码 {result.returncode}"
+        )
         raise HTTPException(status_code=400, detail=f"{label}失败: {detail}")
     return result.stdout + result.stderr if combine else result.stdout
 
@@ -1053,7 +1063,9 @@ async def git_status(root_dir: str):
     """Git status。非 git 仓库会返回 400, 前端据此区分"没有更改"与"不是仓库"。"""
     _validate_path(root_dir, "")
     # 前端按 porcelain 逐行解析, stderr 警告(如 CRLF 提示)混入会产生伪造条目
-    output = await _run_git(["status", "--porcelain"], root_dir, "Git status", combine=False)
+    output = await _run_git(
+        ["status", "--porcelain"], root_dir, "Git status", combine=False
+    )
     return {"output": output}
 
 
@@ -1524,7 +1536,7 @@ async def create_sub_agent(body: SubAgentCreate):
             "status": "failed",
             "result": f"启动子代理失败: {task.result}",
         }
-    await mgr.wait(task.id, timeout=300)
+    await mgr.wait(task.id, timeout=300, config=config)
 
     return {
         "task_id": task.id,

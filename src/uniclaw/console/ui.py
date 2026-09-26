@@ -148,25 +148,30 @@ def _wechat_reply(msg: str, config: AppConfig | None, level: str = "info") -> bo
     try:
         bot.reply_text(f"{prefix} {msg}")
     except Exception as e:
-        get_logger("console.ui", config.root_dir).debug("微信消息回复失败: %s", e)
+        get_logger(root_dir=config.root_dir).error("微信消息回复失败: %s", e)
     return True
 
 
 async def info(msg: str, config: AppConfig = None):
-    cb = _get_callback(config)
-    if cb:
-        if inspect.iscoroutinefunction(cb):
-            await cb(msg, "info")
+    try:
+        cb = _get_callback(config)
+        if cb:
+            if inspect.iscoroutinefunction(cb):
+                await cb(msg, "info")
+            else:
+                cb(msg, "info")
+            return
+        if _wechat_reply(msg, config, "info"):
+            return
+        tui = _get_tui()
+        if tui:
+            tui.print(tui_clr(msg, C.CYAN))
         else:
-            cb(msg, "info")
-        return
-    if _wechat_reply(msg, config, "info"):
-        return
-    tui = _get_tui()
-    if tui:
-        tui.print(tui_clr(msg, C.CYAN))
-    else:
-        print(clr(msg, C.CYAN))
+            print(clr(msg, C.CYAN))
+    except Exception as e:
+        get_logger(root_dir=config.root_dir if config else None).error(
+            "信息通知失败: %s", e
+        )
 
 
 def clear():
@@ -179,37 +184,47 @@ def clear():
 
 
 async def ok(msg: str, config: AppConfig = None):
-    cb = _get_callback(config)
-    if cb:
-        if inspect.iscoroutinefunction(cb):
-            await cb(msg, "ok")
+    try:
+        cb = _get_callback(config)
+        if cb:
+            if inspect.iscoroutinefunction(cb):
+                await cb(msg, "ok")
+            else:
+                cb(msg, "ok")
+            return
+        if _wechat_reply(msg, config, "ok"):
+            return
+        tui = _get_tui()
+        if tui:
+            tui.print(tui_clr(msg, C.GREEN))
         else:
-            cb(msg, "ok")
-        return
-    if _wechat_reply(msg, config, "ok"):
-        return
-    tui = _get_tui()
-    if tui:
-        tui.print(tui_clr(msg, C.GREEN))
-    else:
-        print(clr(msg, C.GREEN))
+            print(clr(msg, C.GREEN))
+    except Exception as e:
+        get_logger(root_dir=config.root_dir if config else None).error(
+            "成功通知失败: %s", e
+        )
 
 
 async def warn(msg: str, config: AppConfig = None):
-    cb = _get_callback(config)
-    if cb:
-        if inspect.iscoroutinefunction(cb):
-            await cb(msg, "warn")
+    try:
+        cb = _get_callback(config)
+        if cb:
+            if inspect.iscoroutinefunction(cb):
+                await cb(msg, "warn")
+            else:
+                cb(msg, "warn")
+            return
+        if _wechat_reply(msg, config, "warn"):
+            return
+        tui = _get_tui()
+        if tui:
+            tui.print(tui_clr(f"Warning: {msg}", C.YELLOW))
         else:
-            cb(msg, "warn")
-        return
-    if _wechat_reply(msg, config, "warn"):
-        return
-    tui = _get_tui()
-    if tui:
-        tui.print(tui_clr(f"Warning: {msg}", C.YELLOW))
-    else:
-        print(clr(f"Warning: {msg}", C.YELLOW))
+            print(clr(f"Warning: {msg}", C.YELLOW))
+    except Exception as e:
+        get_logger(root_dir=config.root_dir if config else None).error(
+            "警告通知失败: %s", e
+        )
 
 
 async def err(msg: str, config: AppConfig = None, e: Exception = None):
@@ -221,24 +236,29 @@ async def err(msg: str, config: AppConfig = None, e: Exception = None):
         e: 异常对象,完整堆栈写入 _log_dir_for 对应的 logs 目录供排查,
             不展示给用户。默认 None 不写日志。
     """
-    if e is not None:
-        get_logger("console.ui", config.root_dir if config else None).error(
-            "%s\n%s", msg, "".join(traceback.format_exception(e))
-        )
-    cb = _get_callback(config)
-    if cb:
-        if inspect.iscoroutinefunction(cb):
-            await cb(msg, "err")
+    try:
+        if e is not None:
+            get_logger(root_dir=config.root_dir if config else None).error(
+                "%s\n%s", msg, "".join(traceback.format_exception(e))
+            )
+        cb = _get_callback(config)
+        if cb:
+            if inspect.iscoroutinefunction(cb):
+                await cb(msg, "err")
+            else:
+                cb(msg, "err")
+            return
+        if _wechat_reply(msg, config, "err"):
+            return
+        tui = _get_tui()
+        if tui:
+            tui.print(tui_clr(f"Error: {msg}", C.RED))
         else:
-            cb(msg, "err")
-        return
-    if _wechat_reply(msg, config, "err"):
-        return
-    tui = _get_tui()
-    if tui:
-        tui.print(tui_clr(f"Error: {msg}", C.RED))
-    else:
-        print(clr(f"Error: {msg}", C.RED), file=sys.stderr)
+            print(clr(f"Error: {msg}", C.RED), file=sys.stderr)
+    except Exception as error:
+        get_logger(root_dir=config.root_dir if config else None).error(
+            "错误通知失败: %s", error
+        )
 
 
 def colorize_diff(diff_text: str) -> str:
@@ -475,7 +495,9 @@ async def get_multi_input(
     # console 模式:优先 TUI
     tui = _get_tui()
     if tui:
-        return (await tui.tui_multi_input(questions, title=title)) or "已经超时,用户这会可能不在"
+        return (
+            await tui.tui_multi_input(questions, title=title)
+        ) or "已经超时,用户这会可能不在"
 
     # stdin 降级:逐题提问
     print(f"\n💬 {title}\n")
@@ -493,7 +515,8 @@ async def get_multi_input(
                 ans = input("  > ").strip()
                 # 解析多选
                 import re
-                parts = re.split(r'[,，\s]+', ans)
+
+                parts = re.split(r"[,，\s]+", ans)
                 selected = []
                 has_number = False
                 for part in parts:
@@ -502,7 +525,9 @@ async def get_multi_input(
                         selected.append(options[int(part) - 1])
                         has_number = True
                 if has_number:
-                    answers[question_text] = selected if len(selected) > 1 else selected[0]
+                    answers[question_text] = (
+                        selected if len(selected) > 1 else selected[0]
+                    )
                 else:
                     answers[question_text] = ans if ans else ""
             else:

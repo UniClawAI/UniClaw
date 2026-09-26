@@ -67,7 +67,9 @@ def kg_add_entity(
             return f"{TOOL_ERROR}: {result['error']}"
 
         # 重复添加时,如果实体已存在,只显示警告不显示"已添加"
-        already_exists = result.get("duplicate_warning", "") and "已存在" in result.get("duplicate_warning", "")
+        already_exists = result.get("duplicate_warning", "") and "已存在" in result.get(
+            "duplicate_warning", ""
+        )
         if already_exists:
             entity_id = result.get("id", "?")
             # 检查是否有实际的新内容需要更新 (type, description 等与原实体不同时可使用 update_entity)
@@ -652,7 +654,7 @@ async def kg_extract(
 
         # 等待完成(subagent 的 ToolStartEvent/ThinkingChunkEvent 等
         # 会通过 bridge_events 自动广播到前端,无需在此重复)
-        await mgr.wait(task.id, timeout=300)
+        await mgr.wait(task.id, timeout=300, config=config)
 
         if task.status == AgentStatus.FAILED:
             return f"{TOOL_ERROR}: subagent 执行失败: {task.result}"

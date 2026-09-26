@@ -55,7 +55,6 @@ from uniclaw.utils.git import (
     remove_worktree,
 )
 from uniclaw.utils.truncation import truncate_text_by_lines
-from uniclaw.utils.logger import get_logger
 from uniclaw.utils.format import format_args_for_display
 from uniclaw.tools.hooks.hook_manager import HookError, HookEvent, run_hooks
 import traceback
@@ -407,7 +406,7 @@ class MultiAgent:
                     if tui and tui.config:
                         queue = tui.config.current_agent.event_queue
                 except Exception as e:
-                    get_logger("agent", config.root_dir).debug("获取TUI实例失败: %s", e)
+                    await err("获取TUI实例失败", config, e)
         if queue:
             await queue.put((task, event))
 
@@ -428,14 +427,9 @@ class MultiAgent:
             return
         output = truncate_text_by_lines(content, max_tokens=500)
         msg = f"[子智能体:{task.name}] {output}"
-        try:
-            await info(msg, parent_config)
-        except Exception as e:
-            get_logger("agent", config.root_dir).debug(
-                "子代理进度通知失败(%s): %s", task.name, e
-            )
+        await info(msg, parent_config)
 
-    async def wait(self, task_id: str, timeout: float = None):
+    async def wait(self, task_id: str, timeout: float = None, config: AppConfig = None):
         """
         异步等待指定任务完成并返回任务对象。
 
@@ -445,6 +439,7 @@ class MultiAgent:
         Args:
             task_id (str): 任务的唯一标识符。
             timeout (float, optional): 每轮等待的超时时间(秒)。
+            config (AppConfig, optional): 当前会话配置,用于错误通知和日志关联。
 
         Returns:
             AgentTask or None: 返回对应的任务对象。
@@ -462,9 +457,7 @@ class MultiAgent:
             except asyncio.TimeoutError:
                 pass
             except Exception as e:
-                get_logger("agent", self.session.root_dir).debug(
-                    "等待任务完成异常: %s", e
-                )
+                await err("等待任务完成异常", config, e)
             # 任务已完成
             if task.status in (
                 AgentStatus.COMPLETED,
@@ -801,8 +794,7 @@ class MultiAgent:
         except Exception as e:
             # 网络错误/模型厂商 API 错误属预期内外部故障(fallback 层会 warn/err 提示),不写日志
             if not is_network_or_provider_error(e):
-                error_traceback = traceback.format_exc()
-                get_logger("agent", task.session.root_dir).error(error_traceback)
+                await err(f"LLM 流式响应失败: {e}", config, e)
             raise  # 向上抛出异常,由调用方处理 fallback
 
     async def _process_response(self, resp, task, config: AppConfig):
@@ -1083,9 +1075,7 @@ class MultiAgent:
                     if dedup_msg:
                         tool_resp_content = dedup_msg
                 except Exception as e:
-                    get_logger("agent", task.session.root_dir).error(
-                        f"{TOOL_ERROR}: [{tc_name}]\n参数: {tc_args}\n{traceback.format_exc()}"
-                    )
+                    await err(f"{TOOL_ERROR}: [{tc_name}]\n参数: {tc_args}", config, e)
                     tool_resp_content = f"{TOOL_ERROR}: {e}"
             else:
                 tool_resp_content = (
@@ -1198,10 +1188,8 @@ class MultiAgent:
             from uniclaw.tools.session.session_manager import SessionManager
 
             await SessionManager.save_session(config)
-        except Exception:
-            get_logger("agent", config.root_dir).warning(
-                f"保存会话失败:\n{traceback.format_exc()}"
-            )
+        except Exception as e:
+            await warn("保存会话失败", config, e)
 
     async def _save_memory(self, config: AppConfig):
         """保存记忆(异步,不阻塞主流程)。"""
@@ -1214,10 +1202,8 @@ class MultiAgent:
                 await info(
                     f"已保存一条新记忆: {memory.name}\n{memory.description}", config
                 )
-        except Exception:
-            get_logger("agent", config.root_dir).warning(
-                f"保存记忆失败:\n{traceback.format_exc()}"
-            )
+        except Exception as e:
+            await warn("保存记忆失败", config, e)
 
     async def _run_cleanup(self, task, config: AppConfig):
         """设置最终状态,触发 SESSION_END 钩子,保存会话和记忆,发送 EndEvent。"""
@@ -1243,8 +1229,9 @@ class MultiAgent:
         # 主 agent: 有正在运行的 subagent 时不发 EndEvent,等它们完成
         # WAITING/PENDING 状态的子代理不等待(下一轮对话可能被唤醒)
         if not config.is_sub and config.has_running_subs():
-            get_logger("agent", config.root_dir).info(
-                f"主 agent 已结束,等待 {len(config.get_running_subs())} 个子代理完成..."
+            await info(
+                f"主 agent 已结束,等待 {len(config.get_running_subs())} 个子代理完成...",
+                config,
             )
             return
         # 子代理: 发送 depth>0 的 EndEvent,通知前端子代理完成

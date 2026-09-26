@@ -46,8 +46,12 @@ def _get_or_create_handler(log_file: str) -> RotatingFileHandler:
         return handler
 
 
-def get_logger(name: str, root_dir: Path | None) -> logging.Logger:
+def get_logger(name: str = "uniclaw", root_dir: Path | None = None) -> logging.Logger:
     """获取指定名称和工作目录的 logger。
+
+    Args:
+        name: 日志名称,默认为 "uniclaw"。
+        root_dir: 工作目录,用于确定日志文件位置。默认为用户级目录。
 
     每个 (name, root_dir) 组合对应独立的 logger, 但同一日志文件共享 handler。
     """

@@ -91,7 +91,7 @@ async def investigate(query: str, tool_runtime: ToolRuntime = None) -> str:
     if task.status == AgentStatus.FAILED:
         return f"{TOOL_ERROR}: 侦察代理启动失败: {task.result}"
 
-    await mgr.wait(task.id, timeout=300)
+    await mgr.wait(task.id, timeout=300, config=config)
     return task.result or f"(侦察代理未返回结果 — 状态: {task.status})"
 
 
@@ -175,7 +175,7 @@ async def ask_advisor(
         if task.status == AgentStatus.FAILED:
             return f"{TOOL_ERROR}: 顾问代理 ({m}) 启动失败: {task.result}"
 
-        await mgr.wait(task.id, timeout=300)
+        await mgr.wait(task.id, timeout=300, config=config)
         return task.result or f"(顾问模型未返回结果 — 状态: {task.status})"
 
     # 并发调用所有顾问模型

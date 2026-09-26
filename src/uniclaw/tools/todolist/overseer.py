@@ -53,7 +53,7 @@ async def _run_reviewer(prompt: str, config: AppConfig) -> tuple[bool, str]:
         if task.status == AgentStatus.FAILED:
             return False, f"审核子代理启动失败: {task.result}"
 
-        await mgr.wait(task.id, timeout=300)
+        await mgr.wait(task.id, timeout=300, config=config)
 
         # 检查任务是否真正完成
         if task.status == AgentStatus.FAILED:
