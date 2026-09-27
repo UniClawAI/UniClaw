@@ -24,7 +24,7 @@
 - 🗺️ **知识图谱**: 基于 SQLite 的知识图谱系统,支持实体/关系管理、全文搜索、路径发现、自动提取和可视化导出,用户级和项目级双层管理
 - 📚 **RAG 检索增强**: 文档导入、智能拆分、向量嵌入和语义检索,支持多集合管理和用户级/项目级双层作用域
 - 👥 **多智能体协作**: 全异步架构支持创建和管理多个专业智能体,实现任务分工协作和智能体间通信
-- 🖥️ **计算机控制**: 屏幕截图、鼠标/键盘自动化操作(全平台异步实现),支持全局热键 (Ctrl+U) 切换,`/cu` 命令一键开关
+- 🖥️ **计算机控制**: 屏幕截图、鼠标/键盘自动化操作(全平台异步实现),全局热键 Ctrl+U 可紧急停止正在运行的 Computer Use 写操作,`/cu` 命令切换启用状态
 - 🔊 **语音合成**: TTS 文本转语音,支持多种风格/情绪/方言控制,`/voice` 命令切换语音模式
 - 🎨 **图片生成**: 配置 `image_model` 后支持 AI 文生图,可保存为文件或直接分析,支持自定义尺寸
 - 📤 **文件发送**: AI 可将生成的文件发送给用户,WebUI 提供下载链接,微信直接发送
@@ -33,7 +33,7 @@
 - 🔄 **后台进程**: 启动和管理后台进程(异步实现),支持输入/输出流控制
 - 🎯 **Jev 结构化决策**: 集成 TypeSafe SDK 提供快速、低成本的 AI 结构化决策能力(select_one/select_many/yes_no/rate),应用于记忆语义搜索、安全快速筛选、RAG 文档重排序、技能智能推荐、上下文智能压缩等场景,Jev 不可用时自动回退到 LLM
 - 🛡️ **死循环检测**: 自动检测 AI 连续相同工具调用,智能打破循环并引导换策略
-- 💾 **自动保存**: 会话和记忆在对话结束时自动持久化,数据不丢失
+- 💾 **自动保存**: 会话在对话结束时自动持久化;记忆系统定期回顾会话并提取值得长期保存的信息
 - 🪝 **Hook 系统**: 事件驱动的 Shell 命令钩子,支持会话和工具调用生命周期事件
 - 🔔 **系统通知**: 支持 Windows/macOS/Linux 桌面通知,任务完成时自动提醒
 - 📝 **计划模式**: 支持进入计划模式进行任务规划,暂存方案后再执行
@@ -50,7 +50,7 @@
 - 🎯 **目标模式**: 设置目标停止条件,agent 停止时用独立 judge 模型评估是否达成,未达标则自动继续工作
 - 🌐 **平台搜索**: 支持 GitHub/arXiv/Stack Overflow/Hacker News/B站等多平台并发搜索
 - 📚 **扩展搜索平台**: 新增 OpenAlex/Google News/Reddit/Polymarket/SEC EDGAR/HuggingFace(models/datasets)/alphaXiv 等学术与数据搜索平台,OpenAlex 支持 429 重试,HuggingFace 支持 models/datasets 两种类型
-- 🔎 **智能搜索**: webSearch 自动切换 Exa 语义搜索 → Bing → DuckDuckGo,内置 Exa MCP 服务器,支持时间范围过滤(time_range)和 LLM 智能重排
+- 🔎 **智能搜索**: `webSearch` 默认使用 Exa 通用搜索,可按需指定 Bing、DuckDuckGo 或其他平台;内置 Exa MCP 服务器,支持时间范围过滤(time_range)和 LLM 智能重排
 - 🌍 **浏览器自动化**: 基于 Playwright 的浏览器控制,支持导航/点击/输入/截图/JS 执行等操作
 - ⬇️ **HTTP 下载**: 多协程并发下载、断点续传、代理支持、自动重试和文件校验,支持同步/异步两种模式
 - 🎞️ **M3U8/HLS 流下载**: 支持 M3U8/HLS 流媒体下载,自动解析主/子流,支持自定义请求头、重试、代理和断点续传,与 HTTP 下载管理器分离
@@ -113,7 +113,7 @@ uv tool install .
 
 **配置文件**
 
-首次启动时会自动运行配置向导(`run_setup_wizard()`),引导您配置 API 地址、密钥和模型。也可手动创建配置文件：
+控制台模式首次启动且尚未配置 provider 时,会自动运行配置向导(`run_setup_wizard()`),引导您配置 API 地址、密钥和模型。WebUI 模式不会启动此交互式向导,请通过 WebUI 设置页面配置 provider,或提前创建配置文件：
 
 ```
 # 项目级
@@ -155,7 +155,7 @@ uv tool install .
 }
 ```
 
-> 💡 支持多 provider 配置，通过 `providers` 字典管理多个 API 提供商。`model_name` 为列表格式，第一个为主模型，后续为 fallback。首次启动时会自动运行配置向导。
+> 💡 支持多 provider 配置,通过 `providers` 字典管理多个 API 提供商。`model_name` 为列表格式,第一个为主模型,后续为 fallback。仅控制台模式在首次启动且尚未配置 provider 时运行配置向导。
 
 **运行项目**
 
@@ -193,7 +193,7 @@ uv run pytest tests/ -v                          # 全量测试(串行)
 uv lock --upgrade
 
 # 格式化代码
-uv run black .
+uvx black .
 ```
 
 ## 🎯 快速开始
@@ -444,7 +444,7 @@ docker run -d --name uniclaw \
 
 ### 权限模式说明
 
-- **auto**: 自动批准读取类操作,对写入和不安全的 Bash 命令询问用户
+- **auto**: 根据工具类型、授权目录、持久化规则和安全检查决定是否自动批准;无法安全放行的操作会询问用户
 - **manual**: 所有工具调用都需要用户手动确认
 - **accept-all**: 自动批准所有操作(谨慎使用)
 - **plan**: 计划模式(通过工具调用进入)
@@ -452,7 +452,7 @@ docker run -d --name uniclaw \
 **配置方式：**
 - WebUI 设置页面直接切换权限模式
 - 配置文件 `settings.json` 中设置 `permission_mode` 字段
-- 命令 `/permissions mode <模式>` 临时切换
+- 控制台按 **Shift+Tab** 循环切换权限模式
 
 ### 持久化权限规则 🔒
 
@@ -548,7 +548,7 @@ UniClaw 支持自定义持久化权限规则,可以记住您的权限偏好：
 - 显示文件差异的详细内容
 - 适合调试和了解 AI 的工作细节
 
-> 💡 **提示**: 可以通过配置 `VERBOSE=true` 在启动时默认启用详细模式。
+> 💡 **提示**: 按 **F2** 可切换详细/简洁显示模式。
 
 #### 事件类型展示
 
@@ -904,11 +904,11 @@ uv run uniclaw --mode webui
 
 #### 3. 斜杠命令
 
-使用 `/` 前缀执行内置命令(如查看帮助、切换权限模式等)：
+使用 `/` 前缀执行内置命令(如查看帮助、切换模型或查看权限规则)：
 
 ```
 /help
-/permission auto
+/permissions list
 ```
 
 #### 4. 图片识别
@@ -922,24 +922,23 @@ uv run uniclaw --mode webui
 - ✅ **WebUI 集成** - 在 WebUI 中直接管理微信 Bot 账号(添加/移除/查看状态)
 - ✅ **自动启动** - 已登录账号会自动启动消息监听
 - ✅ **图片处理** - 支持接收和识别图片内容
-- ✅ **权限请求交互** - 微信模式下支持权限请求,用户可通过微信确认操作
+- ✅ **权限请求交互** - 按当前配置的权限模式处理工具调用;需要确认时,用户可通过微信批准或拒绝
 - ✅ **实时反馈** - 工具调用时会发送进度通知
-- ✅ **权限控制** - 微信模式默认使用 ACCEPT_ALL 权限模式,无需手动确认
+- ✅ **权限控制** - 微信会话使用配置中的权限模式,默认是 `auto`;是否需要确认取决于工具和权限规则
 - ✅ **上下文隔离** - 每个用户拥有独立的对话历史和状态
 - ✅ **会话自动清理** - 微信模式下的会话自动管理和清理
 
 ### 数据存储
 
-微信机器人的数据存储在项目目录下的 `wechat/` 文件夹中,包括：
+微信机器人的数据默认存储在用户目录下的 `~/.UniClaw/` 中：
 
-- 账号登录信息
-- 会话历史记录
-- 临时文件缓存
+- 账号配置和登录凭据: `~/.UniClaw/wechat/`
+- 会话历史记录: `~/.UniClaw/sessions/`
 
 ### 注意事项
 
 ⚠️ **安全提示**：
-- 微信模式下所有操作自动批准,请谨慎使用
+- 微信会话的权限行为由配置的权限模式决定;使用 `accept-all` 时,所有操作都会自动批准,请谨慎使用
 - 建议在可信环境中使用此功能
 - 不要在不信任的网络中暴露机器人接口
 
@@ -1055,7 +1054,7 @@ UniClaw 提供了丰富的内置工具,AI 助手可以自动调用这些工具�
   - 支持 `intent` 搜索意图描述,供 LLM 重排时判断相关度参考
   - 自动缓存搜索结果(128条,10分钟过期)
   - GitHub 支持 repositories/code/issues/users 类型和 stars/forks/updated 排序
-  - 支持 `GITHUB_TOKEN` 环境变量提高 GitHub API 速率限制
+  - 可在 `settings.json` 的 `GITHUB_TOKEN` 配置项中填写 Token,提高 GitHub API 速率限制
 
 #### 下载工具 ⬇️
 
@@ -1280,7 +1279,7 @@ http_download(
 - **cu_find_element** - 查找指定的 UI 元素(支持名称、角色、值等条件)
 - **cu_interact** - 操作 UI 元素(点击、聚焦、调用等)
 
-> 💡 **提示**: 计算机控制功能可通过全局热键 **Ctrl+U** 切换启用/禁用。依赖 `pyautogui`、`pynput`、`mss`、`pillow`。Windows 上额外依赖 `uiautomation`。
+> 💡 **提示**: 全局热键 **Ctrl+U** 可紧急取消正在运行的 Computer Use 写操作;通过 `/cu on|off` 切换 Computer Use 启用状态。依赖 `pyautogui`、`pynput`、`mss`、`pillow`。Windows 上额外依赖 `uiautomation`。
 
 #### 任务清单工具 📋
 
@@ -1394,10 +1393,10 @@ http_download(
   - 支持格式: txt/md/py/json/yaml/csv/html/pdf 等
   - 可配置文档块大小(`chunk_size`)和重叠度(`chunk_overlap`)
   - 支持用户级/项目级双层作用域
-  - 重复导入自动清除旧文档块,embedding 入库过程实时推送进度
+  - 重复导入时跳过未变更块,并清理本次导入中内容已变更来源的旧块;目录中已删除文件对应的旧块不会自动清理
   - 自动遵守 `.gitignore` 规则,跳过被忽略的文件和目录
 - **rag_search** - 在指定集合中语义检索,返回最相关的文档片段
-  - 支持 `score_threshold` 过滤低相关度结果
+  - 支持 `min_score` 过滤低相关度结果
   - 支持 `top_k` 控制返回数量
   - 多路召回(向量语义 + BM25 关键词)+ RRF 融合 + Jev/LLM 重排序(优先使用 Jev,不可用时回退到 LLM)
   - 支持 `intent` 搜索意图参数:传入非空意图描述时自动启用重排序,提升相关性判断
@@ -1407,7 +1406,7 @@ http_download(
 - **rag_set_desc** - 设置或更新集合描述,便于后续检索时识别
 - **rag_evaluate** - 评估 RAG 检索效果:对一组测试问题执行检索,输出 LLM Judge 相关性指标
   - `use_llm_judge=True` 时用 LLM 评估每个检索结果与查询的相关性,无需人工标注
-  - 输出 LLM Judge 平均分和 Context Precision@k
+  - 输出 LLM Judge 平均分和相关结果占比(相关块数 / 实际返回块数;报告中标记为 Context Precision@k,不考虑结果排序位置)
   - 支持 `rerank`(LLM 重排序)和 `use_bm25`(BM25 多路召回)开关
 
 **作用域：**
@@ -2095,7 +2094,7 @@ rag_ingest(path="docs/api.md", collection="api-docs")
 rag_ingest(path="src/", collection="source-code", chunk_size=500)
 
 # 用户级导入(跨项目共享)
-rag_ingest(path="~/notes/", collection="my-notes", scope="user")
+rag_ingest(path="./notes/", collection="my-notes", scope="user")
 ```
 
 #### 语义检索
@@ -2105,7 +2104,7 @@ rag_ingest(path="~/notes/", collection="my-notes", scope="user")
 rag_search(query="如何配置 MCP 服务器", collection="api-docs")
 
 # 限制返回数量和相关度阈值
-rag_search(query="认证流程", collection="api-docs", top_k=3, score_threshold=0.7)
+rag_search(query="认证流程", collection="api-docs", top_k=3, min_score=0.7)
 ```
 
 #### 管理集合
@@ -2115,7 +2114,7 @@ rag_search(query="认证流程", collection="api-docs", top_k=3, score_threshold
 rag_list_collections()
 
 # 设置集合描述
-rag_set_desc(collection="api-docs", desc="API 接口文档")
+rag_set_desc(collection="api-docs", description="API 接口文档")
 
 # 删除集合
 rag_delete_collection(collection="old-docs")
@@ -2123,8 +2122,8 @@ rag_delete_collection(collection="old-docs")
 
 ### 存储位置
 
-- **用户级**: `~/.UniClaw/rag.db` (跨项目共享)
-- **项目级**: `.UniClaw/rag.db` (当前项目)
+- **用户级**: `~/.UniClaw/rag/chroma_data/` (跨项目共享)
+- **项目级**: `.UniClaw/rag/chroma_data/` (当前项目)
 
 ---
 
@@ -2427,7 +2426,7 @@ A: 系统支持 OpenAI 和 Anthropic 两种协议,通过 `providers` 配置多�
 - **添加 Provider**: 在 `providers` 字典中添加新的提供商配置,指定 `protocol`(openai/anthropic)、`api_key` 和 `base_url`
 - **切换模型**: 修改 `model_name` 列表,使用 `provider_name/model_name` 格式指定模型,如 `["anthropic/claude-sonnet-4-20250514"]`
 - **Fallback 机制**: `model_name` 列表中多个模型自动 fallback,主模型失败时自动切换到下一个
-- **首次配置**: 运行配置向导自动完成 provider 设置
+- **首次配置**: 控制台模式首次启动且尚未配置 provider 时,可运行配置向导完成设置;WebUI 模式请使用设置页面或提前配置 `settings.json`
 
 ### Q: 如何使用顾问模型？
 
@@ -2481,10 +2480,9 @@ A:
 
 ### Q: 微信机器人的数据存储在哪里？
 
-A: 微信机器人的数据存储在项目的 `wechat/` 目录下,包括：
-- 账号登录凭证
-- 会话历史记录
-- 临时文件缓存
+A: 微信机器人数据默认存储在用户目录下的 `~/.UniClaw/` 中：
+- 账号配置和登录凭据: `~/.UniClaw/wechat/`
+- 会话历史记录: `~/.UniClaw/sessions/`
 
 这些数据会在首次使用时自动创建,无需手动配置。
 
@@ -2523,10 +2521,10 @@ A: 多智能体系统采用全异步架构,允许创建专业化的助手并进�
 **使用场景示例**:
 ```
 # 同步创建代码审查智能体(等待完成后返回结果)
-subagent_create(prompt="审查这段代码", subagent_type="code_reviewer", name="review-task")
+subagent_create(prompt="审查这段代码", subagent_type="reviewer", name="review-task")
 
 # 异步创建智能体(立即返回,后台运行)
-subagent_create(prompt="编写测试", subagent_type="test_writer", name="test-task", wait=False)
+subagent_create(prompt="编写测试", subagent_type="tester", name="test-task", wait=False)
 
 # 向智能体发送消息
 subagent_send_message(task_id="test-task", message="补充要求")
@@ -2564,7 +2562,7 @@ A:
 - **快捷键**: 按 **F2** 键切换详细/简洁模式
 - **默认模式**: 简洁模式(只显示核心信息)
 - **详细模式**: 显示完整的工具调用参数、Token 统计等元数据
-- **配置启动**: 设置环境变量 `VERBOSE=true` 可默认启用详细模式
+- **切换模式**: 按 **F2** 在详细/简洁模式间切换
 
 详细模式适合调试和了解 AI 的工作细节,简洁模式适合日常使用。
 
@@ -2639,7 +2637,7 @@ A: 系统通知工具会在以下场景自动发送桌面通知：
 
 A:
 1. 启动 WebUI：`uv run uniclaw --mode webui`
-2. 浏览器自动打开(或手动访问终端显示的地址)
+2. 在浏览器中手动访问终端显示的地址
 3. 在浏览器中与 AI 进行对话
 
 局域网共享：`uv run uniclaw --mode webui --host 0.0.0.0`,其他设备可通过你的 IP 地址访问。
@@ -2880,7 +2878,7 @@ A: Computer Use 模式允许 AI 直接控制您的计算机：
 - **鼠标控制**: 移动、点击、拖拽等操作
 - **键盘控制**: 输入文本、按键等
 
-使用 `/cu on` 开启,`/cu off` 关闭。开启后可通过 **Ctrl+U** 全局热键快速切换。
+使用 `/cu on` 开启,`/cu off` 关闭。全局热键 **Ctrl+U** 可紧急取消正在运行的 Computer Use 写操作,不会切换启用状态。
 
 > ⚠️ **安全提示**: Computer Use 模式下 AI 可以直接操作您的计算机,请在可信环境中使用。
 
@@ -2967,8 +2965,10 @@ A: 是的,WebUI 完美支持移动端访问：
 uv run uniclaw --mode webui --host 0.0.0.0
 
 # 手机浏览器访问
-http://你的IP地址:8080
+https://你的IP地址:8080
 ```
+
+默认使用 HTTPS(自签名证书);如需使用 HTTP,启动命令追加 `--no-ssl`,再访问 `http://你的IP地址:8080`。
 
 **功能完整**:
 - 对话功能完整可用
