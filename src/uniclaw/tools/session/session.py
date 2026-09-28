@@ -1638,7 +1638,7 @@ class Session:
     async def smart_compact(
         self, config: AppConfig, focus: str = "", keep_ratio: float = 0.3
     ) -> bool:
-        """Jev 智能压缩优先,失败则回退 LLM 摘要。
+        """深度压缩:Jev 智能压缩优先,失败则回退 LLM 摘要。
 
         供自动压缩(maybe_compact level 1+)与手动 /compact 共用,
         保证两条路径行为一致。
@@ -1651,7 +1651,16 @@ class Session:
         Returns:
             bool: True 表示 Jev 压缩成功,False 表示已回退 LLM 摘要。
         """
-        from uniclaw.jev_compact import JevCompactConfig, jev_compact
+        from uniclaw.jev_compact import (
+            JEV_COMPACT_ENABLED,
+            JevCompactConfig,
+            jev_compact,
+        )
+
+        # Jev 压缩暂已停用(JEV_COMPACT_ENABLED=False),直接走 LLM 摘要
+        if not JEV_COMPACT_ENABLED:
+            await self.compact(config, focus=focus, keep_ratio=keep_ratio)
+            return False
 
         # 阈值在 JevCompactConfig 默认值中调好,这里不重复字面量
         jev_config = JevCompactConfig()
@@ -1686,10 +1695,10 @@ class Session:
 
         三级压缩策略:
         - level 0 (50%): 仅微压缩(清空旧工具结果)
-        - level 1 (70%): Jev 智能压缩(优先),失败则回退 LLM 摘要
-        - level 2 (85%): 更激进的 Jev/LLM 压缩
+        - level 1 (70%): 深度压缩(Jev 智能压缩暂已停用,直接 LLM 摘要)
+        - level 2 (85%): 更激进的 LLM 摘要
 
-        force=True 时忽略压力等级门槛,强制走完整压缩链(微压缩 + Jev + LLM 摘要兜底)。
+        force=True 时忽略压力等级门槛,强制走完整压缩链(微压缩 + 深度压缩 + LLM 摘要兜底)。
         供 CONTEXT_OVERFLOW 重试路径使用 — estimate_tokens 是估算值,可能低于
         API 真实计数,已确认溢出时不能只凭估算值决定压不压。
 
@@ -1732,20 +1741,19 @@ class Session:
             return True
 
         # level 0 到此为止,深度压缩只在 level 1+ 触发:
-        # Jev 保守保留(文本消息全保留/fail-safe 全留)常落在 (50%, 70%],
-        # 若 level 0 也深度压缩,每轮工具循环都会重复触发(Jev 调用 + 净增一对
-        # 摘要消息)却始终压不回 50% 以下,token 不降反升。
+        # 深度压缩(Jev 保守保留时尤甚)常压不回 50% 以下,
+        # 若 level 0 也深度压缩,每轮工具循环都会重复触发(净增一对摘要消息),
+        # token 不降反升。
         if level < 1 and not force:
             return True
 
-        # level 1+ / force: 尝试 Jev 智能压缩,失败则回退 LLM 摘要
+        # level 1+ / force: 深度压缩(Jev 暂停用,smart_compact 直接走 LLM 摘要)
         await self.smart_compact(config, keep_ratio=0.3)
 
         if not force and self.estimate_tokens(model) <= limit * PRESSURE_LEVELS[1][0]:
             return True
 
-        # 仍超阈值(或 force): LLM 摘要兜底(确定性压缩,保证释放空间)—
-        # Jev 不动文本消息,文本为主的会话可能压不动,不能就此收手
+        # 仍超阈值(或 force): LLM 摘要兜底(确定性压缩,保证释放空间)
         await self.compact(config, keep_ratio=0.15)
 
         return True

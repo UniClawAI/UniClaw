@@ -11,8 +11,8 @@ from uniclaw.utils.message import MessageRole
 async def cmd_compact(args: str, config: AppConfig) -> bool:
     """手动压缩对话历史
 
-    Jev 智能压缩优先(按价值保留/删除工具配对),失败则回退 LLM 摘要,
-    与自动压缩走同一条链路。支持可选的聚焦参数,保留与特定主题相关的消息。
+    Jev 智能压缩暂已停用,当前直接走 LLM 摘要,与自动压缩走同一条链路。
+    支持可选的聚焦参数,保留与特定主题相关的消息。
 
     Args:
         args: 可选的聚焦关键词,用于保留相关消息

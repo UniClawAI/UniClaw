@@ -21,6 +21,12 @@ if TYPE_CHECKING:
     from uniclaw.tools.session.session import Session
 
 
+# 主开关: Jev 压缩实测效果不佳,暂已停用,压缩链统一走 LLM 摘要。
+# 恢复时置 True 即可重新接入(smart_compact 会自动尝试 Jev 路径)。
+# 本模块的单元测试直接覆盖内部函数,不受此开关影响。
+JEV_COMPACT_ENABLED = False
+
+
 class JevCompactSkip(Exception):
     """Jev 压缩跳过(不可用/无配对/分割点异常),调用方应回退 LLM。"""
 
