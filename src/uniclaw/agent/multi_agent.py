@@ -406,7 +406,7 @@ class MultiAgent:
                     if tui and tui.config:
                         queue = tui.config.current_agent.event_queue
                 except Exception as e:
-                    await err("获取TUI实例失败", config, e)
+                    await err(f"获取TUI实例失败: {e}", config, e)
         if queue:
             await queue.put((task, event))
 
@@ -457,7 +457,7 @@ class MultiAgent:
             except asyncio.TimeoutError:
                 pass
             except Exception as e:
-                await err("等待任务完成异常", config, e)
+                await err(f"等待任务完成异常: {e}", config, e)
             # 任务已完成
             if task.status in (
                 AgentStatus.COMPLETED,
@@ -1079,7 +1079,9 @@ class MultiAgent:
                     if dedup_msg:
                         tool_resp_content = dedup_msg
                 except Exception as e:
-                    await err(f"{TOOL_ERROR}: [{tc_name}]\n参数: {tc_args}", config, e)
+                    await err(
+                        f"{TOOL_ERROR}: [{tc_name}] {e}\n参数: {tc_args}", config, e
+                    )
                     tool_resp_content = f"{TOOL_ERROR}: {e}"
             else:
                 tool_resp_content = (
