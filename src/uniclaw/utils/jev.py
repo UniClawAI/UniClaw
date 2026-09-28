@@ -3,6 +3,9 @@
 提供底层原语(choice/score/noul/batch)和通用模式函数(select_one/select_many/yes_no/rate/multi_judge),
 供各子系统代码直接调用,不注册为 LLM 工具。
 
+API 调用对瞬时故障(网络/限流/服务端错误)自动重试 2 次;
+鉴权失败、state 超预算等确定性错误立即抛出,由调用方回退 LLM。
+
 用法:
     from uniclaw.utils.jev import select_one, yes_no, rate
 
@@ -37,6 +40,11 @@ from typesafe_sdk import (
     Score,
 )
 
+from uniclaw.provider.error_classifier import (
+    ErrorCategory,
+    classify_error,
+    get_backoff_delay,
+)
 from uniclaw.utils.tokens import count_tokens
 
 
@@ -180,6 +188,140 @@ def _classify_answer(qid: str, answer) -> ChoiceResult | ScoreResult | NoulResul
         raise JevAPIError(f"未知 answer 类型 (qid={qid}): {type(answer)}")
 
 
+# ── 瞬时故障重试 ──────────────────────────────────────────────
+#
+# 评估是幂等的,瞬时故障(网络/限流/服务端错误)可安全重发。
+# 鉴权失败、state 超预算等确定性错误不重试 — 重试无意义,由调用方回退 LLM。
+
+_MAX_TRANSIENT_RETRIES = 2
+"""瞬时故障最大重试次数。"""
+
+RETRY_TIMEOUT_SECONDS = 20.0
+"""重试请求的 timeout 上限(秒)— 重试时缩短,避免网络黑洞下多次长超时叠加。"""
+
+_TRANSIENT_CATEGORIES = frozenset(
+    {ErrorCategory.RATE_LIMIT, ErrorCategory.SERVER_ERROR, ErrorCategory.TIMEOUT}
+)
+"""可重试的错误分类。CONTEXT_OVERFLOW 不在此列 — Jev 超预算应直接回退 LLM。"""
+
+_TRANSIENT_NAME_KEYWORDS = (
+    "connection",
+    "timeout",
+    "socket",
+    "gaierror",
+    "sslerror",
+    "network",
+    "protocolerror",
+)
+"""classify_error 未覆盖的传输层异常名关键词(小写子串匹配)。"""
+
+
+def _extract_status_code(e: Exception) -> int | None:
+    """从底层异常提取 HTTP 状态码(兼容 status_code/status 两种属性)。"""
+    status = getattr(e, "status_code", None)
+    if status is None:
+        status = getattr(e, "status", None)
+    try:
+        return int(status)
+    except (TypeError, ValueError):
+        return None
+
+
+def _wrap_api_error(prefix: str, e: Exception) -> JevAPIError:
+    """把底层异常包装为 JevAPIError,保留 HTTP 状态码供调用方分类。"""
+    return JevAPIError(f"{prefix}: {e}", status_code=_extract_status_code(e))
+
+
+def is_transient_error(e: Exception) -> bool:
+    """判断是否为瞬时故障(网络/限流/服务端错误),值得重试。
+
+    鉴权失败(401/403)、state 超预算等确定性错误返回 False — 重试无意义,
+    调用方应回退 LLM。
+
+    Args:
+        e: 待判断的异常(已包装的 JevAPIError 会自动回溯 __cause__)。
+
+    Returns:
+        bool: True 表示可以重试。
+    """
+    cause = e.__cause__ or e
+    if classify_error(cause) in _TRANSIENT_CATEGORIES:
+        return True
+    name = type(cause).__name__.lower()
+    return any(kw in name for kw in _TRANSIENT_NAME_KEYWORDS)
+
+
+def _retry_backoff(e: Exception, attempt: int) -> float:
+    """第 attempt 次重试前的退避秒数(复用 LLM fallback 的分类退避策略)。"""
+    cat = classify_error(e.__cause__ or e)
+    if cat in _TRANSIENT_CATEGORIES:
+        return get_backoff_delay(cat, attempt)
+    return float(attempt)
+
+
+async def _system_one_requests(
+    state: str | dict,
+    question_groups: list[dict[str, Any]],
+    *,
+    prefix: str,
+    api_key: str | None = None,
+    model: str | None = None,
+    base_url: str | None = None,
+    timeout: float = 60.0,
+) -> list[Any]:
+    """执行一批 system_one 请求(每组一次),瞬时故障自动重试整组。
+
+    评估是幂等的,整组重发无副作用。瞬时故障最多重试 _MAX_TRANSIENT_RETRIES 次,
+    重试时缩短 timeout 并按分类退避;其余错误立即包装为 JevAPIError 抛出。
+    JevConfigError(未配置 key)原样抛出,不包装、不重试。
+
+    Args:
+        state: 待评估的内容。
+        question_groups: 问题分组,每组一次 system_one 请求。
+        prefix: 错误消息前缀(如 "Choice"/"Batch")。
+        api_key: TypeSafe API key(为空时从环境变量读取)。
+        model: Jev 模型名(为空时用 SDK 默认)。
+        base_url: API 地址(为空时用默认)。
+        timeout: 首次请求超时秒数。
+
+    Returns:
+        list: 与 question_groups 一一对应的响应对象。
+
+    Raises:
+        JevConfigError: TYPESAFE_API_KEY 未配置。
+        JevAPIError: API 调用失败(不可重试或重试耗尽)。
+    """
+    for attempt in range(_MAX_TRANSIENT_RETRIES + 1):
+        attempt_timeout = (
+            timeout if attempt == 0 else min(timeout, RETRY_TIMEOUT_SECONDS)
+        )
+        try:
+            async with _create_client(
+                api_key, model, base_url, attempt_timeout
+            ) as client:
+                if len(question_groups) == 1:
+                    return [
+                        await client.system_one(
+                            state=state, questions=question_groups[0]
+                        )
+                    ]
+                return list(
+                    await asyncio.gather(
+                        *(
+                            client.system_one(state=state, questions=group)
+                            for group in question_groups
+                        )
+                    )
+                )
+        except JevConfigError:
+            raise
+        except Exception as e:
+            if attempt >= _MAX_TRANSIENT_RETRIES or not is_transient_error(e):
+                raise _wrap_api_error(f"{prefix} 调用失败", e) from e
+            await asyncio.sleep(_retry_backoff(e, attempt + 1))
+    raise JevAPIError(f"{prefix} 调用失败: 重试次数耗尽")  # 理论不可达
+
+
 # ── 请求预算 ──────────────────────────────────────────────────
 #
 # Jev (jev-1.13) 的输入限制,超限服务端返回 400 max_tokens_exceeded:
@@ -229,19 +371,18 @@ async def choice(
 
     Raises:
         JevConfigError: TYPESAFE_API_KEY 未配置。
-        JevAPIError: API 调用失败。
+        JevAPIError: API 调用失败(瞬时故障自动重试后仍失败)。
     """
-    async with _create_client(api_key, model, base_url, timeout) as client:
-        try:
-            response = await client.system_one(
-                state=state,
-                questions={
-                    question_id: Choice(instructions=instructions, criteria=criteria),
-                },
-            )
-        except Exception as e:
-            raise JevAPIError(f"Choice 调用失败: {e}") from e
-    return _parse_choice(response.answers[question_id])
+    responses = await _system_one_requests(
+        state,
+        [{question_id: Choice(instructions=instructions, criteria=criteria)}],
+        prefix="Choice",
+        api_key=api_key,
+        model=model,
+        base_url=base_url,
+        timeout=timeout,
+    )
+    return _parse_choice(responses[0].answers[question_id])
 
 
 async def score(
@@ -272,19 +413,18 @@ async def score(
 
     Raises:
         JevConfigError: TYPESAFE_API_KEY 未配置。
-        JevAPIError: API 调用失败。
+        JevAPIError: API 调用失败(瞬时故障自动重试后仍失败)。
     """
-    async with _create_client(api_key, model, base_url, timeout) as client:
-        try:
-            response = await client.system_one(
-                state=state,
-                questions={
-                    question_id: Score(instructions=instructions, criteria=criteria),
-                },
-            )
-        except Exception as e:
-            raise JevAPIError(f"Score 调用失败: {e}") from e
-    return _parse_score(response.answers[question_id])
+    responses = await _system_one_requests(
+        state,
+        [{question_id: Score(instructions=instructions, criteria=criteria)}],
+        prefix="Score",
+        api_key=api_key,
+        model=model,
+        base_url=base_url,
+        timeout=timeout,
+    )
+    return _parse_score(responses[0].answers[question_id])
 
 
 async def noul(
@@ -315,7 +455,7 @@ async def noul(
 
     Raises:
         JevConfigError: TYPESAFE_API_KEY 未配置。
-        JevAPIError: API 调用失败。
+        JevAPIError: API 调用失败(瞬时故障自动重试后仍失败)。
     """
     noul_kwargs: dict[str, Any] = {"instructions": instructions}
     if criteria:
@@ -323,15 +463,16 @@ async def noul(
             true=criteria.get("true", ""),
             false=criteria.get("false", ""),
         )
-    async with _create_client(api_key, model, base_url, timeout) as client:
-        try:
-            response = await client.system_one(
-                state=state,
-                questions={question_id: Noul(**noul_kwargs)},
-            )
-        except Exception as e:
-            raise JevAPIError(f"Noul 调用失败: {e}") from e
-    return _parse_noul(response.answers[question_id])
+    responses = await _system_one_requests(
+        state,
+        [{question_id: Noul(**noul_kwargs)}],
+        prefix="Noul",
+        api_key=api_key,
+        model=model,
+        base_url=base_url,
+        timeout=timeout,
+    )
+    return _parse_noul(responses[0].answers[question_id])
 
 
 def _state_text(state: str | dict) -> str:
@@ -392,20 +533,20 @@ def _split_questions(
         list[dict[str, Any]]: 问题分组,至少一组;单个问题超预算时独占一组。
     """
     budget = int(TOTAL_BUDGET_TOKENS * BUDGET_USAGE) - state_tokens
-    chunks: list[dict[str, Any]] = []
+    groups: list[dict[str, Any]] = []
     current: dict[str, Any] = {}
     used = 0
     for qid, qobj in sdk_questions.items():
         cost = question_tokens.get(qid, 0)
         if current and used + cost > budget:
-            chunks.append(current)
+            groups.append(current)
             current = {}
             used = 0
         current[qid] = qobj
         used += cost
     if current:
-        chunks.append(current)
-    return chunks
+        groups.append(current)
+    return groups
 
 
 async def batch(
@@ -443,7 +584,7 @@ async def batch(
 
     Raises:
         JevConfigError: TYPESAFE_API_KEY 未配置。
-        JevAPIError: API 调用失败,或 state 超出 Jev 预算。
+        JevAPIError: API 调用失败(瞬时故障自动重试后仍失败),或 state 超出 Jev 预算。
     """
     # 构建 SDK 问题对象
     sdk_questions: dict[str, Any] = {}
@@ -473,28 +614,20 @@ async def batch(
     }
     max_q = max(question_tokens.values(), default=0)
     state_tokens = _check_state_budget(state, max_q)
-    chunks = _split_questions(sdk_questions, question_tokens, state_tokens)
-    if not chunks:
+    question_groups = _split_questions(sdk_questions, question_tokens, state_tokens)
+    if not question_groups:
         # 空问题原样透传给 SDK 报 "At least one question is required.",保持既有报错行为
-        chunks = [{}]
+        question_groups = [{}]
 
-    async with _create_client(api_key, model, base_url, timeout) as client:
-        try:
-            if len(chunks) == 1:
-                responses = [
-                    await client.system_one(state=state, questions=chunks[0])
-                ]
-            else:
-                responses = list(
-                    await asyncio.gather(
-                        *(
-                            client.system_one(state=state, questions=chunk)
-                            for chunk in chunks
-                        )
-                    )
-                )
-        except Exception as e:
-            raise JevAPIError(f"Batch 调用失败: {e}") from e
+    responses = await _system_one_requests(
+        state,
+        question_groups,
+        prefix="Batch",
+        api_key=api_key,
+        model=model,
+        base_url=base_url,
+        timeout=timeout,
+    )
 
     merged: dict[str, Any] = {}
     for response in responses:

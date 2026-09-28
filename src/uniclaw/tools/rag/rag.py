@@ -69,6 +69,34 @@ def _match_where(metadata: dict | None, where: dict) -> bool:
     return True
 
 
+# 召回候选池倍数: 基础 3 倍;Jev 可用时 6 倍(Jev 批量精排便宜,多捞候选提升召回)
+BASE_CANDIDATE_MULT = 3
+JEV_CANDIDATE_MULT = 6
+MAX_CANDIDATES = 150
+"""加深候选池的绝对上限 — top_k 很大时不加深,防止精排成本失控(不低于基础池)。"""
+
+
+def _candidate_pool_size(top_k: int) -> int:
+    """计算召回候选池大小(精排前)。
+
+    Jev 可用时加深候选池 — Jev 批量精排便宜,多捞候选提升召回;
+    不可用时维持基础倍数,避免回退 LLM 精排时成本放大。
+    top_k 很大时受 MAX_CANDIDATES 约束不加深,但不低于基础池。
+
+    Args:
+        top_k: 最终返回结果数。
+
+    Returns:
+        int: 候选池大小。
+    """
+    if is_available():
+        return min(
+            top_k * JEV_CANDIDATE_MULT,
+            max(top_k * BASE_CANDIDATE_MULT, MAX_CANDIDATES),
+        )
+    return top_k * BASE_CANDIDATE_MULT
+
+
 class RAGManager:
     """管理 ChromaDB 客户端、集合和 embedding 函数。"""
 
@@ -744,6 +772,31 @@ class RAGManager:
                     r["rrf_score"] /= max_rrf
         return results
 
+    @staticmethod
+    def _trim_candidates(candidates: list[dict], keep: int) -> list[dict]:
+        """按召回强度截尾到 keep 个,控制 LLM 精排成本。
+
+        有 rrf_score(多路合并结果)按其降序;纯向量路径无 rrf_score 时
+        按 cosine_similarity 降序(仅 distance 时换算)。rrf_score 已归一化
+        到 top-1=1.0,只能按排名截断,不能用绝对阈值。
+
+        Args:
+            candidates: 候选文档列表。
+            keep: 保留数量。
+
+        Returns:
+            截尾后的候选列表。
+        """
+        if len(candidates) <= keep:
+            return candidates
+
+        def _key(c: dict) -> float:
+            if "rrf_score" in c:
+                return c["rrf_score"]
+            return c.get("cosine_similarity", 1.0 - c.get("distance", 1.0))
+
+        return sorted(candidates, key=_key, reverse=True)[:keep]
+
     async def search(
         self,
         collection_name: str,
@@ -784,8 +837,8 @@ class RAGManager:
         if collection.count() == 0:
             return []
 
-        # 候选取 3 倍,保证合并后有足够的候选
-        n_candidates = min(top_k * 3, collection.count())
+        # 候选池按 Jev 可用性加深,保证合并后有足够的候选
+        n_candidates = min(_candidate_pool_size(top_k), collection.count())
 
         async def _vector_search() -> list[dict]:
             """向量语义检索。"""
@@ -886,6 +939,8 @@ class RAGManager:
             except Exception as e:
                 await err(f"Jev 重排序异常, 回退 LLM: {e}", e=e)
         if relevance_scores is None:
+            # 回退 LLM 前按召回排名截尾 — 加深后的候选池会放大 LLM 精排成本
+            candidates = self._trim_candidates(candidates, top_k * BASE_CANDIDATE_MULT)
             relevance_scores = await self._rerank_via_llm(query, candidates, intent)
 
         # 余弦相似度: 仅向量召回的候选才有 distance,纯 BM25 召回的用 RRF 归一化分数作代理

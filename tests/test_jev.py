@@ -10,12 +10,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from uniclaw.utils.jev import (
+    RETRY_TIMEOUT_SECONDS,
     BatchResult,
     ChoiceResult,
     JevAPIError,
     JevConfigError,
     NoulResult,
     ScoreResult,
+    _MAX_TRANSIENT_RETRIES,
     _check_state_budget,
     _classify_answer,
     _parse_choice,
@@ -24,8 +26,10 @@ from uniclaw.utils.jev import (
     _question_tokens,
     _split_questions,
     _state_text,
+    _wrap_api_error,
     batch,
     is_available,
+    is_transient_error,
 )
 
 
@@ -255,6 +259,193 @@ class TestExceptions:
         assert err.status_code is None
 
 
+# ── 瞬时故障重试测试 ──────────────────────────────────────
+
+
+class TestTransientError:
+    """is_transient_error / _wrap_api_error 测试"""
+
+    def test_timeout_error_is_transient(self):
+        assert is_transient_error(TimeoutError("timed out")) is True
+
+    def test_connection_error_is_transient(self):
+        assert is_transient_error(ConnectionError("refused")) is True
+
+    def test_status_429_is_transient(self):
+        class FakeHTTPError(Exception):
+            status_code = 429
+
+        assert is_transient_error(FakeHTTPError("rate limited")) is True
+
+    def test_status_503_is_transient(self):
+        class FakeHTTPError(Exception):
+            status_code = 503
+
+        assert is_transient_error(FakeHTTPError("bad gateway")) is True
+
+    def test_status_400_not_transient(self):
+        class FakeHTTPError(Exception):
+            status_code = 400
+
+        assert is_transient_error(FakeHTTPError("bad request")) is False
+
+    def test_status_401_not_transient(self):
+        class FakeHTTPError(Exception):
+            status_code = 401
+
+        assert is_transient_error(FakeHTTPError("unauthorized")) is False
+
+    def test_config_error_not_transient(self):
+        assert is_transient_error(JevConfigError("未配置")) is False
+
+    def test_budget_error_not_transient(self):
+        err = JevAPIError("state 超出 Jev 预算: 约 40000 token > 上限 27200 token")
+        assert is_transient_error(err) is False
+
+    def test_unwraps_cause(self):
+        """已包装的 JevAPIError 回溯 __cause__ 判定"""
+        try:
+            try:
+                raise TimeoutError("timed out")
+            except TimeoutError as e:
+                raise JevAPIError("Batch 调用失败: timed out") from e
+        except JevAPIError as err:
+            assert is_transient_error(err) is True
+
+    def test_wrap_api_error_keeps_status(self):
+        class FakeHTTPError(Exception):
+            status_code = 502
+
+        wrapped = _wrap_api_error("Batch 调用失败", FakeHTTPError("boom"))
+        assert isinstance(wrapped, JevAPIError)
+        assert wrapped.status_code == 502
+        assert str(wrapped) == "Batch 调用失败: boom"
+
+    def test_wrap_api_error_without_status(self):
+        wrapped = _wrap_api_error("Batch 调用失败", RuntimeError("boom"))
+        assert wrapped.status_code is None
+
+
+class TestSystemOneRetry:
+    """_system_one_requests 瞬时故障重试测试"""
+
+    @pytest.mark.asyncio
+    @patch("uniclaw.utils.jev._create_client")
+    async def test_retries_transient_then_succeeds(self, mock_create):
+        """瞬时故障重试后成功"""
+        fake = _FakeSystemOneClient()
+        fake.system_one = AsyncMock(
+            side_effect=[
+                TimeoutError("t1"),
+                TimeoutError("t2"),
+                _make_response({"q1": _make_noul_answer(0.7)}),
+            ]
+        )
+        mock_create.return_value = fake
+        result = await batch(state="s", questions={"q1": _make_noul_qdef()})
+        assert result.answers["q1"].noul == 0.7
+        assert fake.system_one.call_count == 3
+
+    @pytest.mark.asyncio
+    @patch("uniclaw.utils.jev._create_client")
+    async def test_gives_up_after_max_retries(self, mock_create):
+        """瞬时故障重试耗尽后抛出"""
+        fake = _FakeSystemOneClient()
+        fake.system_one = AsyncMock(side_effect=TimeoutError("down"))
+        mock_create.return_value = fake
+        with pytest.raises(JevAPIError, match="Batch 调用失败"):
+            await batch(state="s", questions={"q1": _make_noul_qdef()})
+        assert fake.system_one.call_count == 1 + _MAX_TRANSIENT_RETRIES
+
+    @pytest.mark.asyncio
+    @patch("uniclaw.utils.jev._create_client")
+    async def test_non_transient_not_retried(self, mock_create):
+        """确定性错误不重试,立即抛出"""
+        fake = _FakeSystemOneClient()
+        fake.system_one = AsyncMock(side_effect=RuntimeError("boom"))
+        mock_create.return_value = fake
+        with pytest.raises(JevAPIError, match="Batch 调用失败"):
+            await batch(state="s", questions={"q1": _make_noul_qdef()})
+        assert fake.system_one.call_count == 1
+
+    @pytest.mark.asyncio
+    @patch("uniclaw.utils.jev._create_client")
+    async def test_status_code_preserved_on_raise(self, mock_create, monkeypatch):
+        """包装异常保留 HTTP 状态码(503 瞬时故障,重试满额后抛出)"""
+        monkeypatch.setattr("uniclaw.utils.jev._retry_backoff", lambda e, a: 0.0)
+
+        class FakeHTTPError(Exception):
+            status_code = 503
+
+        fake = _FakeSystemOneClient()
+        fake.system_one = AsyncMock(side_effect=FakeHTTPError("bad gateway"))
+        mock_create.return_value = fake
+        with pytest.raises(JevAPIError) as exc_info:
+            await batch(state="s", questions={"q1": _make_noul_qdef()})
+        assert exc_info.value.status_code == 503
+        assert fake.system_one.call_count == 1 + _MAX_TRANSIENT_RETRIES
+
+    @pytest.mark.asyncio
+    @patch("uniclaw.utils.jev._create_client")
+    async def test_retry_uses_shorter_timeout(self, mock_create):
+        """重试请求缩短 timeout,避免长超时叠加"""
+        fake = _FakeSystemOneClient()
+        fake.system_one = AsyncMock(
+            side_effect=[
+                TimeoutError("t"),
+                _make_response({"q1": _make_noul_answer(0.5)}),
+            ]
+        )
+        mock_create.return_value = fake
+        await batch(state="s", questions={"q1": _make_noul_qdef()})
+        assert mock_create.call_count == 2
+        assert mock_create.call_args_list[0][0][3] == 60.0
+        assert mock_create.call_args_list[1][0][3] == RETRY_TIMEOUT_SECONDS
+
+    @pytest.mark.asyncio
+    @patch("uniclaw.utils.jev._create_client")
+    async def test_config_error_not_wrapped(self, mock_create):
+        """JevConfigError 原样抛出,不包装不重试"""
+        mock_create.side_effect = JevConfigError("未配置")
+        with pytest.raises(JevConfigError):
+            await batch(state="s", questions={"q1": _make_noul_qdef()})
+        assert mock_create.call_count == 1
+
+    @pytest.mark.asyncio
+    @patch("uniclaw.utils.jev._create_client")
+    async def test_multi_group_retries_whole_batch(self, mock_create, monkeypatch):
+        """多分片瞬时故障时整组重发(含已成功分片)"""
+        monkeypatch.setattr("uniclaw.utils.jev.TOTAL_BUDGET_TOKENS", 80)
+        monkeypatch.setattr("uniclaw.utils.jev.STATE_WITH_LONGEST_TOKENS", 10_000)
+        monkeypatch.setattr("uniclaw.utils.jev.BUDGET_USAGE", 1.0)
+        questions = {
+            f"q{i}": _make_noul_qdef("判断此项是否保留。" * 20) for i in range(4)
+        }
+
+        fake = _FakeSystemOneClient()
+
+        async def system_one(state, questions):
+            fake.calls.append((state, questions))
+            if len(fake.calls) == 2:  # 第一轮第二个分片瞬时失败
+                raise TimeoutError("boom")
+            return _make_response({qid: _make_noul_answer(0.6) for qid in questions})
+
+        fake.system_one = system_one
+        mock_create.return_value = fake
+
+        result = await batch(state="state", questions=questions)
+
+        assert set(result.answers) == set(questions)
+        assert all(a.noul == 0.6 for a in result.answers.values())
+        # 整组重发: 每个问题恰好发了两遍(含第一轮已成功的分片)
+        sent = [qid for _, qs in fake.calls for qid in qs]
+        assert sorted(sent) == sorted(list(questions) * 2)
+        # 两轮 × 每轮 N 个分片,且确实拆成了多分片
+        n_groups = len({frozenset(qs) for _, qs in fake.calls})
+        assert n_groups >= 2
+        assert len(fake.calls) == 2 * n_groups
+
+
 # ── batch 预算/分片测试 ──────────────────────────────────
 
 
@@ -302,12 +493,12 @@ class TestStateAndQuestionTokens:
 class TestSplitQuestions:
     """_split_questions 分组逻辑测试"""
 
-    def test_single_chunk_when_fits(self, monkeypatch):
+    def test_single_group_when_fits(self, monkeypatch):
         monkeypatch.setattr("uniclaw.utils.jev.TOTAL_BUDGET_TOKENS", 10_000)
         qs = {"a": _make_noul_qdef(), "b": _make_noul_qdef()}
-        chunks = _split_questions(qs, {"a": 10, "b": 10}, state_tokens=5)
-        assert len(chunks) == 1
-        assert list(chunks[0]) == ["a", "b"]
+        groups = _split_questions(qs, {"a": 10, "b": 10}, state_tokens=5)
+        assert len(groups) == 1
+        assert list(groups[0]) == ["a", "b"]
 
     def test_splits_when_over_budget(self, monkeypatch):
         monkeypatch.setattr("uniclaw.utils.jev.TOTAL_BUDGET_TOKENS", 50)
@@ -315,10 +506,10 @@ class TestSplitQuestions:
         qs = {f"q{i}": _make_noul_qdef() for i in range(4)}
         tokens = {f"q{i}": 20 for i in range(4)}
         # budget = 50 - 5 = 45 → 每组最多 2 题
-        chunks = _split_questions(qs, tokens, state_tokens=5)
-        assert [list(c) for c in chunks] == [["q0", "q1"], ["q2", "q3"]]
+        groups = _split_questions(qs, tokens, state_tokens=5)
+        assert [list(g) for g in groups] == [["q0", "q1"], ["q2", "q3"]]
 
-    def test_oversized_question_gets_own_chunk(self, monkeypatch):
+    def test_oversized_question_gets_own_group(self, monkeypatch):
         monkeypatch.setattr("uniclaw.utils.jev.TOTAL_BUDGET_TOKENS", 50)
         monkeypatch.setattr("uniclaw.utils.jev.BUDGET_USAGE", 1.0)
         qs = {
@@ -327,8 +518,8 @@ class TestSplitQuestions:
             "s2": _make_noul_qdef(),
         }
         tokens = {"big": 500, "s1": 10, "s2": 10}
-        chunks = _split_questions(qs, tokens, state_tokens=5)
-        assert [list(c) for c in chunks] == [["big"], ["s1", "s2"]]
+        groups = _split_questions(qs, tokens, state_tokens=5)
+        assert [list(g) for g in groups] == [["big"], ["s1", "s2"]]
 
 
 class TestBatchBudget:
@@ -396,6 +587,118 @@ class TestBatchBudget:
         mock_create.return_value = fake
         with pytest.raises(JevAPIError, match="Batch 调用失败"):
             await batch(state="s", questions={"q1": _make_noul_qdef()})
+
+
+# ── RAG 候选池加深与截尾测试 ─────────────────────────────
+
+
+class TestCandidatePoolSize:
+    """RAG _candidate_pool_size 测试"""
+
+    @patch("uniclaw.tools.rag.rag.is_available", return_value=False)
+    def test_base_mult_when_jev_unavailable(self, mock_available):
+        from uniclaw.tools.rag.rag import _candidate_pool_size
+
+        assert _candidate_pool_size(5) == 15
+
+    @patch("uniclaw.tools.rag.rag.is_available", return_value=True)
+    def test_widened_when_jev_available(self, mock_available):
+        from uniclaw.tools.rag.rag import _candidate_pool_size
+
+        assert _candidate_pool_size(5) == 30
+
+    @patch("uniclaw.tools.rag.rag.is_available", return_value=True)
+    def test_capped_but_never_below_base(self, mock_available):
+        from uniclaw.tools.rag.rag import _candidate_pool_size
+
+        # top_k=30: 加深被 MAX_CANDIDATES(150) 截住(基础池 90 < 150)
+        assert _candidate_pool_size(30) == 150
+        # top_k=100: 基础池 300 高于上限,不加深也不收缩
+        assert _candidate_pool_size(100) == 300
+
+
+class TestSearchCandidatePool:
+    """search() 候选池加深接线测试"""
+
+    def _make_manager(self):
+        from uniclaw.tools.rag.rag import RAGManager
+
+        manager = RAGManager.__new__(RAGManager)
+        manager.config = _make_config()
+        manager._client = MagicMock()
+        collection = MagicMock()
+        collection.count.return_value = 100
+        collection.query.return_value = {
+            "documents": [["doc-a", "doc-b", "doc-c"]],
+            "metadatas": [[{"source": "a"}, {"source": "b"}, {"source": "c"}]],
+            "distances": [[0.1, 0.2, 0.3]],
+        }
+        manager._client.get_collection.return_value = collection
+
+        async def _embed(texts):
+            return [[0.0]]
+
+        manager._get_embedding_fn = lambda: _embed
+        manager._bm25_search = MagicMock(return_value=[])
+        return manager, collection
+
+    @pytest.mark.asyncio
+    @patch("uniclaw.tools.rag.rag.is_available", return_value=True)
+    async def test_widened_pool_passed_to_query(self, mock_available):
+        """Jev 可用时候选池加深(top_k=5 → 30)并传给向量查询"""
+        manager, collection = self._make_manager()
+        await manager.search("col", "query", top_k=5, rerank=False)
+        assert collection.query.call_args.kwargs["n_results"] == 30
+
+    @pytest.mark.asyncio
+    @patch("uniclaw.tools.rag.rag.is_available", return_value=False)
+    async def test_base_pool_when_jev_unavailable(self, mock_available):
+        """Jev 不可用时维持基础倍数(top_k=5 → 15)"""
+        manager, collection = self._make_manager()
+        await manager.search("col", "query", top_k=5, rerank=False)
+        assert collection.query.call_args.kwargs["n_results"] == 15
+
+
+class TestTrimCandidates:
+    """RAG _trim_candidates 测试"""
+
+    def test_no_op_when_small(self):
+        from uniclaw.tools.rag.rag import RAGManager
+
+        candidates = [{"content": "a", "rrf_score": 1.0}]
+        assert RAGManager._trim_candidates(candidates, 3) == candidates
+
+    def test_keeps_top_by_rrf_score(self):
+        from uniclaw.tools.rag.rag import RAGManager
+
+        candidates = [
+            {"content": "low", "rrf_score": 0.1},
+            {"content": "high", "rrf_score": 0.9},
+            {"content": "mid", "rrf_score": 0.5},
+        ]
+        result = RAGManager._trim_candidates(candidates, 2)
+        assert [c["content"] for c in result] == ["high", "mid"]
+
+    def test_falls_back_to_cosine_without_rrf(self):
+        from uniclaw.tools.rag.rag import RAGManager
+
+        candidates = [
+            {"content": "far", "cosine_similarity": 0.2},
+            {"content": "near", "cosine_similarity": 0.8},
+            {"content": "mid", "cosine_similarity": 0.5},
+        ]
+        result = RAGManager._trim_candidates(candidates, 2)
+        assert [c["content"] for c in result] == ["near", "mid"]
+
+    def test_falls_back_to_distance(self):
+        from uniclaw.tools.rag.rag import RAGManager
+
+        candidates = [
+            {"content": "near", "distance": 0.1},
+            {"content": "far", "distance": 0.9},
+        ]
+        result = RAGManager._trim_candidates(candidates, 1)
+        assert [c["content"] for c in result] == ["near"]
 
 
 # ── RAG 重排序 Jev 集成测试 ──────────────────────────────
@@ -611,6 +914,33 @@ class TestRAGRerankRouting:
         await manager._rerank("query", candidates, 2)
 
         manager._rerank_via_llm.assert_called_once()
+
+    @pytest.mark.asyncio
+    @patch("uniclaw.tools.rag.rag.is_available", return_value=True)
+    @patch("uniclaw.tools.rag.rag.select_many", side_effect=JevAPIError("失败"))
+    async def test_jev_failure_trims_before_llm(
+        self, mock_select_many, mock_available
+    ):
+        """测试 Jev 失败回退 LLM 前按 rrf_score 截尾"""
+        from uniclaw.tools.rag.rag import BASE_CANDIDATE_MULT, RAGManager
+
+        manager = RAGManager.__new__(RAGManager)
+        manager.config = _make_config()
+        manager._rerank_via_llm = AsyncMock(return_value=[0.8, 0.2, 0.1])
+
+        candidates = [
+            {"content": "c1", "rrf_score": 0.3, "retrieval_channels": ["vector"], "distance": 0.5},
+            {"content": "c2", "rrf_score": 1.0, "retrieval_channels": ["vector"], "distance": 0.1},
+            {"content": "c3", "rrf_score": 0.6, "retrieval_channels": ["vector"], "distance": 0.3},
+            {"content": "c4", "rrf_score": 0.1, "retrieval_channels": ["vector"], "distance": 0.8},
+            {"content": "c5", "rrf_score": 0.5, "retrieval_channels": ["vector"], "distance": 0.4},
+        ]
+        # top_k=1 → 截尾到 BASE_CANDIDATE_MULT 个,按 rrf_score 取最高
+        await manager._rerank("query", candidates, 1)
+
+        llm_candidates = manager._rerank_via_llm.call_args[0][1]
+        assert len(llm_candidates) == BASE_CANDIDATE_MULT
+        assert [c["content"] for c in llm_candidates] == ["c2", "c3", "c5"]
 
     @pytest.mark.asyncio
     @patch("uniclaw.tools.rag.rag.is_available", return_value=False)
