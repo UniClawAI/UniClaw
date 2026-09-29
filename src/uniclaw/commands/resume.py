@@ -216,7 +216,7 @@ async def _restore_session(session: Session, task: AgentTask, config: AppConfig 
         try:
             from uniclaw.webui.ws import notify_session_switched
 
-            await notify_session_switched(session.id, old_session_id)
+            await notify_session_switched(session.id, old_session_id, config=config)
         except Exception as e:
             await err(f"通知前端会话切换失败: {e}", config, e=e)
     else:

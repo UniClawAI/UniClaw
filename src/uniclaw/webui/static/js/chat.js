@@ -766,6 +766,8 @@ _showLightbox(url) {
     // ============================================================
 
     _onSessionCreated(msg) {
+        // notify_only: 其他页面创建的会话,只刷新侧栏列表(由 SessionPanel 处理),不劫持本页面的当前会话
+        if (msg.notify_only) return;
         this.currentSessionId = msg.session_id;
         SessionPanel.activeSessionId = msg.session_id;
         this._resetStreamingState();

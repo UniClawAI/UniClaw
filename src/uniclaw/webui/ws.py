@@ -235,6 +235,17 @@ async def _broadcast(data: dict):
         await asyncio.gather(*(_safe_send(w, data) for w in targets))
 
 
+async def _notify_session_created(ws: WebSocket, data: dict):
+    """创建会话通知:切换动作只发给发起创建的连接,其余连接收 notify_only 仅刷新列表。
+
+    session_created 若广播给所有连接,每个页面的 _onSessionCreated 都会把
+    当前会话无条件切换成新会话 id — 多页面场景下所有标签页的当前会话被劫持,
+    后续消息因 session_id 匹配而在所有页面渲染。
+    """
+    await _safe_send(ws, data)
+    await _broadcast({**data, "notify_only": True})
+
+
 async def _resend_pending_requests(session_id: str):
     """当 set_active 或 chat 时,重新发送该会话的所有待处理请求。
 
@@ -824,12 +835,7 @@ async def handle_ws_message(ws: WebSocket, msg: dict):
             config.current_agent.event_queue = asyncio.Queue()
             session_cache[session_id] = config
             spinner.set_send_callback(_broadcast)
-            await _broadcast(
-                {
-                    "event": "session_created",
-                    "session_id": session_id,
-                },
-            )
+            await _notify_session_created(ws, {"event": "session_created", "session_id": session_id})
         elif root_dir:
             # 创建项目会话
             spinner = WebSpinner()
@@ -841,7 +847,8 @@ async def handle_ws_message(ws: WebSocket, msg: dict):
             config.current_agent.event_queue = asyncio.Queue()
             session_cache[session_id] = config
             spinner.set_send_callback(_broadcast)
-            await _broadcast(
+            await _notify_session_created(
+                ws,
                 {
                     "event": "session_created",
                     "session_id": session_id,
@@ -1442,15 +1449,29 @@ async def websocket_endpoint(ws: WebSocket):
 # ── 模块级便捷接口(供 commands/ 导入)──────────────────────
 
 
-async def notify_session_switched(session_id: str, old_session_id: str = ""):
-    """通知前端会话已切换(用于 fork 后切换到新会话)。"""
-    await _broadcast(
-        {
-            "event": "session_switched",
-            "session_id": session_id,
-            "old_session_id": old_session_id,
-        }
-    )
+async def notify_session_switched(
+    session_id: str, old_session_id: str = "", config: AppConfig | None = None
+):
+    """通知前端会话已切换(用于 fork/resume 后切换到新会话)。
+
+    切换动作只发给发起命令的连接(config.ws_send),其余连接收 notify_only
+    仅刷新列表,避免多页面场景下所有标签页的当前会话被劫持。
+    """
+    data = {
+        "event": "session_switched",
+        "session_id": session_id,
+        "old_session_id": old_session_id,
+    }
+    send = getattr(config, "ws_send", None) if config is not None else None
+    if send is None:
+        # 无发起连接可定向时退回全量广播,保证单页面场景仍能收到切换通知
+        await _broadcast(data)
+        return
+    try:
+        await send(data)
+    except Exception as e:
+        get_logger("webui", Path.cwd()).warning(f"session_switched 定向发送失败: {e}")
+    await _broadcast({**data, "notify_only": True})
 
 
 async def notify_server_restarting(session_id: str):

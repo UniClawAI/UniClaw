@@ -289,12 +289,16 @@ const SessionPanel = {
 
     _onSessionSwitched(msg) {
         if (!msg.session_id) return;
+        // notify_only: 其他页面发起的切换,只刷新列表,不劫持本页面的当前会话
+        if (msg.notify_only) { this._refreshSessions(); return; }
         this.selectSession(msg.session_id, this.activeProjectDir);
         this._refreshSessions();
     },
 
     _onSessionCreated(msg) {
         if (!msg.session_id) return;
+        // notify_only: 其他页面创建的会话,只刷新列表,不劫持本页面的当前会话
+        if (msg.notify_only) { this._refreshSessions(); return; }
         this.activeSessionId = msg.session_id;
         Chat.currentSessionId = msg.session_id;
         this._saveSessionToUrl(msg.session_id);
