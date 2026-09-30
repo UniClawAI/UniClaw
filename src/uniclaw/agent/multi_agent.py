@@ -416,17 +416,45 @@ class MultiAgent:
             return event.content
 
     async def _notify_sub_agent_progress(
-        self, task: AgentTask, config: AppConfig, content: str
+        self,
+        task: AgentTask,
+        config: AppConfig,
+        content: str,
+        tool_calls: list | None = None,
     ):
         """异步子代理执行中产出新输出时,以 info 消息把输出内容展示给用户(不唤醒父 agent)。
 
-        由 _process_response 在 resp 出结果且含文本输出时通过 create_task 调用。
+        输出格式: 文本内容在前,随后每个工具调用一行,参数换行对齐显示:
+            content
+            tool_name1(参数1=xx,
+                       参数2=xx)
+            tool_name2(参数1=xx,
+                       参数2=xx)
+
+        由 _process_response 在 resp 出结果且含文本输出或工具调用时通过 create_task 调用。
+
+        Args:
+            task: 子代理任务,取 task.name 作为展示名。
+            config: 子代理配置,经 parent_config 路由 info 消息。
+            content: 本轮 LLM 文本输出。
+            tool_calls: 本轮 LLM 发出的工具调用列表,可为空。
         """
         parent_config = config.parent_config
         if parent_config is None:
             return
-        output = truncate_text_by_lines(content, max_tokens=500)
-        msg = f"[子智能体:{task.name}] {output}"
+        parts = []
+        if content:
+            parts.append(truncate_text_by_lines(content, max_tokens=500))
+        for tc in tool_calls or []:
+            name = _tc_name(tc)
+            args = _tc_args(tc)
+            if args:
+                indent = " " * (len(name) + 1)
+                args_str = format_args_for_display(args, 500, f",\n{indent}")
+            else:
+                args_str = ""
+            parts.append(f"{name}({args_str})")
+        msg = f"[子智能体:{task.name}] " + "\n".join(parts)
         await info(msg, parent_config)
 
     async def wait(self, task_id: str, timeout: float = None, config: AppConfig = None):
@@ -867,8 +895,10 @@ class MultiAgent:
             config,
         )
         # 异步子代理执行中有新输出 → info 展示输出给用户(create_task 不阻塞主循环)
-        if task.notify_parent and content:
-            asyncio.create_task(self._notify_sub_agent_progress(task, config, content))
+        if task.notify_parent and (content or tool_calls):
+            asyncio.create_task(
+                self._notify_sub_agent_progress(task, config, content, tool_calls)
+            )
         from uniclaw.utils.usage import record_usage
 
         await record_usage(
