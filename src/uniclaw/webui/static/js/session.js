@@ -5,7 +5,8 @@ const SessionPanel = {
     activeSessionId: null,
     activeProjectDir: null,
     runningSessions: new Set(),
-    attentionSessions: new Set(),
+    // session_id → reason: 'permission_request' | 'input_request' | 'multi_input_request' | 'new_message'
+    attentionSessions: new Map(),
     wechatBots: [],
     categoryExpanded: { projects: true, sessions: true, wechat: true },
 
@@ -16,7 +17,7 @@ const SessionPanel = {
         WS.on('status', msg => this._onStatus(msg));
         WS.on('wechat_login_status', msg => this._onWechatLoginStatus(msg));
         WS.on('session_attention', msg => {
-            if (msg.session_id) { this.attentionSessions.add(msg.session_id); this._render(); }
+            if (msg.session_id) { this.attentionSessions.set(msg.session_id, msg.reason || 'permission_request'); this._render(); }
         });
         WS.on('session_attention_clear', msg => {
             if (msg.session_id) { this.attentionSessions.delete(msg.session_id); this._render(); }
@@ -538,7 +539,7 @@ const SessionPanel = {
         sessions.forEach(s => {
             const isActive = s.session_id === this.activeSessionId;
             const isRunning = this.runningSessions.has(s.session_id);
-            const isAttn = this.attentionSessions.has(s.session_id);
+            const attnReason = this.attentionSessions.get(s.session_id);
             const title = s.title || s.session_id;
             const time = Utils.formatRelativeTime(s.end_time || s.start_time);
             const tipData = JSON.stringify({ id: s.session_id, title: title, start: s.start_time || '', end: s.end_time || '', dir: s.root_dir || '', msg: s.message_count || 0 }).replace(/"/g, '&quot;');
@@ -546,7 +547,7 @@ const SessionPanel = {
             h += `<span class="session-icon">${icon('chat')}</span>`;
             h += `<div class="session-info"><div class="session-title">${Utils.escapeHtml(title)}</div><div class="session-meta">${time}</div></div>`;
             if (isRunning) h += '<span class="running-indicator"></span>';
-            if (isAttn) h += '<span class="attention-badge"></span>';
+            if (attnReason) h += `<span class="attention-badge ${attnReason === 'new_message' ? 'attn-msg' : 'attn-request'}"></span>`;
             h += `<button class="btn-icon compact" onclick="event.stopPropagation(); SessionPanel.showMenu('${s.session_id}', '${this._esc(rootDir)}')" style="opacity:0.5">${icon('moreVertical')}</button>`;
             h += `</div>`;
         });
@@ -1008,12 +1009,20 @@ const SessionPanel = {
 
         let rows;
         if (d.id) {
-            // 会话 tooltip
+            // 会话 tooltip(状态实时读取,避免 data-tip 因局部 DOM 更新而过期)
             const fmtTime = t => t ? t.replace('T', ' ').substring(0, 19) : '-';
             rows = [['标题', d.title || '-'], ['ID', d.id], ['创建', fmtTime(d.start)], ['活跃', fmtTime(d.end)], ['路径', d.dir || '-'], ['消息', d.msg]];
+            const status = [];
+            if (this.runningSessions.has(d.id)) status.push('运行中');
+            const attnReason = this.attentionSessions.get(d.id);
+            if (attnReason) status.push(this._attentionLabel(attnReason));
+            if (status.length) rows.unshift(['状态', status.join(', ')]);
         } else {
             // 项目 tooltip
             rows = [['路径', d.dir], ['创建', d.created || '-'], ['会话', d.sessions], ['最新', d.latest || '-']];
+            const proj = this.projects[d.dir];
+            const running = proj ? proj.sessions.filter(s => this.runningSessions.has(s.session_id)).length : 0;
+            if (running) rows.unshift(['状态', `${running} 个会话运行中`]);
         }
         const inner = rows.map(([k, v]) => `<span style="color:var(--text-3)">${k}: </span><span style="color:var(--text-0)">${Utils.escapeHtml(String(v))}</span>`).join('<br>');
 
@@ -1039,5 +1048,15 @@ const SessionPanel = {
     _hideTip() {
         const tip = document.getElementById('session-tooltip');
         if (tip) tip.style.display = 'none';
+    },
+
+    /** attention 徽章原因 → 展示文案 */
+    _attentionLabel(reason) {
+        return {
+            permission_request: '等待权限确认',
+            input_request: '等待输入回复',
+            multi_input_request: '等待输入回复',
+            new_message: '有新消息',
+        }[reason] || '需要你的关注';
     },
 };

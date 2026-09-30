@@ -57,7 +57,7 @@ const WS = {
                          'session_deleted', 'session_switched', 'session_created',
                          'config_changed'].includes(msg.event)) {
                     if (!SessionPanel.attentionSessions.has(msg.session_id)) {
-                        SessionPanel.attentionSessions.add(msg.session_id);
+                        SessionPanel.attentionSessions.set(msg.session_id, 'new_message');
                         SessionPanel._render();
                         const title = SessionPanel.getSessionTitle(msg.session_id);
                         Utils.showToast(`${title} 有新消息`);

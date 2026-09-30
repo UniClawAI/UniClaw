@@ -128,26 +128,35 @@
     margin-top: 1px;
 }
 
-/* ---- 运行指示器 ---- */
+/* ---- 运行指示器(鼠标悬停会话行可在 tooltip 的"状态"中查看含义) ---- */
 .running-indicator {
     width: 6px;
     height: 6px;
     border-radius: 50%;
     background: var(--green);
     flex-shrink: 0;
+    cursor: help;
     animation: pulseDot 1.5s ease-in-out infinite;
     box-shadow: 0 0 4px var(--green);
     will-change: opacity, transform;
 }
 
-/* ---- 注意力徽章 ---- */
+/* ---- 注意力徽章(鼠标悬停会话行可在 tooltip 的"状态"中查看含义) ---- */
 .attention-badge {
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: var(--orange);
     flex-shrink: 0;
+    cursor: help;
     animation: badgeBreath 2s ease-in-out infinite;
+}
+/* 待处理请求(权限确认 / 输入回复),需要用户操作 */
+.attention-badge.attn-request {
+    background: var(--orange);
+}
+/* 其他会话有新消息 */
+.attention-badge.attn-msg {
+    background: var(--accent);
 }
 
 /* ---- 上下文使用率 ---- */
