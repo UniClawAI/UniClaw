@@ -444,7 +444,9 @@ class MultiAgent:
             return
         parts = []
         if content:
-            parts.append(truncate_text_by_lines(content, max_tokens=500))
+            parts.append(truncate_text_by_lines(content, max_tokens=500).strip())
+        else:
+            parts.append("")
         for tc in tool_calls or []:
             name = _tc_name(tc)
             args = _tc_args(tc)
@@ -1398,7 +1400,7 @@ class MultiAgent:
                         errors.append(err_msg)
                         if i < len(model_list) - 1:
                             # 还有 fallback 模型,通知用户并继续
-                            await warn(f"模型 {err_msg}，尝试 fallback 模型...", config)
+                            await warn(f"模型 {err_msg},尝试 fallback 模型...", config)
                         else:
                             # 所有模型都失败了
                             detail = "\n  - ".join(errors)
