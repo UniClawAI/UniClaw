@@ -616,12 +616,55 @@ CHECKPOINT_TEMPLATE = """请将以下对话整理为**续作摘要**。这份摘
 # 改动此处时两端自动同步,避免压缩会话无法被 recall 识别。
 SUMMARY_PREFIX = "[之前的对话摘要]"
 
+# 压缩摘要中会话笔记快照段的标题 — 生成端(compact/jev 追加到摘要末尾)与
+# 剥离端(下次压缩清掉上一轮快照)共用。
+NOTES_SNAPSHOT_HEADER = "## 会话笔记(上轮对话快照,可能已过期,仅供参考)"
+
+# 摘要对的 ack 消息内容 — 给摘要配平 user/assistant 角色,本身零信息量。
+# 下次压缩时旧 ack 一律删除(只保留最新一对),生成端与识别端共用此常量。
+SUMMARY_ACK_CONTENT = "已阅读之前的对话摘要,继续当前任务。"
+
+
+def strip_notes_snapshot(msg):
+    """去掉压缩摘要消息里的会话笔记快照段(没有则原样返回)。
+
+    快照是生成时刻的过时视图,而摘要对钉在压缩区永不重写 — 不剥除的话,
+    已删除的笔记会永远留在旧摘要里,多轮压缩后过时快照持续累积。
+    最新一轮的快照由每次压缩重新生成,无需人工维护。
+
+    Args:
+        msg: 任意消息;非压缩摘要消息原样返回。
+
+    Returns:
+        剥离快照后的消息副本;消息本身不含快照时返回原对象。
+    """
+    if not isinstance(msg, UserMessage):
+        return msg
+    content = msg.content
+    if (
+        not isinstance(content, str)
+        or not content.startswith(SUMMARY_PREFIX)
+        or NOTES_SNAPSHOT_HEADER not in content
+    ):
+        return msg
+    head, _, tail = content.partition(NOTES_SNAPSHOT_HEADER)
+    # 快照段到下一个同级 "## " 标题(或文末)为止 — 生成端追加在摘要末尾,后者为主
+    nxt = tail.find("\n## ")
+    new_msg = copy.copy(msg)
+    new_msg.content = head.rstrip() + (tail[nxt:] if nxt >= 0 else "")
+    return new_msg
+
+
+def is_summary_ack(msg) -> bool:
+    """判断是否为摘要对里的 ack 消息(纯角色配平填充,下次压缩时删除)。"""
+    return isinstance(msg, AIMessage) and msg.content == SUMMARY_ACK_CONTENT
+
 # 摘要输出 token 预算下限/上限(自适应: 按被替换的 token 量分配)
 _SUMMARY_MIN_TOKENS = 500
 _SUMMARY_MAX_TOKENS = 1500
 
 # 压缩预警阈值系数:达到某压力等级阈值 * 此系数时,通过 wake_agent 注入
-# "写遗言"提示,让 LLM 在压缩发生前把关键信息存入会话笔记。
+# "写遗言"提示,让 LLM 在压缩发生前把关键信息存入会话笔记、清理过时笔记。
 # 预警必须先于压缩触发,故取阈值打折(0.9)。
 _COMPACT_WARN_FACTOR = 0.9
 # 预警的最低压力等级:低于此等级的压缩不损失信息(仅微压缩清空可再生工具结果),
@@ -1468,9 +1511,15 @@ class Session:
         已有压缩区(`_messages[:_compact_end]`,即上一轮摘要对)钉在头部原样保留,
         不参与本轮摘要 — 对已摘要过的内容再摘要会二次有损。keep_ratio 只相对
         压缩区之后的消息计算:该区域较旧的部分被摘要替换,较新的保留原文。
+        例外:钉住区会瘦身 — 旧摘要的会话笔记快照剥除(见 strip_notes_snapshot)、
+        旧 ack 删除(见 is_summary_ack),最新快照与 ack 随本轮摘要重新生成。
         """
         base = self._compact_end
-        pinned = self._messages[:base]
+        pinned = [
+            m
+            for m in (strip_notes_snapshot(m) for m in self._messages[:base])
+            if not is_summary_ack(m)
+        ]
         split = self._find_split_point(keep_ratio=keep_ratio, base=base)
         if split <= base:
             return
@@ -1541,7 +1590,7 @@ class Session:
         if self.session_notes:
             from uniclaw.tools.session.notes import session_note_list
 
-            notes_section = "\n\n## 会话笔记(上轮对话快照,可能已过期,仅供参考)\n"
+            notes_section = f"\n\n{NOTES_SNAPSHOT_HEADER}\n"
             for note in self.session_notes:
                 notes_section += f"- [{note.name}]: {note.description}\n"
             notes_section += f"使用 {session_note_list.name} 查看全部笔记。\n"
@@ -1551,7 +1600,7 @@ class Session:
         self._messages.append(UserMessage(content=summary_content))
         self._messages.append(
             AIMessage(
-                content="已阅读之前的对话摘要,继续当前任务。",
+                content=SUMMARY_ACK_CONTENT,
                 model_name="",
                 usage=Usage.from_dict({}),
             )
@@ -1720,7 +1769,8 @@ class Session:
         API 真实计数,已确认溢出时不能只凭估算值决定压不压。
 
         压缩前预警:每跨过一个压力阈值,在其 *_COMPACT_WARN_FACTOR 比例处通过
-        wake_agent 注入一次"写遗言"提示,让 LLM 在压缩发生前把关键信息存入会话笔记。
+        wake_agent 注入一次"写遗言"提示,让 LLM 在压缩发生前把关键信息存入会话笔记、
+        清理过时笔记。
         """
         from uniclaw.compaction import (
             PRESSURE_LEVELS,
@@ -1784,13 +1834,15 @@ class Session:
         运行中 → user_queue 注入;空闲 → 重新拉起。
         """
         from uniclaw.utils.constants import SYSTEM_PREFIX
-        from uniclaw.tools.session.notes import session_note_add
+        from uniclaw.tools.session.notes import session_note_add, session_note_delete
 
         message = (
             f"{SYSTEM_PREFIX}[压缩预警] 上下文用量即将达到 {threshold:.0%} 压缩阈值,"
             "超过该阈值的早期消息将被压缩为摘要,摘要可能丢失细节。"
             "如有压缩后仍需保留的关键信息(配置值、决策结论、路径、密钥格式等),"
             f"请立即调用 {session_note_add.name} 保存到会话笔记。"
+            f"同时请检查并清理已过时的笔记({session_note_delete.name}),"
+            "过时笔记会随每次压缩的摘要快照反复占用上下文。"
         )
 
         try:

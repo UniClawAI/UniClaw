@@ -8,11 +8,14 @@ from uniclaw.provider.types import Usage
 from uniclaw.tools.session.session import (
     AIMessage,
     CHECKPOINT_TEMPLATE,
+    NOTES_SNAPSHOT_HEADER,
     SUMMARY_PREFIX,
     Session,
+    SessionNote,
     ToolCallMessage,
     UserMessage,
     _build_summary_transcript,
+    is_summary_ack,
 )
 
 # ── CHECKPOINT_TEMPLATE ────────────────────────────────────────
@@ -339,11 +342,13 @@ async def test_second_compact_pins_previous_summary():
         )
         await s.compact(cfg)
 
-    # 上一轮摘要对原样钉在头部,未被二次摘要
+    # 上一轮摘要钉在头部未被二次摘要;旧 ack 删除,只保留最新一对的 ack
     assert s._messages[0].content == first_summary
-    assert "第二轮摘要" in s._messages[2].content
-    assert s._compact_end == 4
-    assert len(s._messages) == 5  # 两对摘要(4) + recent(1)
+    assert "第二轮摘要" in s._messages[1].content
+    assert s._compact_end == 3  # 旧摘要(1) + 新摘要对(2)
+    assert len(s._messages) == 4  # 旧摘要(1) + 新摘要对(2) + recent(1)
+    acks = [m for m in s._messages if is_summary_ack(m)]
+    assert len(acks) == 1
 
     # 转录只含非压缩区消息,不含上一轮摘要
     prompt = mock_achat.call_args.args[1]._messages[0].content
@@ -365,3 +370,79 @@ def test_find_split_point_never_splits_inside_pinned_region():
     for ratio in (0.0, 0.15, 0.3, 0.5, 0.9, 1.0):
         split = s._find_split_point(keep_ratio=ratio, base=2)
         assert 2 <= split <= 4, f"keep_ratio={ratio} 切入压缩区: split={split}"
+
+
+@pytest.mark.asyncio
+async def test_compact_notes_snapshot_lists_all_notes():
+    """笔记快照逐条列出名称与描述(不锁标点格式,显示正确性由前端渲染层保证)。"""
+    s = _make_filled_session()
+    s.session_notes.append(
+        SessionNote(name="部署端口", description="8001", content="端口 8001")
+    )
+    s.session_notes.append(
+        SessionNote(name="数据库配置", description="host为localhost", content="连接串")
+    )
+    with (
+        patch(
+            "uniclaw.tools.session.session.Session._find_split_point", return_value=4
+        ),
+        patch("uniclaw.provider.fallback.achat", new=AsyncMock()) as mock_achat,
+    ):
+        mock_achat.return_value = AIMessage(
+            content="摘要", model_name="gpt-4o", usage=Usage.from_dict({})
+        )
+        await s.compact(_mock_config())
+
+    summary = s._messages[0].content
+    assert "会话笔记" in summary
+    assert "部署端口" in summary and "8001" in summary
+    assert "数据库配置" in summary and "host为localhost" in summary
+
+
+@pytest.mark.asyncio
+async def test_second_compact_strips_old_notes_snapshot():
+    """二次压缩剥掉上一轮摘要的笔记快照,新摘要重新注入最新快照。"""
+    s = _make_filled_session()
+    s.session_notes.append(
+        SessionNote(name="旧笔记", description="即将删除", content="x")
+    )
+    cfg = _mock_config()
+    with (
+        patch(
+            "uniclaw.tools.session.session.Session._find_split_point", return_value=4
+        ),
+        patch("uniclaw.provider.fallback.achat", new=AsyncMock()) as mock_achat,
+    ):
+        mock_achat.return_value = AIMessage(
+            content="第一轮摘要", model_name="gpt-4o", usage=Usage.from_dict({})
+        )
+        await s.compact(cfg)
+
+    assert NOTES_SNAPSHOT_HEADER in s._messages[0].content
+    assert "旧笔记" in s._messages[0].content
+
+    # 删旧笔记,换新笔记后二次压缩
+    s.session_notes.clear()
+    s.session_notes.append(
+        SessionNote(name="新笔记", description="当前有效", content="y")
+    )
+    with (
+        patch(
+            "uniclaw.tools.session.session.Session._find_split_point", return_value=3
+        ),
+        patch("uniclaw.provider.fallback.achat", new=AsyncMock()) as mock_achat,
+    ):
+        mock_achat.return_value = AIMessage(
+            content="第二轮摘要", model_name="gpt-4o", usage=Usage.from_dict({})
+        )
+        await s.compact(cfg)
+
+    old_summary = s._messages[0].content
+    new_summary = s._messages[1].content
+    # 旧摘要:快照段整体剥除,已删笔记不再滞留
+    assert NOTES_SNAPSHOT_HEADER not in old_summary
+    assert "旧笔记" not in old_summary
+    assert "第一轮摘要" in old_summary  # 摘要正文不受影响
+    # 新摘要:快照反映当前笔记
+    assert "新笔记" in new_summary
+    assert "旧笔记" not in new_summary

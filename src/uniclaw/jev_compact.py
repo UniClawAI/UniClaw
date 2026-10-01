@@ -659,33 +659,44 @@ async def jev_compact(
     if recall_hint:
         summary_text += f"\n\n{recall_hint}"
 
+    from uniclaw.provider.types import Usage
+    from uniclaw.tools.session.session import (
+        AIMessage,
+        NOTES_SNAPSHOT_HEADER,
+        SUMMARY_ACK_CONTENT,
+        SUMMARY_PREFIX,
+        UserMessage,
+        is_summary_ack,
+        strip_notes_snapshot,
+    )
+
     if session.session_notes:
         from uniclaw.tools.session.notes import session_note_list
 
-        notes_section = "\n\n## 会话笔记(上轮对话快照,可能已过期,仅供参考)\n"
+        notes_section = f"\n\n{NOTES_SNAPSHOT_HEADER}\n"
         for note in session.session_notes:
             notes_section += f"- [{note.name}]: {note.description}\n"
         notes_section += f"使用 {session_note_list.name} 查看全部笔记。\n"
         summary_text += notes_section
 
-    from uniclaw.provider.types import Usage
-    from uniclaw.tools.session.session import (
-        AIMessage,
-        SUMMARY_PREFIX,
-        UserMessage,
-    )
-
+    # 钉住区瘦身:旧摘要的笔记快照剥除、旧 ack 删除(纯角色配平填充),
+    # 过时快照/重复 ack 不随压缩累积,见 strip_notes_snapshot / is_summary_ack
+    kept_old = [
+        m
+        for m in (strip_notes_snapshot(m) for m in filtered_old)
+        if not is_summary_ack(m)
+    ]
     session._messages = [
-        *filtered_old,
+        *kept_old,
         UserMessage(content=f"{SUMMARY_PREFIX}\n{summary_text}"),
         AIMessage(
-            content="已阅读压缩记录,继续当前任务。",
+            content=SUMMARY_ACK_CONTENT,
             model_name="",
             usage=Usage.from_dict({}),
         ),
         *recent_msgs,
     ]
-    session._compact_end = len(filtered_old) + 2
+    session._compact_end = len(kept_old) + 2
     session._compact_warned_levels.clear()
     tokens_saved = max(0, tokens_before - session.estimate_tokens())
 
