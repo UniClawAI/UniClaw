@@ -134,8 +134,15 @@ async def _kill_proc_tree(pid: int) -> None:
                 pass
 
 
+# Bash 前台等待超时上限(秒)。超过该时长的任务应使用 monitor_start 转入后台,
+# 避免 agent 主循环被单个命令长时间阻塞。
+BASH_MAX_TIMEOUT = 300
+
+
 @tool
-async def Bash(command: str, timeout: int = 30, tool_runtime: ToolRuntime = None) -> str:
+async def Bash(
+    command: str, timeout: int = 30, tool_runtime: ToolRuntime = None
+) -> str:
     """
     执行 shell 命令并返回输出结果。
 
@@ -157,8 +164,8 @@ async def Bash(command: str, timeout: int = 30, tool_runtime: ToolRuntime = None
 
     Args:
         command (str): 要执行的 shell 命令字符串。
-        timeout (int): 命令执行的超时时间(秒),默认为 30 秒,必须大于 0。
-                       超时后进程自动转入后台监控。
+        timeout (int): 命令执行的超时时间(秒),默认为 30 秒,取值范围 1-300。
+                       超时后进程自动转入后台监控,预期运行更久的命令请直接用 monitor_start 启动。
 
     Returns:
         str: 命令的标准输出内容。如果存在标准错误输出,会追加在标准输出之后。
@@ -166,13 +173,20 @@ async def Bash(command: str, timeout: int = 30, tool_runtime: ToolRuntime = None
              如果发生异常,返回[stderr]开头的标准错误。
              如果没有输出内容,返回 "(没有输出)"。
     """
+    from .monitor.tools import monitor_start
+
     config = tool_runtime.config
     root_dir = config.root_dir
     cancel_event = config.current_agent.cancel_event
 
     # 超时校验
     if timeout <= 0:
-        return f"{TOOL_ERROR}: timeout 必须大于 0,后台任务请使用 monitor_start 工具。"
+        return f"{TOOL_ERROR}: timeout 必须大于 0,后台任务请使用 {monitor_start.name} 工具。"
+    if timeout > BASH_MAX_TIMEOUT:
+        return (
+            f"{TOOL_ERROR}: timeout 不能超过 {BASH_MAX_TIMEOUT} 秒,"
+            f"长期任务请使用 {monitor_start.name} 工具。"
+        )
 
     # 如果是 bash 命令,自动修正 nul 重定向
     if command.strip().lower().startswith("bash "):
@@ -255,6 +269,18 @@ async def Bash(command: str, timeout: int = 30, tool_runtime: ToolRuntime = None
             await asyncio.gather(*read_tasks, return_exceptions=True)
             raise
 
+    async def _kill_quietly() -> None:
+        """进程仍在运行时强杀进程树,失败不抛出(收尾路径用)。"""
+        if proc.returncode is not None:
+            return
+        try:
+            await _kill_proc_tree(proc.pid)
+        except asyncio.CancelledError:
+            # 清理期间可能被再次取消,吞掉二次取消保证收尾完成
+            pass
+        except Exception:
+            pass
+
     try:
         status = await asyncio.wait_for(_wait_with_cancel(), timeout=timeout)
 
@@ -293,7 +319,7 @@ async def Bash(command: str, timeout: int = 30, tool_runtime: ToolRuntime = None
             )
         except RuntimeError as e:
             # 并发数已满,回退到杀死进程
-            await _kill_proc_tree(proc.pid)
+            await _kill_quietly()
             return f"{TOOL_ERROR}: 超时且无法转入监控 - {e}"
 
         stdout = sanitize_progress_line("".join(_collected["stdout"]))
@@ -309,7 +335,16 @@ async def Bash(command: str, timeout: int = 30, tool_runtime: ToolRuntime = None
         )
         return (header + "\n" + out.strip()).strip()
 
+    except asyncio.CancelledError:
+        # 外部取消(ESC / Tool 层 task.cancel)会以 CancelledError 打进来,
+        # 内层轮询的 kill 路径几乎必输(事件 set 立即唤醒 cancel_wait),
+        # 必须在这里杀进程树,否则子进程成为孤儿继续运行
+        await _kill_quietly()
+        raise
+
     except Exception as e:
+        # 意外异常也收尾,避免残留进程
+        await _kill_quietly()
         return f"{TOOL_ERROR}: {e}"
 
 
@@ -380,6 +415,7 @@ def _python_grep(
         files = [f for f in files if f.is_file()]
         # 按 .gitignore 规则过滤(含隐藏文件)
         from uniclaw.utils.gitignore import get_not_ignored_files
+
         files = get_not_ignored_files(files)
     else:
         return f"{TOOL_ERROR}: 路径不存在: {path}"

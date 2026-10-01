@@ -226,6 +226,35 @@ class TestBash:
         mock_exec.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_timeout_max_limit(self):
+        """超过上限的超时被拒绝,引导使用 monitor_start。"""
+        from uniclaw.tools.shell import BASH_MAX_TIMEOUT, Bash
+
+        with patch("uniclaw.tools.shell.asyncio.create_subprocess_shell") as mock_exec:
+            result = await Bash(
+                "echo hi", timeout=BASH_MAX_TIMEOUT + 1, tool_runtime=self._rt()
+            )
+        assert str(BASH_MAX_TIMEOUT) in result
+        assert "monitor_start" in result
+        mock_exec.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_timeout_at_max_allowed(self):
+        """上限值本身允许通过。"""
+        from uniclaw.tools.shell import BASH_MAX_TIMEOUT, Bash
+
+        proc = self._proc()
+        with patch(
+            "uniclaw.tools.shell.asyncio.create_subprocess_shell",
+            new_callable=AsyncMock,
+            return_value=proc,
+        ):
+            result = await Bash(
+                "true", timeout=BASH_MAX_TIMEOUT, tool_runtime=self._rt()
+            )
+        assert result == "(没有输出)"
+
+    @pytest.mark.asyncio
     async def test_no_output(self):
         """无输出返回占位。"""
         from uniclaw.tools.shell import Bash
@@ -276,6 +305,52 @@ class TestBash:
         ):
             result = await Bash("sleep 100", tool_runtime=self._rt(cancel_event))
         assert "用户中断" in result
+
+    @pytest.mark.asyncio
+    async def test_external_cancel_kills_process(self):
+        """外部取消(ESC / Tool 层 task.cancel)必须杀掉进程树,不留孤儿。
+
+        竞态背景:Tool.__call__ 的 cancel_wait 会先于 Bash 内层轮询醒来并
+        task.cancel(),CancelledError 直接打进 Bash,旧代码只清理 read tasks
+        不杀进程,子进程会脱管继续运行。
+        """
+        from uniclaw.tools.shell import Bash
+
+        async def never():
+            await asyncio.Event().wait()
+
+        proc = self._proc(returncode=None)
+        proc.wait = never
+        with patch("uniclaw.tools.shell.asyncio.create_subprocess_shell", new_callable=AsyncMock, return_value=proc), patch(
+            "uniclaw.tools.shell._kill_proc_tree", new_callable=AsyncMock
+        ) as mock_kill:
+            task = asyncio.create_task(Bash("sleep 100", tool_runtime=self._rt()))
+            await asyncio.sleep(0.05)  # 让 Bash 进入等待循环
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        mock_kill.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_timeout_transfers_without_kill(self):
+        """超时转交 monitor 时不杀进程。"""
+        from uniclaw.tools.shell import Bash
+
+        async def never():
+            await asyncio.Event().wait()
+
+        proc = self._proc(returncode=None)
+        proc.wait = never
+        mock_monitor = AsyncMock()
+        mock_monitor.register_existing_process = AsyncMock(return_value=("abc12345", None))
+        with patch("uniclaw.tools.shell.asyncio.create_subprocess_shell", new_callable=AsyncMock, return_value=proc), patch(
+            "uniclaw.tools.shell._kill_proc_tree", new_callable=AsyncMock
+        ) as mock_kill, patch(
+            "uniclaw.tools.monitor.manager.MonitorManager.get_instance", return_value=mock_monitor
+        ):
+            result = await Bash("sleep 100", timeout=0.2, tool_runtime=self._rt())
+        assert "abc12345" in result
+        mock_kill.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_timeout(self):
