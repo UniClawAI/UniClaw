@@ -5,6 +5,17 @@ from uniclaw.context import Scope, get_app_dir
 from uniclaw.tools.fs import Glob, Read, ConvertToMarkdown, Write
 from uniclaw.tools.media import ReadMedia
 from uniclaw.tools.shell import Bash, Grep
+from uniclaw.tools.monitor.tools import (
+    monitor_start,
+    monitor_stop,
+    monitor_list,
+    monitor_output,
+    monitor_screen,
+    monitor_input,
+    monitor_get_matched,
+    monitor_update_pattern,
+    monitor_clear,
+)
 from uniclaw.tools.skill.tools import skill_suggest, skill_read
 from uniclaw.tools.web import webFetch
 from uniclaw.tools.search import webSearch
@@ -117,6 +128,15 @@ def get_builtin_agent_definitions() -> Dict[str, AgentDefinition]:
                 webSearch.name,
                 skill_suggest.name,
                 skill_read.name,
+                monitor_start.name,
+                monitor_stop.name,
+                monitor_list.name,
+                monitor_output.name,
+                monitor_screen.name,
+                monitor_input.name,
+                monitor_get_matched.name,
+                monitor_update_pattern.name,
+                monitor_clear.name,
             ],
             source="built-in",
         ),

@@ -74,6 +74,13 @@ class TestGetBuiltinDefinitions:
         assert "Read" in defs["reviewer"].tools
         assert "Grep" in defs["reviewer"].tools
 
+    def test_recon_has_monitor_tools(self):
+        """recon 有 Bash,白名单同时放开 monitor 系列。"""
+        defs = get_builtin_agent_definitions()
+        assert "Bash" in defs["recon"].tools
+        assert "monitor_start" in defs["recon"].tools
+        assert "monitor_output" in defs["recon"].tools
+
     def test_returns_fresh_dict(self):
         """每次调用返回独立对象。"""
         d1 = get_builtin_agent_definitions()
