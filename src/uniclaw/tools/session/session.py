@@ -1463,12 +1463,19 @@ class Session:
     async def compact(
         self, config: AppConfig, focus: str = "", keep_ratio: float = 0.3
     ) -> None:
-        """通过 LLM 将旧消息压缩为结构化续作摘要。"""
-        split = self._find_split_point(keep_ratio=keep_ratio)
-        if split <= 0:
+        """通过 LLM 将旧消息压缩为结构化续作摘要。
+
+        已有压缩区(`_messages[:_compact_end]`,即上一轮摘要对)钉在头部原样保留,
+        不参与本轮摘要 — 对已摘要过的内容再摘要会二次有损。keep_ratio 只相对
+        压缩区之后的消息计算:该区域较旧的部分被摘要替换,较新的保留原文。
+        """
+        base = self._compact_end
+        pinned = self._messages[:base]
+        split = self._find_split_point(keep_ratio=keep_ratio, base=base)
+        if split <= base:
             return
 
-        old = self._messages[:split]
+        old = self._messages[base:split]
         recent = self._messages[split:]
 
         # 有界转录 + 自适应摘要预算(按被替换的 token 量分配)
@@ -1516,6 +1523,7 @@ class Session:
             return
 
         self._messages.clear()
+        self._messages.extend(pinned)
         # 历史检索提示追加到摘要消息末尾,与压缩数据同生共死:
         # system prompt 在 run 开始时一次性构建,而压缩可能在运行中途后台触发,
         # 若提示只放在 system prompt 中,压缩发生后 LLM 便无从得知可用
@@ -1549,7 +1557,7 @@ class Session:
             )
         )
         self._messages.extend(recent)
-        self._compact_end = 2
+        self._compact_end = len(pinned) + 2
         self._compact_warned_levels.clear()  # 重置预警状态,下个压缩周期可再次预警
 
     def _align_split_to_tool_pairs(self, split: int) -> int:
@@ -1591,19 +1599,28 @@ class Session:
                 return split
             split = move_to
 
-    def _find_split_point(self, keep_ratio: float = 0.3) -> int:
-        """查找分割点使最近部分约占总 token 的 keep_ratio(对齐工具配对边界)。"""
+    def _find_split_point(self, keep_ratio: float = 0.3, base: int = 0) -> int:
+        """查找分割点使最近部分约占总 token 的 keep_ratio(对齐工具配对边界)。
+
+        Args:
+            keep_ratio: 保留最近消息的 token 比例,相对 base 之后的消息计算。
+            base: 压缩区钉住的消息数(`_compact_end`)。分割点不会落入该区域,
+                keep_ratio 预算也不计入它,保证已有摘要不被二次摘要。
+
+        Returns:
+            int: 对齐到工具配对边界后的分割点(绝对下标);无可压缩消息时返回 base。
+        """
         if not self._messages:
             return 0
         keep_ratio = max(0.0, min(1.0, keep_ratio))
-        total = self.estimate_tokens()
+        total = sum(m.estimate_tokens() for m in self._messages[base:])
         target = int(total * keep_ratio)
         running = 0
-        for i in range(len(self._messages) - 1, -1, -1):
+        for i in range(len(self._messages) - 1, base - 1, -1):
             running += self._messages[i].estimate_tokens()
             if running >= target:
                 return self._align_split_to_tool_pairs(i)
-        return 0
+        return base
 
     def snip_old_tool_results(
         self, max_chars: int = 2000, preserve_last_n_turns: int = 6

@@ -305,3 +305,63 @@ async def test_compact_split_zero_noop():
 
     mock_achat.assert_not_called()
     assert s._compact_end == 0
+
+
+@pytest.mark.asyncio
+async def test_second_compact_pins_previous_summary():
+    """二次压缩时已有摘要对钉在头部:原文保留、不进转录、_compact_end 前移。"""
+    s = _make_filled_session()  # 6 条消息
+    cfg = _mock_config()
+    with (
+        patch(
+            "uniclaw.tools.session.session.Session._find_split_point", return_value=4
+        ),
+        patch("uniclaw.provider.fallback.achat", new=AsyncMock()) as mock_achat,
+    ):
+        mock_achat.return_value = AIMessage(
+            content="第一轮摘要-独特标记", model_name="gpt-4o", usage=Usage.from_dict({})
+        )
+        await s.compact(cfg)
+
+    first_summary = s._messages[0].content
+    assert "第一轮摘要-独特标记" in first_summary
+    assert s._compact_end == 2
+
+    # 第二轮只压 recent 区(_messages[2:] 中较旧的部分),split=3
+    with (
+        patch(
+            "uniclaw.tools.session.session.Session._find_split_point", return_value=3
+        ),
+        patch("uniclaw.provider.fallback.achat", new=AsyncMock()) as mock_achat,
+    ):
+        mock_achat.return_value = AIMessage(
+            content="第二轮摘要", model_name="gpt-4o", usage=Usage.from_dict({})
+        )
+        await s.compact(cfg)
+
+    # 上一轮摘要对原样钉在头部,未被二次摘要
+    assert s._messages[0].content == first_summary
+    assert "第二轮摘要" in s._messages[2].content
+    assert s._compact_end == 4
+    assert len(s._messages) == 5  # 两对摘要(4) + recent(1)
+
+    # 转录只含非压缩区消息,不含上一轮摘要
+    prompt = mock_achat.call_args.args[1]._messages[0].content
+    assert "第一轮摘要-独特标记" not in prompt
+    assert SUMMARY_PREFIX not in prompt
+    assert "[用户]: 用户消息" in prompt
+
+
+def test_find_split_point_never_splits_inside_pinned_region():
+    """base 之下的压缩区不可分割,keep_ratio 只相对其后的消息计算。"""
+    s = Session()
+    s._messages = [
+        _user("旧摘要"),
+        _assistant("已阅读"),
+        _user("x" * 400),  # body 旧消息
+        _user("y" * 40),  # body 新消息
+    ]
+    s._compact_end = 2
+    for ratio in (0.0, 0.15, 0.3, 0.5, 0.9, 1.0):
+        split = s._find_split_point(keep_ratio=ratio, base=2)
+        assert 2 <= split <= 4, f"keep_ratio={ratio} 切入压缩区: split={split}"
