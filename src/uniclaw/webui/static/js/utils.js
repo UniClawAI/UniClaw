@@ -25,12 +25,27 @@ const Utils = {
         });
     },
 
+    /**
+     * 中和链接引用定义行: markdown 把 "- [x]: y" 解析为 link reference definition,
+     * 该行不产生任何输出(列表项渲染成空白)。会话笔记快照的 "- [名字]: 描述" 格式
+     * 因此在 WebUI 大面积"消失"(仅描述含空格的行幸存,见 marked 对 URL 位置的解析)。
+     * 转义左方括号使其按字面显示;代码块内是字面内容,不得改动。
+     */
+    _neutralizeLinkDefs(text) {
+        let inFence = false;
+        return text.split('\n').map(line => {
+            if (/^\s*(```|~~~)/.test(line)) { inFence = !inFence; return line; }
+            if (inFence) return line;
+            return line.replace(/^(\s*(?:[-*+]|\d+[.)])?\s*)\[([^\]\n]+)\]:/, '$1\\[$2\\]:');
+        }).join('\n');
+    },
+
     /** 渲染 Markdown 为 HTML */
     renderMarkdown(text) {
         if (!text) return '';
         if (typeof marked === 'undefined') return this.escapeHtml(text).replace(/\n/g, '<br>');
         try {
-            const html = marked.parse(text);
+            const html = marked.parse(this._neutralizeLinkDefs(text));
             // 消毒:LLM 输出/历史消息中的原生 HTML(如 <img onerror>)不得执行。
             // DOMPurify 缺失(CDN 故障)时不能直接返回未消毒的 html(fail-open 等于放弃防护),
             // 退化为纯文本转义,保证任何路径都不会执行原始 HTML
