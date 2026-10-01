@@ -57,14 +57,20 @@ def sleep_timer(seconds: int, name: str = "", tool_runtime: ToolRuntime = None) 
 @tool
 async def wait(seconds: float, tool_runtime: ToolRuntime = None) -> str:
     """
-    等待指定的秒数。此工具会阻塞当前线程,超过30秒请使用 sleep_timer。
+    等待指定的秒数。此工具会阻塞当前线程,最长 30 秒。
+    需要更长的非阻塞等待时,主 agent 可改用 sleep_timer;子代理没有该工具,
+    应把长等待交回父代理处理。
 
     Args:
         seconds: 等待秒数(1-30)
     """
     config = tool_runtime.config
     if seconds <= 0 or seconds > 30:
-        return f"{TOOL_ERROR}: 等待秒数必须在 1-30 之间,超过 30 秒请使用 sleep_timer"
+        if config is not None and config.is_sub:
+            hint = f"子代理没有 {sleep_timer.name},请将长等待(>30 秒)交回父agent处理"
+        else:
+            hint = f"超过 30 秒请使用 {sleep_timer.name}"
+        return f"{TOOL_ERROR}: 等待秒数必须在 1-30 之间,{hint}"
 
     deadline = time.monotonic() + seconds
     last_displayed = -1
