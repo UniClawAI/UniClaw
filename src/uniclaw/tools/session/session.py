@@ -336,16 +336,17 @@ class AIMessage(BaseMessage):
 
         Args:
             path: 输出文件路径,格式由扩展名决定(如 .wav, .flac, .ogg)。
-            sample_rate: 采样率,默认从音频数据中读取。
 
         Returns:
-            保存的文件路径。
+            Path: 保存的文件路径。
         """
         if not self.audio:
             raise ValueError("当前消息没有音频数据")
         audio_bytes = base64.b64decode(self.audio)
-        with open(path, "wb") as f:
+        out = Path(path)
+        with open(out, "wb") as f:
             f.write(audio_bytes)
+        return out
 
     @property
     def role(self) -> str:
