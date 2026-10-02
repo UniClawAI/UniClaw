@@ -9,7 +9,7 @@
 
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -40,6 +40,7 @@ def _make_task(status_value, future_done=True):
         future=future,
         user_queue=asyncio.Queue(),
         cancel_event=asyncio.Event(),
+        result=None,
         session=SimpleNamespace(get_assistant_messages=lambda separator="\n": []),
     )
 
@@ -52,14 +53,18 @@ class TestWakeAgentGuards:
 
     async def test_none_agent(self):
         config = _make_config(agent=None)
-        assert await wake_agent("msg", config) is False
+        # wake_agent 的警告走 console.ui.warn,假 config 缺 root_config 等属性,
+        # 这里只测返回值,把 UI 输出桩掉
+        with patch("uniclaw.utils.wakeup.warn", new_callable=AsyncMock):
+            assert await wake_agent("msg", config) is False
 
     async def test_exception_returns_false(self):
         """内部异常时返回 False 而非抛出。"""
         task = _make_task(AgentStatus.RUNNING)
         task.user_queue = None  # put_nowait 将抛 AttributeError
         config = _make_config(agent=task)
-        assert await wake_agent("msg", config) is False
+        with patch("uniclaw.utils.wakeup.err", new_callable=AsyncMock):
+            assert await wake_agent("msg", config) is False
 
 
 class TestWakeAgentQueueInjection:
@@ -99,45 +104,47 @@ class TestWakeAgentQueueInjection:
 class TestNeedsDrain:
     """_needs_drain 各模式判定。"""
 
-    def test_console_active_tui_session(self, monkeypatch):
+    async def test_console_active_tui_session(self, monkeypatch):
         """TUI 活跃会话不需要后台消费。"""
         monkeypatch.setattr(
-            "uniclaw.utils.wakeup._is_active_tui_session", lambda config: True
+            "uniclaw.utils.wakeup._is_active_tui_session",
+            AsyncMock(return_value=True),
         )
         config = _make_config(run_mode=RunMode.CONSOLE)
-        assert _needs_drain(config) is False
+        assert await _needs_drain(config) is False
 
-    def test_console_inactive_session(self, monkeypatch):
+    async def test_console_inactive_session(self, monkeypatch):
         """TUI 非活跃会话(如后台任务)需要消费。"""
         monkeypatch.setattr(
-            "uniclaw.utils.wakeup._is_active_tui_session", lambda config: False
+            "uniclaw.utils.wakeup._is_active_tui_session",
+            AsyncMock(return_value=False),
         )
         config = _make_config(run_mode=RunMode.CONSOLE)
-        assert _needs_drain(config) is True
+        assert await _needs_drain(config) is True
 
-    def test_wechat_no_draining(self):
+    async def test_wechat_no_draining(self):
         """WeChat(WEBUI 运行模式)且 _collect_response 未运行 → 需要消费。"""
         task = _make_task(AgentStatus.IDLE if hasattr(AgentStatus, "IDLE") else "idle")
         config = _make_config(run_mode=RunMode.WEBUI, is_wechat=True, agent=task)
-        assert _needs_drain(config) is True
+        assert await _needs_drain(config) is True
 
-    def test_wechat_already_draining(self):
+    async def test_wechat_already_draining(self):
         """WeChat 已有内联消费者 → 不需要。"""
         task = _make_task("idle")
         mark_draining(task, True)
         config = _make_config(run_mode=RunMode.WEBUI, is_wechat=True, agent=task)
-        assert _needs_drain(config) is False
+        assert await _needs_drain(config) is False
 
-    def test_wechat_flag_missing_defaults_to_drain(self):
+    async def test_wechat_flag_missing_defaults_to_drain(self):
         """无 _wechat_draining 标志的旧任务对象默认需要消费。"""
         task = SimpleNamespace(status="idle")  # 无 _wechat_draining 属性
         config = _make_config(run_mode=RunMode.WEBUI, is_wechat=True, agent=task)
-        assert _needs_drain(config) is True
+        assert await _needs_drain(config) is True
 
-    def test_webui_never_drains(self):
+    async def test_webui_never_drains(self):
         """WebUI 有自己的桥接,永不后台消费。"""
         config = _make_config(run_mode=RunMode.WEBUI)
-        assert _needs_drain(config) is False
+        assert await _needs_drain(config) is False
 
 
 class TestMarkDraining:

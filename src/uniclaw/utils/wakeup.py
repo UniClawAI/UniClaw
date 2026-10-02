@@ -10,12 +10,9 @@
 """
 
 import asyncio
-import logging
 
 from uniclaw.config import AppConfig, RunMode
-from uniclaw.console.ui import info
-
-logger = logging.getLogger(__name__)
+from uniclaw.console.ui import info, warn, err
 
 
 async def wake_agent(message: str, config: AppConfig) -> bool:
@@ -35,12 +32,12 @@ async def wake_agent(message: str, config: AppConfig) -> bool:
         如果唤醒已调度返回 True,出错返回 False
     """
     if config is None:
-        logger.warning("[wake_agent] config 为 None,无法唤醒 agent")
+        await warn("[wake_agent] config 为 None,无法唤醒 agent", config)
         return False
 
     task = config.current_agent
     if task is None:
-        logger.warning("[wake_agent] current_agent 为 None,无法唤醒 agent")
+        await warn("[wake_agent] current_agent 为 None,无法唤醒 agent", config)
         return False
 
     try:
@@ -69,23 +66,23 @@ async def wake_agent(message: str, config: AppConfig) -> bool:
         # 当没有内联消费者时需要后台消费:
         # - TUI:活跃会话有自己的消费循环；其他会话没有
         # - WeChat:_collect_response 按消息消费；如果我们从后台任务(scheduler/sleep)启动 agent,没有人在监听
-        if _needs_drain(config):
-            asyncio.create_task(_drain_and_log(task))
+        if await _needs_drain(config):
+            asyncio.create_task(_drain_and_log(task, config))
 
         return True
 
     except Exception as e:
-        logger.exception("[wake_agent] 唤醒 agent 失败: %s", e)
+        await err("[wake_agent] 唤醒 agent 失败: %s", config, e)
         return False
 
 
-def _needs_drain(config: AppConfig) -> bool:
+async def _needs_drain(config: AppConfig) -> bool:
     """检查 event_queue 是否需要后台消费任务。"""
     task = config.current_agent
 
     if config.run_mode == RunMode.CONSOLE:
         # TUI:仅当这不是活跃会话时需要消费
-        return not _is_active_tui_session(config)
+        return not await _is_active_tui_session(config)
 
     if config.is_wechat:
         # WeChat:如果 _collect_response 当前未运行则需要消费。
@@ -103,7 +100,7 @@ def mark_draining(task, draining: bool = True) -> None:
     task._wechat_draining = draining
 
 
-def _is_active_tui_session(config: AppConfig) -> bool:
+async def _is_active_tui_session(config: AppConfig) -> bool:
     """检查此 config 的会话是否是 TUI 当前显示的会话。"""
     try:
         from uniclaw.console.run import TUIApp
@@ -114,7 +111,7 @@ def _is_active_tui_session(config: AppConfig) -> bool:
                 tui.config.current_agent.session.id == config.current_agent.session.id
             )
     except Exception as e:
-        logger.debug("[wake_agent] 检查活跃 TUI 会话失败: %s", e)
+        await err("[wake_agent] 检查活跃 TUI 会话失败: %s", config, e)
     return False
 
 
@@ -124,7 +121,7 @@ def _last_assistant_message(task) -> str | None:
     return messages[-1] if messages else None
 
 
-async def _drain_and_log(task) -> None:
+async def _drain_and_log(task, config: AppConfig) -> None:
     """当没有内联消费者时消费 event_queue。
 
     如果不这样做,事件会无限累积且永远不会被消费。
@@ -159,7 +156,7 @@ async def _drain_and_log(task) -> None:
     except asyncio.CancelledError:
         pass
     except Exception as e:
-        logger.debug("[wake_agent] drain_and_log 错误: %s", e, exc_info=True)
+        await err("[wake_agent] drain_and_log 错误: %s", config, e)
 
 
 async def _ensure_webui_bridge(config: AppConfig) -> None:
@@ -175,4 +172,4 @@ async def _ensure_webui_bridge(config: AppConfig) -> None:
     except ImportError:
         pass
     except Exception as e:
-        logger.debug("[wake_agent] 启动 WebUI 桥接失败: %s", e, exc_info=True)
+        await err("[wake_agent] 启动 WebUI 桥接失败: %s", config, e)
