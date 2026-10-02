@@ -27,8 +27,7 @@ from .scheduler.tools import (
     get_tools as scheduler_get_tools,
     get_all_tools as scheduler_get_all_tools,
 )
-from .sleep import get_all_tools as sleep_get_all_tools
-from .sleep import wait as sleep_wait, sleep_timer
+from .sleep import get_tools as sleep_get_tools, get_all_tools as sleep_get_all_tools
 from .monitor.tools import (
     get_tools as process_get_tools,
     get_all_tools as process_get_all_tools,
@@ -168,7 +167,8 @@ async def get_tools(config) -> list:
         *media_get_tools(config),
         *await docker_get_tools(config),
         *scheduler_get_tools(),
-        sleep_wait,  # wait 子代理可用
+        # sleep_timer 仅主 agent 与异步子代理可用,同步子代理由 get_tools 过滤
+        *sleep_get_tools(config),
         *process_get_tools(),
         *mcp_management_get_tools(),
         *session_get_tools(),
@@ -198,7 +198,6 @@ async def get_tools(config) -> list:
                 *security_get_tools(),
                 *hooks_get_tools(),
                 *computer_use_get_tools(config),
-                sleep_timer,  # sleep_timer 仅主 agent 可用
                 *restart_get_tools(
                     config
                 ),  # restart_agent 仅 WebUI 模式的主 agent 可用

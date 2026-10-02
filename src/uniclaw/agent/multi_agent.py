@@ -535,6 +535,7 @@ class MultiAgent:
         task.prompt = user_message
         task.status = AgentStatus.PENDING
         task.notify_parent = notify_parent  # run 主循环在 resp 出结果时读取并即时唤醒
+        task.keep_alive = keep_alive  # 异步子代理驻留标志,sleep_timer 可用性据此判断
         root_dir = config.root_dir
 
         if (

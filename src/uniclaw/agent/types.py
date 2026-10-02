@@ -42,6 +42,7 @@ class AgentTask:
     result: Optional[str] = None
     result_read_index: int = 0
     notify_parent: bool = False  # 异步子代理:执行中/结束时唤醒父 agent(run 主循环读取)
+    keep_alive: bool = False  # 异步子代理:回合结束后驻留等待消息(sleep_timer 等唤醒依赖此)
 
     worktree_path: str = ""
     worktree_branch: str = ""

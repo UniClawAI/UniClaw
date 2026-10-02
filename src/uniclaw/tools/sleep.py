@@ -1,9 +1,28 @@
 import asyncio
 import time
 from datetime import datetime, timedelta
+from uniclaw.config import AppConfig
 from uniclaw.utils.constants import SYSTEM_PREFIX, TOOL_ERROR
 from uniclaw.utils.wakeup import wake_agent
 from uniclaw.tools.base import tool, ToolRuntime
+
+
+def sleep_timer_available(config: AppConfig | None) -> bool:
+    """判断 sleep_timer 是否可用:主 agent 与异步子代理可用,同步子代理不可用。
+
+    同步子代理随当前回合结束即向父代理返回结果,之后的定时唤醒无人接收;
+    异步子代理回合结束后仍驻留等待消息(keep_alive),可被定时唤醒继续工作。
+
+    Args:
+        config: AppConfig 实例,可为 None(视为不限制,直接可用)。
+
+    Returns:
+        bool: 可用返回 True。
+    """
+    if config is None or not config.is_sub:
+        return True
+    task = config.current_agent
+    return bool(task is not None and task.keep_alive)
 
 
 @tool
@@ -58,16 +77,16 @@ def sleep_timer(seconds: int, name: str = "", tool_runtime: ToolRuntime = None) 
 async def wait(seconds: float, tool_runtime: ToolRuntime = None) -> str:
     """
     等待指定的秒数。此工具会阻塞当前线程,最长 30 秒。
-    需要更长的非阻塞等待时,主 agent 可改用 sleep_timer;子代理没有该工具,
-    应把长等待交回父代理处理。
+    需要更长的非阻塞等待时,主 agent 与异步子代理可改用 sleep_timer;
+    同步子代理没有该工具,应把长等待交回父代理处理。
 
     Args:
         seconds: 等待秒数(1-30)
     """
     config = tool_runtime.config
     if seconds <= 0 or seconds > 30:
-        if config is not None and config.is_sub:
-            hint = f"子代理没有 {sleep_timer.name},请将长等待(>30 秒)交回父agent处理"
+        if not sleep_timer_available(config):
+            hint = f"同步子代理没有 {sleep_timer.name},请将长等待(>30 秒)交回父agent处理"
         else:
             hint = f"超过 30 秒请使用 {sleep_timer.name}"
         return f"{TOOL_ERROR}: 等待秒数必须在 1-30 之间,{hint}"
@@ -89,11 +108,31 @@ async def wait(seconds: float, tool_runtime: ToolRuntime = None) -> str:
     return f"已等待 {seconds} 秒"
 
 
-def get_tools() -> list:
-    """获取睡眠定时器工具列表"""
-    return [sleep_timer, wait]
+def get_tools(config: AppConfig | None = None) -> list:
+    """获取睡眠定时器工具列表。
+
+    sleep_timer 仅主 agent 与异步子代理可用,同步子代理过滤掉并记录不可用原因
+    (供 search_tools 提示);wait 始终可用。
+
+    Args:
+        config: AppConfig 实例,用于判断子代理同步/异步。None 时不限制。
+
+    Returns:
+        list: 当前可用的工具列表。
+    """
+    if sleep_timer_available(config):
+        if config is not None:
+            config.clear_unavailable_tools([sleep_timer.name])
+        return [sleep_timer, wait]
+    if config is not None:
+        config.record_unavailable_tools(
+            [sleep_timer.name],
+            "同步子代理不可用:回合结束即返回结果,定时唤醒无人接收,"
+            "请将长等待交回父agent处理",
+        )
+    return [wait]
 
 
 def get_all_tools() -> list:
-    """获取所有睡眠定时器工具(无条件返回)"""
-    return get_tools()
+    """获取所有睡眠定时器工具(无条件返回,供 registry BM25 索引发现)"""
+    return [sleep_timer, wait]
