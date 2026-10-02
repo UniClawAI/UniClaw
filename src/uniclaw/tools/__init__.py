@@ -123,18 +123,27 @@ async def get_core_tools(sub_agent: bool = False) -> list:
     扩展工具通过 search_tools 按需发现和加载。
 
     Args:
-        sub_agent: 子代理模式时为 True,排除计划模式工具。
+        sub_agent: 子代理模式时为 True,排除计划模式工具,追加子代理专属的
+            向父代理发送消息的工具。主 agent 无父代理,不加载该工具。
+
+    Returns:
+        list: 核心工具列表,末尾追加 search_tools。
     """
     from .registry import CORE_TOOLS
 
     await _ensure_registry()
     # 直接使用 CORE_TOOLS,无需重复收集再过滤
     tools = list(CORE_TOOLS)
-    # 子代理模式排除计划模式工具
     if sub_agent:
+        # 子代理模式排除计划模式工具
         tools = [
             t for t in tools if t.name not in ("enter_plan_mode", "exit_plan_mode")
         ]
+        # 子代理专属核心工具: 向父代理发送消息(主 agent 拿不到)
+        from .multi_agent.tools import subagent_send_to_parent
+
+        if all(t.name != subagent_send_to_parent.name for t in tools):
+            tools.append(subagent_send_to_parent)
     # search_tools 不在 CORE_TOOLS 中,单独添加
     tools.extend(registry_get_tools())
     return tools

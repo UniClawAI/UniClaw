@@ -287,7 +287,8 @@ def is_safe_tool(name: str) -> bool:
         subagent_close,
         subagent_get_definition,
         subagent_discuss,
-        subagent_send_message,
+        subagent_send_to_child,
+        subagent_send_to_parent,
     )
     from uniclaw.tools.notify import push_notification
     from uniclaw.tools.registry import search_tools
@@ -415,7 +416,8 @@ def is_safe_tool(name: str) -> bool:
         todolist_list.name,
         todolist_cancel.name,
         # ── 多智能体 ──
-        subagent_send_message.name,
+        subagent_send_to_child.name,
+        subagent_send_to_parent.name,
         subagent_close.name,
         subagent_check_result.name,
         subagent_list_tasks.name,

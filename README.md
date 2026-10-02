@@ -1182,7 +1182,8 @@ http_download(
 #### 多智能体工具 👥
 
 - **subagent_create** - 创建并启动子智能体任务(支持同步/异步模式和 worktree 隔离)
-- **subagent_send_message** - 向指定智能体发送消息进行通信
+- **subagent_send_to_child** - 父智能体向指定子智能体发送消息(追加指令或要求)
+- **subagent_send_to_parent** - 子智能体向父智能体发送消息(仅异步子智能体可用)
 - **subagent_close** - 关闭后台子智能体释放资源
 - **subagent_check_result** - 检查子智能体的执行结果和状态(支持增量读取)
 - **subagent_list_tasks** - 列出所有子智能体任务的当前状态
@@ -1190,7 +1191,7 @@ http_download(
 - **subagent_list_definitions** - 查看所有可用的智能体类型定义
 - **subagent_get_definition** - 查看指定子智能体类型的详细定义(系统提示词、工具列表等)
 
-> 💡 **提示**: 多智能体系统采用全异步架构,允许为不同任务创建专门的助手,实现更精细的任务分工。支持智能体间的异步通信和结果传递,可通过 `keep_alive` 模式保持智能体持续运行并接收新指令。支持 worktree 隔离模式(`isolation=True`),子智能体在独立的 git 分支上工作,避免文件冲突。支持事件继承(`inherit_events=True`),子智能体的工具调用、思考过程等事件会自动广播到父级队列,前端可实时显示执行进度。子智能体完成后会自动通知父智能体,支持唤醒代理机制确保父任务及时处理子任务结果。子智能体定义支持 `tools` 白名单字段(在 YAML frontmatter 中声明),限制子智能体只能使用指定工具;未声明时则像主智能体一样通过 `search_tools` 按需发现扩展工具。
+> 💡 **提示**: 多智能体系统采用全异步架构,允许为不同任务创建专门的助手,实现更精细的任务分工。智能体间通信是双向的:父智能体用 `subagent_send_to_child` 追加指令,异步子智能体用 `subagent_send_to_parent` 主动汇报进度或请求指示(该工具对所有子智能体默认加载,不受 `tools` 白名单限制;同步子智能体不加载 — 父智能体正阻塞等待最终结果,请直接在输出中汇报)。可通过 `keep_alive` 模式保持智能体持续运行并接收新指令。支持 worktree 隔离模式(`isolation=True`),子智能体在独立的 git 分支上工作,避免文件冲突。支持事件继承(`inherit_events=True`),子智能体的工具调用、思考过程等事件会自动广播到父级队列,前端可实时显示执行进度。子智能体完成后会自动通知父智能体,支持唤醒代理机制确保父任务及时处理子任务结果。子智能体定义支持 `tools` 白名单字段(在 YAML frontmatter 中声明),限制子智能体只能使用指定工具;未声明时则像主智能体一样通过 `search_tools` 按需发现扩展工具。
 
 #### 技能系统
 
@@ -2496,7 +2497,8 @@ A: 多智能体系统采用全异步架构,允许创建专业化的助手并进�
 - **任务分配**: AI 会根据任务类型自动选择合适的智能体
 
 **高级功能**:
-- **智能体通信**: 使用 `subagent_send_message` 向指定智能体发送消息
+- **智能体通信(父→子)**: 使用 `subagent_send_to_child` 向指定子智能体发送消息
+- **智能体通信(子→父)**: 异步子智能体可用 `subagent_send_to_parent` 主动向父智能体汇报进度或请求指示
 - **结果检查**: 使用 `subagent_check_result` 查看子智能体的执行结果和状态
 - **关闭智能体**: 使用 `subagent_close` 关闭不再需要的智能体
 - **智能体讨论**: 使用 `subagent_discuss` 启动多个智能体之间的多轮协作讨论
@@ -2513,7 +2515,10 @@ subagent_create(prompt="审查这段代码", subagent_type="reviewer", name="rev
 subagent_create(prompt="编写测试", subagent_type="tester", name="test-task", wait=False)
 
 # 向智能体发送消息
-subagent_send_message(task_id="test-task", message="补充要求")
+subagent_send_to_child(task_id="test-task", message="补充要求")
+
+# (在异步子智能体内部)子智能体可主动向父智能体汇报或请示
+subagent_send_to_parent(message="进度 50%,遇到 XX 问题,请指示")
 
 # 检查结果
 subagent_check_result(task_id="test-task")

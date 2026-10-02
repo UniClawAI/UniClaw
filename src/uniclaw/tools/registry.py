@@ -78,7 +78,7 @@ def _build_extended_keywords() -> dict[str, list[str]]:
     )
     from .multi_agent.tools import (
         subagent_create,
-        subagent_send_message,
+        subagent_send_to_child,
         subagent_close,
         subagent_check_result,
         subagent_list_tasks,
@@ -465,7 +465,7 @@ def _build_extended_keywords() -> dict[str, list[str]]:
             "多智能体",
             "spawn agent",
         ],
-        subagent_send_message.name: [
+        subagent_send_to_child.name: [
             "发送消息",
             "send message",
             "代理消息",
@@ -1455,7 +1455,7 @@ def _build_tool_categories() -> dict[str, str]:
     )
     from .multi_agent.tools import (
         subagent_create,
-        subagent_send_message,
+        subagent_send_to_child,
         subagent_close,
         subagent_check_result,
         subagent_list_tasks,
@@ -1658,7 +1658,7 @@ def _build_tool_categories() -> dict[str, str]:
         cu_find_element.name: "计算机操作",
         cu_interact.name: "计算机操作",
         subagent_create.name: "多智能体",
-        subagent_send_message.name: "多智能体",
+        subagent_send_to_child.name: "多智能体",
         subagent_close.name: "多智能体",
         subagent_check_result.name: "多智能体",
         subagent_list_tasks.name: "多智能体",

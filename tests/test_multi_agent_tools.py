@@ -1,11 +1,12 @@
 """多 Agent 工具测试 — 覆盖 subagent_* 工具的调用逻辑。"""
 
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from uniclaw.tools.base import ToolRuntime
 from uniclaw.tools.multi_agent.tools import (
-    subagent_send_message,
+    subagent_send_to_child,
+    subagent_send_to_parent,
     subagent_close,
     subagent_check_result,
     subagent_list_tasks,
@@ -50,7 +51,9 @@ class TestToolRegistration:
         """工具名称齐全。"""
         names = [t.name for t in get_all_tools()]
         assert "subagent_create" in names
-        assert "subagent_send_message" in names
+        assert "subagent_send_to_child" in names
+        # 子代理专属,不进通用列表(主 agent 经 get_tools/search_tools 均不可见)
+        assert "subagent_send_to_parent" not in names
         assert "subagent_close" in names
         assert "subagent_check_result" in names
         assert "subagent_list_tasks" in names
@@ -59,15 +62,15 @@ class TestToolRegistration:
         assert "subagent_list_definitions" in names
 
 
-class TestSendMessage:
-    """subagent_send_message 测试。"""
+class TestSendToChild:
+    """subagent_send_to_child 测试。"""
 
     @pytest.mark.asyncio
     async def test_send_success(self, mock_mgr):
         """发送成功。"""
         mock_mgr.send_message.return_value = True
         with _patch_get_instance(mock_mgr):
-            result = await subagent_send_message("task-1", "hello")
+            result = await subagent_send_to_child("task-1", "hello")
         assert "已排队" in result
 
     @pytest.mark.asyncio
@@ -76,7 +79,7 @@ class TestSendMessage:
         mock_mgr.send_message.return_value = False
         mock_mgr.id2AgentTask = {}
         with _patch_get_instance(mock_mgr):
-            result = await subagent_send_message("nonexistent", "hello")
+            result = await subagent_send_to_child("nonexistent", "hello")
         assert "无法找到" in result
 
     @pytest.mark.asyncio
@@ -87,8 +90,80 @@ class TestSendMessage:
         mock_task.status = "stopped"
         mock_mgr.id2AgentTask = {"task-1": mock_task}
         with _patch_get_instance(mock_mgr):
-            result = await subagent_send_message("task-1", "hello")
+            result = await subagent_send_to_child("task-1", "hello")
         assert "未运行" in result
+
+
+class TestSendToParent:
+    """subagent_send_to_parent 测试。"""
+
+    @staticmethod
+    def _make_config(notify_parent: bool = True):
+        """构造子代理 config(notify_parent 标志区分异步/同步子代理)。"""
+        config = MagicMock()
+        config.parent_config = MagicMock()
+        task = MagicMock()
+        task.name = "child"
+        task.id = "task-1"
+        task.status = "running"
+        task.notify_parent = notify_parent
+        config.current_agent = task
+        return config
+
+    @pytest.mark.asyncio
+    async def test_no_parent(self):
+        """非子智能体(无父代理)时返回错误。"""
+        config = MagicMock()
+        config.parent_config = None
+        result = await subagent_send_to_parent(
+            "hello", tool_runtime=ToolRuntime(config=config)
+        )
+        assert "没有父智能体" in result
+
+    @pytest.mark.asyncio
+    async def test_sync_subagent_rejected(self):
+        """同步子代理(父代理阻塞等待)不允许发送。"""
+        config = self._make_config(notify_parent=False)
+        with patch(
+            "uniclaw.utils.wakeup.wake_agent", new_callable=AsyncMock
+        ) as mock_wake:
+            result = await subagent_send_to_parent(
+                "hello", tool_runtime=ToolRuntime(config=config)
+            )
+        assert "同步子智能体" in result
+        assert mock_wake.await_count == 0
+
+    @pytest.mark.asyncio
+    async def test_send_success(self):
+        """异步子代理有父代理时调用 wake_agent 送达。"""
+        config = self._make_config(notify_parent=True)
+        with patch(
+            "uniclaw.utils.wakeup.wake_agent", new_callable=AsyncMock
+        ) as mock_wake:
+            mock_wake.return_value = True
+            result = await subagent_send_to_parent(
+                "hello", tool_runtime=ToolRuntime(config=config)
+            )
+        assert "已发送" in result
+        assert mock_wake.await_count == 1
+        # 注入的消息包含发送者标识与原始内容
+        sent_text = mock_wake.await_args.args[0]
+        assert "[child_agent]" in sent_text
+        assert "task-1" in sent_text
+        assert "hello" in sent_text
+
+    @pytest.mark.asyncio
+    async def test_wake_failed(self):
+        """wake_agent 返回 False 时返回错误。"""
+        config = self._make_config(notify_parent=True)
+        with patch(
+            "uniclaw.utils.wakeup.wake_agent", new_callable=AsyncMock
+        ) as mock_wake:
+            mock_wake.return_value = False
+            result = await subagent_send_to_parent(
+                "hello", tool_runtime=ToolRuntime(config=config)
+            )
+        assert "失败" in result
 
 
 class TestClose:

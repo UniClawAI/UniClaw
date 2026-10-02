@@ -60,8 +60,14 @@ class TestCoreTools:
             assert isinstance(t, Tool)
 
     def test_core_names_match(self):
-        """CORE_TOOL_NAMES 与工具名一致(search_tools 在模块加载时加入)。"""
-        assert CORE_TOOL_NAMES == {t.name for t in CORE_TOOLS} | {"search_tools"}
+        """CORE_TOOL_NAMES = CORE_TOOLS 名字 + search_tools + 子代理专属核心工具。"""
+        from uniclaw.tools.multi_agent.tools import subagent_send_to_parent
+
+        assert CORE_TOOL_NAMES == (
+            {t.name for t in CORE_TOOLS}
+            | {"search_tools"}
+            | {subagent_send_to_parent.name}
+        )
 
     def test_search_tools_in_core(self):
         """search_tools 元工具在核心工具中。"""

@@ -30,7 +30,7 @@ async def subagent_create(
 
     Returns:
         str: 执行结果或任务信息。异步模式(wait=False)下可使用 subagent_check_result 查询状态、
-             subagent_send_message 发送消息,任务完成后需调用 subagent_close 关闭智能体
+             subagent_send_to_child 发送消息,任务完成后需调用 subagent_close 关闭智能体
 
     Example:
         >>> # 同步执行(不需要关闭)
@@ -39,7 +39,7 @@ async def subagent_create(
         >>> # 异步执行,需要使用 subagent_close 关闭
         >>> task_info = subagent_create(prompt="编写测试", subagent_type="test_writer", name="task2", wait=False)
         >>> subagent_check_result("task2")  # 查询结果
-        >>> subagent_send_message("task2", "补充要求")  # 发送消息
+        >>> subagent_send_to_child("task2", "补充要求")  # 发送消息
         >>> subagent_close("task2")  # 任务完成后必须关闭
     """
     from uniclaw.agent import MultiAgent
@@ -93,7 +93,7 @@ async def subagent_create(
         if task.worktree_branch:
             info_parts.append(f"工作树分支:{task.worktree_branch}")
         info_parts.append(
-            f"使用 {subagent_check_result.name} 或 {subagent_send_message.name} 与此智能体交互。"
+            f"使用 {subagent_check_result.name} 或 {subagent_send_to_child.name} 与此智能体交互。"
         )
         info_parts.append(
             f"子智能体完成/失败/被取消时会以 {SYSTEM_PREFIX}[child_agent] 前缀消息唤醒你(消息中的 状态 字段标明具体情形);请使用任务ID调用 {subagent_check_result.name} 来读取结果。"
@@ -103,12 +103,12 @@ async def subagent_create(
 
 
 @tool
-def subagent_send_message(task_id: str, message: str) -> str:
+def subagent_send_to_child(task_id: str, message: str) -> str:
     """
-    向指定的智能体发送消息。
+    向指定的子智能体发送消息(父智能体专用,与 subagent_send_to_parent 方向相反)。
 
-    该函数尝试将消息发送给目标智能体。如果智能体正在运行,消息会被排队等待处理；
-    如果智能体不存在或未运行,则返回相应的错误信息。
+    该函数尝试将消息发送给目标子智能体。如果子智能体正在运行,消息会被排队等待处理；
+    如果子智能体不存在或未运行,则返回相应的错误信息。
 
     Args:
         task_id (str): 目标智能体的名称或ID。
@@ -133,6 +133,53 @@ def subagent_send_message(task_id: str, message: str) -> str:
     return (
         f"{TOOL_ERROR}: 智能体 '{task_id}' 未运行(状态: {task.status})。无法发送消息。"
     )
+
+
+@tool
+async def subagent_send_to_parent(message: str, tool_runtime: ToolRuntime = None) -> str:
+    """
+    向父智能体发送消息(子智能体专用,与 subagent_send_to_child 方向相反)。
+
+    将消息注入父智能体的消息队列:父智能体空闲时会被唤醒,运行中时会在下一次
+    检查消息队列时看到。适用于向父智能体汇报进度、请求指示或提交阶段性结果,
+    调用后立即返回,无需等待父智能体响应。
+    仅异步子智能体(subagent_create wait=False)可用:同步子智能体(wait=True)的
+    父智能体正阻塞等待你的最终结果,中途消息无法被及时处理,请直接把要汇报的
+    内容写入最终输出返回。
+
+    Args:
+        message (str): 要发送给父智能体的消息内容。
+
+    Returns:
+        str: 操作结果状态信息。成功时返回送达说明;当前没有父智能体或同步
+            子智能体调用时返回错误提示。
+    """
+    from uniclaw.utils.wakeup import wake_agent
+
+    config = tool_runtime.config
+    parent_config = config.parent_config
+    if parent_config is None:
+        return f"{TOOL_ERROR}: 当前没有父智能体,无法发送消息。"
+
+    task = config.current_agent
+    if not task.notify_parent:
+        return (
+            f"{TOOL_ERROR}: 同步子智能体不能向父智能体发送消息(父智能体正阻塞"
+            f"等待你的最终结果,消息无法被及时处理)。请将要汇报的内容直接写入"
+            f"最终输出返回。"
+        )
+    text = (
+        f"{SYSTEM_PREFIX}[child_agent]\n"
+        f"名称: {task.name}\n"
+        f"任务ID: {task.id}\n"
+        f"状态: {task.status}\n"
+        f"消息: {message}\n"
+        f'- 请调用 {subagent_check_result.name}(task_id="{task.id}") 读取该智能体的输出\n'
+        f'- 使用 {subagent_send_to_child.name}(task_id="{task.id}", message="...") 回复该智能体'
+    )
+    if await wake_agent(text, parent_config):
+        return "消息已发送给父智能体,它将在下次处理消息时看到。"
+    return f"{TOOL_ERROR}: 向父智能体发送消息失败。"
 
 
 @tool
@@ -383,9 +430,11 @@ def subagent_get_definition(
 
 def get_tools() -> list:
     """获取多智能体工具列表"""
+    # subagent_send_to_parent 不在列表中: 子代理专属,仅由 agent/_run 强制注入,
+    # 不注册进 registry,主 agent 通过 get_tools()/search_tools 均不可见
     return [
         subagent_create,
-        subagent_send_message,
+        subagent_send_to_child,
         subagent_close,
         subagent_check_result,
         subagent_list_tasks,
@@ -398,6 +447,16 @@ def get_tools() -> list:
 def get_all_tools() -> list:
     """获取所有多智能体工具(无条件返回)"""
     return get_tools()
+
+
+# subagent_send_to_parent 是子代理专属核心工具(不进 get_tools()/registry,
+# 主 agent 经 get_tools/search_tools 均不可见)。加入 CORE_TOOL_NAMES:
+# 1) 不参与扩展工具能量淘汰(agent 主循环 touch/drain_energy 跳过,始终加载);
+# 2) get_builtin_tool_names 覆盖插件重名检测 — 该检测在 init_registry 之前执行,
+#    因此登记必须在模块加载时完成,不能依赖 init_registry。
+from uniclaw.tools.registry import CORE_TOOL_NAMES
+
+CORE_TOOL_NAMES.add(subagent_send_to_parent.name)
 
 
 def get_sub_agent_system_prompt() -> str:

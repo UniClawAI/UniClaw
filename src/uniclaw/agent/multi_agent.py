@@ -43,7 +43,8 @@ LOOP_DETECTION_THRESHOLD = 5
 from uniclaw.tools.multi_agent.sub_agent import AgentDefinition
 from uniclaw.tools.multi_agent.tools import (
     subagent_check_result,
-    subagent_send_message,
+    subagent_send_to_child,
+    subagent_send_to_parent,
     subagent_close,
 )
 from uniclaw.tools.shell import Bash
@@ -620,7 +621,7 @@ class MultiAgent:
                 f"状态: {task.status}\n"
                 f"消息: {reason}\n"
                 f'- 请调用 {subagent_check_result.name}(task_id="{task.id}") 来读取结果\n'
-                f'- 使用 {subagent_send_message.name}(task_id="{task.id}", message="...") 发送消息\n'
+                f'- 使用 {subagent_send_to_child.name}(task_id="{task.id}", message="...") 发送消息\n'
                 f'- 使用 {subagent_close.name}(task_id="{task.id}") 关闭智能体'
             )
 
@@ -1352,13 +1353,23 @@ class MultiAgent:
             # allowed_tools 非 None 时为白名单; 否则不限制(全集, 走 search_tools 按需加载)
             if allowed_tools:
                 allowed_names = {t.name for t in allowed_tools}
-                tools = [t for t in tools if t.name in allowed_names]
+                # subagent_send_to_parent 是子代理核心工具(get_core_tools 已加载),
+                # 不受 agent_def 白名单过滤
+                tools = [
+                    t
+                    for t in tools
+                    if t.name in allowed_names
+                    or t.name == subagent_send_to_parent.name
+                ]
                 # 专用代理显式声明的扩展工具直接加载,避免通过 search_tools 绕过白名单。
                 loaded_names = {t.name for t in tools}
                 tools.extend(t for t in allowed_tools if t.name not in loaded_names)
                 ext_names = allowed_names
             else:
                 ext_names = {t.name for t in await get_tools(config)}
+            # 同步子代理(父代理阻塞等待最终结果)无法中途发消息,不加载该工具
+            if not task.notify_parent:
+                tools = [t for t in tools if t.name != subagent_send_to_parent.name]
             task.allowed_tools_set = {t.name for t in tools} | ext_names
         else:
             task.allowed_tools_set = {t.name for t in await get_tools(config)}
