@@ -188,7 +188,7 @@ class BaseMessage:
         return raw if isinstance(raw, datetime) else None
 
     @property
-    def role(self) -> str:
+    def role(self) -> MessageRole:
         raise NotImplementedError
 
     def to_openai_message(self) -> dict[str, Any]:
@@ -238,7 +238,7 @@ class BaseMessage:
 class UserMessage(BaseMessage):
 
     @property
-    def role(self) -> str:
+    def role(self) -> MessageRole:
         return MessageRole.USER
 
     @classmethod
@@ -349,7 +349,7 @@ class AIMessage(BaseMessage):
         return out
 
     @property
-    def role(self) -> str:
+    def role(self) -> MessageRole:
         return MessageRole.ASSISTANT
 
     @classmethod
@@ -504,7 +504,7 @@ class ToolCallMessage(BaseMessage):
         return self._hash_cache
 
     @property
-    def role(self) -> str:
+    def role(self) -> MessageRole:
         return MessageRole.TOOL
 
     def to_openai_message(self) -> dict[str, Any]:
@@ -1376,8 +1376,15 @@ class Session:
     def add_message(
         self, role: MessageRole, content: str | list[dict[str, Any]], **kwargs
     ) -> None:
-        """添加消息,内部转为结构化对象。"""
+        """添加消息,内部转为结构化对象。
+
+        created_at 若来自已序列化的消息(如 fork_session 直接透传 JSON 字段),
+        是 ISO 字符串,这里统一归一化为 datetime,避免后续 to_dict 报
+        'str' object has no attribute 'isoformat'。
+        """
         ca = kwargs.get("created_at", _UNSET)
+        if ca is not _UNSET:
+            ca = _normalize_datetime(ca)
         if role == MessageRole.USER:
             self.add_user_message(content=content, created_at=ca)
         elif role == MessageRole.ASSISTANT:

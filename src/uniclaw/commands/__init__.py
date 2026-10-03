@@ -132,10 +132,16 @@ async def handle_slash(line: str, config: AppConfig) -> Union[bool, str]:
         # 兼容同步和异步handler
         import inspect
 
-        if inspect.iscoroutinefunction(handler):
-            return await handler(args, config)
-        else:
-            return handler(args, config)
+        try:
+            if inspect.iscoroutinefunction(handler):
+                return await handler(args, config)
+            else:
+                return handler(args, config)
+        except Exception as e:
+            from uniclaw.console.ui import err
+
+            await err(f"处理命令 {cmd} 时出错: {e}", config, e)
+            return True
 
     # 回退到技能查找
     from uniclaw.tools.skill.loader import find_skill

@@ -1,4 +1,5 @@
 import pytest
+from datetime import datetime
 from pathlib import Path
 from uniclaw.agent import AgentTask
 from uniclaw.config import AppConfig
@@ -113,3 +114,30 @@ async def test_session_load_command_replaces_task_messages(tmp_path):
     target.session.replace_messages(loaded.to_openai_messages())
 
     assert target.session.to_openai_messages() == loaded.to_openai_messages()
+
+
+@pytest.mark.asyncio
+async def test_fork_session_normalizes_serialized_created_at(tmp_path):
+    """fork_session 透传 JSON 中的 ISO created_at 字符串,需归一化为 datetime。
+
+    否则后续 to_dict 对 str 调 .isoformat() 抛 AttributeError。
+    """
+    task = _make_task(root_dir=tmp_path)
+    task.session.add_user_message(content="original question")
+    task.session.add_assistant_message(
+        content="answer", model_name="test-model", usage={}
+    )
+
+    config = _make_config(tmp_path, task)
+    await SessionManager.save_session(config)
+
+    forked = await SessionManager.fork_session(task.session.id, 1, config)
+
+    assert forked is not None
+    for msg in forked._messages:
+        assert isinstance(msg.created_at, datetime), f"created_at 未归一化: {msg!r}"
+    # 序列化不再报 'str' object has no attribute 'isoformat'
+    data = await forked.to_dict(config)
+    assert data is not None
+    assert len(data["messages"]) == 2
+    datetime.fromisoformat(data["messages"][0]["created_at"])
