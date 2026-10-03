@@ -1235,7 +1235,6 @@ class MultiAgent:
         """保存记忆(异步,不阻塞主流程)。"""
         try:
             from uniclaw.tools.memory.auto_review import review_and_save_if_due
-            from uniclaw.console.ui import info
 
             saved = await review_and_save_if_due(config)
             for memory in saved:
@@ -1341,8 +1340,6 @@ class MultiAgent:
                 task.session.root_dir, message=extract_text(user_message)
             )
         except Exception as e:
-            from uniclaw.console.ui import err
-
             await err(f"创建检查点失败(已跳过): {e}", config=config, e=e)
         await self.send_event_to_user(CheckpointEndEvent(), config)
         if system_message is None:
