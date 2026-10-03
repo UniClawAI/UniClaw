@@ -754,6 +754,10 @@ _UNSET = object()
 # 与上次真实用户发言的间隔达到该阈值时,注入当前时间告知
 TIME_NOTICE_GAP = timedelta(hours=1)
 
+# 时间告知的识别标记 — maybe_time_notice 生成与 is_time_notice 识别共用,
+# 修改格式时只改这里,避免"生成"与"识别"两处不一致
+TIME_NOTICE_TAG = f"{SYSTEM_PREFIX}(time)"
+
 _WEEKDAY_CN = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")
 
 
@@ -814,6 +818,23 @@ def _format_gap(delta: timedelta) -> str:
     return " ".join(parts)
 
 
+def is_time_notice(message: Any) -> bool:
+    """判断消息是否为 maybe_time_notice 注入的系统时间提醒。
+
+    仅匹配 TIME_NOTICE_TAG 开头的用户消息 — 其他 [system] 注入消息
+    (如 (用户执行Shell命令) / [child_agent] 等)不算时间提醒。
+
+    Args:
+        message: 待判断的消息对象。
+
+    Returns:
+        bool: 是系统时间提醒返回 True。
+    """
+    if not isinstance(message, UserMessage):
+        return False
+    return message.to_content().strip().startswith(TIME_NOTICE_TAG)
+
+
 def maybe_time_notice(session: Session, now: datetime | None = None) -> str | None:
     """长时间未对话或跨天后,生成时间告知文本;无需注入时返回 None。
 
@@ -839,7 +860,7 @@ def maybe_time_notice(session: Session, now: datetime | None = None) -> str | No
         return None
     weekday = _WEEKDAY_CN[now.weekday()]
     line = (
-        f"{SYSTEM_PREFIX}(时间)当前时间:{now.strftime('%Y-%m-%d %H:%M')} {weekday};"
+        f"{TIME_NOTICE_TAG}当前时间:{now.strftime('%Y-%m-%d %H:%M')} {weekday};"
         f"距上次用户发言已过 {_format_gap(gap)}"
     )
     if crossed_day:
@@ -1418,6 +1439,10 @@ class Session:
     def delete_messages(self, count: int, source: str = "messages") -> int:
         """从末尾删除指定数量的消息。返回实际删除数量。
 
+        被删范围紧邻的上一条若是系统时间提醒(is_time_notice),一并删除 —
+        时间提醒依附其后的用户消息,那条消息删掉后提醒失去意义,
+        留在末尾只会成为孤立的过期告知。
+
         Args:
             count: 要删除的消息数量
             source: 消息来源
@@ -1425,10 +1450,15 @@ class Session:
                 - "history": 从 history 末尾删除,同步 _messages
 
         Returns:
-            实际删除的消息数量
+            实际删除的消息数量(含一并删除的时间提醒)
         """
         if count <= 0:
             return 0
+        source_list = self.history if source == "history" else self._messages
+        # 上一条 = 被删范围前一条(count 可能超过长度,先按实际范围取边界)
+        boundary = len(source_list) - min(count, len(source_list)) - 1
+        if boundary >= 0 and is_time_notice(source_list[boundary]):
+            count += 1
         if source == "history":
             return self._delete_tail_from_history(count)
         return self._delete_tail_from_messages(count)

@@ -4,15 +4,18 @@
 - get_last_user_spoke_at 基准扫描(跳过 [system] 注入 / 时间戳异常)
 - maybe_time_notice 触发条件(间隔阈值 / 跨天 / 不触发)
 - _format_gap 间隔格式化
+- is_time_notice 识别 / delete_messages 连带删除时间提醒
 """
 
 from datetime import datetime, timedelta
 
 from uniclaw.tools.session.session import (
     TIME_NOTICE_GAP,
+    TIME_NOTICE_TAG,
     Session,
     _format_gap,
     get_last_user_spoke_at,
+    is_time_notice,
     maybe_time_notice,
 )
 from uniclaw.utils.constants import SYSTEM_PREFIX
@@ -133,7 +136,7 @@ class TestMaybeTimeNotice:
         """[system] 消息插在中间,基准仍是更早的真实用户发言。"""
         session = _session_with_user("hello", NOW - timedelta(hours=3))
         session.add_user_message(
-            content=f"{SYSTEM_PREFIX}(时间)当前时间:...",
+            content=f"{TIME_NOTICE_TAG}当前时间:...",
             created_at=NOW - timedelta(minutes=10),
         )
         notice = maybe_time_notice(session, now=NOW)
@@ -179,3 +182,97 @@ class TestFormatGap:
 
     def test_negative_clamped(self):
         assert _format_gap(timedelta(minutes=-5)) == "不足 1 分"
+
+
+def _session_with_notice_tail(prefix: str = TIME_NOTICE_TAG) -> Session:
+    """构造末尾为 [user hello] [系统消息] [user 继续] [assistant 好的] 的会话。"""
+    session = Session()
+    session.add_user_message(content="hello", created_at=NOW - timedelta(hours=3))
+    session.add_user_message(
+        content=f"{prefix}当前时间:2026-09-24 14:00 周四;距上次用户发言已过 2 小时。",
+        created_at=NOW - timedelta(hours=1),
+    )
+    session.add_user_message(content="继续", created_at=NOW - timedelta(hours=1))
+    session.add_assistant_message(
+        content="好的", model_name="test", usage={}, created_at=NOW
+    )
+    return session
+
+
+class TestIsTimeNotice:
+    def test_time_notice_recognized(self):
+        session = _session_with_notice_tail()
+        assert is_time_notice(session._messages[1]) is True
+
+    def test_other_system_message_not_matched(self):
+        """其他 [system] 注入(监控/Shell 命令等)不算时间提醒。"""
+        session = Session()
+        session.add_user_message(
+            content=f"{SYSTEM_PREFIX}(monitor) 监控命中", created_at=NOW
+        )
+        assert is_time_notice(session._messages[0]) is False
+
+    def test_normal_user_message_not_matched(self):
+        session = _session_with_user("hello", NOW)
+        assert is_time_notice(session._messages[0]) is False
+
+    def test_non_user_message_not_matched(self):
+        session = Session()
+        session.add_assistant_message(
+            content=f"{TIME_NOTICE_TAG}当前时间:...", model_name="t", usage={},
+            created_at=NOW,
+        )
+        assert is_time_notice(session._messages[0]) is False
+
+
+class TestDeleteMessagesWithTimeNotice:
+    def test_notice_before_range_deleted_together(self):
+        """被删范围上一条是时间提醒 → 一并删除,返回数量包含它。"""
+        session = _session_with_notice_tail()
+        deleted = session.delete_messages(2)
+        assert deleted == 3
+        assert [m.to_content() for m in session._messages] == ["hello"]
+        assert len(session.history) == 1
+
+    def test_normal_boundary_only_deletes_count(self):
+        """上一条是普通消息 → 只删指定数量。"""
+        session = _session_with_notice_tail()
+        session.add_user_message(content="再问一句", created_at=NOW)
+        # 删 "再问一句",边界是 assistant "好的",与时间提醒无关
+        deleted = session.delete_messages(1)
+        assert deleted == 1
+        assert len(session._messages) == 4
+
+    def test_other_system_boundary_not_deleted(self):
+        """上一条是其他 [system] 消息 → 不连带删除。"""
+        session = _session_with_notice_tail(prefix=f"{SYSTEM_PREFIX}(monitor)")
+        deleted = session.delete_messages(2)
+        assert deleted == 2
+        assert len(session._messages) == 2
+
+    def test_history_source_same_behavior(self):
+        """source="history" 时同样连带删除时间提醒。"""
+        session = _session_with_notice_tail()
+        deleted = session.delete_messages(2, source="history")
+        assert deleted == 3
+        assert len(session.history) == 1
+        assert len(session._messages) == 1
+
+    def test_delete_all_no_extra(self):
+        """全删时没有"上一条",不越界。"""
+        session = _session_with_notice_tail()
+        assert session.delete_messages(4) == 4
+        assert len(session._messages) == 0
+
+    def test_count_beyond_length_no_crash(self):
+        session = _session_with_notice_tail()
+        assert session.delete_messages(10) == 4
+        assert len(session._messages) == 0
+
+    def test_notice_inside_range_deleted_once(self):
+        """时间提醒本身在被删范围内 → 不重复删,计数不含额外项。"""
+        session = _session_with_notice_tail()
+        # 从时间提醒开始删 3 条: 时间提醒 + "继续" + "好的"
+        deleted = session.delete_messages(3)
+        assert deleted == 3
+        assert [m.to_content() for m in session._messages] == ["hello"]
