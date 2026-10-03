@@ -179,7 +179,7 @@ class SessionManager:
     @classmethod
     async def fork_session(
         cls, session_id: str, message_idx: int, config: AppConfig
-    ) -> Session | None:
+    ) -> Session:
         """从指定会话的消息处分叉,创建新会话。
 
         Args:
@@ -188,22 +188,28 @@ class SessionManager:
             config: 配置字典
 
         Returns:
-            新会话 Session,失败返回 None
+            Session: 新会话。
+
+        Raises:
+            ValueError: 会话不存在、会话文件损坏或 message_idx 越界。
+            RuntimeError: 序列化新会话失败。
         """
         meta = cls._load_metadata().get(session_id)
         if not meta:
-            return None
+            raise ValueError(f"未找到会话: {session_id}")
         path = cls._resolve_path(meta.get("file_path", ""))
         if not path.exists():
-            return None
+            raise ValueError(f"会话文件不存在: {path}")
         try:
             original = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return None
+        except (OSError, json.JSONDecodeError) as e:
+            raise ValueError(f"会话文件读取或解析失败: {path}") from e
 
         messages = original.get("messages", [])
         if message_idx < 0 or message_idx >= len(messages):
-            return None
+            raise ValueError(
+                f"无效的消息序号 {message_idx}(共 {len(messages)} 条消息)"
+            )
 
         title = (original.get("title") or "") + "分叉"
 
@@ -223,7 +229,7 @@ class SessionManager:
 
         data = await forked.to_dict(config)
         if data is None:
-            return None
+            raise RuntimeError("分叉会话序列化失败")
         data["metadata"] = original.get("metadata", {})
 
         task_dir = cls._default_dir()

@@ -297,12 +297,8 @@ async def _handle_fork(args: str, task: AgentTask, config: AppConfig):
             return  # 用户取消了选择
 
     # 执行分叉:SessionManager 会截取原会话的前 message_idx 条消息创建新会话
+    # 失败时 fork_session 抛出 ValueError/RuntimeError,由 handle_slash 统一捕获展示
     forked = await SessionManager.fork_session(session_id, message_idx, config)
-    if not forked:
-        await err(
-            f"分叉失败: 无效的消息序号 {message_idx}(共 {len(session)} 条消息)", config
-        )
-        return
 
     # 分叉成功:恢复到新会话并通知用户
     await _restore_session(forked, task, config)
