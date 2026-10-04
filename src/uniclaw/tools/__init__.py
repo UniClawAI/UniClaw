@@ -95,6 +95,10 @@ from .restart import (
     get_tools as restart_get_tools,
     get_all_tools as restart_get_all_tools,
 )
+from .lsp.tools import (
+    get_tools as lsp_get_tools,
+    get_all_tools as lsp_get_all_tools,
+)
 from uniclaw.tools.a2a.tools import (
     get_tools as a2a_get_tools,
     get_all_tools as a2a_get_all_tools,
@@ -186,6 +190,7 @@ async def get_tools(config) -> list:
         *rag_get_tools(config),
         *a2a_get_tools(),
         *ipython_get_tools(),
+        *lsp_get_tools(),
         *registry_get_tools(),
         *mcp_tools,
         *ask_get_tools(),
@@ -251,6 +256,7 @@ async def get_all_tools() -> list:
         *rag_get_all_tools(),
         *a2a_get_all_tools(),
         *ipython_get_all_tools(),
+        *lsp_get_all_tools(),
         *restart_get_all_tools(),
         *mcp_tools,
         *plugin_tools,

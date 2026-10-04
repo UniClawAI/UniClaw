@@ -51,6 +51,13 @@ dependencies = [
     "pyobjc-framework-Quartz>=10.0; sys_platform == 'darwin'",
 ]
 
+[project.optional-dependencies]
+# LSP 语言智能:pyright 自带独立二进制(捆绑 node runtime),装后提供
+# pyright-langserver 命令,无需系统 Node。安装: uv pip install 'uniclaw[lsp]'
+lsp = [
+    "pyright>=1.1.414",
+]
+
 [dependency-groups]
 dev = [
     "pytest>=9.0.3",

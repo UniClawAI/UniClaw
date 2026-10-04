@@ -258,6 +258,16 @@ def _build_extended_keywords() -> dict[str, list[str]]:
         ipython_list_kernels,
     )
     from .restart.tools import restart_agent
+    from .lsp.tools import (
+        lsp_status,
+        lsp_start,
+        lsp_stop,
+        lsp_diagnostics,
+        lsp_definition,
+        lsp_hover,
+        lsp_references,
+        lsp_symbols,
+    )
 
     # tool.name → 关键词列表(中英文+语义同义词)
     return {
@@ -272,6 +282,88 @@ def _build_extended_keywords() -> dict[str, list[str]]:
             "热重载",
             "应用配置生效",
             "进程管理",
+        ],
+        # ── LSP 语言智能 ──
+        lsp_status.name: [
+            "lsp",
+            "language server",
+            "语言服务器",
+            "语言服务",
+            "服务器状态",
+            "lsp状态",
+            "pyright",
+            "类型检查服务",
+        ],
+        lsp_start.name: [
+            "lsp",
+            "启动语言服务器",
+            "language server",
+            "启动服务器",
+            "pyright",
+        ],
+        lsp_stop.name: [
+            "lsp",
+            "停止语言服务器",
+            "停止服务器",
+            "关闭服务器",
+            "释放服务器资源",
+        ],
+        lsp_diagnostics.name: [
+            "lsp",
+            "诊断",
+            "类型错误",
+            "类型检查",
+            "静态检查",
+            "检查错误",
+            "语法错误",
+            "errors",
+            "warnings",
+            "diagnostics",
+            "pyright",
+            "报错",
+            "编译错误",
+            "编辑器错误",
+        ],
+        lsp_definition.name: [
+            "lsp",
+            "definition",
+            "定义",
+            "跳转到定义",
+            "goto definition",
+            "符号定义",
+            "查找定义",
+            "去定义",
+        ],
+        lsp_hover.name: [
+            "lsp",
+            "hover",
+            "类型信息",
+            "类型签名",
+            "悬停",
+            "签名",
+            "函数签名",
+            "type",
+            "hover info",
+        ],
+        lsp_references.name: [
+            "lsp",
+            "references",
+            "引用",
+            "查找引用",
+            "谁在用它",
+            "usage",
+            "引用查找",
+            "影响面",
+        ],
+        lsp_symbols.name: [
+            "lsp",
+            "symbols",
+            "符号",
+            "大纲",
+            "outline",
+            "文档结构",
+            "类列表",
+            "函数列表",
         ],
         # ── IPython ──
         ipython_start.name: [
@@ -1627,6 +1719,16 @@ def _build_tool_categories() -> dict[str, str]:
         ipython_list_kernels,
     )
     from .restart.tools import restart_agent
+    from .lsp.tools import (
+        lsp_status,
+        lsp_start,
+        lsp_stop,
+        lsp_diagnostics,
+        lsp_definition,
+        lsp_hover,
+        lsp_references,
+        lsp_symbols,
+    )
 
     # tool.name → 类别
     return {
@@ -1689,6 +1791,15 @@ def _build_tool_categories() -> dict[str, str]:
         session_note_delete.name: "会话管理",
         session_note_list.name: "会话管理",
         session_note_get.name: "会话管理",
+        # ── LSP ──
+        lsp_status.name: "LSP",
+        lsp_start.name: "LSP",
+        lsp_stop.name: "LSP",
+        lsp_diagnostics.name: "LSP",
+        lsp_definition.name: "LSP",
+        lsp_hover.name: "LSP",
+        lsp_references.name: "LSP",
+        lsp_symbols.name: "LSP",
         schedule_create.name: "定时任务",
         schedule_list.name: "定时任务",
         schedule_update.name: "定时任务",
