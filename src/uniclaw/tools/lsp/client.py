@@ -23,6 +23,7 @@ from .protocol import (
     EXIT,
     INITIALIZE,
     INITIALIZED,
+    LspBizError,
     PUBLISH_DIAGNOSTICS,
     SHUTDOWN,
     encode_message,
@@ -190,7 +191,7 @@ class LspClient:
                 close_fds=True,
             )
         except (OSError, FileNotFoundError) as e:
-            raise RuntimeError(f"无法启动语言服务器 {self.name}: {e}") from e
+            raise LspBizError(f"无法启动语言服务器 {self.name}: {e}") from e
 
         self._read_task = asyncio.create_task(
             self._read_loop(), name=f"lsp-read-{self.name}"
@@ -292,13 +293,13 @@ class LspClient:
 
     async def _send(self, msg: dict) -> None:
         if self._proc is None or self._proc.returncode is not None:
-            raise RuntimeError("语言服务器未运行")
+            raise LspBizError("语言服务器未运行")
         try:
             self._proc.stdin.write(encode_message(msg))
             await self._proc.stdin.drain()
             self._last_used = time.monotonic()
         except (BrokenPipeError, ConnectionResetError) as e:
-            raise RuntimeError(f"语言服务器管道已断开: {e}") from e
+            raise LspBizError(f"语言服务器管道已断开: {e}") from e
 
     async def request(self, method: str, params: dict, timeout: float = REQUEST_TIMEOUT) -> Any:
         """发送请求并等待响应(按 id 匹配)。"""
@@ -313,7 +314,7 @@ class LspClient:
             return await asyncio.wait_for(fut, timeout)
         except asyncio.TimeoutError:
             self._pending.pop(msg_id, None)
-            raise TimeoutError(f"LSP 请求超时: {method}(>{timeout}s)")
+            raise LspBizError(f"LSP 请求超时: {method}(>{timeout}s)")
         except BaseException:
             self._pending.pop(msg_id, None)
             raise

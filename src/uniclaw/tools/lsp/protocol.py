@@ -16,6 +16,18 @@ import urllib.parse
 from pathlib import Path
 from typing import Any
 
+# LSP 工具链各层级(servers/manager/client/tools)共享的常量与方法,
+# 以及 LSP 规范消息常量与方法名。
+
+
+class LspBizError(RuntimeError):
+    """LSP 业务错误:可预期的用户/环境层面错误(路径不存在、语言服务器
+    缺失/不支持、请求超时、启动失败/连续崩溃等)。
+
+    工具层只捕获本异常并返回友好提示;其他异常(代码缺陷)上抛给
+    agent 层记录完整 traceback。
+    """
+
 
 class FrameError(Exception):
     """LSP 帧解析错误。"""

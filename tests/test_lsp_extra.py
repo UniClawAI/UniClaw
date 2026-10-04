@@ -13,6 +13,7 @@ import pytest
 
 from uniclaw.tools.lsp.client import LspClient, LspRpcError
 from uniclaw.tools.lsp.manager import LSPManager, LspSession
+from uniclaw.tools.lsp.protocol import LspBizError
 from uniclaw.tools.lsp.tools import (
     _format_diagnostics,
     _format_locations,
@@ -72,7 +73,7 @@ async def test_request_timeout_cleans_pending():
     c._proc.stdin.write = MagicMock()  # 同步写
     c._proc.stdin.drain = AsyncMock()
     # fut 永不 resolve(无响应到达),真实 wait_for 短超时触发
-    with pytest.raises(asyncio.TimeoutError):
+    with pytest.raises(LspBizError, match="请求超时"):
         await c.request("x", {}, timeout=0.01)
     assert 1 not in c._pending  # 已清理
 

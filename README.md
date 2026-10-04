@@ -39,6 +39,7 @@
 - 📝 **计划模式**: 支持进入计划模式进行任务规划,暂存方案后再执行
 - 🔧 **工具解释模式**: 通过 `/explain` 命令开启,AI 调用工具前会解释原因,便于理解和调试工具调用逻辑
 - 🐍 **IPython 内核**: 持久化 Python 交互式执行环境,变量跨调用保持,支持魔术命令和富文本输出
+- 🔤 **LSP 语言智能**: 基于 Language Server Protocol 的代码智能分析,支持类型诊断、跳转定义、悬停信息、查找引用和符号大纲,内置 pyright/TypeScript/HTML/CSS 语言服务器,懒启动、崩溃自动重启
 - 🛠️ **丰富的工具集**: 内置文件系统操作、Shell 命令、网络搜索、技能系统等工具
 - 🔒 **权限管理**: 支持多种权限模式(自动/手动/全部接受),保障操作安全
 - 📋 **持久化规则**: 自定义权限规则,记住您的权限偏好,避免重复确认
@@ -98,7 +99,7 @@
 
 - Python 3.11 或更高版本
 - uv 包管理器
-- 可选：Docker(用于 Docker 容器工具)、Everything(Windows 文件搜索加速)
+- 可选：Docker(用于 Docker 容器工具)、Everything(Windows 文件搜索加速)、语言服务器(用于 LSP 代码智能)
 
 ```bash
 # 安装项目依赖
@@ -109,6 +110,9 @@ uv sync --group dev
 
 # 或者全局安装为命令行工具
 uv tool install .
+
+# 可选:安装 LSP 语言智能支持(pyright 自带独立二进制,无需系统 Node)
+uv pip install 'uniclaw[lsp]'
 ```
 
 **配置文件**
@@ -1042,6 +1046,48 @@ UniClaw 提供了丰富的内置工具,AI 助手可以自动调用这些工具�
 
 > ⚠️ **资源管理**：IPython 内核会持续占用系统资源,用完后请调用 `ipython_stop` 关闭。
 
+#### LSP 语言智能工具 🔤
+
+基于 Language Server Protocol 的代码智能分析,由语言服务器实时提供类型诊断和语义查询,无需运行代码：
+
+**生命周期：**
+- **lsp_status** - 查看语言服务器状态(已注册语言、启动状态、已同步文档数)
+- **lsp_start** - 启动指定语言的服务器(懒启动,通常无需手动调用;服务器未安装时返回安装指引)
+- **lsp_stop** - 停止服务器释放子进程资源(支持停止单个或全部)
+
+**语义查询：**
+- **lsp_diagnostics** - 查询文件的类型诊断(错误/警告/信息),按严重程度排序,修改代码后自检的主力工具
+- **lsp_definition** - 跳转到符号定义位置(支持跨文件、继承与 re-export),返回目标位置 + 代码摘录
+- **lsp_hover** - 获取符号悬停信息(类型签名、文档),用于确认类型或 API 用法
+- **lsp_references** - 查找符号的所有引用位置(含声明处),用于评估重构影响面(最多返回 100 处)
+- **lsp_symbols** - 列出文档的符号大纲(类/函数/变量等及其行号),快速了解文件结构
+
+**内置语言服务器：**
+
+| 语言 | 服务器 | 关联扩展名 | 安装方式 |
+|------|--------|-----------|---------|
+| Python | pyright | `.py` `.pyw` | `uv pip install 'uniclaw[lsp]'` |
+| JavaScript/TypeScript | typescript-language-server | `.js` `.jsx` `.ts` `.tsx` `.mjs` `.cjs` | `npm i -g typescript-language-server typescript@5` |
+| HTML | vscode-html-language-server | `.html` `.htm` `.vue` | `npm i -g vscode-langservers-extracted` |
+| CSS | vscode-css-language-server | `.css` `.scss` `.less` | `npm i -g vscode-langservers-extracted` |
+
+**使用示例**:
+```
+# AI 会自动调用工具(也可通过 search_tools 搜索 "lsp 诊断" 按需发现)
+lsp_diagnostics(file="src/uniclaw/config.py")
+
+# 跳转定义(支持 "路径:行:列" 内嵌格式,1-based)
+lsp_definition(file="src/uniclaw/main.py:10:5")
+
+# 查找引用(评估重构影响面)
+lsp_references(file="src/uniclaw/config.py", line=42)
+
+# 查看文件符号大纲
+lsp_symbols(file="src/uniclaw/agent/multi_agent.py")
+```
+
+> 💡 **提示**: 服务器按"语言 + 项目根目录"管理多个会话,首次查询时自动启动;崩溃后下次查询自动重启,空闲自动回收。Windows 上 npm 全局安装的 `.cmd` 包装器会自动解析真实入口点。位置参数统一支持 `"路径:行[:列]"` 内嵌格式与独立 `line`/`column` 参数(均为 1-based)。语言服务器未安装时,工具会返回对应语言的安装指引。
+
 #### Web 工具
 
 - **webFetch** - 抓取网页内容并提取纯文本(自动清理 HTML 标签)
@@ -1778,6 +1824,12 @@ UniClaw/
     │   │   ├── notes.py    # 会话笔记工具(add/update/delete/list/get) 📝
     │   │   └── tools.py    # 会话管理工具定义
     │   ├── hooks/          # Hook 系统 🪝
+    │   ├── lsp/            # LSP 语言智能(语言服务器生命周期 + 诊断/定义/悬停/引用/符号) 🔤
+    │   │   ├── client.py   # LspClient(子进程管理 + JSON-RPC 请求响应 + 诊断缓存)
+    │   │   ├── manager.py  # LSPManager(按语言/根目录管理会话,崩溃重启 + 空闲回收)
+    │   │   ├── protocol.py # LSP 协议常量与 URI 转换
+    │   │   ├── servers.py  # 内置服务器注册表 + 本机探测(pyright/TS/HTML/CSS)
+    │   │   └── tools.py    # 工具定义(status/start/stop/diagnostics/definition/hover/references/symbols)
     │   ├── tts/            # 语音合成(TTS) 🔊
     │   ├── plugins/        # 插件系统(用户级外部工具动态加载) 🔌
     │   │   ├── __init__.py
@@ -1840,7 +1892,7 @@ UniClaw/
   - 基于 BM25 算法搜索,支持中英文关键词 + 语义同义词
   - **LRU + 能量机制**: 每个扩展工具初始 30 点能量,每轮对话 -1,被调用或搜索命中恢复满能量,归零自动卸载;最多同时加载 25 个扩展工具,超出时按 LRU 顺序淘汰能量最低者
   - 搜索结果自动注入到当前任务的可用工具集
-  - 按类别组织: 系统管理、计算机操作、多智能体、任务清单、进程监控、会话管理、定时任务、MCP 管理、安全管理、Hook 管理、Docker、浏览器、知识图谱、顾问、下载、RAG、IPython、微信、文件、帮助、通知等
+  - 按类别组织: 系统管理、计算机操作、多智能体、任务清单、进程监控、会话管理、定时任务、MCP 管理、安全管理、Hook 管理、Docker、浏览器、知识图谱、顾问、下载、RAG、IPython、LSP、微信、文件、帮助、通知等
   - **可用性跟踪**: 各模块 `get_tools()` 检测依赖(Docker/Everything/embedding_model 等),不可用的工具记录到 `config.unavailable_tool_reasons` 并附带原因;`search_tools` 搜索到不可用工具时自动提示"当前不可用(未启用或无权限)"及原因,避免 AI 做无效调用。Jev 相关功能检测 `TYPESAFE_API_KEY` 环境变量
 
 **工作流程**: AI 需要使用非常用工具时 → 调用 `search_tools(query)` → BM25 匹配 → 工具自动加载(若超过上限则淘汰 LRU 端能量最低的工具) → 下一轮即可调用。已加载工具每轮能量-1,被调用/搜索命中恢复满,归零自动卸载。
@@ -3107,6 +3159,36 @@ A: 使用 `connect_over_cdp` 工具通过 CDP (Chrome DevTools Protocol) 连接�
 3. 连接后可复用已登录的浏览器会话,无需重新登录网站
 
 适用于需要操作已认证页面、复用浏览器状态的场景。
+
+### Q: 如何使用 LSP 语言智能功能？
+
+A: LSP 功能由语言服务器提供实时类型诊断和语义查询,AI 会按需自动调用：
+
+**核心工具**:
+- `lsp_diagnostics` - 查询文件类型诊断(修改代码后自检)
+- `lsp_definition` / `lsp_hover` / `lsp_references` - 跳转定义、悬停信息、查找引用
+- `lsp_symbols` - 查看文件符号大纲
+- `lsp_status` / `lsp_start` / `lsp_stop` - 服务器生命周期管理
+
+**启用步骤**:
+1. 安装语言服务器(未安装时工具会返回安装指引):
+   ```bash
+   # Python(pyright,推荐,自带独立二进制无需 Node)
+   uv pip install 'uniclaw[lsp]'
+
+   # JavaScript/TypeScript
+   npm i -g typescript-language-server typescript@5
+
+   # HTML/CSS
+   npm i -g vscode-langservers-extracted
+   ```
+2. 无需额外配置,首次查询时服务器自动懒启动
+3. 直接告诉 AI 如何使用,如 "检查一下 config.py 有没有类型错误"、"谁引用了这个函数"
+
+**注意事项**:
+- 服务器按"语言 + 项目根目录"管理会话,崩溃后下次查询自动重启,空闲自动回收
+- 诊断由语言服务器实时分析,大型项目首次索引可能需要几秒,稍后重试即可
+- 也可通过 `search_tools` 搜索 "lsp 诊断" 等关键词按需发现这些工具
 
 ## 📄 许可证
 

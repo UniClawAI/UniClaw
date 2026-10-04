@@ -18,6 +18,7 @@ from .protocol import (
     DEFINITION,
     DOCUMENT_SYMBOL,
     HOVER,
+    LspBizError,
     REFERENCES,
     path_to_uri,
     uri_to_path,
@@ -53,6 +54,9 @@ def _parse_position(
     - "path/to/file.py:12:5" (行+列内嵌, 1-based)
     显式 line / column 参数优先于内嵌值。
     """
+    # 兼容 Path 对象输入(工具直接调用时可能传入 WindowsPath)
+    if not isinstance(file, str):
+        file = str(file)
     path_str = file.strip()
     inline_line = inline_col = 0
 
@@ -79,9 +83,10 @@ def _parse_position(
     return path, max(inline_line - 1, 0), max(inline_col - 1, 0)
 
 
-def _require_file(path: Path) -> None:
+def _require_file(path: str | Path) -> None:
+    path = Path(path)  # 兼容 str/Path 输入,内部统一 Path
     if not path.is_file():
-        raise FileNotFoundError(f"文件不存在: {path}")
+        raise LspBizError(f"文件不存在: {path}")
 
 
 def _read_line(path: Path, zero_based_line: int) -> str:
@@ -279,7 +284,8 @@ async def lsp_start(language: str = DEFAULT_LANGUAGE, tool_runtime: ToolRuntime 
         await session.ensure_started()
         name = session.server_def["name"]
         return f"语言服务器 {name}({language}) 已启动。"
-    except Exception as e:
+    except LspBizError as e:
+        # 服务器未装/不支持语言/启动失败/连续崩溃 → 返回可操作提示,不污染错误日志
         return f"{TOOL_ERROR}: {e}"
 
 
@@ -346,7 +352,7 @@ async def lsp_diagnostics(file: str, tool_runtime: ToolRuntime = None) -> str:
         if diags is None:
             return f"{path} — 服务器暂未返回诊断(可能仍在索引,稍后重试)。"
         return _format_diagnostics(path, diags)
-    except Exception as e:
+    except LspBizError as e:
         return f"{TOOL_ERROR}: {e}"
 
 
@@ -387,13 +393,13 @@ async def lsp_definition(
         result = await session.request(
             DEFINITION,
             {
-                "textDocument": {"uri": path_to_uri(path)},
+                "textDocument": {"uri": path_to_uri(str(path))},
                 "position": {"line": line0, "character": col0},
             },
         )
         items = result if isinstance(result, list) else [result]
         return _format_locations([i for i in items if isinstance(i, dict)])
-    except Exception as e:
+    except LspBizError as e:
         return f"{TOOL_ERROR}: {e}"
 
 
@@ -431,12 +437,12 @@ async def lsp_hover(
         result = await session.request(
             HOVER,
             {
-                "textDocument": {"uri": path_to_uri(path)},
+                "textDocument": {"uri": path_to_uri(str(path))},
                 "position": {"line": line0, "character": col0},
             },
         )
         return _format_hover(result)
-    except Exception as e:
+    except LspBizError as e:
         return f"{TOOL_ERROR}: {e}"
 
 
@@ -474,7 +480,7 @@ async def lsp_references(
         result = await session.request(
             REFERENCES,
             {
-                "textDocument": {"uri": path_to_uri(path)},
+                "textDocument": {"uri": path_to_uri(str(path))},
                 "position": {"line": line0, "character": col0},
                 "context": {"includeDeclaration": True},
             },
@@ -493,7 +499,7 @@ async def lsp_references(
         )
         n = min(rendered, 100)
         return f"共找到 {n} 处引用:\n{locs}" if n else "未找到引用。"
-    except Exception as e:
+    except LspBizError as e:
         return f"{TOOL_ERROR}: {e}"
 
 
@@ -521,7 +527,7 @@ async def lsp_symbols(file: str, tool_runtime: ToolRuntime = None) -> str:
         result = await session.request(
             DOCUMENT_SYMBOL,
             {
-                "textDocument": {"uri": path_to_uri(path)},
+                "textDocument": {"uri": path_to_uri(str(path))},
             },
         )
         if not result:
@@ -532,7 +538,7 @@ async def lsp_symbols(file: str, tool_runtime: ToolRuntime = None) -> str:
             return f"{path} — 未提取到符号。"
         pre = f"{path} — 符号大纲(L{_symbol_count(symbols)} 个):"
         return pre + "\n" + "\n".join(lines)
-    except Exception as e:
+    except LspBizError as e:
         return f"{TOOL_ERROR}: {e}"
 
 

@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Optional
 from uniclaw.console.ui import warn
 
 from .client import LspClient, LspRpcError, resolve_launch
-from .protocol import DIAGNOSTIC, DID_OPEN, normalize_uri, path_to_uri
+from .protocol import DIAGNOSTIC, DID_OPEN, LspBizError, normalize_uri, path_to_uri
 from .servers import (
     BUILTIN_SERVERS,
     detect_tsserver_path,
@@ -92,7 +92,7 @@ class LspSession:
                 return
             # 连续失败达上限才停止重试;未达上限继续尝试(临时性故障)
             if self._start_error and self._restarts >= MAX_RESTARTS:
-                raise RuntimeError(self._start_error)
+                raise LspBizError(self._start_error)
 
             if self.client is not None and not self.client.is_alive:
                 # 运行时崩溃(读循环退出/进程死亡):计入连续崩溃次数,
@@ -109,7 +109,7 @@ class LspSession:
             if self._restarts >= MAX_RESTARTS:
                 from .tools import lsp_stop  # 延迟导入,避免与 tools.py 循环导入
 
-                raise RuntimeError(
+                raise LspBizError(
                     f"语言服务器 {self.server_def['name']} 已连续崩溃 "
                     f"{MAX_RESTARTS} 次,停止自动重启。"
                     f"可用 {lsp_stop.name} 后重试。"
@@ -166,7 +166,7 @@ class LspSession:
                         "。检测不到 typescript 编译器(tsserver),"
                         "请安装: npm i -g typescript@5"
                     )
-                raise RuntimeError(msg) from e
+                raise LspBizError(msg) from e
 
     async def close(self) -> None:
         """停止服务器(释放子进程),并重置会话状态供下次启动。"""
@@ -353,13 +353,13 @@ class LSPManager:
             if session is None:
                 server_def = get_server_def(language)
                 if server_def is None:
-                    raise RuntimeError(
+                    raise LspBizError(
                         f"不支持的语言 '{language}',当前注册: "
                         f"{', '.join(sorted(_SERVER_NAMES))}"
                     )
                 if not probe_command(server_def):
                     hint = server_install_hint(language)
-                    raise RuntimeError(
+                    raise LspBizError(
                         f"未找到语言服务器 {server_def['name']} "
                         f"(探测命令: {server_def['command'][0]})。"
                         f"请先安装: {hint}。"
