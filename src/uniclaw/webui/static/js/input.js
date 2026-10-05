@@ -329,22 +329,24 @@ const Input = {
         if (text.startsWith('!')) {
             if (!sid) { Utils.showToast('请先创建会话'); return; }
             const cmd = text.substring(1).trim();
-            if (cmd) { WS.send({ type: 'shell', session_id: sid, command: cmd, source: 'chat' }); }
+            // 用户消息不入发送队列:未能发出时内容保留在编辑框,不写入等待区
+            if (cmd && !WS.send({ type: 'shell', session_id: sid, command: cmd, source: 'chat' }, { queue: false })) return;
         } else if (text.startsWith('/')) {
             const cmdName = text.substring(1).trim().split(/\s+/)[0].toLowerCase();
             if (cmdName === 'clear' || cmdName === 'cls') { if (rootDir === '__free__') SessionPanel.createFreeChat(); else SessionPanel.createSession(rootDir); input.value = ''; input.style.height = 'auto'; return; }
             if (!sid) { Utils.showToast('请先创建会话'); return; }
-            WS.send({ type: 'command', session_id: sid, command: text });
+            if (!WS.send({ type: 'command', session_id: sid, command: text }, { queue: false })) return;
             Chat._appendSystemMessage(text);
         } else {
             if (!sid) { Utils.showToast('会话创建中,请稍候'); return; }
             const msg = { type: 'chat', session_id: sid, content: text, files: this.attachedFiles.map(f => ({ name: f.name, data: f.data, mime: f.mime })) };
-            WS.send(msg);
+            if (!WS.send(msg, { queue: false })) return;
             // 添加到等待区——收到后端 UserEvent 确认后会移除
             PendingMessages.add(text);
             // 发送后刷新上下文用量
             SessionPanel._fetchContextUsage(sid);
         }
+        // 以上均发送成功才记录历史并清空输入框;失败时内容保留在编辑框以便重试
         if (text && (!this._history.length || this._history[this._history.length - 1] !== text)) this._history.push(text);
         this._historyIdx = -1;
         input.value = ''; input.style.height = 'auto';

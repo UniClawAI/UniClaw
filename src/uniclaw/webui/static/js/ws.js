@@ -97,17 +97,35 @@ const WS = {
         };
     },
 
-    /** 发送消息 */
-    send(msg) {
+    /** 发送消息,返回是否已真正发出
+     *
+     *  连接建立中(CONNECTING)时默认缓存消息,open 后自动 flush;传 opts.queue = false
+     *  则不缓存,未能立即发出即返回 false,由调用方回退(如用户消息保留输入框内容)。
+     */
+    send(msg, opts = {}) {
+        const queue = opts.queue !== false;
         if (this.socket && this.socket.readyState === WebSocket.OPEN) {
-            this.socket.send(JSON.stringify(msg));
-        } else if (this.socket && this.socket.readyState === WebSocket.CONNECTING) {
-            // 连接建立中,缓存消息,open 后自动 flush
-            this._pendingMessages.push(msg);
-        } else {
-            console.warn('[WS] 未连接,无法发送消息');
-            Utils.showError('未连接到服务器');
+            try {
+                this.socket.send(JSON.stringify(msg));
+                return true;
+            } catch (e) {
+                console.error('[WS] 发送失败:', e);
+                Utils.showError('消息发送失败');
+                return false;
+            }
         }
+        if (this.socket && this.socket.readyState === WebSocket.CONNECTING) {
+            if (queue) {
+                // 连接建立中,缓存消息,open 后自动 flush
+                this._pendingMessages.push(msg);
+                return true;
+            }
+            Utils.showError('正在连接服务器,消息未发送');
+            return false;
+        }
+        console.warn('[WS] 未连接,无法发送消息');
+        Utils.showError('未连接到服务器');
+        return false;
     },
 
     /** 注册事件处理器 */
