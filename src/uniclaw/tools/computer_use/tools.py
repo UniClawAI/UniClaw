@@ -9,6 +9,7 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 import mss
+from mss.exception import ScreenShotError
 from uniclaw.tools.base import tool
 from uniclaw.utils.constants import SYSTEM_PREFIX, TOOL_ERROR
 from PIL import Image, ImageDraw
@@ -26,6 +27,44 @@ def _get_pyautogui():
         pyautogui.FAILSAFE = True
         _pyautogui = pyautogui
     return _pyautogui
+
+
+def _require_pyautogui(action: str, ctx: str):
+    """获取 pyautogui 模块,导入/初始化失败时返回 (None, TOOL_ERROR 文本)。
+
+    ImportError = pyautogui 未安装;KeyError 仅出现在导入期 X11 查 DISPLAY
+    (无显示环境),属环境问题而非编程错误 —— 真正的按键映射 KeyError 不在此处。
+
+    Args:
+        action: 操作描述,用于报错定位。
+        ctx: 参数上下文(原值回显),用于定位。
+
+    Returns:
+        成功返回 (pyautogui 模块, None);失败返回 (None, TOOL_ERROR 文本)。
+    """
+    try:
+        return _get_pyautogui(), None
+    except ImportError as e:
+        return None, f"{TOOL_ERROR}: pyautogui 导入失败({action}, {ctx}): {e}"
+    except KeyError as e:
+        return (
+            None,
+            f"{TOOL_ERROR}: pyautogui 初始化失败(无显示环境?)({action}, {ctx}): {e}",
+        )
+
+
+def _pa_error(action: str, ctx: str, e: Exception) -> str:
+    """把 pyautogui 非 bug 异常格式化成带上下文的 TOOL_ERROR 文本。
+
+    Args:
+        action: 操作描述。
+        ctx: 参数上下文(原值回显)。
+        e: 捕获到的异常。
+
+    Returns:
+        str: 带 TOOL_ERROR 前缀的详细报错文本。
+    """
+    return f"{TOOL_ERROR}: {action} 失败({ctx}): {type(e).__name__}: {e}"
 
 
 def get_cu_system_prompt(config) -> str:
@@ -140,26 +179,50 @@ def unregister_emergency_hotkey():
 def _screenshot_impl(
     region: Optional[str] = None, save_path: Optional[str] = None
 ) -> list[dict] | str:
-    with mss.mss() as sct:
+    try:
+        sct_cm = mss.mss()
+    except (ScreenShotError, OSError) as e:
+        return (
+            f"{TOOL_ERROR}: 无法初始化屏幕捕获(无显示环境?)"
+            f"(region={region!r}, save_path={save_path!r}): {e}"
+        )
+    with sct_cm as sct:
         if region:
             try:
                 x, y, w, h = map(int, region.split(","))
                 monitor = {"left": x, "top": y, "width": w, "height": h}
             except ValueError:
-                return [
-                    {
-                        "type": "text",
-                        "text": "错误:区域格式无效,请使用 'x,y,width,height' 格式",
-                    }
-                ]
+                return (
+                    f"{TOOL_ERROR}: 区域格式无效: region={region!r},"
+                    f"请使用 'x,y,width,height' 格式(如 '100,200,800,600')"
+                )
         else:
             monitor = sct.monitors[0]  # 整个屏幕
 
-        screenshot = sct.grab(monitor)
+        try:
+            screenshot = sct.grab(monitor)
+        except ScreenShotError as e:
+            return (
+                f"{TOOL_ERROR}: 截取屏幕失败: region={region!r}, monitor={monitor}: {e}"
+            )
+        except OSError as e:
+            return (
+                f"{TOOL_ERROR}: 截取屏幕系统调用失败(无显示环境?): "
+                f"region={region!r}: {e}"
+            )
         img = Image.frombytes("RGB", screenshot.size, screenshot.bgra, "raw", "BGRX")
 
         # 获取鼠标位置并绘制标记
-        cursor_x, cursor_y = _get_pyautogui().position()
+        pa, err = _require_pyautogui("获取鼠标位置", f"region={region!r}")
+        if err:
+            return err
+        try:
+            cursor_x, cursor_y = pa.position()
+        except OSError as e:
+            return (
+                f"{TOOL_ERROR}: 获取鼠标位置失败(无显示环境?): "
+                f"region={region!r}: {e}"
+            )
         draw = ImageDraw.Draw(img)
 
         # 计算相对坐标(如果指定了区域)
@@ -199,7 +262,13 @@ def _screenshot_impl(
 
         # 保存到文件
         if save_path:
-            img.save(save_path)
+            try:
+                img.save(save_path)
+            except OSError as e:
+                return (
+                    f"{TOOL_ERROR}: 截图保存失败(目录不存在/无权限?): "
+                    f"save_path={save_path!r}, region={region!r}: {e}"
+                )
             return f"截图已保存到 {save_path} ({screenshot.width}x{screenshot.height} | 鼠标位置: ({cursor_x}, {cursor_y}))"
 
         # 转换为 base64
@@ -260,7 +329,20 @@ def cu_mouse_move(x: int, y: int, duration: float = 0.5) -> str:
     Returns:
         操作结果消息。
     """
-    _get_pyautogui().moveTo(x, y, duration=duration)
+    ctx = f"x={x}, y={y}, duration={duration}"
+    pa, err = _require_pyautogui("鼠标移动", ctx)
+    if err:
+        return err
+    try:
+        pa.moveTo(x, y, duration=duration)
+    except pa.FailSafeException:
+        return (
+            f"{TOOL_ERROR}: 鼠标移动触发 FailSafe 安全保护(鼠标移到了屏幕角落?): {ctx}"
+        )
+    except pa.PyAutoGUIException as e:
+        return _pa_error("鼠标移动", ctx, e)
+    except OSError as e:
+        return _pa_error("鼠标移动(无显示环境?)", ctx, e)
     return f"鼠标已移动到 ({x}, {y})"
 
 
@@ -284,7 +366,19 @@ def cu_mouse_click(
     Returns:
         操作结果消息。
     """
-    _get_pyautogui().click(x, y, clicks=clicks, button=button, interval=interval)
+    ctx = f"x={x}, y={y}, button={button!r}, clicks={clicks}, interval={interval}"
+    pa, err = _require_pyautogui("鼠标点击", ctx)
+    if err:
+        return err
+    try:
+        pa.click(x, y, clicks=clicks, button=button, interval=interval)
+    except pa.FailSafeException:
+        return f"{TOOL_ERROR}: 鼠标点击触发 FailSafe 安全保护(鼠标移到了屏幕角落?): {ctx}"
+    except pa.PyAutoGUIException as e:
+        # 非法 button 名(如 "left1")由 pyautogui 在此抛出,属参数校验失败
+        return _pa_error("鼠标点击", ctx, e)
+    except OSError as e:
+        return _pa_error("鼠标点击(无显示环境?)", ctx, e)
     action = "双击" if clicks == 2 else "点击"
     return f"已在 ({x}, {y}) {action}鼠标{button}键"
 
@@ -301,7 +395,18 @@ def cu_mouse_double_click(x: int, y: int, button: str = "left") -> str:
     Returns:
         操作结果消息。
     """
-    _get_pyautogui().doubleClick(x, y, button=button)
+    ctx = f"x={x}, y={y}, button={button!r}"
+    pa, err = _require_pyautogui("鼠标双击", ctx)
+    if err:
+        return err
+    try:
+        pa.doubleClick(x, y, button=button)
+    except pa.FailSafeException:
+        return f"{TOOL_ERROR}: 鼠标双击触发 FailSafe 安全保护(鼠标移到了屏幕角落?): {ctx}"
+    except pa.PyAutoGUIException as e:
+        return _pa_error("鼠标双击", ctx, e)
+    except OSError as e:
+        return _pa_error("鼠标双击(无显示环境?)", ctx, e)
     return f"已在 ({x}, {y}) 双击鼠标{button}键"
 
 
@@ -327,10 +432,22 @@ def cu_mouse_drag(
     Returns:
         操作结果消息。
     """
-    _get_pyautogui().moveTo(start_x, start_y)
-    _get_pyautogui().drag(
-        end_x - start_x, end_y - start_y, duration=duration, button=button
+    ctx = (
+        f"start=({start_x}, {start_y}), end=({end_x}, {end_y}), "
+        f"duration={duration}, button={button!r}"
     )
+    pa, err = _require_pyautogui("鼠标拖拽", ctx)
+    if err:
+        return err
+    try:
+        pa.moveTo(start_x, start_y)
+        pa.drag(end_x - start_x, end_y - start_y, duration=duration, button=button)
+    except pa.FailSafeException:
+        return f"{TOOL_ERROR}: 鼠标拖拽触发 FailSafe 安全保护(鼠标移到了屏幕角落?): {ctx}"
+    except pa.PyAutoGUIException as e:
+        return _pa_error("鼠标拖拽", ctx, e)
+    except OSError as e:
+        return _pa_error("鼠标拖拽(无显示环境?)", ctx, e)
     return f"已从 ({start_x}, {start_y}) 拖拽到 ({end_x}, {end_y})"
 
 
@@ -348,14 +465,25 @@ def cu_mouse_scroll(
     Returns:
         操作结果消息。
     """
-    pa = _get_pyautogui()
+    ctx = f"clicks={clicks}, x={x}, y={y}"
+    pa, err = _require_pyautogui("鼠标滚动", ctx)
+    if err:
+        return err
+    try:
+        if x is not None and y is not None:
+            pa.scroll(clicks, x=x, y=y)
+        else:
+            pa.scroll(clicks)
+    except pa.FailSafeException:
+        return f"{TOOL_ERROR}: 鼠标滚动触发 FailSafe 安全保护(鼠标移到了屏幕角落?): {ctx}"
+    except pa.PyAutoGUIException as e:
+        return _pa_error("鼠标滚动", ctx, e)
+    except OSError as e:
+        return _pa_error("鼠标滚动(无显示环境?)", ctx, e)
     if x is not None and y is not None:
-        pa.scroll(clicks, x=x, y=y)
         return f"已在 ({x}, {y}) 滚动 {clicks} 格"
-    else:
-        pa.scroll(clicks)
-        direction = "上" if clicks > 0 else "下"
-        return f"已向{direction}滚动 {abs(clicks)} 格"
+    direction = "上" if clicks > 0 else "下"
+    return f"已向{direction}滚动 {abs(clicks)} 格"
 
 
 @tool
@@ -369,7 +497,25 @@ def cu_keyboard_type(text: str, interval: float = 0.05) -> str:
     Returns:
         操作结果消息。
     """
-    _get_pyautogui().typewrite(text, interval=interval)
+    ctx = f"text={text!r}, interval={interval}"
+    # pyautogui 对未知字符静默忽略(不抛异常),不校验会向 LLM 报假成功
+    if not text.isascii():
+        bad = [c for c in text if not c.isascii()]
+        return (
+            f"{TOOL_ERROR}: 仅支持 ASCII 文本,含非 ASCII 字符: {bad}。"
+            f"中文等请改用 cu_keyboard_type_unicode。{ctx}"
+        )
+    pa, err = _require_pyautogui("键盘输入", ctx)
+    if err:
+        return err
+    try:
+        pa.typewrite(text, interval=interval)
+    except pa.FailSafeException:
+        return f"{TOOL_ERROR}: 键盘输入触发 FailSafe 安全保护(鼠标移到了屏幕角落?): {ctx}"
+    except pa.PyAutoGUIException as e:
+        return _pa_error("键盘输入", ctx, e)
+    except OSError as e:
+        return _pa_error("键盘输入(无显示环境?)", ctx, e)
     return f"已输入文本:{text}"
 
 
@@ -384,8 +530,22 @@ def cu_keyboard_type_unicode(text: str, interval: float = 0.05) -> str:
     Returns:
         操作结果消息。
     """
-    for char in text:
-        _get_pyautogui().write(char, interval=interval)
+    ctx = f"text={text!r}, interval={interval}"
+    pa, err = _require_pyautogui("Unicode 键盘输入", ctx)
+    if err:
+        return err
+    try:
+        for char in text:
+            pa.write(char, interval=interval)
+    except pa.FailSafeException:
+        return (
+            f"{TOOL_ERROR}: Unicode 键盘输入触发 FailSafe 安全保护"
+            f"(鼠标移到了屏幕角落?): {ctx}"
+        )
+    except pa.PyAutoGUIException as e:
+        return _pa_error("Unicode 键盘输入", ctx, e)
+    except OSError as e:
+        return _pa_error("Unicode 键盘输入(无显示环境?)", ctx, e)
     return f"已输入 Unicode 文本:{text}"
 
 
@@ -403,8 +563,27 @@ def cu_keyboard_press(keys: str) -> str:
     Returns:
         操作结果消息。
     """
+    ctx = f"keys={keys!r}"
+    pa, err = _require_pyautogui("按键", ctx)
+    if err:
+        return err
     key_list = [k.strip() for k in keys.split("+")]
-    _get_pyautogui().hotkey(*key_list)
+    # 非法按键名(如 "shfit")必须显式校验: 部分平台 pyautogui 静默忽略,
+    # 不校验会向 LLM 报假成功;按键映射的 KeyError 在此提前拦截,属参数校验失败。
+    invalid = [k for k in key_list if not k or not pa.isValidKey(k)]
+    if invalid:
+        return (
+            f"{TOOL_ERROR}: 非法按键名: {invalid}。{ctx}。"
+            f"合法按键如 enter/tab/escape/ctrl/alt/shift/f1,组合键用 '+' 连接"
+        )
+    try:
+        pa.hotkey(*key_list)
+    except pa.FailSafeException:
+        return f"{TOOL_ERROR}: 按键触发 FailSafe 安全保护(鼠标移到了屏幕角落?): {ctx}"
+    except pa.PyAutoGUIException as e:
+        return _pa_error("按键", ctx, e)
+    except OSError as e:
+        return _pa_error("按键(无显示环境?)", ctx, e)
     return f"已按下按键:{keys}"
 
 
@@ -418,7 +597,21 @@ def cu_keyboard_key_down(key: str) -> str:
     Returns:
         操作结果消息。
     """
-    _get_pyautogui().keyDown(key)
+    ctx = f"key={key!r}"
+    pa, err = _require_pyautogui("按下按键", ctx)
+    if err:
+        return err
+    # 非法按键名在调用前校验(部分平台静默忽略会假成功),见 cu_keyboard_press
+    if not key or not pa.isValidKey(key):
+        return f"{TOOL_ERROR}: 非法按键名: {key!r}。{ctx}。合法按键如 shift/ctrl/alt/enter"
+    try:
+        pa.keyDown(key)
+    except pa.FailSafeException:
+        return f"{TOOL_ERROR}: 按下按键触发 FailSafe 安全保护(鼠标移到了屏幕角落?): {ctx}"
+    except pa.PyAutoGUIException as e:
+        return _pa_error("按下按键", ctx, e)
+    except OSError as e:
+        return _pa_error("按下按键(无显示环境?)", ctx, e)
     return f"已按下并保持:{key}"
 
 
@@ -432,7 +625,20 @@ def cu_keyboard_key_up(key: str) -> str:
     Returns:
         操作结果消息。
     """
-    _get_pyautogui().keyUp(key)
+    ctx = f"key={key!r}"
+    pa, err = _require_pyautogui("释放按键", ctx)
+    if err:
+        return err
+    if not key or not pa.isValidKey(key):
+        return f"{TOOL_ERROR}: 非法按键名: {key!r}。{ctx}。合法按键如 shift/ctrl/alt/enter"
+    try:
+        pa.keyUp(key)
+    except pa.FailSafeException:
+        return f"{TOOL_ERROR}: 释放按键触发 FailSafe 安全保护(鼠标移到了屏幕角落?): {ctx}"
+    except pa.PyAutoGUIException as e:
+        return _pa_error("释放按键", ctx, e)
+    except OSError as e:
+        return _pa_error("释放按键(无显示环境?)", ctx, e)
     return f"已释放按键:{key}"
 
 
@@ -447,16 +653,19 @@ def cu_locate_on_screen(image_path: str, confidence: float = 0.8) -> str:
     Returns:
         找到的图像中心坐标,或未找到的错误消息。
     """
+    ctx = f"image_path={image_path!r}, confidence={confidence}"
+    pa, err = _require_pyautogui("图像定位", ctx)
+    if err:
+        return err
     try:
-        pa = _get_pyautogui()
         location = pa.locateOnScreen(image_path, confidence=confidence)
-        if location:
-            center = pa.center(location)
-            return f"找到图像,中心位置:({center.x}, {center.y})"
-        else:
-            return f"{TOOL_ERROR}: 未在屏幕上找到指定图像"
-    except Exception as e:
-        return f"{TOOL_ERROR}: {e}"
+    except (OSError, pa.ImageNotFoundException) as e:
+        # 图像文件不存在/读失败(OSError)或启用异常模式后未在屏幕上找到(pyscreeze)
+        return _pa_error("图像定位", ctx, e)
+    if location:
+        center = pa.center(location)
+        return f"找到图像,中心位置:({center.x}, {center.y})"
+    return f"{TOOL_ERROR}: 未在屏幕上找到指定图像({ctx})"
 
 
 # ── desktop UI 工具(从平台后端导入)─────────────────────────────────

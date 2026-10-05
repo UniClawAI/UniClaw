@@ -62,6 +62,20 @@ def _validate_chunk_params(chunk_size: int, chunk_overlap: int) -> None:
         raise ValueError("chunk_overlap 必须小于 chunk_size")
 
 
+def _external_errors() -> tuple[type[BaseException], ...]:
+    """非 bug 级预期异常类型: 参数校验、磁盘 IO、运行时环境、ChromaDB 后端。
+
+    chromadb 延迟导入(与 RAGManager.client 一致),不拖慢工具模块加载。
+    KeyError/AttributeError/TypeError 等编程错误不在其中,
+    由 Tool.__call__ 兜底记录并返回 TOOL_ERROR。
+    """
+    try:
+        from chromadb.errors import ChromaError
+    except ImportError:  # chromadb 缺失时仅保留基础类型
+        return (ValueError, OSError, RuntimeError)
+    return (ValueError, OSError, RuntimeError, ChromaError)
+
+
 _manager_cache: dict[tuple, RAGManager] = {}
 _MANAGER_CACHE_MAX = 32  # 缓存上限,防止长时间运行时内存泄漏
 
@@ -121,12 +135,12 @@ async def rag_ingest(
     if not config:
         return f"{TOOL_ERROR}: 无法获取配置"
 
-    try:
-        # 校验 collection 名称
-        err = validate_collection_name(collection)
-        if err:
-            return f"{TOOL_ERROR}: {err}"
+    # 校验 collection 名称
+    err = validate_collection_name(collection)
+    if err:
+        return f"{TOOL_ERROR}: {err}"
 
+    try:
         # 验证参数
         _validate_chunk_params(chunk_size, chunk_overlap)
 
@@ -223,7 +237,7 @@ async def rag_ingest(
                     if ctx:
                         chunk.content = f"{ctx}\n\n{chunk.content}"
                 await tool_runtime.stream("\n")
-            except Exception as e:
+            except _external_errors() as e:
                 await tool_runtime.stream(f"\n⚠️ 上下文生成失败,按原始内容入库: {e}\n")
 
         await tool_runtime.stream(
@@ -242,20 +256,27 @@ async def rag_ingest(
         await tool_runtime.stream("\n")
 
         info = manager.get_collection_info(collection)
-        total = info["count"] if info else count
-
-        msg = f"成功导入 {len(docs)} 个文档,新增 {count} 个块,存入集合 '{collection}'。"
-        if skipped_count:
-            msg = f"{skipped_count} 个未变更块已跳过。" + msg
-        if deleted:
-            msg = f"已清除 {deleted} 个旧文档块。" + msg
-        msg += f"集合当前共 {total} 个文档块。"
-        await tool_runtime.stream(f"✅ {msg}\n")
-        return msg
     except ValueError as e:
-        return f"{TOOL_ERROR}: {e}"
-    except Exception as e:
-        return f"{TOOL_ERROR}: {e}"
+        return (
+            f"{TOOL_ERROR}: 参数或格式无效(path={path!r}, collection={collection!r}, "
+            f"chunk_size={chunk_size}, chunk_overlap={chunk_overlap}): {e}"
+        )
+    except _external_errors() as e:
+        return (
+            f"{TOOL_ERROR}: 文档导入失败(collection={collection!r}, path={path!r}, "
+            f"scope={scope.value}): {type(e).__name__}: {e}"
+        )
+
+    # 结果格式化在 try 外: info["count"] 等下标错误是 bug,须原样抛出交给 Tool.__call__
+    total = info["count"] if info else count
+    msg = f"成功导入 {len(docs)} 个文档,新增 {count} 个块,存入集合 '{collection}'。"
+    if skipped_count:
+        msg = f"{skipped_count} 个未变更块已跳过。" + msg
+    if deleted:
+        msg = f"已清除 {deleted} 个旧文档块。" + msg
+    msg += f"集合当前共 {total} 个文档块。"
+    await tool_runtime.stream(f"✅ {msg}\n")
+    return msg
 
 
 @tool
@@ -306,97 +327,98 @@ async def rag_search(
     if top_k > 100:
         return f"{TOOL_ERROR}: top_k 不能超过 100,当前值: {top_k}"
 
-    try:
-        err = validate_collection_name(collection)
-        if err:
-            return f"{TOOL_ERROR}: {err}"
+    err = validate_collection_name(collection)
+    if err:
+        return f"{TOOL_ERROR}: {err}"
 
-        all_results = []
-        seen_keys: set[str] = set()
-        errors = []
-        collection_exists = False
+    all_results = []
+    seen_keys: set[str] = set()
+    errors = []
+    collection_exists = False
 
-        await tool_runtime.stream(f"🔍 正在搜索集合 '{collection}'...\n")
+    await tool_runtime.stream(f"🔍 正在搜索集合 '{collection}'...\n")
 
-        # 搜索两个层级,search() 内部已处理集合不存在/为空的情况
-        for scope in [Scope.PROJECT, Scope.USER]:
-            try:
-                manager = _get_manager(config, scope)
-                # 检查集合是否存在
-                info = manager.get_collection_info(collection)
-                if info:
-                    collection_exists = True
-                results = await manager.search(
-                    collection,
-                    query,
-                    top_k,
-                    rerank,
-                    use_bm25,
-                    intent,
-                    where=where,
-                )
-                for r in results:
-                    # 按 (内容, 来源) 去重,避免同内容不同来源的块被合并
-                    dedup_key = f"{r['content']}|{r.get('metadata', {}).get('source', '')}"
-                    if dedup_key not in seen_keys:
-                        seen_keys.add(dedup_key)
-                        all_results.append(r)
-            except Exception as e:
-                errors.append(f"{scope.value}: {e}")
-                continue
+    # 搜索两个层级,search() 内部已处理集合不存在/为空的情况
+    for scope in [Scope.PROJECT, Scope.USER]:
+        try:
+            manager = _get_manager(config, scope)
+            # 检查集合是否存在
+            info = manager.get_collection_info(collection)
+            if info:
+                collection_exists = True
+            results = await manager.search(
+                collection,
+                query,
+                top_k,
+                rerank,
+                use_bm25,
+                intent,
+                where=where,
+            )
+        except _external_errors() as e:
+            errors.append(
+                f"{scope.value}(collection={collection!r}, query={query!r}): "
+                f"{type(e).__name__}: {e}"
+            )
+            continue
+        # 结果格式化在 try 外: r['content'] 等下标错误是 bug,须原样抛出
+        for r in results:
+            # 按 (内容, 来源) 去重,避免同内容不同来源的块被合并
+            dedup_key = f"{r['content']}|{r.get('metadata', {}).get('source', '')}"
+            if dedup_key not in seen_keys:
+                seen_keys.add(dedup_key)
+                all_results.append(r)
 
-        if not all_results:
-            if not collection_exists:
-                return f"{TOOL_ERROR}: 集合 '{collection}' 不存在。请先使用 {rag_ingest.name} 导入文档创建集合。"
-            msg = f"{TOOL_ERROR}: 在集合 '{collection}' 中未找到与查询相关的结果"
-            if errors:
-                msg += f"\n搜索过程中出现错误:\n" + "\n".join(
-                    f"  - {e}" for e in errors
-                )
-            return msg
+    if not all_results:
+        if not collection_exists:
+            return f"{TOOL_ERROR}: 集合 '{collection}' 不存在。请先使用 {rag_ingest.name} 导入文档创建集合。"
+        msg = f"{TOOL_ERROR}: 在集合 '{collection}' 中未找到与查询相关的结果"
+        if errors:
+            msg += f"\n搜索过程中出现错误:\n" + "\n".join(
+                f"  - {e}" for e in errors
+            )
+        return msg
 
-        # 按分数排序取 top_k
-        all_results.sort(key=_sort_key, reverse=True)
-        all_results = [r for r in all_results if _sort_key(r) >= min_score][:top_k]
+    # 按分数排序取 top_k
+    all_results.sort(key=_sort_key, reverse=True)
+    all_results = [r for r in all_results if _sort_key(r) >= min_score][:top_k]
 
-        lines = [f"在集合 '{collection}' 中找到 {len(all_results)} 个相关结果:\n"]
+    lines = [f"在集合 '{collection}' 中找到 {len(all_results)} 个相关结果:\n"]
 
-        for i, r in enumerate(all_results, 1):
-            source = r["metadata"].get("source", "未知")
-            filename = r["metadata"].get("filename", "")
+    for i, r in enumerate(all_results, 1):
+        source = r["metadata"].get("source", "未知")
+        filename = r["metadata"].get("filename", "")
 
-            # 构建分数信息
-            score_parts = []
-            if "rerank_score" in r:
-                score_parts.append(f"重排序: {r['rerank_score']:.3g}")
-            if r.get("llm_score", 0) > 0:
-                score_parts.append(f"LLM: {r['llm_score']:.3g}")
-            if "cosine_similarity" in r:
-                score_parts.append(f"向量相似度: {r['cosine_similarity']:.3g}")
-            elif "distance" in r:
-                score_parts.append(f"向量相似度: {1 - r['distance']:.3g}")
-            if "bm25_score" in r:
-                score_parts.append(f"BM25: {r['bm25_score']:.3g}")
-            if "rrf_score" in r:
-                score_parts.append(f"RRF: {r['rrf_score']:.3g}")
-            channels = r.get("retrieval_channels", [])
-            if channels:
-                score_parts.append(f"召回: {'+'.join(channels)}")
-            score_str = " | ".join(score_parts) if score_parts else ""
+        # 构建分数信息
+        score_parts = []
+        if "rerank_score" in r:
+            score_parts.append(f"重排序: {r['rerank_score']:.3g}")
+        if r.get("llm_score", 0) > 0:
+            score_parts.append(f"LLM: {r['llm_score']:.3g}")
+        if "cosine_similarity" in r:
+            score_parts.append(f"向量相似度: {r['cosine_similarity']:.3g}")
+        elif "distance" in r:
+            score_parts.append(f"向量相似度: {1 - r['distance']:.3g}")
+        if "bm25_score" in r:
+            score_parts.append(f"BM25: {r['bm25_score']:.3g}")
+        if "rrf_score" in r:
+            score_parts.append(f"RRF: {r['rrf_score']:.3g}")
+        channels = r.get("retrieval_channels", [])
+        if channels:
+            score_parts.append(f"召回: {'+'.join(channels)}")
+        score_str = " | ".join(score_parts) if score_parts else ""
 
-            lines.append(f"--- 结果 {i} ({score_str}) ---")
-            lines.append(f"来源: {filename or source}")
-            if "chunk_index" in r["metadata"]:
-                lines.append(f"块索引: {r['metadata']['chunk_index']}")
-            if "page" in r["metadata"]:
-                lines.append(f"页码: {r['metadata']['page']}")
-            if "created_at" in r["metadata"]:
-                lines.append(f"导入时间: {r['metadata']['created_at']}")
-            lines.append(f"内容:\n{r['content']}\n")
+        lines.append(f"--- 结果 {i} ({score_str}) ---")
+        lines.append(f"来源: {filename or source}")
+        if "chunk_index" in r["metadata"]:
+            lines.append(f"块索引: {r['metadata']['chunk_index']}")
+        if "page" in r["metadata"]:
+            lines.append(f"页码: {r['metadata']['page']}")
+        if "created_at" in r["metadata"]:
+            lines.append(f"导入时间: {r['metadata']['created_at']}")
+        lines.append(f"内容:\n{r['content']}\n")
 
-        return "\n".join(lines)
-    except Exception as e:
-        return f"{TOOL_ERROR}: 检索失败: {e}"
+    return "\n".join(lines)
 
 
 @tool
@@ -414,44 +436,42 @@ def rag_list_collections(
     if not config:
         return f"{TOOL_ERROR}: 无法获取配置"
 
-    try:
-        has_any = False
-        lines = []
-        # 加载失败必须与"确实没有集合"区分开 —— 否则会向 LLM 报假空库,
-        # LLM 会据此去重建集合,把既有数据当成不存在
-        load_errors = []
+    has_any = False
+    lines = []
+    # 加载失败必须与"确实没有集合"区分开 —— 否则会向 LLM 报假空库,
+    # LLM 会据此去重建集合,把既有数据当成不存在
+    load_errors = []
 
-        for scope, label in [(Scope.PROJECT, "project"), (Scope.USER, "user")]:
-            try:
-                manager = _get_manager(config, scope)
-                collections = manager.list_collections()
-            except Exception as e:
-                load_errors.append(f"{label}: {e}")
-                continue
+    for scope, label in [(Scope.PROJECT, "project"), (Scope.USER, "user")]:
+        try:
+            manager = _get_manager(config, scope)
+            collections = manager.list_collections()
+        except _external_errors() as e:
+            load_errors.append(f"{label}: {type(e).__name__}: {e}")
+            continue
 
-            if not collections:
-                continue
+        if not collections:
+            continue
 
-            has_any = True
-            lines.append(f"[{label}]")
-            for c in collections:
-                created = f" (创建于 {c['created_at']})" if c.get("created_at") else ""
-                desc = f"\n    描述: {c['description']}" if c.get("description") else ""
-                lines.append(f"  - {c['name']}: {c['count']} 个文档块{created}{desc}")
+        has_any = True
+        lines.append(f"[{label}]")
+        # 结果格式化在 try 外: c['name'] 等下标错误是 bug,须原样抛出
+        for c in collections:
+            created = f" (创建于 {c['created_at']})" if c.get("created_at") else ""
+            desc = f"\n    描述: {c['description']}" if c.get("description") else ""
+            lines.append(f"  - {c['name']}: {c['count']} 个文档块{created}{desc}")
 
-        if not has_any:
-            if load_errors:
-                return (
-                    f"{TOOL_ERROR}: 集合加载失败,无法判断是否存在集合"
-                    f"(请勿据此重建集合): {'; '.join(load_errors)}"
-                )
-            return f"{TOOL_ERROR}: 当前没有任何集合"
-
+    if not has_any:
         if load_errors:
-            lines.append(f"⚠️ 部分层级加载失败: {'; '.join(load_errors)}")
-        return "\n".join(lines)
-    except Exception as e:
-        return f"{TOOL_ERROR}: 列出集合失败: {e}"
+            return (
+                f"{TOOL_ERROR}: 集合加载失败,无法判断是否存在集合"
+                f"(请勿据此重建集合): {'; '.join(load_errors)}"
+            )
+        return f"{TOOL_ERROR}: 当前没有任何集合"
+
+    if load_errors:
+        lines.append(f"⚠️ 部分层级加载失败: {'; '.join(load_errors)}")
+    return "\n".join(lines)
 
 
 @tool
@@ -480,17 +500,20 @@ def rag_set_desc(
     if not description or not description.strip():
         return f"{TOOL_ERROR}: 描述内容不能为空"
 
-    try:
-        err = validate_collection_name(collection)
-        if err:
-            return f"{TOOL_ERROR}: {err}"
+    err = validate_collection_name(collection)
+    if err:
+        return f"{TOOL_ERROR}: {err}"
 
+    try:
         manager = _get_manager(config, scope)
         if manager.set_collection_desc(collection, description):
             return f"已更新集合 '{collection}' 的描述: {description}"
         return f"{TOOL_ERROR}: 集合 '{collection}' 不存在或设置失败"
-    except Exception as e:
-        return f"{TOOL_ERROR}: 设置描述失败: {e}"
+    except _external_errors() as e:
+        return (
+            f"{TOOL_ERROR}: 设置描述失败(collection={collection!r}, "
+            f"scope={scope.value}): {type(e).__name__}: {e}"
+        )
 
 
 @tool
@@ -513,17 +536,20 @@ def rag_delete_collection(
     if not config:
         return f"{TOOL_ERROR}: 无法获取配置"
 
-    try:
-        err = validate_collection_name(collection)
-        if err:
-            return f"{TOOL_ERROR}: {err}"
+    err = validate_collection_name(collection)
+    if err:
+        return f"{TOOL_ERROR}: {err}"
 
+    try:
         manager = _get_manager(config, scope)
         if manager.delete_collection(collection):
             return f"已删除集合 '{collection}'"
         return f"{TOOL_ERROR}: 集合 '{collection}' 不存在或删除失败"
-    except Exception as e:
-        return f"{TOOL_ERROR}: 删除集合失败: {e}"
+    except _external_errors() as e:
+        return (
+            f"{TOOL_ERROR}: 删除集合失败(collection={collection!r}, "
+            f"scope={scope.value}): {type(e).__name__}: {e}"
+        )
 
 
 async def _judge_relevance(
@@ -648,135 +674,138 @@ async def rag_evaluate(
     if top_k <= 0:
         return f"{TOOL_ERROR}: top_k 必须为正整数"
 
-    try:
-        err = validate_collection_name(collection)
-        if err:
-            return f"{TOOL_ERROR}: {err}"
+    err = validate_collection_name(collection)
+    if err:
+        return f"{TOOL_ERROR}: {err}"
 
-        # 为每个问题执行多层级检索,按内容去重
-        all_retrieved: dict[str, list[dict]] = {}
-        errors = []
-        for qi, query in enumerate(queries):
-            retrieved = []
-            seen_keys: set[str] = set()
-            for s in [Scope.PROJECT, Scope.USER]:
-                try:
-                    manager = _get_manager(config, s)
-                    results = await manager.search(
-                        collection, query, top_k, rerank, use_bm25, where=where
-                    )
-                    for r in results:
-                        dedup_key = f"{r['content']}|{r.get('metadata', {}).get('source', '')}"
-                        if dedup_key not in seen_keys:
-                            seen_keys.add(dedup_key)
-                            retrieved.append(r)
-                except Exception as e:
-                    errors.append(f"问题 {qi + 1} ({s.value}): {e}")
-            # 按分数排序并截断到 top_k
-            retrieved.sort(key=_sort_key, reverse=True)
-            retrieved = retrieved[:top_k]
-            all_retrieved[query] = retrieved
+    # 为每个问题执行多层级检索,按内容去重
+    all_retrieved: dict[str, list[dict]] = {}
+    errors = []
+    for qi, query in enumerate(queries):
+        retrieved = []
+        seen_keys: set[str] = set()
+        for s in [Scope.PROJECT, Scope.USER]:
+            try:
+                manager = _get_manager(config, s)
+                results = await manager.search(
+                    collection, query, top_k, rerank, use_bm25, where=where
+                )
+            except _external_errors() as e:
+                errors.append(
+                    f"问题 {qi + 1} ({s.value}, collection={collection!r}): "
+                    f"{type(e).__name__}: {e}"
+                )
+                continue
+            # 结果格式化在 try 外: r['content'] 等下标错误是 bug,须原样抛出
+            for r in results:
+                dedup_key = f"{r['content']}|{r.get('metadata', {}).get('source', '')}"
+                if dedup_key not in seen_keys:
+                    seen_keys.add(dedup_key)
+                    retrieved.append(r)
+        # 按分数排序并截断到 top_k
+        retrieved.sort(key=_sort_key, reverse=True)
+        retrieved = retrieved[:top_k]
+        all_retrieved[query] = retrieved
 
-        # ── LLM judge 相关性评估 ──
-        judge_scores: dict[str, list[float]] = {}
-        judge_errors: list[str] = []
-        if use_llm_judge:
-            for qi, query in enumerate(queries):
-                retrieved = all_retrieved[query]
-                if not retrieved:
-                    judge_scores[query] = []
-                    continue
-                try:
-                    judge_scores[query] = await _judge_relevance(query, retrieved, config)
-                except Exception as e:
-                    # 这里的 catch 不是为了吞错,而是把失败写进报告 ——
-                    # 单个问题 judge 失败不应中断其余问题的评估
-                    judge_errors.append(f"问题 {qi + 1}: {e}")
-
-        # ── 汇总指标 ──
-        result_counts = []
-        detail_lines = []
-
+    # ── LLM judge 相关性评估 ──
+    judge_scores: dict[str, list[float]] = {}
+    judge_errors: list[str] = []
+    if use_llm_judge:
         for qi, query in enumerate(queries):
             retrieved = all_retrieved[query]
-            result_counts.append(len(retrieved))
+            if not retrieved:
+                judge_scores[query] = []
+                continue
+            try:
+                judge_scores[query] = await _judge_relevance(query, retrieved, config)
+            except RuntimeError as e:
+                # 这里的 catch 不是为了吞错,而是把失败写进报告 ——
+                # 单个问题 judge 失败不应中断其余问题的评估
+                # (_judge_relevance 失败统一以 RuntimeError 上抛,带原因)
+                judge_errors.append(f"问题 {qi + 1}: {e}")
 
-            # 构建每个问题的明细
-            parts = [f"Q{qi + 1}. {query}"]
+    # ── 汇总指标 ──
+    result_counts = []
+    detail_lines = []
 
-            if use_llm_judge and judge_scores.get(query):
-                scores = judge_scores[query]
-                avg_score = sum(scores) / len(scores) if scores else 0.0
-                relevant = sum(1 for s in scores if s >= 0.5)
-                context_precision = relevant / len(scores) if scores else 0.0
-                parts.append(
-                    f"    LLM Judge: 平均分 {avg_score:.3f}, "
-                    f"Context Precision@{top_k}: {relevant}/{len(scores)} = {context_precision * 100:.0f}%"
-                )
-                # 显示每个结果的分数
-                score_details = []
-                for i, s in enumerate(scores):
-                    tag = "✓" if s >= 0.5 else "✗"
-                    score_details.append(f"[{i}]{tag}{s:.2f}")
-                parts.append(f"    Chunk 分数: {' '.join(score_details)}")
+    for qi, query in enumerate(queries):
+        retrieved = all_retrieved[query]
+        result_counts.append(len(retrieved))
 
-            parts.append(f"    返回 {len(retrieved)} 个结果")
-            detail_lines.append("\n".join(parts))
+        # 构建每个问题的明细
+        parts = [f"Q{qi + 1}. {query}"]
 
-        n = len(queries)
-        avg_results = sum(result_counts) / n
+        if use_llm_judge and judge_scores.get(query):
+            scores = judge_scores[query]
+            avg_score = sum(scores) / len(scores) if scores else 0.0
+            relevant = sum(1 for s in scores if s >= 0.5)
+            context_precision = relevant / len(scores) if scores else 0.0
+            parts.append(
+                f"    LLM Judge: 平均分 {avg_score:.3f}, "
+                f"Context Precision@{top_k}: {relevant}/{len(scores)} = {context_precision * 100:.0f}%"
+            )
+            # 显示每个结果的分数
+            score_details = []
+            for i, s in enumerate(scores):
+                tag = "✓" if s >= 0.5 else "✗"
+                score_details.append(f"[{i}]{tag}{s:.2f}")
+            parts.append(f"    Chunk 分数: {' '.join(score_details)}")
 
-        # 构建报告
-        lines = [
-            f"评估完成:集合 '{collection}', 共 {n} 个问题, "
-            f"top_k={top_k}, rerank={rerank}, BM25={use_bm25}",
-            "=" * 40,
-            "总指标:",
-            f"  平均返回结果数:      {avg_results:.1f}",
-        ]
+        parts.append(f"    返回 {len(retrieved)} 个结果")
+        detail_lines.append("\n".join(parts))
 
-        # 全局 LLM judge 指标
-        if use_llm_judge:
-            all_scores = [s for scores in judge_scores.values() for s in scores]
-            if all_scores:
-                all_precisions = []
-                for query in queries:
-                    scores = judge_scores.get(query, [])
-                    if scores:
-                        all_precisions.append(
-                            sum(1 for s in scores if s >= 0.5) / len(scores)
-                        )
-                avg_judge = sum(all_scores) / len(all_scores)
-                avg_precision = (
-                    sum(all_precisions) / len(all_precisions) if all_precisions else 0.0
-                )
-                lines.append(f"  LLM Judge 平均相关度:  {avg_judge:.3f}")
-                lines.append(f"  LLM Context Precision: {avg_precision * 100:.1f}%")
-            else:
-                # judge 一次都没跑成时必须明说 —— 报 0.000 会被当成"全部不相关"
-                lines.append(
-                    f"  LLM Judge 不可用({len(judge_errors) or len(queries)} 次调用失败,"
-                    f"指标已省略,不能视为 0 分)"
-                )
+    n = len(queries)
+    avg_results = sum(result_counts) / n
 
-        if errors:
-            lines.append(f"  搜索错误: {len(errors)} 个")
-        if judge_errors:
-            lines.append(f"  LLM Judge 错误: {len(judge_errors)} 个")
-        if not use_llm_judge:
-            lines.append("  (未启用 LLM Judge,仅统计检索结果数量)")
-        if detail_lines:
-            lines.append("-" * 40)
-            lines.extend(detail_lines)
-        all_errors = errors + judge_errors
-        if all_errors:
-            lines.append("-" * 40)
-            lines.append("错误明细:")
-            lines.extend(f"  - {e}" for e in all_errors[:10])
+    # 构建报告(格式化在 try 外: 下标/类型错误是 bug,须原样抛出)
+    lines = [
+        f"评估完成:集合 '{collection}', 共 {n} 个问题, "
+        f"top_k={top_k}, rerank={rerank}, BM25={use_bm25}",
+        "=" * 40,
+        "总指标:",
+        f"  平均返回结果数:      {avg_results:.1f}",
+    ]
 
-        return "\n".join(lines)
-    except Exception as e:
-        return f"{TOOL_ERROR}: 评估失败: {e}"
+    # 全局 LLM judge 指标
+    if use_llm_judge:
+        all_scores = [s for scores in judge_scores.values() for s in scores]
+        if all_scores:
+            all_precisions = []
+            for query in queries:
+                scores = judge_scores.get(query, [])
+                if scores:
+                    all_precisions.append(
+                        sum(1 for s in scores if s >= 0.5) / len(scores)
+                    )
+            avg_judge = sum(all_scores) / len(all_scores)
+            avg_precision = (
+                sum(all_precisions) / len(all_precisions) if all_precisions else 0.0
+            )
+            lines.append(f"  LLM Judge 平均相关度:  {avg_judge:.3f}")
+            lines.append(f"  LLM Context Precision: {avg_precision * 100:.1f}%")
+        else:
+            # judge 一次都没跑成时必须明说 —— 报 0.000 会被当成"全部不相关"
+            lines.append(
+                f"  LLM Judge 不可用({len(judge_errors) or len(queries)} 次调用失败,"
+                f"指标已省略,不能视为 0 分)"
+            )
+
+    if errors:
+        lines.append(f"  搜索错误: {len(errors)} 个")
+    if judge_errors:
+        lines.append(f"  LLM Judge 错误: {len(judge_errors)} 个")
+    if not use_llm_judge:
+        lines.append("  (未启用 LLM Judge,仅统计检索结果数量)")
+    if detail_lines:
+        lines.append("-" * 40)
+        lines.extend(detail_lines)
+    all_errors = errors + judge_errors
+    if all_errors:
+        lines.append("-" * 40)
+        lines.append("错误明细:")
+        lines.extend(f"  - {e}" for e in all_errors[:10])
+
+    return "\n".join(lines)
 
 
 def get_tools(config=None) -> list:

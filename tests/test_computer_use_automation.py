@@ -231,28 +231,55 @@ class TestGetInteractiveElements:
             walk_mock.assert_called_once_with(scope, maxDepth=5, includeTop=False)
 
     def test_scope_not_found(self):
-        """范围未找到。"""
+        """范围未找到,回显查找条件。"""
         with patch.object(aw.auto, "GetRootControl", return_value=MagicMock()), patch.object(
             aw.auto, "FindControl", return_value=None
         ):
-            result = aw.get_interactive_elements(scope_name="窗口")
-        assert f"{TOOL_ERROR}: 未找到名为 '窗口' 的元素" == result
+            result = aw.get_interactive_elements(scope_name="窗口", max_depth=5)
+        assert result.startswith(TOOL_ERROR)
+        assert "未找到名为 '窗口' 的元素" in result
+        assert "窗口" in result
+        assert "max_depth=5" in result
 
     def test_scope_exception(self):
-        """范围查找异常。"""
+        """范围查找 UIA/COM 异常转 TOOL_ERROR 并回显参数。"""
+        with patch.object(aw.auto, "GetRootControl", return_value=MagicMock()), patch.object(
+            aw.auto, "FindControl", side_effect=OSError("boom")
+        ):
+            result = aw.get_interactive_elements(scope_name="窗口", max_depth=5)
+        assert result.startswith(TOOL_ERROR)
+        assert "查找窗口失败" in result
+        assert "窗口" in result
+        assert "max_depth=5" in result
+        assert "boom" in result
+
+    def test_scope_bug_exception_propagates(self):
+        """范围查找的编程错误(RuntimeError)不吞,原样抛出。"""
         with patch.object(aw.auto, "GetRootControl", return_value=MagicMock()), patch.object(
             aw.auto, "FindControl", side_effect=RuntimeError("boom")
         ):
-            result = aw.get_interactive_elements(scope_name="窗口")
-        assert f"{TOOL_ERROR}: 查找窗口失败: boom" == result
+            with pytest.raises(RuntimeError, match="boom"):
+                aw.get_interactive_elements(scope_name="窗口")
 
     def test_walk_exception(self):
-        """遍历异常。"""
+        """遍历 UIA/COM 异常转 TOOL_ERROR 并回显参数。"""
         with patch.object(aw.auto, "GetRootControl", return_value=MagicMock()), patch.object(
-            aw.auto, "WalkControl", side_effect=RuntimeError("boom")
+            aw.auto, "FindControl", return_value=MagicMock()
+        ), patch.object(aw.auto, "WalkControl", side_effect=OSError("boom")):
+            result = aw.get_interactive_elements(scope_name="窗口", max_depth=5)
+        assert result.startswith(TOOL_ERROR)
+        assert "遍历 UI 树失败" in result
+        assert "窗口" in result
+        assert "max_depth=5" in result
+        assert "boom" in result
+
+    def test_walk_bug_exception_propagates(self):
+        """遍历的编程错误(KeyError 等)不吞,原样抛出。"""
+        with patch.object(aw.auto, "GetRootControl", return_value=MagicMock()), patch.object(
+            aw.auto, "WalkControl", side_effect=KeyError("missing")
         ):
-            result = aw.get_interactive_elements()
-        assert f"{TOOL_ERROR}: 遍历 UI 树失败: boom" == result
+            with pytest.raises(KeyError):
+                aw.get_interactive_elements()
 
     def test_max_elements_cap(self):
         """超过 MAX_ELEMENTS 截断。"""
@@ -288,20 +315,34 @@ class TestFindElement:
         assert "子元素数: 0" in result
 
     def test_not_found(self):
-        """未找到。"""
+        """未找到时回显查找条件。"""
         with patch.object(aw.auto, "GetRootControl", return_value=MagicMock()), patch.object(
             aw.auto, "FindControl", return_value=None
         ):
             result = aw.find_element(name="x")
-        assert f"{TOOL_ERROR}: 未找到匹配的元素" == result
+        assert result.startswith(TOOL_ERROR)
+        assert "未找到匹配的元素" in result
+        assert "name='x'" in result
 
     def test_exception(self):
-        """查找异常。"""
+        """查找 UIA/COM 异常转 TOOL_ERROR 并回显参数。"""
         with patch.object(aw.auto, "GetRootControl", return_value=MagicMock()), patch.object(
-            aw.auto, "FindControl", side_effect=RuntimeError("boom")
+            aw.auto, "FindControl", side_effect=OSError("boom")
         ):
             result = aw.find_element(automation_id="x")
-        assert f"{TOOL_ERROR}: 查找失败: boom" == result
+        assert result.startswith(TOOL_ERROR)
+        assert "查找元素失败" in result
+        assert "automation_id='x'" in result
+        assert "boom" in result
+
+    def test_format_bug_not_swallowed(self):
+        """_format_element_detail 的编程错误不再被吞成"查找失败"。"""
+        ctrl = MagicMock()
+        with patch.object(aw.auto, "GetRootControl", return_value=MagicMock()), patch.object(
+            aw.auto, "FindControl", return_value=ctrl
+        ), patch.object(aw, "_format_element_detail", side_effect=KeyError("bad dict")):
+            with pytest.raises(KeyError):
+                aw.find_element(name="x")
 
     def test_control_type_filter(self):
         """带控件类型过滤。"""
@@ -445,24 +486,43 @@ class TestInteract:
     @pytest.mark.asyncio
     @patch("uniclaw.tools.computer_use.automation_win._ensure_visible", new_callable=AsyncMock, return_value=None)
     async def test_operation_exception(self, mock_vis):
-        """操作异常。"""
+        """操作 UIA/COM 异常转 TOOL_ERROR 并回显元素标签与 action。"""
+        ctrl = _make_ctrl(name="确定")
+        ctrl.Click.side_effect = OSError("boom")
+        with patch.object(aw.auto, "GetRootControl", return_value=MagicMock()), patch.object(
+            aw.auto, "FindControl", return_value=ctrl
+        ):
+            result = await aw.interact(name="确定", action="click", type_text=None)
+        assert result.startswith(TOOL_ERROR)
+        assert "操作失败" in result
+        assert "action='click'" in result
+        assert "确定" in result
+        assert "boom" in result
+
+    @pytest.mark.asyncio
+    @patch("uniclaw.tools.computer_use.automation_win._ensure_visible", new_callable=AsyncMock, return_value=None)
+    async def test_operation_bug_propagates(self, mock_vis):
+        """操作的编程错误(RuntimeError)不吞,原样抛出。"""
         ctrl = _make_ctrl(name="确定")
         ctrl.Click.side_effect = RuntimeError("boom")
         with patch.object(aw.auto, "GetRootControl", return_value=MagicMock()), patch.object(
             aw.auto, "FindControl", return_value=ctrl
         ):
-            result = await aw.interact(name="确定", action="click")
-        assert f"{TOOL_ERROR}: 操作失败: boom" == result
+            with pytest.raises(RuntimeError, match="boom"):
+                await aw.interact(name="确定", action="click")
 
     @pytest.mark.asyncio
     @patch("uniclaw.tools.computer_use.automation_win._ensure_visible", new_callable=AsyncMock, return_value=None)
     async def test_not_found(self, mock_vis):
-        """UIA 未找到。"""
+        """UIA 未找到时回显查找条件与 action。"""
         with patch.object(aw.auto, "GetRootControl", return_value=MagicMock()), patch.object(
             aw.auto, "FindControl", return_value=None
         ):
             result = await aw.interact(name="x", action="click")
-        assert f"{TOOL_ERROR}: 未找到匹配的元素" == result
+        assert result.startswith(TOOL_ERROR)
+        assert "未找到匹配的元素" in result
+        assert "name='x'" in result
+        assert "action='click'" in result
 
 
 class TestCtypesHelpers:

@@ -791,7 +791,7 @@ class TestCdpConnect:
 
         mock_playwright, _, _ = self._make_cdp_mocks([])
         mock_playwright.chromium.connect_over_cdp = AsyncMock(
-            side_effect=Exception("connection refused")
+            side_effect=OSError("connection refused")
         )
 
         with patch(
@@ -949,3 +949,58 @@ class TestTools:
         tool = next(t for t in get_tools() if t.name == "browser_insert_text")
         sig = __import__("inspect").signature(tool.func)
         assert "selector" in sig.parameters
+
+
+class TestInsertTextEditableCheck:
+    """insert_text 的目标可编辑性校验。
+
+    回归测试: 对非 input/textarea/contenteditable 元素(如 <p>)调用时,
+    locator.focus() 是 no-op,keyboard.insert_text 会把文本写进"当前拥有
+    焦点"的元素 —— 工具却返回成功,造成数据错位(文本落到别的输入框)。
+    """
+
+    @pytest.mark.asyncio
+    async def test_non_editable_target_rejected(self, web_browser, mock_page):
+        """不可编辑元素直接报错, 绝不能把文本串到焦点元素。"""
+        web_browser._browser = MagicMock()
+        web_browser._pages = {1: mock_page}
+        web_browser._active_page_id = 1
+
+        locator = mock_page.locator.return_value
+        locator.is_editable = AsyncMock(return_value=False)
+
+        result = await web_browser.insert_text("LEAK-TO-FOCUSED", selector=".desc")
+
+        assert "不可编辑" in result
+        assert "未写入" in result
+        # 关键断言: 绝不能写入, 否则会污染当前焦点元素的值
+        mock_page.keyboard.insert_text.assert_not_called()
+        locator.focus.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_editable_target_inserts_normally(self, web_browser, mock_page):
+        """可编辑元素照常聚焦并插入。"""
+        web_browser._browser = MagicMock()
+        web_browser._pages = {1: mock_page}
+        web_browser._active_page_id = 1
+
+        locator = mock_page.locator.return_value
+        locator.is_editable = AsyncMock(return_value=True)
+
+        result = await web_browser.insert_text("OK", selector="#name-input")
+
+        assert "已向元素 #name-input 插入文本: OK" in result
+        locator.focus.assert_awaited_once()
+        mock_page.keyboard.insert_text.assert_awaited_once_with("OK")
+
+    @pytest.mark.asyncio
+    async def test_no_selector_keeps_focused_element_behavior(self, web_browser, mock_page):
+        """不带 selector 时按文档语义写入当前焦点元素, 不做校验。"""
+        web_browser._browser = MagicMock()
+        web_browser._pages = {1: mock_page}
+        web_browser._active_page_id = 1
+
+        result = await web_browser.insert_text("HELLO")
+
+        assert "已插入文本: HELLO" in result
+        mock_page.keyboard.insert_text.assert_awaited_once_with("HELLO")

@@ -13,6 +13,7 @@ from pathlib import Path
 from uniclaw.tools.base import tool, ToolRuntime
 from uniclaw.utils.constants import TOOL_ERROR
 
+from .client import LspRpcError
 from .manager import LSPManager
 from .protocol import (
     DEFINITION,
@@ -327,6 +328,17 @@ def _check_line_bounds(path: Path, line0: int) -> str | None:
 
 # ── 语义查询工具 ──────────────────────────────────────────
 
+# 语义查询的预期失败:
+# - LspBizError(RuntimeError 子类): 文件不存在/服务器未装/请求超时/管道断开
+# - LspRpcError: 服务器返回 error 响应(远端拒绝,等价远端 4xx/5xx)
+# - RuntimeError: client.stop() 对 pending 请求注入的"语言服务器已关闭"
+_QUERY_ERRORS = (LspBizError, LspRpcError, RuntimeError)
+
+
+def _query_error(method: str, path: Path, e: BaseException) -> str:
+    """语义查询失败的统一 TOOL_ERROR(带 method 与文件路径,便于定位)。"""
+    return f"{TOOL_ERROR}: LSP {method} 查询失败(file={path}): {type(e).__name__}: {e}"
+
 @tool
 async def lsp_diagnostics(file: str, tool_runtime: ToolRuntime = None) -> str:
     """查询文件的类型诊断(错误/警告/信息),由语言服务器实时分析。
@@ -399,8 +411,8 @@ async def lsp_definition(
         )
         items = result if isinstance(result, list) else [result]
         return _format_locations([i for i in items if isinstance(i, dict)])
-    except LspBizError as e:
-        return f"{TOOL_ERROR}: {e}"
+    except _QUERY_ERRORS as e:
+        return _query_error(DEFINITION, path, e)
 
 
 @tool
@@ -442,8 +454,8 @@ async def lsp_hover(
             },
         )
         return _format_hover(result)
-    except LspBizError as e:
-        return f"{TOOL_ERROR}: {e}"
+    except _QUERY_ERRORS as e:
+        return _query_error(HOVER, path, e)
 
 
 @tool
@@ -499,8 +511,8 @@ async def lsp_references(
         )
         n = min(rendered, 100)
         return f"共找到 {n} 处引用:\n{locs}" if n else "未找到引用。"
-    except LspBizError as e:
-        return f"{TOOL_ERROR}: {e}"
+    except _QUERY_ERRORS as e:
+        return _query_error(REFERENCES, path, e)
 
 
 @tool
@@ -538,8 +550,8 @@ async def lsp_symbols(file: str, tool_runtime: ToolRuntime = None) -> str:
             return f"{path} — 未提取到符号。"
         pre = f"{path} — 符号大纲(L{_symbol_count(symbols)} 个):"
         return pre + "\n" + "\n".join(lines)
-    except LspBizError as e:
-        return f"{TOOL_ERROR}: {e}"
+    except _QUERY_ERRORS as e:
+        return _query_error(DOCUMENT_SYMBOL, path, e)
 
 
 def _symbol_count(symbols) -> int:

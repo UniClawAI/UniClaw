@@ -1,3 +1,4 @@
+import json
 import sys
 
 from uniclaw.tools.base import tool, ToolRuntime
@@ -6,7 +7,9 @@ from uniclaw.utils.constants import TOOL_ERROR
 from uniclaw.context import Scope
 from uniclaw.tools.hooks.hook_manager import (
     HookEvent,
+    VALID_EVENTS,
     add_hook,
+    get_hooks_path,
     remove_hook,
     load_all_hooks_configs,
 )
@@ -219,14 +222,34 @@ def hook_add(
         return (
             f"{TOOL_ERROR}: 当前会话无工作目录,无法添加项目级 hook,请使用 scope='user'"
         )
+    if event not in VALID_EVENTS:
+        return f"{TOOL_ERROR}: 未知事件 '{event}',可选: {', '.join(sorted(VALID_EVENTS))}"
+    if not cmd_list:
+        return f"{TOOL_ERROR}: commands 不能为空,请提供至少一条 shell 命令"
     root = root_dir if scope == Scope.PROJECT else Scope.USER
-    new_id = add_hook(
-        event=event,
-        commands=cmd_list,
-        name=name or None,
-        matcher=matcher or None,
-        root=root,
-    )
+    try:
+        new_id = add_hook(
+            event=event,
+            commands=cmd_list,
+            name=name or None,
+            matcher=matcher or None,
+            root=root,
+        )
+    except json.JSONDecodeError as e:
+        return (
+            f"{TOOL_ERROR}: hooks 配置文件 JSON 解析失败"
+            f"(路径: {get_hooks_path(root)}): {e}"
+        )
+    except ValueError as e:
+        return (
+            f"{TOOL_ERROR}: hooks 配置校验失败"
+            f"(路径: {get_hooks_path(root)}, 事件: '{event}'): {e}"
+        )
+    except OSError as e:
+        return (
+            f"{TOOL_ERROR}: 读写 hooks 配置失败"
+            f"(路径: {get_hooks_path(root)}, 事件: '{event}'): {type(e).__name__}: {e}"
+        )
     label = f"[{new_id}]"
     if name:
         label += f" {name}"
@@ -250,7 +273,13 @@ def hook_remove(id_or_name: str, tool_runtime: ToolRuntime = None) -> str:
     if not config or not config.current_agent:
         raise ValueError("hook_remove 需要 config 中的 current_agent 来获取 root_dir")
     root_dir = config.root_dir
-    removed = remove_hook(id_or_name, root_dir)
+    try:
+        removed = remove_hook(id_or_name, root_dir)
+    except OSError as e:
+        return (
+            f"{TOOL_ERROR}: 写入 hooks 配置失败"
+            f"(id/名称: '{id_or_name}'): {type(e).__name__}: {e}"
+        )
     if removed:
         return f"已删除 hook: {id_or_name}"
     return f"{TOOL_ERROR}: 未找到 hook: {id_or_name}"

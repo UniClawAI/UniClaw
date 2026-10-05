@@ -10,30 +10,32 @@ from uniclaw.tools.base import tool, ToolRuntime
 from uniclaw.utils.constants import TOOL_ERROR
 
 
-def _format_send_error(e: Exception, what: str) -> str:
+def _format_send_error(e: Exception, what: str, bot_name: str = "") -> str:
     """把 iLink 底层异常翻译为带原因说明的工具错误消息。
 
     Args:
         e: 捕获到的异常
         what: 操作描述,如 "文字消息发送" / "图片发送"
+        bot_name: 出错的机器人名称,多机器人场景下用于定位
 
     Returns:
         以 TOOL_ERROR 前缀开头、含原因提示的错误消息
     """
+    where = f"(机器人: {bot_name})" if bot_name else ""
     if isinstance(e, AuthError):
-        return f"{TOOL_ERROR}: {what}失败: 微信登录已过期,请通过 /wechat 重新登录机器人"
+        return f"{TOOL_ERROR}: {what}失败{where}: 微信登录已过期,请通过 /wechat 重新登录机器人"
     if isinstance(e, MediaError):
-        return f"{TOOL_ERROR}: {what}失败: 媒体上传失败 — {e}"
+        return f"{TOOL_ERROR}: {what}失败{where}: 媒体上传失败 — {e}"
     if isinstance(e, ApiError):
         code = getattr(e, "code", None)
         code_str = f"(错误码 {code})" if code is not None else ""
         return (
-            f"{TOOL_ERROR}: {what}失败: 微信服务器拒绝: {e}{code_str}。"
+            f"{TOOL_ERROR}: {what}失败{where}: 微信服务器拒绝: {e}{code_str}。"
             "常见原因: 会话上下文已过期或上传准备失败,请让用户重新给机器人发一条消息后重试"
         )
     if isinstance(e, (requests.ConnectionError, requests.Timeout)):
-        return f"{TOOL_ERROR}: {what}失败: 网络连接异常 — {e}"
-    return f"{TOOL_ERROR}: {what}失败: {type(e).__name__}: {e}"
+        return f"{TOOL_ERROR}: {what}失败{where}: 网络连接异常 — {e}"
+    return f"{TOOL_ERROR}: {what}失败{where}: {type(e).__name__}: {e}"
 
 
 def _resolve_bot(config: AppConfig, bot_name: str = ""):
@@ -133,9 +135,9 @@ async def wechat_send_text(
         bot.reply_text(text)
         return "文字消息已发送"
     except NoContextError:
-        return f"{TOOL_ERROR}: 当前没有对话用户,请先让用户给机器人发一条消息"
-    except Exception as e:
-        return _format_send_error(e, "文字消息发送")
+        return f"{TOOL_ERROR}: 机器人 '{bot.name}' 当前没有对话用户,请先让用户给机器人发一条消息"
+    except (AuthError, MediaError, ApiError, requests.ConnectionError, requests.Timeout) as e:
+        return _format_send_error(e, "文字消息发送", bot.name)
 
 
 @tool
@@ -171,9 +173,9 @@ async def wechat_send_image(
         bot.reply_image(p, caption=caption or None)
         return f"图片已发送: {p.name}"
     except NoContextError:
-        return f"{TOOL_ERROR}: 当前没有对话用户,请先让用户给机器人发一条消息"
-    except Exception as e:
-        return _format_send_error(e, "图片发送")
+        return f"{TOOL_ERROR}: 机器人 '{bot.name}' 当前没有对话用户,请先让用户给机器人发一条消息"
+    except (AuthError, MediaError, ApiError, requests.ConnectionError, requests.Timeout) as e:
+        return _format_send_error(e, "图片发送", bot.name)
 
 
 @tool
@@ -211,9 +213,9 @@ async def wechat_send_file(
         bot.reply_file(p, file_name=file_name or None)
         return f"文件已发送: {file_name or p.name}"
     except NoContextError:
-        return f"{TOOL_ERROR}: 当前没有对话用户,请先让用户给机器人发一条消息"
-    except Exception as e:
-        return _format_send_error(e, "文件发送")
+        return f"{TOOL_ERROR}: 机器人 '{bot.name}' 当前没有对话用户,请先让用户给机器人发一条消息"
+    except (AuthError, MediaError, ApiError, requests.ConnectionError, requests.Timeout) as e:
+        return _format_send_error(e, "文件发送", bot.name)
 
 
 def get_tools() -> list:

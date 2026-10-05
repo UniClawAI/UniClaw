@@ -155,6 +155,11 @@ async def _overseer_update(
     if todo.is_empty():
         return f"{TOOL_ERROR}: 当前没有任务清单,请先使用 {todolist_create.name} 创建"
 
+    # 与非监工路径对齐: 先做越界检查,避免 items[step] 抛 IndexError
+    err = todo.index_error(step)
+    if err:
+        return err
+
     if status == TodoStatus.COMPLETED:
         item = todo.items[step]
         old_status = item.status

@@ -1,10 +1,12 @@
 import math
+import sqlite3
 import time
 from pathlib import Path
 
 from uniclaw.tools.base import tool, ToolRuntime
 from uniclaw.console.ui import warn
 from uniclaw.tools.memory.context import ai_select_memories, memory_freshness_text
+from uniclaw.utils.constants import TOOL_ERROR
 from .memory import Memory, MemorySource, MemoryType, Scope
 
 
@@ -76,9 +78,9 @@ def memory_save(
     config = tool_runtime.config
     # user scope 不需要 root_dir；project scope 需要 root_dir(无 root_dir 时 fallback 到用户级)
     if not name.strip():
-        raise ValueError("记忆名称 name 不能为空")
+        return f"{TOOL_ERROR}: 记忆名称 name 不能为空"
     if not content.strip():
-        raise ValueError("记忆内容 content 不能为空")
+        return f"{TOOL_ERROR}: 记忆内容 content 不能为空"
 
     memory_scope: Scope | Path = (
         config.root_dir if scope == Scope.PROJECT and config.root_dir else Scope.USER
@@ -93,7 +95,13 @@ def memory_save(
         confidence=confidence,
     )
 
-    result = memory.save_memory(force=force)
+    try:
+        result = memory.save_memory(force=force)
+    except OSError as e:
+        return (
+            f"{TOOL_ERROR}: 保存记忆 '{name}' (作用域: {scope}) 失败"
+            f"(路径: {memory.filename}): {type(e).__name__}: {e}"
+        )
 
     if result["status"] == "identical":
         return result["message"]
@@ -165,18 +173,35 @@ async def memory_delete(name: str, scope: Scope, tool_runtime: ToolRuntime = Non
     )
     # 获取记忆文件路径并删除对应的记忆文件
     memory_path = Memory.get_memory_path(memory_scope, name)
-    memory_path.unlink()
+    if not memory_path.exists():
+        return f"{TOOL_ERROR}: 记忆 '{name}' 不存在(作用域: {scope})"
+    try:
+        memory_path.unlink()
+    except OSError as e:
+        return (
+            f"{TOOL_ERROR}: 删除记忆 '{name}' (作用域: {scope}) 的文件失败"
+            f"(路径: {memory_path}): {type(e).__name__}: {e}"
+        )
 
     # 重建索引以保持数据一致性
-    Memory.rebuild_index(memory_scope)
+    try:
+        Memory.rebuild_index(memory_scope)
+    except OSError as e:
+        return (
+            f"{TOOL_ERROR}: 记忆 '{name}' (作用域: {scope}) 的文件已删除,但重建索引失败"
+            f"(目录: {memory_path.parent}): {type(e).__name__}: {e}"
+        )
 
     # 同步 FTS5 索引
     try:
         from .fts import remove_memory
 
         remove_memory(memory_path)
-    except Exception as e:
-        await warn(f"FTS 索引删除失败: {e}", config)
+    except (sqlite3.Error, OSError, RuntimeError) as e:
+        await warn(
+            f"FTS 索引删除失败(记忆: {name}, 作用域: {scope}): {type(e).__name__}: {e}",
+            config,
+        )
 
     return f"记忆已删除: '{name}' (作用域: {scope})"
 
@@ -283,7 +308,14 @@ async def memory_search(query: str, max_results: int, tool_runtime: ToolRuntime 
     # Phase 1: FTS5 BM25 搜索
     from .fts import fts_search
 
-    fts_hits = fts_search(query, memory_dirs, max_results=max_results)
+    try:
+        fts_hits = fts_search(query, memory_dirs, max_results=max_results)
+    except sqlite3.Error as e:
+        await warn(
+            f"FTS 记忆搜索失败,回退 AI 检索(查询: {query}): {type(e).__name__}: {e}",
+            config,
+        )
+        fts_hits = []
 
     # 将 FTS 结果映射回 Memory 对象
     path_to_memory = {str(m.filename.resolve()): m for m in memories}
@@ -294,7 +326,11 @@ async def memory_search(query: str, max_results: int, tool_runtime: ToolRuntime 
             memory = path_to_memory.get(hit["path"])
             if not memory:
                 continue
-            mtime_s = Path(memory.filename).stat().st_mtime
+            try:
+                mtime_s = Path(memory.filename).stat().st_mtime
+            except OSError:
+                # 并发删除: 记忆文件已消失,跳过此条
+                continue
             bm25_norm = hit["score"] / max_score if max_score > 0 else 0.0
             keyword_results.append(
                 {
@@ -317,9 +353,17 @@ async def memory_search(query: str, max_results: int, tool_runtime: ToolRuntime 
     # Phase 2: AI 语义搜索(FTS5 结果不足时补充)
     ai_results = []
     if len(keyword_results) < max_results:
-        ai_results = await ai_select_memories(
-            query, memories, max_results, config=config
-        )
+        try:
+            ai_results = await ai_select_memories(
+                query, memories, max_results, config=config
+            )
+        except (RuntimeError, OSError) as e:
+            await warn(
+                f"AI 记忆语义检索失败,仅返回关键词结果(查询: {query}): "
+                f"{type(e).__name__}: {e}",
+                config,
+            )
+            ai_results = []
 
     # 合并两种搜索结果,按文件名去重
     seen = set()
@@ -346,7 +390,14 @@ async def memory_search(query: str, max_results: int, tool_runtime: ToolRuntime 
     # 为返回的记忆条目更新 last_used_at
     for r in results:
         if r.get("filename"):
-            r["memory"].touch_last_used()
+            try:
+                r["memory"].touch_last_used()
+            except OSError as e:
+                await warn(
+                    f"更新记忆使用时间失败(记忆: {r['name']}, 路径: {r['filename']}): "
+                    f"{type(e).__name__}: {e}",
+                    config,
+                )
 
     # 格式化输出结果
     lines = [f"Found {len(results)} relevant memory/memories for '{query}':", ""]

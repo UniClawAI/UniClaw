@@ -317,10 +317,11 @@ async def Bash(
         await _kill_quietly()
         raise
 
-    except Exception as e:
-        # 意外异常也收尾,避免残留进程
+    except Exception:
+        # 意外异常也收尾,避免残留进程;
+        # 收尾后原样上抛(bug 级异常交给 Tool.__call__ 兜底),不转成返回值
         await _kill_quietly()
-        return f"{TOOL_ERROR}: {e}"
+        raise
 
 
 # ── Grep ──────────────────────────────────────────────────────────────────
@@ -389,9 +390,18 @@ def _python_grep(
         files = sorted(target.rglob(glob or "*"))
         files = [f for f in files if f.is_file()]
         # 按 .gitignore 规则过滤(含隐藏文件)
-        from uniclaw.utils.gitignore import get_not_ignored_files
+        from uniclaw.utils.gitignore import (
+            get_not_ignored_files,
+            is_ignored_by_gitignore,
+        )
 
-        files = get_not_ignored_files(files)
+        # 显式给出的搜索根必须可搜 —— 与 rg 一致(显式路径强制搜索,忽略规则
+        # 只作用于其内部新发现的项)。否则搜 .UniClaw/temp 这类隐藏目录时,
+        # 其下所有文件都会因"祖先目录是点目录"被兜底规则 `.*` 清空,
+        # 静默返回 No matches found,误导 LLM 判断"符号不存在"。
+        # 根本身不被忽略时,照常过滤内部的 .git / node_modules 等。
+        if not is_ignored_by_gitignore([target]):
+            files = get_not_ignored_files(files)
     else:
         return f"{TOOL_ERROR}: 路径不存在: {path}"
 
@@ -501,6 +511,12 @@ async def Grep(
     use_rg = await _has_rg()
     cmd = ["rg" if use_rg else "grep"]
 
+    # grep 必须带 -r: 无它时给目录只会报 "Is a directory"(exit 2),
+    # 目录搜索整体失效 —— 而 rg 缺失时正是走这条回退路径。
+    # -r 对单文件无副作用,故无条件加上。rg 本身就递归,不需要。
+    if not use_rg:
+        cmd.append("-r")
+
     if case_insensitive:
         cmd.append("-i")
     if output_mode == GrepOutputMode.files_with_matches:
@@ -522,8 +538,12 @@ async def Grep(
     try:
         # decode=smart_decode: Windows 上 rg/grep 命中 GBK 文件时输出非 UTF-8
         r = await run_command(cmd, timeout=30, decode=smart_decode)
-    except Exception as e:
-        return f"{TOOL_ERROR}: 搜索异常(pattern={pattern!r}, path={path}): {e}"
+    except OSError as e:
+        # 命令不可执行(无权限、竞态消失等);超时是 r.timed_out,不走异常
+        return (
+            f"{TOOL_ERROR}: 搜索异常(pattern={pattern!r}, path={path}): "
+            f"{type(e).__name__}: {e}"
+        )
 
     if r.timed_out:
         return f"{TOOL_ERROR}: 搜索超时(pattern={pattern!r}, path={path}, 30 秒)"

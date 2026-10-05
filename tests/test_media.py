@@ -179,13 +179,18 @@ class TestReadMediaImpl:
         assert "无法从 URL 识别" in result
 
     def test_read_exception(self, tmp_path):
-        """读取异常。"""
+        """IO 异常转 TOOL_ERROR 并带路径;bug 级异常原样上抛。"""
         p = tmp_path / "test.png"
         p.write_bytes(b"data")
-        with patch("uniclaw.tools.media._read_image", side_effect=RuntimeError("boom")):
+        with patch("uniclaw.tools.media._read_image", side_effect=OSError("boom")):
             result = _read_media_impl(str(p))
         assert isinstance(result, str)
         assert "boom" in result
+        assert str(p) in result
+
+        with patch("uniclaw.tools.media._read_image", side_effect=RuntimeError("bug")):
+            with pytest.raises(RuntimeError):
+                _read_media_impl(str(p))
 
 
 class TestReadMediaTool:
@@ -253,12 +258,14 @@ class TestGenerateImage:
         assert url.startswith("data:image/png;base64,")
 
     @pytest.mark.asyncio
-    @patch("uniclaw.provider.openai_provider.agenerate_image", new_callable=AsyncMock, side_effect=RuntimeError("boom"))
+    @patch("uniclaw.provider.openai_provider.agenerate_image", new_callable=AsyncMock, side_effect=OSError("boom"))
     async def test_exception(self, mock_gen):
-        """生成异常。"""
+        """生成异常(网络/IO)转 TOOL_ERROR,报错带 prompt 与 model。"""
         result = await GenerateImage("一只猫", tool_runtime=ToolRuntime(config=self._config()))
         assert isinstance(result, str)
         assert "图片生成失败" in result
+        assert "一只猫" in result
+        assert "dall-e-3" in result
 
     @pytest.mark.asyncio
     @patch("uniclaw.provider.openai_provider.agenerate_image", new_callable=AsyncMock, return_value=[])

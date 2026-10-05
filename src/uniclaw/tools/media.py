@@ -1,10 +1,13 @@
 import asyncio
 import base64
+import binascii
 import logging
 import mimetypes
 import shutil
 import subprocess
 from pathlib import Path
+
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -242,8 +245,8 @@ def _read_media_impl(file_path: str, fps: int = 2) -> list | str:
             return _read_audio(p)
         else:
             return _read_video(p, fps)
-    except Exception as e:
-        return f"{TOOL_ERROR}: {e}"
+    except OSError as e:
+        return f"{TOOL_ERROR}: 读取媒体失败 {file_path}: {type(e).__name__}: {e}"
 
 
 def _get_description_prompt(content: list[dict]) -> str:
@@ -318,8 +321,12 @@ async def ReadMedia(
             config=config,
         )
         return response.content or f"{TOOL_ERROR}: 多模态模型返回为空"
-    except Exception as e:
-        return f"{TOOL_ERROR}: 转换文字描述失败: {e}"
+    except (httpx.HTTPError, OSError) as e:
+        models = config.multimodal_model_name
+        return (
+            f"{TOOL_ERROR}: 转换文字描述失败 (file_path={file_path}, model={models}): "
+            f"{type(e).__name__}: {e}"
+        )
 
 
 @tool
@@ -352,8 +359,11 @@ async def GenerateImage(
             size=size,
             config=config,
         )
-    except Exception as e:
-        return f"{TOOL_ERROR}: 图片生成失败: {e}"
+    except (httpx.HTTPError, OSError) as e:
+        return (
+            f"{TOOL_ERROR}: 图片生成失败 (prompt={prompt!r}, model={model_name}, "
+            f"size={size}): {type(e).__name__}: {e}"
+        )
 
     if not results:
         return f"{TOOL_ERROR}: 图片生成返回为空"
@@ -364,15 +374,22 @@ async def GenerateImage(
     # 保存到文件
     if save_path:
         p = Path(save_path)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        if is_url:
-            import urllib.request
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            if is_url:
+                import urllib.request
 
-            urllib.request.urlretrieve(result, str(p))
-        else:
-            import base64 as b64mod
+                urllib.request.urlretrieve(result, str(p))
+            else:
+                import base64 as b64mod
 
-            p.write_bytes(b64mod.b64decode(result))
+                p.write_bytes(b64mod.b64decode(result))
+        except (OSError, binascii.Error) as e:
+            # OSError: 建目录/写文件/下载失败;binascii.Error: 远端返回的 base64 非法
+            return (
+                f"{TOOL_ERROR}: 图片保存失败 (save_path={save_path}, "
+                f"source={'url' if is_url else 'base64'}): {type(e).__name__}: {e}"
+            )
         return f"已保存到: {p.resolve()}"
 
     # 返回多模态数据

@@ -2207,7 +2207,7 @@ class TestRerankResults:
 
     @pytest.mark.asyncio
     async def test_rerank_failure_falls_back(self, mock_config):
-        """achat 调用失败时回退到原文本, 不抛异常"""
+        """achat 调用失败(非 bug: LLM 不可用)时回退到原文本, 不抛异常"""
         with (
             _patch_all_with_github(self._github_mock(12)),
             patch(
@@ -2219,6 +2219,23 @@ class TestRerankResults:
 
         assert "GitHub" in result
         assert "user/repo" in result
+
+    @pytest.mark.asyncio
+    async def test_rerank_parse_bug_propagates(self, mock_config):
+        """解析 response 的编程错误(AttributeError 等)不吞, 原样抛出。
+
+        按 Tool Exception Convention: 只有 achat 的外部失败才降级回退原文本;
+        自家代码里的 bug 若被吞, 重排会静默永久失效, 且 warn 看不到堆栈。
+        """
+        with (
+            _patch_all_with_github(self._github_mock(12)),
+            patch(
+                "uniclaw.provider.fallback.achat",
+                new=AsyncMock(return_value=None),  # response.content → AttributeError
+            ),
+        ):
+            with pytest.raises(AttributeError):
+                await _search(query="test", platforms="all", tool_runtime=ToolRuntime(config=mock_config))
 
     @pytest.mark.asyncio
     async def test_error_info_kept_after_rerank(self, mock_config):

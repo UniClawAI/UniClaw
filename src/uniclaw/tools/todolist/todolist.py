@@ -35,11 +35,21 @@ class TodoList:
         self.items.append(item)
         return item
 
+    def index_error(self, index: int) -> str:
+        """步骤索引越界时的错误提示,合法索引返回空串。
+
+        update_status 与监工模式路径共用同一文案,避免两条路径提示漂移。
+        """
+        if 0 <= index < len(self.items):
+            return ""
+        count = len(self.items)
+        hint = f",有效范围: 0~{count - 1}" if count > 0 else ",列表为空"
+        return f"{TOOL_ERROR}: 索引 {index} 超出范围,当前共 {count} 项{hint}"
+
     def update_status(self, index: int, status: TodoStatus | str) -> str:
-        if index < 0 or index >= len(self.items):
-            count = len(self.items)
-            hint = f",有效范围: 0~{count - 1}" if count > 0 else ",列表为空"
-            return f"{TOOL_ERROR}: 索引 {index} 超出范围,当前共 {count} 项{hint}"
+        err = self.index_error(index)
+        if err:
+            return err
 
         status = TodoStatus(status)
         old_status = self.items[index].status

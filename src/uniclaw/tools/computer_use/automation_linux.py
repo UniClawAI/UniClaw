@@ -114,8 +114,10 @@ async def get_interactive_elements() -> str:
         ]
         return "\n".join(lines)
 
-    except Exception as e:
-        return f"{TOOL_ERROR}: {e}"
+    except _CmdError as e:
+        return f"{TOOL_ERROR}: 获取元素失败: {e}"
+    except OSError as e:
+        return f"{TOOL_ERROR}: 获取元素系统调用失败(无显示环境?): {type(e).__name__}: {e}"
 
 
 async def find_element(
@@ -137,8 +139,13 @@ async def find_element(
 
         return f"{TOOL_ERROR}: Linux 后端仅支持按窗口名称查找"
 
-    except Exception as e:
-        return f"{TOOL_ERROR}: {e}"
+    except _CmdError as e:
+        return f"{TOOL_ERROR}: 查找窗口失败(name={name!r}): {e}"
+    except OSError as e:
+        return (
+            f"{TOOL_ERROR}: 查找窗口系统调用失败(name={name!r}): "
+            f"{type(e).__name__}: {e}"
+        )
 
 
 async def interact(
@@ -190,9 +197,16 @@ async def interact(
             return f"{TOOL_ERROR}: 不支持的操作 '{action}'"
 
     except _CmdError as e:
-        return f"{TOOL_ERROR}: 操作 '{action}' 未生效: {e}"
-    except Exception as e:
-        return f"{TOOL_ERROR}: {e}"
+        return (
+            f"{TOOL_ERROR}: 操作 '{action}' 未生效"
+            f"(name={name!r}, x={x}, y={y}, type_text={type_text!r}): {e}"
+        )
+    except OSError as e:
+        return (
+            f"{TOOL_ERROR}: 操作 '{action}' 系统调用失败"
+            f"(name={name!r}, x={x}, y={y}, type_text={type_text!r}): "
+            f"{type(e).__name__}: {e}"
+        )
 
 
 # ── 工具定义 ──────────────────────────────────────────────────────

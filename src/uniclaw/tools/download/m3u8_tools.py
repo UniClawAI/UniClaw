@@ -9,6 +9,7 @@ from enum import StrEnum
 from pathlib import Path
 
 from uniclaw.tools.base import tool, ToolRuntime
+from uniclaw.utils.constants import TOOL_ERROR
 from uniclaw.tools.download.m3u8 import (
     DEFAULT_M3U8_CONCURRENCY,
     M3u8Downloader,
@@ -61,8 +62,9 @@ async def m3u8_download(
     config = tool_runtime.config
     resolved_path = Path(save_path).expanduser()
     if not resolved_path.is_absolute():
-        raise ValueError(
-            f"save_path 必须为绝对路径(如 D:/videos/movie.ts),收到: {save_path}"
+        return (
+            f"{TOOL_ERROR}: save_path 必须为绝对路径(如 D:/videos/movie.ts),"
+            f"收到: {save_path!r}"
         )
     resolved_path = resolved_path.resolve()
 
@@ -78,7 +80,15 @@ async def m3u8_download(
     )
 
     # 先解析播放列表,判断是否需要选择分辨率
-    await downloader.parse()
+    try:
+        await downloader.parse()
+    except OSError as e:
+        # IOError 是 OSError 别名;parse() 网络失败重试耗尽后以 IOError 上抛
+        return (
+            f"{TOOL_ERROR}: M3U8 播放列表解析失败(url={url}, "
+            f"max_retries={max_retries}, proxy={proxy or '直连'}): "
+            f"{type(e).__name__}: {e}"
+        )
 
     if downloader.progress.status == M3u8Status.SELECTING:
         # 多分辨率:返回可选列表,引导用户重新调用

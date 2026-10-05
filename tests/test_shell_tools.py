@@ -490,6 +490,74 @@ class TestGrepTool:
         assert "搜索超时" in result
 
     @pytest.mark.asyncio
+    async def test_python_fallback_searches_hidden_dir(self, tmp_path):
+        """显式给出的搜索根是隐藏目录(如 .UniClaw/temp)时必须可搜。
+
+        回归测试: 兜底规则 `.*` 按绝对路径分量匹配,导致 .UniClaw/xxx 下的
+        所有文件被清空、静默返回 "No matches found" —— 而 rg 的语义是
+        显式路径强制搜索。Windows 无 rg 时走的正是 _python_grep 这条路。
+        """
+        root = tmp_path / ".UniClaw" / "temp" / "round6"
+        root.mkdir(parents=True)
+        (root / "rep1.md").write_text("COMMON_MARKER_XYZ alpha\n", encoding="utf-8")
+        (root / "rep2.txt").write_text("COMMON_MARKER_XYZ hello\n", encoding="ascii")
+
+        with patch("uniclaw.tools.shell._has_native_grep", new_callable=AsyncMock, return_value=False):
+            result = await Grep("COMMON_MARKER_XYZ", str(root))
+
+        assert "No matches found" not in result
+        assert "rep1.md" in result
+        assert "rep2.txt" in result
+
+    def test_python_fallback_still_filters_nested_ignored(self, tmp_path):
+        """根不被忽略时, 内部的隐藏项(如 .git)照常过滤。"""
+        root = tmp_path / "proj"
+        root.mkdir()
+        (root / "keep.txt").write_text("HIT_XYZ\n", encoding="utf-8")
+        nested = root / ".git"
+        nested.mkdir()
+        (nested / "secret.txt").write_text("HIT_XYZ\n", encoding="utf-8")
+
+        out = _python_grep("HIT_XYZ", str(root))
+        assert "keep.txt" in out
+        assert "secret.txt" not in out
+
+    @pytest.mark.asyncio
+    async def test_grep_fallback_recurses_into_dirs(self, tmp_path):
+        """rg 缺失回退到 grep 时必须带 -r,否则目录搜索整体失效。
+
+        回归测试: 无 -r 时 `grep -n pattern 目录` 报 "Is a directory"(exit 2),
+        旧代码忽略退出码会伪装成 "No matches found",误导 LLM 认为符号不存在。
+        """
+        with patch("uniclaw.tools.shell._has_native_grep", new_callable=AsyncMock, return_value=True), patch(
+            "uniclaw.tools.shell._has_rg", new_callable=AsyncMock, return_value=False
+        ), patch(
+            "uniclaw.tools.shell.run_command",
+            new_callable=AsyncMock,
+            return_value=RunResult(0, "a.txt:1:hello\n"),
+        ) as m:
+            result = await Grep("hello", str(tmp_path))
+        cmd = m.await_args.args[0]
+        assert cmd[0] == "grep"
+        assert "-r" in cmd
+        assert "hello" in result
+
+    @pytest.mark.asyncio
+    async def test_rg_fallback_no_recursive_flag(self, tmp_path):
+        """rg 本身就递归,不需要也不该加 -r(rg 的 -r 是 --replace)。"""
+        with patch("uniclaw.tools.shell._has_native_grep", new_callable=AsyncMock, return_value=True), patch(
+            "uniclaw.tools.shell._has_rg", new_callable=AsyncMock, return_value=True
+        ), patch(
+            "uniclaw.tools.shell.run_command",
+            new_callable=AsyncMock,
+            return_value=RunResult(0, "a.txt:1:hello\n"),
+        ) as m:
+            await Grep("hello", str(tmp_path))
+        cmd = m.await_args.args[0]
+        assert cmd[0] == "rg"
+        assert "-r" not in cmd
+
+    @pytest.mark.asyncio
     async def test_unknown_mode(self, tmp_path):
         """未知模式。"""
         with patch("uniclaw.tools.shell._has_native_grep", new_callable=AsyncMock, return_value=True), patch(

@@ -86,7 +86,12 @@ def schedule_create(
     try:
         task = scheduler.add_task(name, schedule, action, config=config)
     except ValueError as e:
-        return f"{TOOL_ERROR}: {e}"
+        return f"{TOOL_ERROR}: 无效的 cron 表达式 '{schedule}': {e}"
+    except OSError as e:
+        return (
+            f"{TOOL_ERROR}: 保存定时任务配置失败(任务: {name}, cron: {schedule}): "
+            f"{type(e).__name__}: {e}"
+        )
 
     return f"已创建定时任务: {task.id} ({name}, {schedule})"
 
@@ -140,7 +145,14 @@ def schedule_remove(task_id: str) -> str:
     from .scheduler import Scheduler
 
     scheduler = Scheduler.get_instance()
-    if scheduler.remove_task(task_id):
+    try:
+        removed = scheduler.remove_task(task_id)
+    except OSError as e:
+        return (
+            f"{TOOL_ERROR}: 保存定时任务配置失败(任务: {task_id}): "
+            f"{type(e).__name__}: {e}"
+        )
+    if removed:
         return f"已删除定时任务: {task_id}"
     return f"{TOOL_ERROR}: 任务 '{task_id}' 不存在"
 
@@ -174,17 +186,25 @@ def schedule_update(
 
     scheduler = Scheduler.get_instance()
 
-    if action:
-        action = action.strip()
-        err = _validate_action(action)
-        if err:
-            return err
-        if not scheduler.update_action(task_id, action):
-            return f"{TOOL_ERROR}: 任务 '{task_id}' 不存在"
+    try:
+        if action:
+            action = action.strip()
+            err = _validate_action(action)
+            if err:
+                return err
+            if not scheduler.update_action(task_id, action):
+                return f"{TOOL_ERROR}: 任务 '{task_id}' 不存在"
 
-    if schedule:
-        if not scheduler.update_schedule(task_id, schedule.strip()):
-            return f"{TOOL_ERROR}: 任务 '{task_id}' 不存在"
+        if schedule:
+            if not scheduler.update_schedule(task_id, schedule.strip()):
+                return f"{TOOL_ERROR}: 任务 '{task_id}' 不存在"
+    except ValueError as e:
+        return f"{TOOL_ERROR}: 无效的 cron 表达式 '{schedule}': {e}"
+    except OSError as e:
+        return (
+            f"{TOOL_ERROR}: 保存定时任务配置失败(任务: {task_id}, cron: '{schedule}'): "
+            f"{type(e).__name__}: {e}"
+        )
 
     return f"已更新任务 {task_id}"
 
@@ -209,7 +229,14 @@ def schedule_toggle(
 
     scheduler = Scheduler.get_instance()
     action = "启用" if enabled else "禁用"
-    if scheduler.toggle_task(task_id, enabled):
+    try:
+        toggled = scheduler.toggle_task(task_id, enabled)
+    except OSError as e:
+        return (
+            f"{TOOL_ERROR}: 保存定时任务配置失败(任务: {task_id}): "
+            f"{type(e).__name__}: {e}"
+        )
+    if toggled:
         return f"已{action}定时任务: {task_id}"
     return f"{TOOL_ERROR}: 任务 '{task_id}' 不存在"
 

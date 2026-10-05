@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 
+import httpx
+
 from uniclaw.config import AppConfig
 from uniclaw.tools.base import tool, ToolRuntime
 from uniclaw.utils.constants import TOOL_ERROR
@@ -72,8 +74,9 @@ async def a2a_send_task(agent_name: str, message: str, context_id: str = "") -> 
     remote = await A2AManager.get_instance().get_agent(agent_name)
     if not remote:
         return f"{TOOL_ERROR}: 未找到 A2A Agent '{agent_name}';请先用 a2a_add_agent 添加。"
+    url = remote["url"]  # 缺 url 是配置数据 bug,直接抛出
     try:
-        client = A2AClient(remote["url"], remote.get("token", ""))
+        client = A2AClient(url, remote.get("token", ""))
         submitted = await client.send_message(message, context_id)
         task_id = submitted.get("id")
         ctx = submitted.get("contextId", "")
@@ -87,8 +90,11 @@ async def a2a_send_task(agent_name: str, message: str, context_id: str = "") -> 
                 return json.dumps({"task_id": task_id, "context_id": ctx, "result": text}, ensure_ascii=False)
             await asyncio.sleep(1)
         return f"{TOOL_ERROR}: A2A 任务超时;可用 a2a_get_task 查询 task_id={task_id}"
-    except Exception as exc:
-        return f"{TOOL_ERROR}: A2A Agent '{agent_name}' 调用失败: {exc}"
+    except (RuntimeError, httpx.HTTPError) as exc:
+        return (
+            f"{TOOL_ERROR}: A2A Agent '{agent_name}'(url={url}) 调用失败: "
+            f"{type(exc).__name__}: {exc}"
+        )
 
 
 @tool
@@ -103,17 +109,22 @@ async def a2a_add_agent(agent_name: str, url: str, token: str = "") -> str:
     try:
         card = await A2AClient(url, token).get_card()
         await A2AManager.get_instance().add_agent(agent_name, url, token, card=card)
-        summary = {"name": card.get("name", agent_name), "description": card.get("description", "")}
-        if card.get("skills"):
-            summary["skills"] = [
-                {"name": s.get("name", ""), "description": s.get("description", "")}
-                for s in card["skills"]
-            ]
-        if card.get("capabilities"):
-            summary["capabilities"] = card["capabilities"]
-        return f"已添加 A2A Agent '{agent_name}':\n{json.dumps(summary, ensure_ascii=False, indent=2)}"
-    except Exception as exc:
-        return f"{TOOL_ERROR}: 无法添加 A2A Agent: {exc}"
+    except (RuntimeError, httpx.HTTPError) as exc:
+        return (
+            f"{TOOL_ERROR}: 无法添加 A2A Agent '{agent_name}'(url={url}): "
+            f"{type(exc).__name__}: {exc}"
+        )
+
+    # 结果摘要在 try 外: card 结构异常(card['skills'] 等)是 bug,须原样抛出
+    summary = {"name": card.get("name", agent_name), "description": card.get("description", "")}
+    if card.get("skills"):
+        summary["skills"] = [
+            {"name": s.get("name", ""), "description": s.get("description", "")}
+            for s in card["skills"]
+        ]
+    if card.get("capabilities"):
+        summary["capabilities"] = card["capabilities"]
+    return f"已添加 A2A Agent '{agent_name}':\n{json.dumps(summary, ensure_ascii=False, indent=2)}"
 
 
 @tool
@@ -151,13 +162,17 @@ async def a2a_submit_task(agent_name: str, message: str, context_id: str = "", t
     remote = await A2AManager.get_instance().get_agent(agent_name)
     if not remote:
         return f"{TOOL_ERROR}: 未找到 A2A Agent '{agent_name}'。"
+    url = remote["url"]  # 缺 url 是配置数据 bug,直接抛出
     try:
-        client = A2AClient(remote["url"], remote.get("token", ""))
+        client = A2AClient(url, remote.get("token", ""))
         result = await client.send_message(message, context_id)
         _start_task_watcher(agent_name, result, client, config)
         return json.dumps({"task_id": result.get("id"), "context_id": result.get("contextId"), "state": result.get("status", {}).get("state")}, ensure_ascii=False)
-    except Exception as exc:
-        return f"{TOOL_ERROR}: A2A 任务提交失败: {exc}"
+    except (RuntimeError, httpx.HTTPError) as exc:
+        return (
+            f"{TOOL_ERROR}: A2A 任务提交失败(agent={agent_name}, url={url}, "
+            f"context_id={context_id or '无'}): {type(exc).__name__}: {exc}"
+        )
 
 
 @tool
@@ -171,11 +186,15 @@ async def a2a_get_task(agent_name: str, task_id: str) -> str:
     remote = await A2AManager.get_instance().get_agent(agent_name)
     if not remote:
         return f"{TOOL_ERROR}: 未找到 A2A Agent '{agent_name}'。"
+    url = remote["url"]  # 缺 url 是配置数据 bug,直接抛出
     try:
-        result = await A2AClient(remote["url"], remote.get("token", "")).get_task(task_id)
+        result = await A2AClient(url, remote.get("token", "")).get_task(task_id)
         return json.dumps({"task_id": result.get("id"), "context_id": result.get("contextId"), "state": result.get("status", {}).get("state"), "result": extract_a2a_text(result)}, ensure_ascii=False)
-    except Exception as exc:
-        return f"{TOOL_ERROR}: A2A 任务查询失败: {exc}"
+    except (RuntimeError, httpx.HTTPError) as exc:
+        return (
+            f"{TOOL_ERROR}: A2A 任务查询失败(agent={agent_name}, task_id={task_id}, "
+            f"url={url}): {type(exc).__name__}: {exc}"
+        )
 
 
 @tool
@@ -189,11 +208,15 @@ async def a2a_cancel_task(agent_name: str, task_id: str) -> str:
     remote = await A2AManager.get_instance().get_agent(agent_name)
     if not remote:
         return f"{TOOL_ERROR}: 未找到 A2A Agent '{agent_name}'。"
+    url = remote["url"]  # 缺 url 是配置数据 bug,直接抛出
     try:
-        result = await A2AClient(remote["url"], remote.get("token", "")).cancel_task(task_id)
+        result = await A2AClient(url, remote.get("token", "")).cancel_task(task_id)
         return f"A2A 任务 {result.get('id', task_id)} 状态:{result.get('status', {}).get('state', 'unknown')}"
-    except Exception as exc:
-        return f"{TOOL_ERROR}: A2A 任务取消失败: {exc}"
+    except (RuntimeError, httpx.HTTPError) as exc:
+        return (
+            f"{TOOL_ERROR}: A2A 任务取消失败(agent={agent_name}, task_id={task_id}, "
+            f"url={url}): {type(exc).__name__}: {exc}"
+        )
 
 
 def get_tools() -> list:

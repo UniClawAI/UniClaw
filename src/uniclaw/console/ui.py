@@ -5,6 +5,7 @@ import uuid
 import sys
 import traceback
 from enum import StrEnum
+from pathlib import Path
 import threading
 import time
 from typing import TYPE_CHECKING
@@ -148,8 +149,24 @@ def _wechat_reply(msg: str, config: AppConfig | None, level: str = "info") -> bo
     try:
         bot.reply_text(f"{prefix} {msg}")
     except Exception as e:
-        get_logger(root_dir=config.root_dir).error("微信消息回复失败: %s", e)
+        get_logger(root_dir=_safe_root_dir(config)).error("微信消息回复失败: %s", e)
     return True
+
+
+def _safe_root_dir(config: AppConfig | None) -> Path | None:
+    """从 config 提取 root_dir,供日志落盘定位;取不到时返回 None。
+
+    config 为 None 时返回 None(get_logger 回退到用户级日志目录)。
+    root_dir 是便捷属性(链到 current_agent.session.root_dir),链上任一环
+    未就绪都会抛出 —— 而 info/ok/warn/err 的 except 分支会调用本函数,
+    这里再抛出就会把真正的错误掩盖掉,故兜住后退化到用户级目录。
+    """
+    if config is None:
+        return None
+    try:
+        return config.root_dir
+    except Exception:
+        return None
 
 
 async def info(msg: str, config: AppConfig = None):
@@ -169,7 +186,7 @@ async def info(msg: str, config: AppConfig = None):
         else:
             print(clr(msg, C.CYAN))
     except Exception as e:
-        get_logger(root_dir=config.root_dir if config else None).error(
+        get_logger(root_dir=_safe_root_dir(config)).error(
             "信息通知失败: %s", e
         )
 
@@ -200,7 +217,7 @@ async def ok(msg: str, config: AppConfig = None):
         else:
             print(clr(msg, C.GREEN))
     except Exception as e:
-        get_logger(root_dir=config.root_dir if config else None).error(
+        get_logger(root_dir=_safe_root_dir(config)).error(
             "成功通知失败: %s", e
         )
 
@@ -222,7 +239,7 @@ async def warn(msg: str, config: AppConfig = None):
         else:
             print(clr(f"Warning: {msg}", C.YELLOW))
     except Exception as e:
-        get_logger(root_dir=config.root_dir if config else None).error(
+        get_logger(root_dir=_safe_root_dir(config)).error(
             "警告通知失败: %s", e
         )
 
@@ -238,7 +255,7 @@ async def err(msg: str, config: AppConfig = None, e: Exception = None):
     """
     try:
         if e is not None:
-            get_logger(root_dir=config.root_dir if config else None).error(
+            get_logger(root_dir=_safe_root_dir(config)).error(
                 "%s\n%s", msg, "".join(traceback.format_exception(e))
             )
         cb = _get_callback(config)
@@ -256,7 +273,7 @@ async def err(msg: str, config: AppConfig = None, e: Exception = None):
         else:
             print(clr(f"Error: {msg}", C.RED), file=sys.stderr)
     except Exception as error:
-        get_logger(root_dir=config.root_dir if config else None).error(
+        get_logger(root_dir=_safe_root_dir(config)).error(
             "错误通知失败: %s", error
         )
 

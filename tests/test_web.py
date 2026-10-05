@@ -116,16 +116,40 @@ async def test_web_fetch_json_passes_through():
 
 @pytest.mark.asyncio
 async def test_web_fetch_error_returns_tool_error():
-    """请求失败应返回 TOOL_ERROR 前缀的错误信息。"""
+    """HTTP 4xx/5xx 应转成 TOOL_ERROR,并带上 URL 与状态码。"""
+    import httpx
+
+    req = httpx.Request("GET", "https://example.com")
+    resp = httpx.Response(500, request=req, headers={"content-type": "text/html"})
     with patch("uniclaw.tools.web.httpx.AsyncClient") as mock_cls:
         mock_response = MagicMock()
-        mock_response.raise_for_status.side_effect = Exception("boom")
+        mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "Server error", request=req, response=resp
+        )
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=mock_response)
         mock_cls.return_value.__aenter__.return_value = mock_client
         result = await webFetch("https://example.com")
 
     assert result.startswith("[TOOL_ERROR]")
+    assert "HTTP 500" in result
+    assert "https://example.com" in result
+
+
+@pytest.mark.asyncio
+async def test_web_fetch_network_error_returns_tool_error():
+    """网络异常应转成 TOOL_ERROR,并带上 URL 与代理参数。"""
+    import httpx
+
+    with patch("uniclaw.tools.web.httpx.AsyncClient") as mock_cls:
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(side_effect=httpx.ConnectError("boom"))
+        mock_cls.return_value.__aenter__.return_value = mock_client
+        result = await webFetch("https://example.com", proxy="http://127.0.0.1:7890")
+
+    assert result.startswith("[TOOL_ERROR]")
+    assert "https://example.com" in result
+    assert "http://127.0.0.1:7890" in result
 
 
 @pytest.mark.asyncio

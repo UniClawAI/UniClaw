@@ -46,3 +46,48 @@ class TestErrException:
             assert not log.exists()
         finally:
             _release_handlers()
+
+
+class TestErrNeverRaises:
+    """info/ok/warn/err 是最后的错误出口,不能因 root_dir 取不到而自己抛出。
+
+    回归测试: 旧实现在 except 分支里再访问 config.root_dir,而 root_dir 是
+    便捷属性(链到 current_agent.session.root_dir),链上任一环未就绪都会抛出
+    —— 二次异常把真正的错误掩盖掉、甚至打断调用方。
+    """
+
+    async def test_root_dir_property_unavailable(self):
+        """root_dir 属性链未就绪(如未挂载 agent)时退化到用户级目录。"""
+
+        class _Cfg:
+            @property
+            def root_dir(self):
+                raise AttributeError("current_agent 未初始化")
+
+        try:
+            await err("摘要信息", _Cfg(), e=ValueError("x"))  # 不应抛出
+        finally:
+            _release_handlers()
+
+    async def test_root_dir_none_falls_back_to_user_dir(self):
+        """root_dir 为 None 时退化到用户级目录。"""
+        cfg = SimpleNamespace(root_dir=None, output_callback=None)
+        try:
+            await err("摘要信息", cfg, e=ValueError("x"))  # 不应抛出
+        finally:
+            _release_handlers()
+
+    async def test_config_is_none(self):
+        """config 为 None 时不能抛出。"""
+        try:
+            await err("摘要信息", None, e=ValueError("x"))  # 不应抛出
+        finally:
+            _release_handlers()
+
+    async def test_warn_and_info_also_never_raise(self):
+        """warn/info 同样不能抛出。"""
+        from uniclaw.console.ui import info, warn
+
+        cfg = SimpleNamespace(root_dir=None, output_callback=None, wechat_ctx=None)
+        await warn("警告", cfg)
+        await info("信息", cfg)

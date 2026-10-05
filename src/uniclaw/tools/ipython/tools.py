@@ -34,7 +34,11 @@ async def ipython_start(
         info = await mgr.start_kernel(kernel_id, kernel_name)
         return f"IPython 内核 '{kernel_id}' 已启动 (kernel_name={kernel_name})。变量将在多次执行间持久保存。"
     except RuntimeError as e:
-        return f"{TOOL_ERROR}: {e}"
+        # 多内核场景下补上 kernel_id/kernel_name,便于定位是哪个内核失败
+        return (
+            f"{TOOL_ERROR}: 启动内核失败(kernel_id={kernel_id!r}, "
+            f"kernel_name={kernel_name!r}): {e}"
+        )
 
 
 @tool
@@ -62,7 +66,8 @@ async def ipython_execute(
         try:
             await mgr.start_kernel(kernel_id)
         except RuntimeError as e:
-            return f"{TOOL_ERROR}: 自动启动内核失败: {e}"
+            # 多内核场景下补上 kernel_id,便于定位是哪个内核启动失败
+            return f"{TOOL_ERROR}: 自动启动内核失败(kernel_id={kernel_id!r}): {e}"
 
     try:
         result = await mgr.execute(code, kernel_id, timeout)

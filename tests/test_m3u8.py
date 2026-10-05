@@ -22,6 +22,7 @@ from uniclaw.tools.download.m3u8 import (
     _safe_int,
     guess_video_name,
 )
+from uniclaw.utils.constants import TOOL_ERROR
 
 # ==================== guess_video_name 测试 ====================
 
@@ -128,16 +129,19 @@ class TestM3u8SavePathRequired:
         from uniclaw.tools.download.m3u8_tools import m3u8_download
 
         kwargs.setdefault("tool_runtime", ToolRuntime())
-        # 走 execute() 而非 __call__: 校验语义(抛 ValueError)是工具自身契约
+        # 走 execute() 而非 __call__: 校验语义(返回 TOOL_ERROR)是工具自身契约
         return await m3u8_download.execute(**kwargs)
 
     async def test_relative_path_rejected(self):
-        with pytest.raises(ValueError, match="绝对路径"):
-            await self._call(url="http://x/playlist.m3u8", save_path="movie.ts")
+        result = await self._call(url="http://x/playlist.m3u8", save_path="movie.ts")
+        assert TOOL_ERROR in result
+        assert "绝对路径" in result
+        assert "movie.ts" in result
 
     async def test_empty_path_rejected(self):
-        with pytest.raises(ValueError, match="绝对路径"):
-            await self._call(url="http://x/playlist.m3u8", save_path="")
+        result = await self._call(url="http://x/playlist.m3u8", save_path="")
+        assert TOOL_ERROR in result
+        assert "绝对路径" in result
 
     async def test_absolute_path_ok(self, tmp_path, monkeypatch):
         # 打桩 parse,避免真实网络请求

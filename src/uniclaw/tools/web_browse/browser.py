@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import binascii
 import logging
 from fnmatch import fnmatch
 from pathlib import Path
@@ -17,6 +18,22 @@ from urllib.parse import urlparse
 logger = logging.getLogger(__name__)
 
 from uniclaw.utils.constants import SYSTEM_PREFIX, TOOL_ERROR
+
+# Playwright 异常类。
+# 不从 playwright.async_api 导入 — 那会连带加载 greenlet DLL(见 _get_async_playwright 注释)。
+# playwright._impl._errors 是纯异常定义,与 async_api 导出的是同一组类。
+# PlaywrightTimeoutError 是 PlaywrightError 的子类,except PlaywrightError 即覆盖超时。
+try:
+    from playwright._impl._errors import Error as PlaywrightError
+    from playwright._impl._errors import TimeoutError as PlaywrightTimeoutError
+except ImportError:  # pragma: no cover - playwright 未安装时不会进行任何浏览器调用
+
+    class PlaywrightError(Exception):
+        """占位异常(playwright 未安装时使用)。"""
+
+    class PlaywrightTimeoutError(PlaywrightError):
+        """占位超时异常(playwright 未安装时使用)。"""
+
 
 # 延迟导入 playwright,避免启动时加载 greenlet DLL
 _async_playwright = None
@@ -163,7 +180,7 @@ class WebBrowser:
         try:
             self._playwright = await async_playwright_fn().start()
             self._browser = await self._playwright.chromium.connect_over_cdp(cdp_url)
-        except Exception as e:
+        except (PlaywrightError, PlaywrightTimeoutError, OSError) as e:
             # 连接失败时清理残留状态,避免 is_running 误报
             self._browser = None
             self._playwright = None
@@ -204,40 +221,68 @@ class WebBrowser:
         if self._browser is None:
             return f"{TOOL_ERROR}: 浏览器未启动"
 
-        try:
-            # CDP 连接的外部浏览器只断开连接,不关闭用户浏览器进程
-            if self._connected_cdp:
-                self._pages.clear()
-                self._active_page_id = None
-                self._connected_cdp = False
-                self._cdp_url = None
-                if self._context:
-                    self._context = None
-                if self._browser:
-                    await self._browser.close()  # disconnect: 仅断开 CDP 连接
-                    self._browser = None
-                if self._playwright:
-                    await self._playwright.stop()
-                    self._playwright = None
-                return "已断开与外部浏览器的 CDP 连接(浏览器保持运行)"
+        # 清理序列每步独立 try,单步失败不阻断后续释放,避免资源泄漏
+        errors: list[str] = []
 
-            for page in self._pages.values():
-                await page.close()
+        # CDP 连接的外部浏览器只断开连接,不关闭用户浏览器进程
+        if self._connected_cdp:
+            cdp_url = self._cdp_url
             self._pages.clear()
             self._active_page_id = None
-
-            if self._context:
-                await self._context.close()
-                self._context = None
+            self._connected_cdp = False
+            self._cdp_url = None
+            self._context = None
             if self._browser:
-                await self._browser.close()
-                self._browser = None
+                try:
+                    await self._browser.close()  # disconnect: 仅断开 CDP 连接
+                except (PlaywrightError, PlaywrightTimeoutError) as e:
+                    errors.append(f"断开 CDP 连接失败 ({cdp_url}): {e}")
+                finally:
+                    self._browser = None
             if self._playwright:
+                try:
+                    await self._playwright.stop()
+                except (PlaywrightError, PlaywrightTimeoutError) as e:
+                    errors.append(f"停止 Playwright 失败: {e}")
+                finally:
+                    self._playwright = None
+            if errors:
+                return f"{TOOL_ERROR}: " + "; ".join(errors)
+            return "已断开与外部浏览器的 CDP 连接(浏览器保持运行)"
+
+        for page_id, page in list(self._pages.items()):
+            try:
+                await page.close()
+            except (PlaywrightError, PlaywrightTimeoutError) as e:
+                errors.append(f"关闭页面 {page_id} 失败: {e}")
+        self._pages.clear()
+        self._active_page_id = None
+
+        if self._context:
+            try:
+                await self._context.close()
+            except (PlaywrightError, PlaywrightTimeoutError) as e:
+                errors.append(f"关闭浏览器上下文失败: {e}")
+            finally:
+                self._context = None
+        if self._browser:
+            try:
+                await self._browser.close()
+            except (PlaywrightError, PlaywrightTimeoutError) as e:
+                errors.append(f"关闭浏览器失败: {e}")
+            finally:
+                self._browser = None
+        if self._playwright:
+            try:
                 await self._playwright.stop()
+            except (PlaywrightError, PlaywrightTimeoutError) as e:
+                errors.append(f"停止 Playwright 失败: {e}")
+            finally:
                 self._playwright = None
-            return "浏览器已关闭"
-        except Exception as e:
-            return f"{TOOL_ERROR}: {e}"
+
+        if errors:
+            return f"{TOOL_ERROR}: 浏览器清理完成但有错误: " + "; ".join(errors)
+        return "浏览器已关闭"
 
     async def new_page(self) -> tuple[int, str]:
         """创建新页面(标签页)。
@@ -253,8 +298,8 @@ class WebBrowser:
             self._pages[page_id] = page
             self._active_page_id = page_id
             return page_id, f"已创建新页面,ID: {page_id}"
-        except Exception as e:
-            return -1, f"{TOOL_ERROR}: {e}"
+        except (PlaywrightError, PlaywrightTimeoutError) as e:
+            return -1, f"{TOOL_ERROR}: 创建新页面失败: {e}"
 
     async def close_page(self, page_id: int) -> str:
         """关闭指定页面。
@@ -282,8 +327,8 @@ class WebBrowser:
                     self._active_page_id = None
 
             return f"已关闭页面 {page_id}"
-        except Exception as e:
-            return f"{TOOL_ERROR}: {e}"
+        except (PlaywrightError, PlaywrightTimeoutError) as e:
+            return f"{TOOL_ERROR}: 关闭页面 {page_id} 失败: {e}"
 
     async def switch_page(self, page_id: int) -> str:
         """切换到指定页面。
@@ -320,8 +365,8 @@ class WebBrowser:
                 url = page.url
                 active = " (活动)" if page_id == self._active_page_id else ""
                 lines.append(f"  [{page_id}] {title} - {url}{active}")
-            except Exception as e:
-                logger.debug("获取页面信息失败: %s", e)
+            except PlaywrightError as e:
+                logger.debug("获取页面信息失败 (page_id=%s): %s", page_id, e)
                 lines.append(f"  [{page_id}] (无法获取信息)")
 
         return "\n".join(lines)
@@ -337,8 +382,8 @@ class WebBrowser:
             status = response.status if response else "未知"
             pid = page_id or self._active_page_id
             return f"已导航到: {url}\n页面标题: {title}\n状态码: {status}"
-        except Exception as e:
-            return f"{TOOL_ERROR}: {e}"
+        except (PlaywrightError, PlaywrightTimeoutError) as e:
+            return f"{TOOL_ERROR}: 导航到 {url} 失败 (timeout=30000ms): {e}"
 
     async def click(
         self, selector: str, timeout: int = 5000, page_id: Optional[int] = None
@@ -349,8 +394,8 @@ class WebBrowser:
             locator = self._get_locator(page, selector)
             await locator.click(timeout=timeout)
             return f"已点击元素: {selector}"
-        except Exception as e:
-            return f"{TOOL_ERROR}: {e}"
+        except (PlaywrightError, PlaywrightTimeoutError) as e:
+            return f"{TOOL_ERROR}: 点击元素 {selector} 失败 (timeout={timeout}ms): {e}"
 
     async def type_text(
         self,
@@ -368,8 +413,8 @@ class WebBrowser:
                 await locator.fill("", timeout=timeout)
             await locator.fill(text, timeout=timeout)
             return f"已在元素 {selector} 中输入文本"
-        except Exception as e:
-            return f"{TOOL_ERROR}: {e}"
+        except (PlaywrightError, PlaywrightTimeoutError) as e:
+            return f"{TOOL_ERROR}: 在元素 {selector} 中输入文本失败 (timeout={timeout}ms, clear={clear}): {e}"
 
     async def screenshot(
         self,
@@ -386,14 +431,24 @@ class WebBrowser:
                 screenshot_bytes = await locator.screenshot()
             else:
                 screenshot_bytes = await page.screenshot(full_page=full_page)
+        except (PlaywrightError, PlaywrightTimeoutError) as e:
+            target = f"元素 {selector}" if selector else "页面"
+            return [
+                {
+                    "type": "text",
+                    "text": f"{TOOL_ERROR}: 截取{target}截图失败 (full_page={full_page}): {e}",
+                }
+            ]
 
-            size_kb = len(screenshot_bytes) / 1024
+        size_kb = len(screenshot_bytes) / 1024
 
-            if save_path:
-                from PIL import Image
+        if save_path:
+            save_file = Path(save_path)
+            try:
                 from io import BytesIO
 
-                save_file = Path(save_path)
+                from PIL import Image
+
                 save_file.parent.mkdir(parents=True, exist_ok=True)
                 ext = save_file.suffix.lower()
                 if ext in (".jpg", ".jpeg", ".webp", ".bmp"):
@@ -401,22 +456,34 @@ class WebBrowser:
                     img.save(str(save_file))
                 else:
                     save_file.write_bytes(screenshot_bytes)
-                return f"截图已保存: {save_file.resolve()} ({size_kb:.0f} KB)"
+            except ImportError as e:
+                return [
+                    {
+                        "type": "text",
+                        "text": f"{TOOL_ERROR}: 保存截图需要 PIL (save_path={save_path}): {e}",
+                    }
+                ]
+            except OSError as e:
+                return [
+                    {
+                        "type": "text",
+                        "text": f"{TOOL_ERROR}: 写入截图文件失败 (save_path={save_path}): {e}",
+                    }
+                ]
+            return f"截图已保存: {save_file.resolve()} ({size_kb:.0f} KB)"
 
-            img_base64 = base64.b64encode(screenshot_bytes).decode("utf-8")
+        img_base64 = base64.b64encode(screenshot_bytes).decode("utf-8")
 
-            return [
-                {
-                    "type": "text",
-                    "text": f"{SYSTEM_PREFIX}[浏览器截图: {size_kb:.0f} KB]",
-                },
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/png;base64,{img_base64}"},
-                },
-            ]
-        except Exception as e:
-            return [{"type": "text", "text": f"{TOOL_ERROR}: {e}"}]
+        return [
+            {
+                "type": "text",
+                "text": f"{SYSTEM_PREFIX}[浏览器截图: {size_kb:.0f} KB]",
+            },
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:image/png;base64,{img_base64}"},
+            },
+        ]
 
     async def get_text(
         self, selector: Optional[str] = None, page_id: Optional[int] = None
@@ -432,8 +499,8 @@ class WebBrowser:
             if len(text) > 5000:
                 return text[:5000] + f"\n\n...已省略 {len(text) - 5000} 个字符"
             return text
-        except Exception as e:
-            return f"{TOOL_ERROR}: {e}"
+        except (PlaywrightError, PlaywrightTimeoutError) as e:
+            return f"{TOOL_ERROR}: 获取文本失败 (selector={selector!r}): {e}"
 
     async def get_html(
         self, selector: Optional[str] = None, page_id: Optional[int] = None
@@ -449,8 +516,8 @@ class WebBrowser:
             if len(html) > 5000:
                 return html[:5000] + f"\n\n...已省略 {len(html) - 5000} 个字符"
             return html
-        except Exception as e:
-            return f"{TOOL_ERROR}: {e}"
+        except (PlaywrightError, PlaywrightTimeoutError) as e:
+            return f"{TOOL_ERROR}: 获取 HTML 失败 (selector={selector!r}): {e}"
 
     async def get_attribute(
         self, selector: str, attribute: str, page_id: Optional[int] = None
@@ -461,8 +528,8 @@ class WebBrowser:
             locator = self._get_locator(page, selector)
             value = await locator.get_attribute(attribute)
             return value if value else f"元素 {selector} 没有属性 {attribute}"
-        except Exception as e:
-            return f"{TOOL_ERROR}: {e}"
+        except (PlaywrightError, PlaywrightTimeoutError) as e:
+            return f"{TOOL_ERROR}: 获取元素 {selector} 的属性 {attribute} 失败: {e}"
 
     async def get_interactive_elements(
         self,
@@ -485,27 +552,27 @@ class WebBrowser:
             scope: 限定 CSS 选择器范围(如 "#main", ".sidebar")。
         """
         page = self._get_page(page_id)
+        # 构建选择器列表
+        base_selectors = [
+            "a[href]",
+            "button",
+            "input",
+            "select",
+            "textarea",
+            '[role="button"]',
+            '[role="link"]',
+            '[role="tab"]',
+            "[onclick]",
+            "[tabindex]",
+        ]
+        if include_cursor_interactive:
+            base_selectors.append('[style*="cursor: pointer"]')
+            base_selectors.append('[style*="cursor:pointer"]')
+
+        # 范围元素的 CSS 选择器(用于 JS 中 querySelector)
+        scope_selector = scope if scope else None
+
         try:
-            # 构建选择器列表
-            base_selectors = [
-                "a[href]",
-                "button",
-                "input",
-                "select",
-                "textarea",
-                '[role="button"]',
-                '[role="link"]',
-                '[role="tab"]',
-                "[onclick]",
-                "[tabindex]",
-            ]
-            if include_cursor_interactive:
-                base_selectors.append('[style*="cursor: pointer"]')
-                base_selectors.append('[style*="cursor:pointer"]')
-
-            # 范围元素的 CSS 选择器(用于 JS 中 querySelector)
-            scope_selector = scope if scope else None
-
             elements = await page.evaluate(
                 """
                 (args) => {
@@ -598,52 +665,55 @@ class WebBrowser:
                     "depth": depth,
                 },
             )
+        except (PlaywrightError, PlaywrightTimeoutError) as e:
+            return (
+                f"{TOOL_ERROR}: 获取可交互元素失败 (scope={scope!r}, depth={depth}, "
+                f"include_cursor_interactive={include_cursor_interactive}, compact={compact}): {e}"
+            )
 
+        if not elements:
+            return "页面上没有找到可交互元素"
+
+        # compact 模式: 仅保留有文本/id/role 的元素
+        if compact:
+            elements = [
+                el
+                for el in elements
+                if el.get("text") or el.get("id") or el.get("role")
+            ]
             if not elements:
-                return "页面上没有找到可交互元素"
+                return "compact 模式下没有找到有文本内容的可交互元素"
 
-            # compact 模式: 仅保留有文本/id/role 的元素
-            if compact:
-                elements = [
-                    el
-                    for el in elements
-                    if el.get("text") or el.get("id") or el.get("role")
-                ]
-                if not elements:
-                    return "compact 模式下没有找到有文本内容的可交互元素"
+        # 格式化输出 — 不在此捕获:el['index'] 等 KeyError 属 JS 返回结构异常,是 bug,应外抛
+        lines = [f"找到 {len(elements)} 个可交互元素:\n"]
+        for el in elements:
+            parts = [f"[{el['index']}] <{el['tag']}>"]
+            if el["type"]:
+                parts.append(f"type={el['type']}")
+            if el["id"]:
+                parts.append(f"id={el['id']}")
+            if el["name"]:
+                parts.append(f"name={el['name']}")
+            if el["text"]:
+                parts.append(f"text=\"{el['text']}\"")
+            if el["placeholder"]:
+                parts.append(f"placeholder=\"{el['placeholder']}\"")
+            if el["href"]:
+                parts.append(f"href=\"{el['href']}\"")
+            if el["role"]:
+                parts.append(f"role={el['role']}")
+            if el["ariaLabel"]:
+                parts.append(f"aria=\"{el['ariaLabel']}\"")
+            parts.append(f"selector={el['selector']}")
+            parts.append(
+                f"pos=({el['rect']['x']},{el['rect']['y']}) {el['rect']['width']}x{el['rect']['height']}"
+            )
+            lines.append(" | ".join(parts))
 
-            # 格式化输出
-            lines = [f"找到 {len(elements)} 个可交互元素:\n"]
-            for el in elements:
-                parts = [f"[{el['index']}] <{el['tag']}>"]
-                if el["type"]:
-                    parts.append(f"type={el['type']}")
-                if el["id"]:
-                    parts.append(f"id={el['id']}")
-                if el["name"]:
-                    parts.append(f"name={el['name']}")
-                if el["text"]:
-                    parts.append(f"text=\"{el['text']}\"")
-                if el["placeholder"]:
-                    parts.append(f"placeholder=\"{el['placeholder']}\"")
-                if el["href"]:
-                    parts.append(f"href=\"{el['href']}\"")
-                if el["role"]:
-                    parts.append(f"role={el['role']}")
-                if el["ariaLabel"]:
-                    parts.append(f"aria=\"{el['ariaLabel']}\"")
-                parts.append(f"selector={el['selector']}")
-                parts.append(
-                    f"pos=({el['rect']['x']},{el['rect']['y']}) {el['rect']['width']}x{el['rect']['height']}"
-                )
-                lines.append(" | ".join(parts))
-
-            result = "\n".join(lines)
-            if len(result) > 50000:
-                return result[:50000] + f"\n\n...已省略 {len(result) - 50000} 个字符"
-            return result
-        except Exception as e:
-            return f"{TOOL_ERROR}: {e}"
+        result = "\n".join(lines)
+        if len(result) > 50000:
+            return result[:50000] + f"\n\n...已省略 {len(result) - 50000} 个字符"
+        return result
 
     async def wait_for(
         self,
@@ -704,7 +774,22 @@ class WebBrowser:
             await page.wait_for_load_state("load", timeout=timeout)
             return "页面已加载完成"
 
-        except Exception as e:
+        except (PlaywrightError, PlaywrightTimeoutError) as e:
+            # Playwright 超时(TimeoutError 是 Error 子类)与页面/元素层面错误
+            cond = (
+                f"js_condition={js_condition!r}"
+                if js_condition is not None
+                else f"load_state={load_state!r}"
+                if load_state is not None
+                else f"url={url!r}"
+                if url is not None
+                else f"text={text!r}"
+                if text is not None
+                else f"selector={selector!r}"
+            )
+            return f"{TOOL_ERROR}: 等待条件失败 ({cond}, state={state}, timeout={timeout}ms): {e}"
+        except TimeoutError as e:
+            # 轮询辅助方法抛出的内置 TimeoutError(已含上下文)
             return f"{TOOL_ERROR}: {e}"
 
     async def evaluate(
@@ -723,17 +808,23 @@ class WebBrowser:
             arg: 传递给 JS 表达式的参数,在 JS 中通过 arguments[0] 访问。
         """
         page = self._get_page(page_id)
-        try:
-            if is_base64:
+        if is_base64:
+            try:
                 expression = base64.b64decode(expression).decode("utf-8")
+            except (binascii.Error, UnicodeDecodeError, ValueError) as e:
+                return (
+                    f"{TOOL_ERROR}: expression 不是合法的 base64/UTF-8 "
+                    f"(is_base64=True, 原始长度={len(expression)}): {e}"
+                )
 
+        try:
             if arg is not None:
                 result = await page.evaluate(expression, arg)
             else:
                 result = await page.evaluate(expression)
             return str(result) if result is not None else "执行成功(无返回值)"
-        except Exception as e:
-            return f"{TOOL_ERROR}: {e}"
+        except (PlaywrightError, PlaywrightTimeoutError) as e:
+            return f"{TOOL_ERROR}: JS 执行失败 (expression={expression[:200]!r}, is_base64={is_base64}): {e}"
 
     async def scroll(
         self, direction: str = "down", amount: int = 500, page_id: Optional[int] = None
@@ -745,8 +836,8 @@ class WebBrowser:
             await page.mouse.wheel(0, delta)
             direction_cn = "下" if direction == "down" else "上"
             return f"已向{direction_cn}滚动 {amount} 像素"
-        except Exception as e:
-            return f"{TOOL_ERROR}: {e}"
+        except (PlaywrightError, PlaywrightTimeoutError) as e:
+            return f"{TOOL_ERROR}: 页面滚动失败 (direction={direction}, amount={amount}): {e}"
 
     async def back(self, page_id: Optional[int] = None) -> str:
         """浏览器后退。"""
@@ -755,8 +846,8 @@ class WebBrowser:
             await page.go_back()
             title = await page.title()
             return f"已后退,当前页面: {title}"
-        except Exception as e:
-            return f"{TOOL_ERROR}: {e}"
+        except (PlaywrightError, PlaywrightTimeoutError) as e:
+            return f"{TOOL_ERROR}: 浏览器后退失败: {e}"
 
     async def forward(self, page_id: Optional[int] = None) -> str:
         """浏览器前进。"""
@@ -765,8 +856,8 @@ class WebBrowser:
             await page.go_forward()
             title = await page.title()
             return f"已前进,当前页面: {title}"
-        except Exception as e:
-            return f"{TOOL_ERROR}: {e}"
+        except (PlaywrightError, PlaywrightTimeoutError) as e:
+            return f"{TOOL_ERROR}: 浏览器前进失败: {e}"
 
     async def reload(self, page_id: Optional[int] = None) -> str:
         """刷新当前页面。"""
@@ -775,8 +866,8 @@ class WebBrowser:
             await page.reload()
             title = await page.title()
             return f"已刷新页面: {title}"
-        except Exception as e:
-            return f"{TOOL_ERROR}: {e}"
+        except (PlaywrightError, PlaywrightTimeoutError) as e:
+            return f"{TOOL_ERROR}: 刷新页面失败: {e}"
 
     async def get_url(self, page_id: Optional[int] = None) -> str:
         """获取当前页面 URL。"""
@@ -789,8 +880,8 @@ class WebBrowser:
         try:
             title = await page.title()
             return f"页面标题: {title}"
-        except Exception as e:
-            return f"{TOOL_ERROR}: {e}"
+        except (PlaywrightError, PlaywrightTimeoutError) as e:
+            return f"{TOOL_ERROR}: 获取页面标题失败: {e}"
 
     async def switch_mode(self, headless: bool) -> str:
         """切换浏览器模式,保留所有页面 URL 和登录状态。
@@ -865,8 +956,8 @@ class WebBrowser:
         try:
             await page.keyboard.press(key)
             return f"已按下按键: {key}"
-        except Exception as e:
-            return f"{TOOL_ERROR}: {e}"
+        except (PlaywrightError, PlaywrightTimeoutError) as e:
+            return f"{TOOL_ERROR}: 按下按键 {key} 失败: {e}"
 
     async def select_option(
         self, selector: str, value: str, page_id: Optional[int] = None
@@ -877,8 +968,8 @@ class WebBrowser:
             locator = self._get_locator(page, selector)
             await locator.select_option(value)
             return f"已选择选项: {value}"
-        except Exception as e:
-            return f"{TOOL_ERROR}: {e}"
+        except (PlaywrightError, PlaywrightTimeoutError) as e:
+            return f"{TOOL_ERROR}: 选择选项失败 (selector={selector!r}, value={value!r}): {e}"
 
     async def check(
         self, selector: str, checked: bool = True, page_id: Optional[int] = None
@@ -890,8 +981,8 @@ class WebBrowser:
             await locator.check() if checked else await locator.uncheck()
             action = "勾选" if checked else "取消勾选"
             return f"已{action}元素: {selector}"
-        except Exception as e:
-            return f"{TOOL_ERROR}: {e}"
+        except (PlaywrightError, PlaywrightTimeoutError) as e:
+            return f"{TOOL_ERROR}: 勾选操作失败 (selector={selector!r}, checked={checked}): {e}"
 
     async def hover(self, selector: str, page_id: Optional[int] = None) -> str:
         """鼠标悬停在元素上。"""
@@ -900,8 +991,8 @@ class WebBrowser:
             locator = self._get_locator(page, selector)
             await locator.hover()
             return f"已悬停在元素: {selector}"
-        except Exception as e:
-            return f"{TOOL_ERROR}: {e}"
+        except (PlaywrightError, PlaywrightTimeoutError) as e:
+            return f"{TOOL_ERROR}: 鼠标悬停元素 {selector} 失败: {e}"
 
     async def drag(
         self, source: str, target: str, page_id: Optional[int] = None
@@ -913,8 +1004,8 @@ class WebBrowser:
             target_locator = self._get_locator(page, target)
             await source_locator.drag_to(target_locator)
             return f"已将 {source} 拖拽到 {target}"
-        except Exception as e:
-            return f"{TOOL_ERROR}: {e}"
+        except (PlaywrightError, PlaywrightTimeoutError) as e:
+            return f"{TOOL_ERROR}: 拖拽失败 (source={source!r}, target={target!r}): {e}"
 
     async def dblclick(
         self, selector: str, timeout: int = 5000, page_id: Optional[int] = None
@@ -925,8 +1016,8 @@ class WebBrowser:
             locator = self._to_locator(page, selector)
             await locator.dblclick(timeout=timeout)
             return f"已双击元素: {selector}"
-        except Exception as e:
-            return f"{TOOL_ERROR}: {e}"
+        except (PlaywrightError, PlaywrightTimeoutError) as e:
+            return f"{TOOL_ERROR}: 双击元素 {selector} 失败 (timeout={timeout}ms): {e}"
 
     async def focus(self, selector: str, page_id: Optional[int] = None) -> str:
         """聚焦到指定元素。"""
@@ -935,8 +1026,8 @@ class WebBrowser:
             locator = self._to_locator(page, selector)
             await locator.focus()
             return f"已聚焦到元素: {selector}"
-        except Exception as e:
-            return f"{TOOL_ERROR}: {e}"
+        except (PlaywrightError, PlaywrightTimeoutError) as e:
+            return f"{TOOL_ERROR}: 聚焦元素 {selector} 失败: {e}"
 
     async def scroll_into_view(
         self, selector: str, page_id: Optional[int] = None
@@ -947,8 +1038,8 @@ class WebBrowser:
             locator = self._to_locator(page, selector)
             await locator.scroll_into_view_if_needed()
             return f"已将元素 {selector} 滚动到可见区域"
-        except Exception as e:
-            return f"{TOOL_ERROR}: {e}"
+        except (PlaywrightError, PlaywrightTimeoutError) as e:
+            return f"{TOOL_ERROR}: 滚动元素 {selector} 到可见区域失败: {e}"
 
     async def key_down(self, key: str, page_id: Optional[int] = None) -> str:
         """按住键盘按键不放。"""
@@ -956,8 +1047,8 @@ class WebBrowser:
         try:
             await page.keyboard.down(key)
             return f"已按住按键: {key}"
-        except Exception as e:
-            return f"{TOOL_ERROR}: {e}"
+        except (PlaywrightError, PlaywrightTimeoutError) as e:
+            return f"{TOOL_ERROR}: 按住按键 {key} 失败: {e}"
 
     async def key_up(self, key: str, page_id: Optional[int] = None) -> str:
         """松开键盘按键。"""
@@ -965,8 +1056,8 @@ class WebBrowser:
         try:
             await page.keyboard.up(key)
             return f"已松开按键: {key}"
-        except Exception as e:
-            return f"{TOOL_ERROR}: {e}"
+        except (PlaywrightError, PlaywrightTimeoutError) as e:
+            return f"{TOOL_ERROR}: 松开按键 {key} 失败: {e}"
 
     async def keyboard_type(self, text: str, page_id: Optional[int] = None) -> str:
         """使用真实按键事件逐字输入文本。适用于需要触发 keydown/keyup 事件的场景。"""
@@ -974,8 +1065,8 @@ class WebBrowser:
         try:
             await page.keyboard.type(text)
             return f"已通过键盘输入: {text}"
-        except Exception as e:
-            return f"{TOOL_ERROR}: {e}"
+        except (PlaywrightError, PlaywrightTimeoutError) as e:
+            return f"{TOOL_ERROR}: 键盘输入失败 (text={text!r}): {e}"
 
     async def insert_text(
         self,
@@ -986,18 +1077,28 @@ class WebBrowser:
         """插入文本(不触发按键事件)。适用于 input/textarea 的快速填充。
 
         不提供 selector 时向当前聚焦元素插入文本;提供时先聚焦到指定元素再插入。
+        目标必须是可编辑元素(input/textarea/contenteditable)。
         """
         page = self._get_page(page_id)
         try:
             if selector:
                 locator = self._to_locator(page, selector)
+                # focus() 对不可聚焦元素是 no-op —— 此时 keyboard.insert_text
+                # 会写进"当前拥有焦点"的元素,造成数据错位。必须先确认可编辑。
+                if not await locator.is_editable():
+                    return (
+                        f"{TOOL_ERROR}: 元素 {selector} 不可编辑"
+                        f"(需为 input/textarea/contenteditable),文本未写入。"
+                        f"若目标是普通文本节点请改用 browser_evaluate;"
+                        f"若要输入到已有输入框请用 browser_type"
+                    )
                 await locator.focus()
             await page.keyboard.insert_text(text)
             if selector:
                 return f"已向元素 {selector} 插入文本: {text}"
             return f"已插入文本: {text}"
-        except Exception as e:
-            return f"{TOOL_ERROR}: {e}"
+        except (PlaywrightError, PlaywrightTimeoutError) as e:
+            return f"{TOOL_ERROR}: 插入文本失败 (selector={selector!r}, text={text!r}): {e}"
 
     async def get_value(
         self, selector: Optional[str] = None, page_id: Optional[int] = None
@@ -1011,8 +1112,8 @@ class WebBrowser:
             else:
                 value = await page.evaluate("document.activeElement?.value || ''")
             return f"元素值: {value}" if value else "元素值为空"
-        except Exception as e:
-            return f"{TOOL_ERROR}: {e}"
+        except (PlaywrightError, PlaywrightTimeoutError) as e:
+            return f"{TOOL_ERROR}: 获取元素值失败 (selector={selector!r}): {e}"
 
     async def get_count(self, selector: str, page_id: Optional[int] = None) -> str:
         """统计匹配选择器的元素数量。"""
@@ -1021,8 +1122,8 @@ class WebBrowser:
             locator = self._to_locator(page, selector)
             count = await locator.count()
             return f'匹配 "{selector}" 的元素数量: {count}'
-        except Exception as e:
-            return f"{TOOL_ERROR}: {e}"
+        except (PlaywrightError, PlaywrightTimeoutError) as e:
+            return f"{TOOL_ERROR}: 统计元素数量失败 (selector={selector!r}): {e}"
 
     async def get_bounding_box(
         self, selector: str, page_id: Optional[int] = None
@@ -1038,8 +1139,8 @@ class WebBrowser:
                 f"边界框: x={box['x']:.0f}, y={box['y']:.0f}, "
                 f"width={box['width']:.0f}, height={box['height']:.0f}"
             )
-        except Exception as e:
-            return f"{TOOL_ERROR}: {e}"
+        except (PlaywrightError, PlaywrightTimeoutError) as e:
+            return f"{TOOL_ERROR}: 获取元素 {selector} 边界框失败: {e}"
 
     async def get_styles(self, selector: str, page_id: Optional[int] = None) -> str:
         """获取元素的计算样式。"""
@@ -1066,14 +1167,15 @@ class WebBrowser:
             """,
                 selector,
             )
-            if styles is None:
-                return f"{TOOL_ERROR}: 元素 {selector} 不存在"
-            lines = [f"元素 {selector} 的计算样式:"]
-            for prop, value in styles.items():
-                lines.append(f"  {prop}: {value}")
-            return "\n".join(lines)
-        except Exception as e:
-            return f"{TOOL_ERROR}: {e}"
+        except (PlaywrightError, PlaywrightTimeoutError) as e:
+            return f"{TOOL_ERROR}: 获取元素样式失败 (selector={selector!r}): {e}"
+        if styles is None:
+            return f"{TOOL_ERROR}: 元素 {selector} 不存在"
+        # 格式化不在此捕获:styles.items() 的 AttributeError 属 bug,应外抛
+        lines = [f"元素 {selector} 的计算样式:"]
+        for prop, value in styles.items():
+            lines.append(f"  {prop}: {value}")
+        return "\n".join(lines)
 
     def _get_page(self, page_id: Optional[int] = None):
         """获取指定页面,未指定则返回活动页面。"""
@@ -1115,7 +1217,8 @@ class WebBrowser:
                 body_text = await page.inner_text("body")
                 if text in body_text:
                     return f'页面已出现文本: "{text}"'
-            except Exception as e:
+            except PlaywrightError as e:
+                # 页面导航/加载中可能瞬时失败,继续轮询
                 logger.debug("轮询等待文本时获取 body 失败: %s", e)
             await asyncio.sleep(poll_interval)
             elapsed += poll_interval
@@ -1157,10 +1260,14 @@ class WebBrowser:
         while elapsed < timeout_sec:
             try:
                 result = await page.evaluate(expression)
-                if result:
-                    return f"JS 条件已满足: {expression} = {result}"
-            except Exception as e:
-                logger.debug("轮询 JS 条件执行失败: %s", e)
+            except (PlaywrightError, PlaywrightTimeoutError) as e:
+                # JS 表达式错误属参数校验失败,立即返回真实原因,不吞进轮询直到超时
+                return (
+                    f"{TOOL_ERROR}: JS 条件执行失败 "
+                    f"(expression={expression!r}, timeout={timeout}ms): {e}"
+                )
+            if result:
+                return f"JS 条件已满足: {expression} = {result}"
             await asyncio.sleep(poll_interval)
             elapsed += poll_interval
         raise TimeoutError(f'等待 JS 条件 "{expression}" 超时 ({timeout}ms)')

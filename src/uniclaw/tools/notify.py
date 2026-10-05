@@ -39,8 +39,8 @@ async def _notify_windows(title: str, message: str) -> str:
         )
     except FileNotFoundError:
         return "找不到 powershell 可执行文件"
-    except Exception as e:
-        return f"调用 PowerShell 异常: {e}"
+    except OSError as e:
+        return f"调用 PowerShell 异常: {type(e).__name__}: {e}"
     if r.timed_out:
         return "PowerShell 超时(15 秒无响应)"
     if r.code != 0:
@@ -62,8 +62,8 @@ async def _notify_macos(title: str, message: str) -> str:
         )
     except FileNotFoundError:
         return "找不到 osascript 可执行文件"
-    except Exception as e:
-        return f"调用 osascript 异常: {e}"
+    except OSError as e:
+        return f"调用 osascript 异常: {type(e).__name__}: {e}"
     if r.timed_out:
         return "osascript 超时(10 秒无响应)"
     if r.code != 0:
@@ -85,8 +85,8 @@ async def _notify_linux(title: str, message: str) -> str:
         )
     except FileNotFoundError:
         return "找不到 notify-send,请先安装: sudo apt install libnotify-bin"
-    except Exception as e:
-        return f"调用 notify-send 异常: {e}"
+    except OSError as e:
+        return f"调用 notify-send 异常: {type(e).__name__}: {e}"
     if r.timed_out:
         return "notify-send 超时(10 秒无响应)"
     if r.code != 0:

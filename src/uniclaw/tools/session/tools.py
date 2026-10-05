@@ -154,8 +154,11 @@ async def session_delete(
                 from uniclaw.webui.ws import notify_session_deleted
 
                 await notify_session_deleted(session_id, config.root_dir)
-            except Exception as e:
-                await warn(f"通知前端会话删除失败: {e}", config)
+            except (OSError, RuntimeError) as e:
+                await warn(
+                    f"通知前端会话删除失败(会话ID: {session_id}): {type(e).__name__}: {e}",
+                    config,
+                )
         return f"✅ 成功删除会话 '{title}'\n会话ID: {session_id}"
     else:
         await err(f"✗ 删除会话失败: {title}", config)
@@ -195,8 +198,15 @@ async def session_update_title(
 
     config = tool_runtime.config
 
-    # 执行更新
-    success = SessionManager.update_title(session_id, title)
+    # 执行更新(write_text / _save_metadata 在 SessionManager 内部 try 之外,OSError 会上抛)
+    try:
+        success = SessionManager.update_title(session_id, title)
+    except OSError as e:
+        await err(f"✗ 更新会话标题失败: {session_id}", config)
+        return (
+            f"{TOOL_ERROR}: 更新会话标题时写入文件失败"
+            f"(会话ID: {session_id}, 新标题: {title}): {type(e).__name__}: {e}"
+        )
 
     if success:
         await ok(f"✓ 已更新会话标题: {old_title} -> {title}", config)

@@ -207,8 +207,15 @@ def get_history_range(
         return "当前会话没有历史消息。"
 
     # 类型安全(LLM 可能传字符串)
-    start = int(start) if start else 0
-    end = int(end) if end else total
+    try:
+        start_i = int(start) if start else 0
+        end_i = int(end) if end else total
+    except (TypeError, ValueError):
+        return (
+            f"{TOOL_ERROR}: start/end 必须是整数"
+            f"(收到 start={start!r}, end={end!r})"
+        )
+    start, end = start_i, end_i
 
     # 边界修正
     start = max(0, start)

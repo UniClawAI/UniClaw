@@ -723,3 +723,48 @@ class TestHttpDownloader:
         # 校验失败后临时文件应被删除, 最终文件不存在
         assert not dl._tmp_file.exists()
         assert not (tmp_path / "file").exists()
+
+
+class TestRemoveTaskNoArg:
+    """http_download_remove 缺 task_id 的处理。
+
+    回归测试: task_id 曾是必填位置参数,无参调用直接抛
+    TypeError("takes exactly 1 positional argument") —— 参数校验失败
+    应返回带 TOOL_ERROR 的说明,而不是 Python 异常。
+    """
+
+    @pytest.mark.asyncio
+    async def test_no_arg_returns_tool_error(self):
+        """无参调用返回 TOOL_ERROR, 不抛 TypeError。"""
+        from uniclaw.tools.download.http_tools import http_download_remove
+        from uniclaw.utils.constants import TOOL_ERROR
+
+        out = await http_download_remove()
+        assert isinstance(out, str)
+        assert out.startswith(TOOL_ERROR)
+        assert "task_id" in out
+
+    @pytest.mark.asyncio
+    async def test_empty_string_returns_tool_error(self):
+        """显式传空串同样报错, 且给出查 ID 的指引。"""
+        from uniclaw.tools.download.http_tools import http_download_remove
+        from uniclaw.utils.constants import TOOL_ERROR
+
+        out = await http_download_remove(task_id="")
+        assert out.startswith(TOOL_ERROR)
+        assert "http_download_status" in out
+
+    @pytest.mark.asyncio
+    async def test_with_task_id_delegates_to_manager(self):
+        """给了 task_id 就转交 manager, 不再校验。"""
+        from uniclaw.tools.download import http_tools as ht
+
+        with patch.object(ht, "get_http_download_manager") as mock_get:
+            mock_mgr = MagicMock()
+            mock_mgr.remove_task.return_value = "任务 t1 已删除。"
+            mock_get.return_value = mock_mgr
+
+            out = await ht.http_download_remove(task_id="t1")
+
+        assert out == "任务 t1 已删除。"
+        mock_mgr.remove_task.assert_called_once_with("t1")

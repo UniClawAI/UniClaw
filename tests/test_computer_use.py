@@ -145,18 +145,39 @@ def _screenshot_mock(width=320, height=240, left=0, top=0):
     return sct
 
 
+def _pa_mock():
+    """构造 pyautogui mock,异常类必须是真实异常类(否则 except 子句求值会 TypeError)。"""
+    pa = MagicMock()
+
+    class FailSafeException(Exception):
+        pass
+
+    class PyAutoGUIException(Exception):
+        pass
+
+    class ImageNotFoundException(Exception):
+        pass
+
+    pa.FailSafeException = FailSafeException
+    pa.PyAutoGUIException = PyAutoGUIException
+    pa.ImageNotFoundException = ImageNotFoundException
+    pa.isValidKey = MagicMock(return_value=True)
+    return pa
+
+
 class TestScreenshotImpl:
     """_screenshot_impl 测试。"""
 
     def test_invalid_region(self):
-        """区域格式无效返回错误块。"""
+        """区域格式无效返回 TOOL_ERROR 文本并回显 region 原值。"""
         with patch("uniclaw.tools.computer_use.tools.mss.mss") as mss_mock:
             sct = _screenshot_mock()
             mss_mock.return_value.__enter__.return_value = sct
             result = cu_mod._screenshot_impl("abc")
-        assert isinstance(result, list)
-        assert result[0]["type"] == "text"
-        assert "区域格式无效" in result[0]["text"]
+        assert isinstance(result, str)
+        assert result.startswith(TOOL_ERROR)
+        assert "区域格式无效" in result
+        assert "abc" in result
         sct.grab.assert_not_called()
 
     def test_full_screen_base64(self):
@@ -378,7 +399,7 @@ class TestLocateOnScreen:
     @pytest.mark.asyncio
     async def test_found(self):
         """找到图像返回中心坐标。"""
-        pa = MagicMock()
+        pa = _pa_mock()
         location = MagicMock()
         pa.locateOnScreen.return_value = location
         center = MagicMock()
@@ -391,21 +412,107 @@ class TestLocateOnScreen:
 
     @pytest.mark.asyncio
     async def test_not_found(self):
-        """未找到。"""
-        pa = MagicMock()
+        """未找到时回显 image_path/confidence。"""
+        pa = _pa_mock()
         pa.locateOnScreen.return_value = None
         with patch("uniclaw.tools.computer_use.tools._get_pyautogui", return_value=pa):
-            result = await cu_mod.cu_locate_on_screen("/img.png")
-        assert result == f"{TOOL_ERROR}: 未在屏幕上找到指定图像"
+            result = await cu_mod.cu_locate_on_screen("/img.png", confidence=0.9)
+        assert result.startswith(TOOL_ERROR)
+        assert "未在屏幕上找到指定图像" in result
+        assert "/img.png" in result
+        assert "0.9" in result
 
     @pytest.mark.asyncio
-    async def test_exception(self):
-        """定位异常返回错误。"""
-        pa = MagicMock()
+    async def test_image_file_missing(self):
+        """图像文件不存在(OSError)转 TOOL_ERROR 并回显参数。"""
+        pa = _pa_mock()
+        pa.locateOnScreen.side_effect = OSError("no such file")
+        with patch("uniclaw.tools.computer_use.tools._get_pyautogui", return_value=pa):
+            result = await cu_mod.cu_locate_on_screen("/img.png", confidence=0.9)
+        assert result.startswith(TOOL_ERROR)
+        assert "/img.png" in result
+        assert "0.9" in result
+        assert "no such file" in result
+
+    def test_bug_exception_propagates(self):
+        """编程错误(RuntimeError)不吞,原样抛给 Tool.__call__ 兜底。"""
+        pa = _pa_mock()
         pa.locateOnScreen.side_effect = RuntimeError("boom")
         with patch("uniclaw.tools.computer_use.tools._get_pyautogui", return_value=pa):
-            result = await cu_mod.cu_locate_on_screen("/img.png")
-        assert result == f"{TOOL_ERROR}: boom"
+            with pytest.raises(RuntimeError, match="boom"):
+                # .func 是 @tool 剥掉外层兜底后的原始函数
+                cu_mod.cu_locate_on_screen.func("/img.png")
+
+
+class TestNonBugFailures:
+    """非 bug 失败路径 — 必须返回带参数上下文的 TOOL_ERROR,而不是裸抛。"""
+
+    @pytest.mark.asyncio
+    async def test_mouse_move_failsafe(self):
+        """FailSafe 保护触发返回 TOOL_ERROR 并回显坐标。"""
+        pa = _pa_mock()
+        pa.moveTo.side_effect = pa.FailSafeException("fail-safe")
+        with patch("uniclaw.tools.computer_use.tools._get_pyautogui", return_value=pa):
+            result = await cu_mod.cu_mouse_move(10, 20)
+        assert result.startswith(TOOL_ERROR)
+        assert "FailSafe" in result
+        assert "x=10" in result
+        assert "y=20" in result
+
+    @pytest.mark.asyncio
+    async def test_mouse_click_bad_button(self):
+        """非法 button 名回显 button 原值。"""
+        pa = _pa_mock()
+        pa.click.side_effect = pa.PyAutoGUIException("bad button")
+        with patch("uniclaw.tools.computer_use.tools._get_pyautogui", return_value=pa):
+            result = await cu_mod.cu_mouse_click(10, 20, button="left1")
+        assert result.startswith(TOOL_ERROR)
+        assert "left1" in result
+        assert "bad button" in result
+
+    @pytest.mark.asyncio
+    async def test_keyboard_press_invalid_key(self):
+        """非法按键名(如 shfit)返回 TOOL_ERROR 并回显 keys 原值。"""
+        pa = _pa_mock()
+        pa.isValidKey.side_effect = lambda k: k != "shfit"
+        with patch("uniclaw.tools.computer_use.tools._get_pyautogui", return_value=pa):
+            result = await cu_mod.cu_keyboard_press("ctrl+shfit")
+        assert result.startswith(TOOL_ERROR)
+        assert "shfit" in result
+        assert "ctrl+shfit" in result
+        pa.hotkey.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_keyboard_key_down_invalid_key(self):
+        """非法按键名 key_down 返回 TOOL_ERROR 并回显 key 原值。"""
+        pa = _pa_mock()
+        pa.isValidKey.return_value = False
+        with patch("uniclaw.tools.computer_use.tools._get_pyautogui", return_value=pa):
+            result = await cu_mod.cu_keyboard_key_down("shfit")
+        assert result.startswith(TOOL_ERROR)
+        assert "shfit" in result
+        pa.keyDown.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_keyboard_type_non_ascii(self):
+        """非 ASCII 文本拒绝输入,回显 text 原值并指向 unicode 工具。"""
+        pa = _pa_mock()
+        with patch("uniclaw.tools.computer_use.tools._get_pyautogui", return_value=pa):
+            result = await cu_mod.cu_keyboard_type("你好")
+        assert result.startswith(TOOL_ERROR)
+        assert "ASCII" in result
+        assert "你好" in result
+        assert "cu_keyboard_type_unicode" in result
+        pa.typewrite.assert_not_called()
+
+    def test_bug_exception_not_swallowed(self):
+        """编程错误(AttributeError)不在工具内捕获,原样抛给 Tool.__call__ 兜底。"""
+        pa = _pa_mock()
+        pa.moveTo.side_effect = AttributeError("bug")
+        with patch("uniclaw.tools.computer_use.tools._get_pyautogui", return_value=pa):
+            with pytest.raises(AttributeError, match="bug"):
+                # .func 是 @tool 剥掉外层兜底后的原始函数
+                cu_mod.cu_mouse_move.func(1, 2)
 
 
 class TestToolLists:

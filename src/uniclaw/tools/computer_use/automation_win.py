@@ -6,12 +6,19 @@ import asyncio
 import logging
 from typing import Optional
 
+import comtypes
 import uiautomation as auto
 
 logger = logging.getLogger(__name__)
 from uniclaw.tools.base import tool
 
 from uniclaw.utils.constants import TOOL_ERROR
+
+# UIA/COM 外部失败: 元素中途消亡、COM 断开、FindControl 超时、Win32 错误。
+# 不含 KeyError/IndexError/AttributeError/TypeError —— 那些是编程错误,原样
+# 抛出交给 Tool.__call__ 兜底记录(含入参+堆栈)。
+# 注意不能写 LookupError: 它是 KeyError/IndexError 的基类,会把编程错误一起吞掉。
+_UIA_ERRORS = (comtypes.COMError, OSError)
 
 # ControlType 数值 → 可读名称(去掉 "Control" 后缀)
 _TYPE_NAMES = {
@@ -147,12 +154,18 @@ def get_interactive_elements(
                 lambda ctrl, depth: scope_name in (ctrl.Name or ""),
                 maxDepth=max_depth,
             )
-            if scope:
-                root = scope
-            else:
-                return f"{TOOL_ERROR}: 未找到名为 '{scope_name}' 的元素"
-        except Exception as e:
-            return f"{TOOL_ERROR}: 查找窗口失败: {e}"
+        except _UIA_ERRORS as e:
+            return (
+                f"{TOOL_ERROR}: 查找窗口失败(scope_name={scope_name!r}, "
+                f"max_depth={max_depth}): {e}"
+            )
+        if scope:
+            root = scope
+        else:
+            return (
+                f"{TOOL_ERROR}: 未找到名为 {scope_name!r} 的元素"
+                f"(scope_name={scope_name!r}, max_depth={max_depth})"
+            )
 
     # 遍历 UI 树 — 返回所有控件
     elements = []
@@ -217,8 +230,11 @@ def get_interactive_elements(
                     "window": window_name,
                 }
             )
-    except Exception as e:
-        return f"{TOOL_ERROR}: 遍历 UI 树失败: {e}"
+    except _UIA_ERRORS as e:
+        return (
+            f"{TOOL_ERROR}: 遍历 UI 树失败(scope_name={scope_name!r}, "
+            f"max_depth={max_depth}): {e}"
+        )
 
     if not elements:
         return "未找到可交互元素"
@@ -438,12 +454,18 @@ def find_element(
 
     try:
         ctrl = auto.FindControl(root, _match, maxDepth=20)
-        if not ctrl:
-            return f"{TOOL_ERROR}: 未找到匹配的元素"
-
-        return _format_element_detail(ctrl)
-    except Exception as e:
-        return f"{TOOL_ERROR}: 查找失败: {e}"
+    except _UIA_ERRORS as e:
+        return (
+            f"{TOOL_ERROR}: 查找元素失败(name={name!r}, automation_id={automation_id!r}, "
+            f"control_type={control_type!r}): {e}"
+        )
+    if not ctrl:
+        return (
+            f"{TOOL_ERROR}: 未找到匹配的元素(name={name!r}, "
+            f"automation_id={automation_id!r}, control_type={control_type!r})"
+        )
+    # 格式化中的编程错误(KeyError/TypeError 等)不捕获,原样抛出
+    return _format_element_detail(ctrl)
 
 
 async def interact(
@@ -483,13 +505,19 @@ async def interact(
 
         try:
             ctrl = auto.FindControl(root, _match, maxDepth=20)
-        except Exception as e:
-            logger.debug("查找控件失败: %s", e)
-            ctrl = None
+        except _UIA_ERRORS as e:
+            return (
+                f"{TOOL_ERROR}: 查找元素失败(name={name!r}, automation_id={automation_id!r}, "
+                f"control_type={control_type!r}, action={action!r}): {e}"
+            )
 
     # UIA 未找到,降级到坐标
     if ctrl is None:
-        return f"{TOOL_ERROR}: 未找到匹配的元素"
+        return (
+            f"{TOOL_ERROR}: 未找到匹配的元素(name={name!r}, "
+            f"automation_id={automation_id!r}, control_type={control_type!r}, "
+            f"action={action!r})"
+        )
 
     # 执行 UIA 操作
     try:
@@ -533,8 +561,12 @@ async def interact(
             return (
                 f"{TOOL_ERROR}: 不支持的操作 '{action}',可选: click/invoke/focus/type"
             )
-    except Exception as e:
-        return f"{TOOL_ERROR}: 操作失败: {e}"
+    except _UIA_ERRORS as e:
+        # 失败路径比成功路径多回显参数: 成功只报元素标签,失败还要能定位是哪次调用
+        return (
+            f"{TOOL_ERROR}: 操作失败(action={action!r}, 元素: {_element_label(ctrl)}, "
+            f"name={name!r}, automation_id={automation_id!r}, type_text={type_text!r}): {e}"
+        )
 
 
 def _element_label(ctrl) -> str:

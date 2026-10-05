@@ -14,6 +14,11 @@ logger = logging.getLogger(__name__)
 DEFAULT_MAX_DEPTH = 5
 MAX_ELEMENTS = 200
 
+# AX/objc 外部失败: 辅助功能权限、元素消亡、框架/系统调用异常。
+# 不含 KeyError/AttributeError/TypeError —— 那些是编程错误,原样抛出交给
+# Tool.__call__ 兜底记录(含入参+堆栈)。
+_AX_ERRORS = (OSError, RuntimeError)
+
 # 懒加载 Accessibility 框架
 _ax = None
 
@@ -163,9 +168,13 @@ def get_interactive_elements(
         return result
 
     except ImportError as e:
+        # _get_ax 已带 pyobjc 安装指引,原样透出
         return f"{TOOL_ERROR}: {e}"
-    except Exception as e:
-        return f"{TOOL_ERROR}: {e}"
+    except _AX_ERRORS as e:
+        return (
+            f"{TOOL_ERROR}: 获取元素失败(max_depth={max_depth}): "
+            f"{type(e).__name__}: {e}"
+        )
 
 
 def find_element(
@@ -187,12 +196,13 @@ def find_element(
             return f"{TOOL_ERROR}: 未找到名为 '{name}' 的元素"
 
         el = results[0]
+        # 格式化中的编程错误(KeyError/TypeError 等)不捕获,原样抛出
         return _format_detail(el)
 
     except ImportError as e:
         return f"{TOOL_ERROR}: {e}"
-    except Exception as e:
-        return f"{TOOL_ERROR}: {e}"
+    except _AX_ERRORS as e:
+        return f"{TOOL_ERROR}: 查找元素失败(name={name!r}): {type(e).__name__}: {e}"
 
 
 def _find_recursive(element, name: str, depth: int, max_depth: int, results: list):
@@ -258,8 +268,6 @@ async def interact(
     y: Optional[int] = None,
 ) -> str:
     """与 UI 元素交互。"""
-    import pyautogui
-
     # 查找元素
     el = None
     if name:
@@ -270,15 +278,19 @@ async def interact(
                 _find_recursive(app, name, 0, 10, results)
                 if results:
                     el = results[0]
-        except Exception as e:
-            logger.debug("macOS 查找 UI 元素失败: %s", e)
+        except _AX_ERRORS as e:
+            # 查找失败降级到坐标,不是终止条件
+            logger.debug("macOS 查找 UI 元素失败(name=%r): %s", name, e)
             el = None
 
     # 降级到坐标
     if el is None:
         if x is not None and y is not None:
             return await _fallback(x, y, action, type_text)
-        return f"{TOOL_ERROR}: 未找到元素,且未提供降级坐标"
+        return (
+            f"{TOOL_ERROR}: 未找到元素且未提供降级坐标"
+            f"(name={name!r}, action={action!r}, x={x}, y={y})"
+        )
 
     try:
         ax = _get_ax()
@@ -296,28 +308,56 @@ async def interact(
                 return f"{TOOL_ERROR}: action='type' 时必须提供 type_text"
             ax.AXUIElementPerformAction(el, "AXPress")
             await asyncio.sleep(0.1)
-            pyautogui.typewrite(type_text, interval=0.05)
+            try:
+                import pyautogui
+
+                pyautogui.typewrite(type_text, interval=0.05)
+            except ImportError as e:
+                return (
+                    f"{TOOL_ERROR}: pyautogui 导入失败(无法输入文本): "
+                    f"name={name!r}, type_text={type_text!r}: {e}"
+                )
+            except OSError as e:
+                return (
+                    f"{TOOL_ERROR}: 键盘输入失败(name={name!r}, "
+                    f"type_text={type_text!r}, 元素: {_format_label(el)}): {e}"
+                )
             return f"已输入文本到: {_format_label(el)}"
         else:
             return f"{TOOL_ERROR}: 不支持的操作 '{action}'"
-    except Exception as e:
-        return f"{TOOL_ERROR}: 操作失败: {e}"
+    except _AX_ERRORS as e:
+        return (
+            f"{TOOL_ERROR}: 操作失败(action={action!r}, name={name!r}, "
+            f"type_text={type_text!r}): {type(e).__name__}: {e}"
+        )
 
 
 async def _fallback(x: int, y: int, action: str, type_text: Optional[str]) -> str:
-    """坐标降级。"""
-    import pyautogui
-
-    if action in ("click", "invoke", "focus"):
-        pyautogui.click(x, y)
-        return f"已降级到坐标点击: ({x}, {y})"
-    elif action == "type":
-        pyautogui.click(x, y)
-        if type_text:
-            await asyncio.sleep(0.1)
-            pyautogui.typewrite(type_text, interval=0.05)
-        return f"已降级到坐标输入: ({x}, {y})"
-    return f"{TOOL_ERROR}: 不支持的操作 '{action}'"
+    """坐标降级 — 元素未找到后的最后手段,失败时必须说明降级也不可用。"""
+    ctx = f"x={x}, y={y}, action={action!r}, type_text={type_text!r}"
+    try:
+        import pyautogui
+    except ImportError as e:
+        return f"{TOOL_ERROR}: pyautogui 导入失败(坐标降级不可用, {ctx}): {e}"
+    try:
+        if action in ("click", "invoke", "focus"):
+            pyautogui.click(x, y)
+            return f"已降级到坐标点击: ({x}, {y})"
+        elif action == "type":
+            pyautogui.click(x, y)
+            if type_text:
+                await asyncio.sleep(0.1)
+                pyautogui.typewrite(type_text, interval=0.05)
+            return f"已降级到坐标输入: ({x}, {y})"
+        return f"{TOOL_ERROR}: 不支持的操作 '{action}'"
+    except pyautogui.FailSafeException:
+        return (
+            f"{TOOL_ERROR}: 坐标降级触发 FailSafe 安全保护(鼠标移到了屏幕角落?): {ctx}"
+        )
+    except pyautogui.PyAutoGUIException as e:
+        return f"{TOOL_ERROR}: 坐标降级失败({ctx}): {type(e).__name__}: {e}"
+    except OSError as e:
+        return f"{TOOL_ERROR}: 坐标降级系统调用失败({ctx}): {type(e).__name__}: {e}"
 
 
 def _format_label(element) -> str:

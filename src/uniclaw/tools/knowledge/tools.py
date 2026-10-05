@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+import functools
+import inspect
 import json
+import sqlite3
+from pathlib import Path
 from uniclaw.config import AppConfig
 from uniclaw.context import Scope, get_app_dir
 from uniclaw.tools.base import tool, ToolRuntime
@@ -12,15 +15,71 @@ from uniclaw.utils.constants import TOOL_ERROR
 from .graph import KnowledgeGraph
 
 
-def _get_graph(config: AppConfig, scope: Scope = Scope.PROJECT) -> KnowledgeGraph:
-    """从 config 获取知识图谱实例。scope: "user" 用户级 / "project" 项目级(默认)。"""
+def _get_db_path(config: AppConfig, scope: Scope = Scope.PROJECT) -> Path:
+    """解析知识图谱数据库路径。scope: "user" 用户级 / "project" 项目级(默认)。"""
     resolved = (
         config.root_dir if scope == Scope.PROJECT and config.root_dir else Scope.USER
     )
-    return KnowledgeGraph(get_app_dir(resolved) / "knowledge.db")
+    return get_app_dir(resolved) / "knowledge.db"
+
+
+def _get_graph(config: AppConfig, scope: Scope = Scope.PROJECT) -> KnowledgeGraph:
+    """从 config 获取知识图谱实例。scope: "user" 用户级 / "project" 项目级(默认)。"""
+    return KnowledgeGraph(_get_db_path(config, scope))
+
+
+def _kg_error(
+    func_name: str, sig: inspect.Signature, exc: BaseException, args, kwargs
+) -> str:
+    """生成带上下文的 TOOL_ERROR: 工具名 + 关键参数 + scope + db 路径。"""
+    scope = Scope.PROJECT
+    tool_runtime = None
+    ctx: list[str] = []
+    bound = sig.bind(*args, **kwargs)
+    bound.apply_defaults()
+    tool_runtime = bound.arguments.get("tool_runtime")
+    scope = bound.arguments.get("scope") or Scope.PROJECT
+    for key, val in bound.arguments.items():
+        if key in ("tool_runtime", "scope") or val is None:
+            continue
+        if isinstance(val, str) and val == "":
+            continue
+        text = val if isinstance(val, str) else repr(val)
+        if len(text) > 80:
+            text = text[:77] + "..."
+        ctx.append(f"{key}={text}")
+    config = getattr(tool_runtime, "config", None)
+    parts = [f"工具={func_name}", f"scope={scope}"]
+    parts.extend(ctx)
+    if config is not None:
+        parts.append(f"db={_get_db_path(config, scope)}")
+    return (
+        f"{TOOL_ERROR}: 知识图谱操作失败({', '.join(parts)}): "
+        f"{type(exc).__name__}: {exc}"
+    )
+
+
+def _kg_tool(func):
+    """为同步 kg_* 工具统一兜住预期的外部失败(sqlite3.Error/OSError)。
+
+    内层函数保持 try/finally: graph.close();本装饰器在其外层捕获
+    sqlite3.Error(锁冲突/建库失败)与 OSError(导出写文件失败),返回带上下文的
+    TOOL_ERROR 文本。bug 级异常(KeyError/TypeError 等)不捕获,交由 Tool.__call__ 兜底。
+    """
+    sig = inspect.signature(func)
+
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except (sqlite3.Error, OSError) as e:
+            return _kg_error(func.__name__, sig, e, args, kwargs)
+
+    return wrapper
 
 
 @tool
+@_kg_tool
 def kg_add_entity(
     name: str,
     type: str = "concept",
@@ -44,11 +103,10 @@ def kg_add_entity(
         scope: 作用域,"user" 为用户级(跨项目共享),"project" 为项目级(默认)
     """
     config = tool_runtime.config
+    if not name.strip():
+        return f"{TOOL_ERROR}: 实体名称 name 不能为空"
     graph = _get_graph(config, scope)
     try:
-        if not name.strip():
-            raise ValueError("实体名称 name 不能为空")
-
         result = graph.add_entity(
             name=name,
             entity_type=type,
@@ -82,6 +140,7 @@ def kg_add_entity(
 
 
 @tool
+@_kg_tool
 def kg_add_relation(
     source: str,
     target: str,
@@ -128,6 +187,7 @@ def kg_add_relation(
 
 
 @tool
+@_kg_tool
 def kg_add_alias(
     name: str,
     alias: str,
@@ -157,6 +217,7 @@ def kg_add_alias(
 
 
 @tool
+@_kg_tool
 def kg_update_entity(
     name: str,
     type: str = "",
@@ -194,6 +255,7 @@ def kg_update_entity(
 
 
 @tool
+@_kg_tool
 def kg_delete_entity(
     name: str,
     type: str = "",
@@ -221,6 +283,7 @@ def kg_delete_entity(
 
 
 @tool
+@_kg_tool
 def kg_delete_relation(
     source: str,
     target: str,
@@ -250,6 +313,7 @@ def kg_delete_relation(
 
 
 @tool
+@_kg_tool
 def kg_merge_entities(
     source: str,
     target: str,
@@ -295,6 +359,7 @@ def kg_merge_entities(
 
 
 @tool
+@_kg_tool
 def kg_get_entity(
     name: str,
     type: str = "",
@@ -349,6 +414,7 @@ def kg_get_entity(
 
 
 @tool
+@_kg_tool
 def kg_search(
     keyword: str,
     type: str = "",
@@ -385,6 +451,7 @@ def kg_search(
 
 
 @tool
+@_kg_tool
 def kg_neighbors(
     name: str,
     depth: int = 1,
@@ -427,6 +494,7 @@ def kg_neighbors(
 
 
 @tool
+@_kg_tool
 def kg_path(
     source: str,
     target: str,
@@ -467,6 +535,7 @@ def kg_path(
 
 
 @tool
+@_kg_tool
 def kg_stats(
     scope: Scope = Scope.PROJECT,
     tool_runtime: ToolRuntime = None,
@@ -502,6 +571,7 @@ def kg_stats(
 
 
 @tool
+@_kg_tool
 def kg_export(
     path: str,
     scope: Scope = Scope.PROJECT,
@@ -540,6 +610,7 @@ def kg_export(
 
 
 @tool
+@_kg_tool
 def kg_list(
     type: str = "",
     limit: int = 50,
@@ -646,8 +717,14 @@ async def kg_extract(
                 agent_def=agent_def,
                 inherit_events=True,  # 子智能体事件继承到父级队列,前端可显示执行过程
             )
-        except Exception as e:
-            return f"{TOOL_ERROR}: subagent 启动失败: {e}"
+        except (RuntimeError, OSError) as e:
+            # 只兜 subagent 派生失败(超出嵌套深度、资源不足等外部原因);
+            # KeyError/AttributeError/TypeError 等编程错误原样抛给 Tool.__call__
+            src = path or f"text({len(text)} 字符)"
+            return (
+                f"{TOOL_ERROR}: subagent 启动失败(scope={scope.value}, source={src}): "
+                f"{type(e).__name__}: {e}"
+            )
 
         if task.status == AgentStatus.FAILED:
             return f"{TOOL_ERROR}: subagent 启动失败: {task.result}"
@@ -721,6 +798,7 @@ async def kg_extract(
 
 
 @tool
+@_kg_tool
 def kg_clear(
     scope: Scope = Scope.PROJECT,
     tool_runtime: ToolRuntime = None,

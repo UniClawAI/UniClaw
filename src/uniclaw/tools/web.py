@@ -72,10 +72,21 @@ async def webFetch(url: str, proxy: str | None = None, raw: bool = False) -> str
                 headers={"User-Agent": DEFAULT_UA},
                 follow_redirects=True,
             )
-    except Exception as e:
-        return f"{TOOL_ERROR}: {e}"
-
-    r.raise_for_status()
+        # 4xx/5xx 也是可预期的外部失败,必须在 try 内转成 TOOL_ERROR
+        r.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        resp = e.response
+        status = resp.status_code if resp is not None else "?"
+        ct = resp.headers.get("content-type", "") if resp is not None else ""
+        return (
+            f"{TOOL_ERROR}: HTTP {status} 请求失败 {url} "
+            f"(content-type: {ct or 'unknown'}, proxy={proxy}): {e}"
+        )
+    except (httpx.HTTPError, httpx.InvalidURL) as e:
+        return (
+            f"{TOOL_ERROR}: 请求失败 {url} (proxy={proxy}, timeout=30s): "
+            f"{type(e).__name__}: {e}"
+        )
 
     ct = r.headers.get("content-type", "")
     text = r.text

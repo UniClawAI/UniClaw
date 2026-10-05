@@ -87,7 +87,16 @@ async def skill_suggest(
         all_skills = "\n\n".join([skill_summary(skill) for skill in all_skills_list])
         return f"共 {total} 个可用技能,\n\n{all_skills}"
 
-    skills = await _suggest_skills(task_description, all_skills_list, max_results, config)
+    try:
+        skills = await _suggest_skills(
+            task_description, all_skills_list, max_results, config
+        )
+    except (RuntimeError, OSError) as e:
+        # LLM 推荐路径的预期失败(网络/服务不可用): 提示技能总数,让 LLM 改用 skill_read 按名查看
+        return (
+            f"{TOOL_ERROR}: 技能推荐模型调用失败(共 {total} 个可用技能): "
+            f"{type(e).__name__}: {e}。可按名称调用 {skill_read.name} 查看技能详情。"
+        )
     if not skills:
         return f"共 {total} 个可用技能,但没有与当前任务匹配的技能。"
 
@@ -110,9 +119,6 @@ async def _suggest_skills(
         except (JevAPIError, JevConfigError) as e:
             from uniclaw.console.ui import err
             await err(f"Jev skill 推荐失败,回退 LLM: {e}", e=e)
-        except Exception as e:
-            from uniclaw.console.ui import err
-            await err(f"Jev skill 推荐异常,回退 LLM: {e}", e=e)
     return await _suggest_via_llm(task_description, all_skills, max_results, config)
 
 

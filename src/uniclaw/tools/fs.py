@@ -67,8 +67,11 @@ def Read(
         if not chunk:
             return "(空文件)"
         return "".join(f"{start + i + 1:6}\t{l}" for i, l in enumerate(chunk))
-    except Exception as e:
-        return f"{TOOL_ERROR}: {e}"
+    except (OSError, LookupError) as e:
+        return (
+            f"{TOOL_ERROR}: 读取失败 {file_path} (encoding={encoding}): "
+            f"{type(e).__name__}: {e}"
+        )
 
 
 # ── Write ─────────────────────────────────────────────────────────────────
@@ -114,8 +117,8 @@ def Write(file_path: str, content: str) -> str:
         if not diff:
             return f"{file_path} 无变化"
         return f"文件已更新 — {file_path}:\n\n{diff}"
-    except Exception as e:
-        return f"{TOOL_ERROR}: {e}"
+    except OSError as e:
+        return f"{TOOL_ERROR}: 写入失败 {file_path}: {type(e).__name__}: {e}"
 
 
 # ── Edit ──────────────────────────────────────────────────────────────────
@@ -198,8 +201,8 @@ def Edit(
         p.write_text(final_content, encoding="utf-8", newline="")
         diff = generate_unified_diff(old_content_final, final_content, p.name)
         return f"已应用更改到 {p.name}:\n\n{diff}"
-    except Exception as e:
-        return f"{TOOL_ERROR}: {e}"
+    except OSError as e:
+        return f"{TOOL_ERROR}: 编辑失败 {file_path}: {type(e).__name__}: {e}"
 
 
 # ── Glob ──────────────────────────────────────────────────────────────────
@@ -226,8 +229,11 @@ def Glob(pattern: str, path: str) -> str:
             return "未找到匹配的文件"
         # 返回最多500个匹配结果
         return "\n".join(str(m) for m in matches[:500])
-    except Exception as e:
-        return f"{TOOL_ERROR}: {e}"
+    except OSError as e:
+        return (
+            f"{TOOL_ERROR}: 搜索失败 (pattern={pattern!r}, path={path}): "
+            f"{type(e).__name__}: {e}"
+        )
 
 
 # ── ConvertToMarkdown ───────────────────────────────────────────────────
@@ -357,7 +363,14 @@ async def ConvertToMarkdown(file_path: str, output_path: str = "", tool_runtime:
     else:
         # 原子分配:并发转换同名不同扩展名的文件(如 a.csv + a.html)时,
         # 以 O_CREAT|O_EXCL 占位,后者自动获得 _1/_2... 后缀,互不覆盖
-        out = _allocate_md_output(p)
+        try:
+            out = _allocate_md_output(p)
+        except OSError as e:
+            # mkdir/os.open 的非 FileExistsError 失败:无权限、路径过长、磁盘满等
+            return (
+                f"{TOOL_ERROR}: 分配输出路径失败 (file_path={file_path}, "
+                f"output_path={p.with_suffix('.md')}): {type(e).__name__}: {e}"
+            )
 
     def _do_convert() -> tuple[str, float]:
         """在线程池中执行同步转换(避免阻塞事件循环)"""
@@ -424,7 +437,7 @@ async def ConvertToMarkdown(file_path: str, output_path: str = "", tool_runtime:
             )
             await _wake(summary)
         except Exception as e:
-            await _wake(f"转换 {p.name} 失败: {e}")
+            await _wake(f"转换失败 (file_path={p}, output_path={out}): {type(e).__name__}: {e}")
 
     async def _wake(message: str):
         from uniclaw.utils.wakeup import wake_agent

@@ -670,15 +670,35 @@ class TestExtract:
     @patch("uniclaw.tools.multi_agent.sub_agent.load_agent_definitions")
     @patch("uniclaw.agent.MultiAgent.get_instance")
     async def test_start_exception(self, mock_get, mock_defs, tmp_path):
-        """subagent 启动抛出异常。"""
+        """subagent 启动抛外部异常(RuntimeError)→ 返回带上下文的 TOOL_ERROR。"""
         config = _make_config(tmp_path)
         mock_defs.return_value = {"kg-extract": MagicMock()}
         mgr = MagicMock()
-        mgr.start_sub_agent = AsyncMock(side_effect=Exception("boom"))
+        mgr.start_sub_agent = AsyncMock(side_effect=RuntimeError("boom"))
         mock_get.return_value = mgr
 
         result = await kg_extract(text="hello", tool_runtime=ToolRuntime(config=config))
-        assert "subagent 启动失败: boom" in result
+        assert "subagent 启动失败" in result
+        assert "boom" in result
+        assert "scope=" in result
+
+    @pytest.mark.asyncio
+    @patch("uniclaw.tools.multi_agent.sub_agent.load_agent_definitions")
+    @patch("uniclaw.agent.MultiAgent.get_instance")
+    async def test_start_bug_exception_propagates(self, mock_get, mock_defs, tmp_path):
+        """subagent 启动抛编程错误(KeyError 等)→ 工具函数不吞,原样抛出。
+
+        按 Tool Exception Convention: bug 级异常不得捕获,交给 Tool.__call__ 兜底。
+        断言走 execute()(裸实现),__call__ 那层会兜底成 TOOL_ERROR 是预期行为。
+        """
+        config = _make_config(tmp_path)
+        mock_defs.return_value = {"kg-extract": MagicMock()}
+        mgr = MagicMock()
+        mgr.start_sub_agent = AsyncMock(side_effect=KeyError("boom"))
+        mock_get.return_value = mgr
+
+        with pytest.raises(KeyError):
+            await kg_extract.execute(text="hello", tool_runtime=ToolRuntime(config=config))
 
     @pytest.mark.asyncio
     @patch("uniclaw.tools.multi_agent.sub_agent.load_agent_definitions")

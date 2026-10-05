@@ -5,6 +5,7 @@ import re
 import time
 
 from uniclaw.config import AppConfig
+from uniclaw.console.ui import warn
 from uniclaw.tools.base import tool, ToolRuntime
 from uniclaw.utils.constants import TOOL_ERROR
 
@@ -164,27 +165,34 @@ async def _rerank_with_llm(
     Returns:
         str: 重排后的结果文本; 失败时返回 None
     """
-    try:
-        from uniclaw.provider.fallback import achat
-        from uniclaw.tools.session.session import Session
+    from uniclaw.provider.fallback import achat
+    from uniclaw.tools.session.session import Session
 
-        model_name = config.mini_model_name if config else ""
-        session = Session()
-        msg = [f"搜索关键词: {query}"]
-        if intent:
-            msg.append(f"搜索意图: {intent}")
-        msg.append(f"各平台返回的搜索结果:\n\n{content}")
-        session.add_user_message(content="\n\n".join(msg))
+    model_name = config.mini_model_name if config else ""
+    session = Session()
+    msg = [f"搜索关键词: {query}"]
+    if intent:
+        msg.append(f"搜索意图: {intent}")
+    msg.append(f"各平台返回的搜索结果:\n\n{content}")
+    session.add_user_message(content="\n\n".join(msg))
+
+    try:
         response = await achat(
             system_prompt=_RERANK_SYSTEM_PROMPT,
             session=session,
             model_name=model_name,
             config=config,
         )
-        text = (response.content or "").strip()
-        return text or None
-    except Exception:
+    except Exception as e:
+        # 非 bug: LLM 调用失败(模型全挂/网络不通/鉴权失败)。重排是纯增强,
+        # 失败回退原文本即可 —— 但必须留痕, 否则重排静默失效难以排查。
+        # try 只包 achat: 上面的会话构建、下面的 response 解析都是自家代码,
+        # 那里的 KeyError/AttributeError 是 bug, 按约定要抛给 Tool.__call__
+        await warn(f"LLM 重排失败: {type(e).__name__}: {e}", config)
         return None
+
+    text = (response.content or "").strip()
+    return text or None
 
 
 @tool

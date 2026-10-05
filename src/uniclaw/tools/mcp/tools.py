@@ -125,9 +125,17 @@ async def mcp_add_server(
         return f"成功！已添加服务器 '{name}',当前共加载 {tools_count} 个 MCP 工具"
 
     except ValueError as e:
-        return f"{TOOL_ERROR}: {str(e)}"
-    except Exception as e:
-        return f"{TOOL_ERROR}: {_flat_error(e)}"
+        # 参数/状态类预期失败(如连接验证失败),补上定位上下文
+        return (
+            f"{TOOL_ERROR}: 添加服务器 '{name}' 失败(transport={transport}, "
+            f"url={url!r}, command={command!r}, args={command_args!r}): {e}"
+        )
+    except (OSError, RuntimeError) as e:
+        # 配置文件 IO + 连接验证的预期失败;其余(含 KeyError/TypeError)原样抛出
+        return (
+            f"{TOOL_ERROR}: 添加服务器 '{name}' 失败(transport={transport}, "
+            f"url={url!r}, command={command!r}): {_flat_error(e)}"
+        )
 
 
 @tool
@@ -151,8 +159,9 @@ async def mcp_remove_server(name: str, tool_runtime: ToolRuntime = None) -> str:
         await manager.remove_server(name, config)
         tools_count = len(await manager.get_mcp_tools())
         return f"成功！已删除服务器 '{name}',当前共加载 {tools_count} 个 MCP 工具"
-    except Exception as e:
-        return f"{TOOL_ERROR}: {_flat_error(e)}"
+    except (OSError, RuntimeError) as e:
+        # 配置文件 IO 的预期失败;其余(含 KeyError/TypeError)原样抛出
+        return f"{TOOL_ERROR}: 删除服务器 '{name}' 失败: {_flat_error(e)}"
 
 
 @tool
@@ -173,13 +182,17 @@ async def mcp_toggle_server(name: str, enabled: bool = True, tool_runtime: ToolR
     if not await manager.get_server(name, config):
         return f"{TOOL_ERROR}: 服务器 '{name}' 不存在"
 
+    action = "启用" if enabled else "禁用"
     try:
-        action = "启用" if enabled else "禁用"
         await manager.toggle_server(name, enabled, config)
         tools_count = len(await manager.get_mcp_tools())
         return f"成功！已{action}服务器 '{name}',当前共加载 {tools_count} 个 MCP 工具"
-    except Exception as e:
-        return f"{TOOL_ERROR}: {_flat_error(e)}"
+    except (OSError, RuntimeError) as e:
+        # 配置文件 IO 的预期失败;其余(含 KeyError/TypeError)原样抛出
+        return (
+            f"{TOOL_ERROR}: {action}服务器 '{name}' 失败(enabled={enabled}): "
+            f"{_flat_error(e)}"
+        )
 
 
 @tool
