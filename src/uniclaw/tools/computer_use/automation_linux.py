@@ -1,62 +1,95 @@
-"""Linux 后端 — 基于 xdotool 的桌面 UI 自动化。"""
+"""Linux 后端 — 基于 xdotool 的桌面 UI 自动化。
+
+全部走 utils.process.run_command(异步):xdotool 调用若用同步
+subprocess.run 会阻塞事件循环最长 10 秒,等于把整个 agent 卡住。
+"""
 
 from __future__ import annotations
 
 import asyncio
 import logging
-import subprocess
 from typing import Optional
 
 from uniclaw.tools.base import tool
 from uniclaw.utils.constants import TOOL_ERROR
+from uniclaw.utils.process import run_command, smart_decode
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_DEPTH = 5
 MAX_ELEMENTS = 200
 
+_CMD_TIMEOUT = 10
 
-def _run(cmd: str) -> str:
-    """执行 shell 命令并返回 stdout。"""
+
+class _CmdError(RuntimeError):
+    """shell 命令执行失败(非 bug: 命令返回非零或无法执行)。"""
+
+
+async def _run(cmd: str) -> str:
+    """执行 shell 命令并返回 stdout,失败时返回空串。
+
+    用于探测/查询类命令(which、getactivewindow、search、getwindowgeometry)。
+    这些命令的"无结果"与"失败"都以空串表达,调用方按需判断。
+    """
     try:
-        r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=10)
-        return r.stdout.strip()
+        r = await run_command(cmd, timeout=_CMD_TIMEOUT, decode=smart_decode)
     except Exception as e:
         logger.debug("执行命令失败 '%s': %s", cmd, e)
         return ""
+    return r.stdout.strip()
 
 
-def _get_active_window() -> str:
+async def _run_action(cmd: str) -> str:
+    """执行动作类 shell 命令,失败时抛 _CmdError。
+
+    点击/输入/聚焦这类命令的失败绝不能静默 —— 一旦吞掉,调用方就会向 LLM
+    报"已点击""已输入"的假成功,LLM 无从知道操作实际没生效。
+    调用方应把 _CmdError 转成带上下文的 TOOL_ERROR。
+    """
+    try:
+        r = await run_command(cmd, timeout=_CMD_TIMEOUT, decode=smart_decode)
+    except Exception as e:
+        raise _CmdError(f"命令执行异常({cmd}): {e}") from e
+    if r.timed_out:
+        raise _CmdError(f"命令超时 {_CMD_TIMEOUT} 秒({cmd})")
+    if r.code != 0:
+        detail = (r.stderr or r.stdout or "").strip()
+        raise _CmdError(f"命令退出码 {r.code}({cmd}): {detail or '无错误输出'}")
+    return r.stdout.strip()
+
+
+async def _get_active_window() -> str:
     """获取当前活动窗口 ID。"""
-    return _run("xdotool getactivewindow")
+    return await _run("xdotool getactivewindow")
 
 
-def _get_window_name(wid: str) -> str:
+async def _get_window_name(wid: str) -> str:
     """获取窗口名称。"""
-    return _run(f"xdotool getwindowname {wid}")
+    return await _run(f"xdotool getwindowname {wid}")
 
 
-def _get_window_pid(wid: str) -> str:
+async def _get_window_pid(wid: str) -> str:
     """获取窗口 PID。"""
-    return _run(f"xdotool getwindowpid {wid}")
+    return await _run(f"xdotool getwindowpid {wid}")
 
 
-def get_interactive_elements() -> str:
+async def get_interactive_elements() -> str:
     """获取当前活动窗口信息。"""
     try:
         # 检查 xdotool 是否可用
-        if not _run("which xdotool"):
+        if not await _run("which xdotool"):
             return f"{TOOL_ERROR}: 需要安装 xdotool: sudo apt install xdotool"
 
-        wid = _get_active_window()
+        wid = await _get_active_window()
         if not wid:
             return f"{TOOL_ERROR}: 无法获取活动窗口"
 
-        window_name = _get_window_name(wid)
-        window_pid = _get_window_pid(wid)
+        window_name = await _get_window_name(wid)
+        window_pid = await _get_window_pid(wid)
 
         # 获取窗口几何信息
-        geometry = _run(f"xdotool getwindowgeometry --shell {wid}")
+        geometry = await _run(f"xdotool getwindowgeometry --shell {wid}")
         x = y = w = h = ""
         for line in geometry.splitlines():
             if line.startswith("X="):
@@ -85,20 +118,20 @@ def get_interactive_elements() -> str:
         return f"{TOOL_ERROR}: {e}"
 
 
-def find_element(
+async def find_element(
     name: Optional[str] = None,
 ) -> str:
     """按标题查找窗口。"""
     try:
-        if not _run("which xdotool"):
+        if not await _run("which xdotool"):
             return f"{TOOL_ERROR}: 需要安装 xdotool"
 
         if name:
-            wid = _run(f"xdotool search --name '{name}'")
+            wid = await _run(f"xdotool search --name '{name}'")
             if wid:
                 wid = wid.splitlines()[0]
-                wname = _get_window_name(wid)
-                geometry = _run(f"xdotool getwindowgeometry --shell {wid}")
+                wname = await _get_window_name(wid)
+                geometry = await _run(f"xdotool getwindowgeometry --shell {wid}")
                 return f"找到窗口: {wname}\n窗口 ID: {wid}\n{geometry}"
             return f"{TOOL_ERROR}: 未找到名为 '{name}' 的窗口"
 
@@ -117,29 +150,29 @@ async def interact(
 ) -> str:
     """与桌面交互(通过 xdotool)。"""
     try:
-        if not _run("which xdotool"):
+        if not await _run("which xdotool"):
             return f"{TOOL_ERROR}: 需要安装 xdotool"
 
         if action == "click":
             if x is not None and y is not None:
-                _run(f"xdotool mousemove {x} {y} click 1")
+                await _run_action(f"xdotool mousemove {x} {y} click 1")
                 return f"已点击: ({x}, {y})"
             return f"{TOOL_ERROR}: 需要提供 x, y 坐标"
 
         elif action == "invoke":
             if x is not None and y is not None:
-                _run(f"xdotool mousemove {x} {y} click 1")
+                await _run_action(f"xdotool mousemove {x} {y} click 1")
                 return f"已点击(invoke): ({x}, {y})"
             return f"{TOOL_ERROR}: 需要提供 x, y 坐标"
 
         elif action == "focus":
             if name:
-                wid = _run(f"xdotool search --name '{name}'")
+                wid = await _run(f"xdotool search --name '{name}'")
                 if wid:
-                    _run(f"xdotool windowactivate {wid.splitlines()[0]}")
+                    await _run_action(f"xdotool windowactivate {wid.splitlines()[0]}")
                     return f"已聚焦窗口: {name}"
             if x is not None and y is not None:
-                _run(f"xdotool mousemove {x} {y} click 1")
+                await _run_action(f"xdotool mousemove {x} {y} click 1")
                 return f"已点击(focus): ({x}, {y})"
             return f"{TOOL_ERROR}: 需要提供窗口名称或坐标"
 
@@ -147,15 +180,17 @@ async def interact(
             if not type_text:
                 return f"{TOOL_ERROR}: action='type' 时必须提供 type_text"
             if x is not None and y is not None:
-                _run(f"xdotool mousemove {x} {y} click 1")
+                await _run_action(f"xdotool mousemove {x} {y} click 1")
                 await asyncio.sleep(0.1)
             # xdotool type 不支持中文,用 xdotool key 逐字符
-            _run(f"xdotool type -- '{type_text}'")
+            await _run_action(f"xdotool type -- '{type_text}'")
             return f"已输入文本: {type_text}"
 
         else:
             return f"{TOOL_ERROR}: 不支持的操作 '{action}'"
 
+    except _CmdError as e:
+        return f"{TOOL_ERROR}: 操作 '{action}' 未生效: {e}"
     except Exception as e:
         return f"{TOOL_ERROR}: {e}"
 
@@ -164,7 +199,7 @@ async def interact(
 
 
 @tool
-def cu_get_elements() -> str:
+async def cu_get_elements() -> str:
     """获取当前活动窗口信息(Linux xdotool)。
 
     返回当前活动窗口的标题、ID、位置和大小。
@@ -173,11 +208,11 @@ def cu_get_elements() -> str:
     Returns:
         窗口信息文本。
     """
-    return get_interactive_elements()
+    return await get_interactive_elements()
 
 
 @tool
-def cu_find_element(
+async def cu_find_element(
     name: Optional[str] = None,
 ) -> str:
     """在 Linux 桌面中按标题查找窗口。
@@ -188,7 +223,7 @@ def cu_find_element(
     Returns:
         窗口信息文本。
     """
-    return find_element(name)
+    return await find_element(name)
 
 
 @tool

@@ -34,7 +34,7 @@ class TestPushNotification:
     async def test_windows_notification_success(self, mock_win, mock_sys):
         """Windows 通知成功。"""
         mock_sys.platform = "win32"
-        mock_win.return_value = True
+        mock_win.return_value = ""
         result = await push_notification(message="test", title="Test")
         assert "已发送" in result
 
@@ -42,11 +42,27 @@ class TestPushNotification:
     @patch("uniclaw.tools.notify.sys")
     @patch("uniclaw.tools.notify._notify_windows", new_callable=AsyncMock)
     async def test_windows_notification_failure(self, mock_win, mock_sys):
-        """Windows 通知失败。"""
+        """Windows 通知失败时回传真实原因。"""
         mock_sys.platform = "win32"
-        mock_win.return_value = False
+        mock_win.return_value = "PowerShell 退出码 1: Toast XML 无效"
         result = await push_notification(message="test")
-        assert "错误" in result or "不支持" in result
+        assert "失败" in result
+        assert "Toast XML 无效" in result
+
+    @pytest.mark.asyncio
+    @patch("uniclaw.tools.notify.sys")
+    @patch("uniclaw.tools.notify._notify_windows", new_callable=AsyncMock)
+    async def test_failure_never_blames_unsupported_platform(self, mock_win, mock_sys):
+        """失败不能谎报"平台不支持" —— 三个平台都已实现,失败是环境或内容问题。
+
+        静默假结果 bug 的回归测试: 旧实现把任何失败都归因成"当前平台不支持",
+        LLM 据此认为无解而放弃重试,真实原因被丢进 print。
+        """
+        mock_sys.platform = "win32"
+        mock_win.return_value = "调用 PowerShell 异常: 系统找不到指定的文件"
+        result = await push_notification(message="test")
+        assert "不支持" not in result
+        assert "系统找不到指定的文件" in result
 
     @pytest.mark.asyncio
     @patch("uniclaw.tools.notify.sys")
@@ -54,7 +70,7 @@ class TestPushNotification:
     async def test_macos_notification(self, mock_mac, mock_sys):
         """macOS 通知。"""
         mock_sys.platform = "darwin"
-        mock_mac.return_value = True
+        mock_mac.return_value = ""
         result = await push_notification(message="test")
         assert "已发送" in result
 
@@ -64,7 +80,7 @@ class TestPushNotification:
     async def test_linux_notification(self, mock_linux, mock_sys):
         """Linux 通知。"""
         mock_sys.platform = "linux"
-        mock_linux.return_value = True
+        mock_linux.return_value = ""
         result = await push_notification(message="test")
         assert "已发送" in result
 
@@ -74,7 +90,7 @@ class TestPushNotification:
         with patch("uniclaw.tools.notify.sys") as mock_sys, \
              patch("uniclaw.tools.notify._notify_windows", new_callable=AsyncMock) as mock_win:
             mock_sys.platform = "win32"
-            mock_win.return_value = True
+            mock_win.return_value = ""
             result = await push_notification(message="test")
             # 验证 _notify_windows 被调用时 title 默认为 "UniClaw"
             mock_win.assert_called_once()

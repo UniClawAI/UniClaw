@@ -13,6 +13,7 @@ from uniclaw.tools.base import tool, ToolRuntime
 logger = logging.getLogger(__name__)
 from uniclaw.utils.constants import TOOL_ERROR
 from uniclaw.utils.format import sanitize_progress_line
+from uniclaw.utils.process import run_command, smart_decode
 from uniclaw.utils.read_text import read_text_file
 
 # 标准错误输出标记前缀,用于标识错误信息
@@ -37,32 +38,6 @@ def fix_bash_nul_redirect(cmd: str) -> str:
     return _RE_BASH_NUL.sub(r"\1/dev/null", cmd)
 
 
-def smart_decode(data: bytes) -> str:
-    """尝试多种编码方式解码"""
-    if not data:
-        return ""
-
-    # 首先尝试 UTF-8
-    try:
-        return data.decode("utf-8")
-    except UnicodeDecodeError:
-        pass
-
-    # 在 Windows 上尝试 GBK
-    if sys.platform == "win32":
-        try:
-            return data.decode("gbk")
-        except UnicodeDecodeError:
-            pass
-
-        # 尝试 GB18030
-        try:
-            return data.decode("gb18030")
-        except UnicodeDecodeError:
-            pass
-
-    # 最后使用 replace 模式
-    return data.decode("utf-8", errors="replace")
 
 
 def _find_git_bash() -> str | None:
@@ -545,22 +520,23 @@ async def Grep(
     cmd.append(path)
 
     try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout_bytes, stderr_bytes = await asyncio.wait_for(
-            proc.communicate(),
-            timeout=30,
-        )
-        stdout = smart_decode(stdout_bytes)
-        out = stdout.strip()
-        return out if out else "No matches found"
-    except asyncio.TimeoutError:
-        return f"{TOOL_ERROR}: 搜索超时"
+        # decode=smart_decode: Windows 上 rg/grep 命中 GBK 文件时输出非 UTF-8
+        r = await run_command(cmd, timeout=30, decode=smart_decode)
     except Exception as e:
-        return f"{TOOL_ERROR}: {e}"
+        return f"{TOOL_ERROR}: 搜索异常(pattern={pattern!r}, path={path}): {e}"
+
+    if r.timed_out:
+        return f"{TOOL_ERROR}: 搜索超时(pattern={pattern!r}, path={path}, 30 秒)"
+    # rg/grep 退出码约定: 0=有匹配, 1=无匹配, 其余=出错
+    # (非法正则、路径不存在、无权限等)。出错必须回报,不能伪装成
+    # "无匹配",否则 LLM 会误判"该符号不存在"。
+    if r.code not in (0, 1):
+        return (
+            f"{TOOL_ERROR}: 搜索失败({cmd[0]} 退出码 {r.code}, "
+            f"pattern={pattern!r}, path={path}): {r.stderr.strip() or '无错误输出'}"
+        )
+    out = r.stdout.strip()
+    return out if out else "No matches found"
 
 
 async def _check_es() -> str | None:

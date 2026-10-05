@@ -944,6 +944,38 @@ class TestRAGListCollections:
         assert "10 个文档块" in result
         assert "Test collection" in result
 
+    @patch("uniclaw.tools.rag.tools._get_manager")
+    def test_load_failure_is_not_reported_as_empty(self, mock_get_manager, tmp_path):
+        """加载失败不能谎报"没有任何集合"。
+
+        静默假结果 bug 的回归测试: 旧实现对两层 scope 都 continue,最后落到
+        "当前没有任何集合",LLM 据此去重建集合,把既有数据当成不存在。
+        """
+        config = _create_mock_config(root_dir=tmp_path)
+        mock_get_manager.side_effect = RuntimeError("ChromaDB 无法连接")
+
+        result = rag_list_collections.func(tool_runtime=ToolRuntime(config=config))
+        assert "没有任何集合" not in result
+        assert "无法判断是否存在集合" in result
+        assert "ChromaDB 无法连接" in result
+        assert "请勿据此重建集合" in result
+
+    @patch("uniclaw.tools.rag.tools._get_manager")
+    def test_partial_load_failure_still_lists(self, mock_get_manager, tmp_path):
+        """一层加载失败但另一层成功时,照常列出并附上失败说明。"""
+        config = _create_mock_config(root_dir=tmp_path)
+        mock_manager = MagicMock()
+        mock_manager.list_collections.return_value = [
+            {"name": "c1", "count": 3, "created_at": None, "description": ""}
+        ]
+        # 循环顺序为 project -> user: project 成功,user 失败
+        mock_get_manager.side_effect = [mock_manager, RuntimeError("user 级损坏")]
+
+        result = rag_list_collections.func(tool_runtime=ToolRuntime(config=config))
+        assert "c1" in result
+        assert "部分层级加载失败" in result
+        assert "user 级损坏" in result
+
 
 class TestRAGSetDesc:
     """rag_set_desc 工具测试"""
@@ -1560,8 +1592,8 @@ class TestJudgeRelevance:
 
     @pytest.mark.asyncio
     @patch("uniclaw.provider.fallback.achat")
-    async def test_invalid_format_returns_zeros(self, mock_achat, tmp_path):
-        """测试非法格式(纯数字列表)返回全 0,不兼容"""
+    async def test_invalid_format_raises(self, mock_achat, tmp_path):
+        """非法格式(纯数字列表)必须报错,不能返回全 0 假装"全部不相关"。"""
         from uniclaw.tools.session.session import AIMessage
 
         config = _create_mock_config(root_dir=tmp_path)
@@ -1571,13 +1603,13 @@ class TestJudgeRelevance:
             _make_result("doc1 content", "a.txt", rerank_score=0.9),
             _make_result("doc2 content", "b.txt", rerank_score=0.5),
         ]
-        scores = await _judge_relevance("query", results, config)
-        assert scores == [0.0, 0.0]
+        with pytest.raises(RuntimeError, match="格式非法"):
+            await _judge_relevance("query", results, config)
 
     @pytest.mark.asyncio
     @patch("uniclaw.provider.fallback.achat")
-    async def test_missing_index_returns_zeros(self, mock_achat, tmp_path):
-        """测试缺失 index 字段视为格式错误,返回全 0"""
+    async def test_missing_index_raises(self, mock_achat, tmp_path):
+        """缺失 index 字段视为格式错误,必须报错而非返回全 0。"""
         from uniclaw.tools.session.session import AIMessage
 
         config = _create_mock_config(root_dir=tmp_path)
@@ -1586,19 +1618,32 @@ class TestJudgeRelevance:
         )
 
         results = [_make_result("doc1 content", "a.txt", rerank_score=0.9)]
-        scores = await _judge_relevance("query", results, config)
-        assert scores == [0.0]
+        with pytest.raises(RuntimeError, match="index 非法"):
+            await _judge_relevance("query", results, config)
 
     @pytest.mark.asyncio
     @patch("uniclaw.provider.fallback.achat")
-    async def test_failure_returns_zeros(self, mock_achat, tmp_path):
-        """测试 LLM 调用失败时返回全 0"""
+    async def test_failure_raises(self, mock_achat, tmp_path):
+        """LLM 调用失败必须上抛 —— 静默返回全 0 会悄悄污染评估指标。"""
         config = _create_mock_config(root_dir=tmp_path)
         mock_achat.side_effect = RuntimeError("LLM down")
 
         results = [_make_result("doc1 content", "a.txt", rerank_score=0.9)]
-        scores = await _judge_relevance("query", results, config)
-        assert scores == [0.0]
+        with pytest.raises(RuntimeError, match="LLM 调用失败"):
+            await _judge_relevance("query", results, config)
+
+    @pytest.mark.asyncio
+    @patch("uniclaw.provider.fallback.achat")
+    async def test_empty_judgments_raises(self, mock_achat, tmp_path):
+        """LLM 未返回 judgments 时必须报错,不能当成 0 分。"""
+        from uniclaw.tools.session.session import AIMessage
+
+        config = _create_mock_config(root_dir=tmp_path)
+        mock_achat.return_value = AIMessage(content='{"judgments": []}')
+
+        results = [_make_result("doc1 content", "a.txt", rerank_score=0.9)]
+        with pytest.raises(RuntimeError, match="未返回 judgments"):
+            await _judge_relevance("query", results, config)
 
     @pytest.mark.asyncio
     async def test_empty_results(self, tmp_path):

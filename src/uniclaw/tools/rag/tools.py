@@ -417,12 +417,16 @@ def rag_list_collections(
     try:
         has_any = False
         lines = []
+        # 加载失败必须与"确实没有集合"区分开 —— 否则会向 LLM 报假空库,
+        # LLM 会据此去重建集合,把既有数据当成不存在
+        load_errors = []
 
         for scope, label in [(Scope.PROJECT, "project"), (Scope.USER, "user")]:
             try:
                 manager = _get_manager(config, scope)
                 collections = manager.list_collections()
-            except Exception:
+            except Exception as e:
+                load_errors.append(f"{label}: {e}")
                 continue
 
             if not collections:
@@ -436,8 +440,15 @@ def rag_list_collections(
                 lines.append(f"  - {c['name']}: {c['count']} 个文档块{created}{desc}")
 
         if not has_any:
+            if load_errors:
+                return (
+                    f"{TOOL_ERROR}: 集合加载失败,无法判断是否存在集合"
+                    f"(请勿据此重建集合): {'; '.join(load_errors)}"
+                )
             return f"{TOOL_ERROR}: 当前没有任何集合"
 
+        if load_errors:
+            lines.append(f"⚠️ 部分层级加载失败: {'; '.join(load_errors)}")
         return "\n".join(lines)
     except Exception as e:
         return f"{TOOL_ERROR}: 列出集合失败: {e}"
@@ -528,7 +539,12 @@ async def _judge_relevance(
         config: 应用配置。
 
     Returns:
-        list[float]: 每个结果的 LLM 相关度分数(0-1),调用失败时全为 0。
+        list[float]: 每个结果的 LLM 相关度分数(0-1)。
+
+    Raises:
+        RuntimeError: LLM 调用失败或返回无法解析时抛出,由调用方回报给用户。
+            失败绝不能伪装成全 0 分 —— 0 分表示"确实不相关",与"judge 没跑成"
+            完全不同,混为一谈会悄悄污染评估指标。
     """
     if not results:
         return []
@@ -555,9 +571,9 @@ async def _judge_relevance(
     session = Session()
     session.add_user_message(content=user_message)
 
-    try:
-        from uniclaw.utils.format import parse_json_from_llm
+    from uniclaw.utils.format import parse_json_from_llm
 
+    try:
         resp = await achat(
             system_prompt,
             session,
@@ -568,22 +584,29 @@ async def _judge_relevance(
             temperature=0.3,
             response_format={"type": "json_object"},
         )
-        result = parse_json_from_llm(resp.content)
-        judgments = result.get("judgments", []) if result else []
-        scores = [0.0] * len(results)
-        # 只接受 {"index": 序号, "score": 分数} 字典格式,其余视为错误
-        for j in judgments:
-            if not isinstance(j, dict):
-                return [0.0] * len(results)
+    except Exception as e:
+        raise RuntimeError(f"LLM 调用失败: {e}") from e
+
+    result = parse_json_from_llm(resp.content)
+    judgments = result.get("judgments", []) if result else []
+    if not judgments:
+        raise RuntimeError("LLM 未返回 judgments,无法评分")
+
+    scores = [0.0] * len(results)
+    # 只接受 {"index": 序号, "score": 分数} 字典格式,其余视为错误
+    for j in judgments:
+        if not isinstance(j, dict):
+            raise RuntimeError(f"judgments 格式非法(应为对象): {j!r:.200}")
+        try:
+            idx = int(j.get("index"))
+        except (TypeError, ValueError):
+            raise RuntimeError(f"judgments.index 非法: {j!r:.200}") from None
+        if 0 <= idx < len(scores):
             try:
-                idx = int(j.get("index"))
-            except (TypeError, ValueError):
-                return [0.0] * len(results)
-            if 0 <= idx < len(scores):
                 scores[idx] = max(0.0, min(1.0, float(j.get("score", 0)) / 100))
-        return scores
-    except Exception:
-        return [0.0] * len(results)
+            except (TypeError, ValueError):
+                raise RuntimeError(f"judgments.score 非法: {j!r:.200}") from None
+    return scores
 
 
 @tool
@@ -656,14 +679,19 @@ async def rag_evaluate(
 
         # ── LLM judge 相关性评估 ──
         judge_scores: dict[str, list[float]] = {}
+        judge_errors: list[str] = []
         if use_llm_judge:
             for qi, query in enumerate(queries):
                 retrieved = all_retrieved[query]
-                if retrieved:
-                    scores = await _judge_relevance(query, retrieved, config)
-                else:
-                    scores = []
-                judge_scores[query] = scores
+                if not retrieved:
+                    judge_scores[query] = []
+                    continue
+                try:
+                    judge_scores[query] = await _judge_relevance(query, retrieved, config)
+                except Exception as e:
+                    # 这里的 catch 不是为了吞错,而是把失败写进报告 ——
+                    # 单个问题 judge 失败不应中断其余问题的评估
+                    judge_errors.append(f"问题 {qi + 1}: {e}")
 
         # ── 汇总指标 ──
         result_counts = []
@@ -708,29 +736,43 @@ async def rag_evaluate(
         ]
 
         # 全局 LLM judge 指标
-        if use_llm_judge and judge_scores:
+        if use_llm_judge:
             all_scores = [s for scores in judge_scores.values() for s in scores]
-            all_precisions = []
-            for query in queries:
-                scores = judge_scores.get(query, [])
-                if scores:
-                    all_precisions.append(sum(1 for s in scores if s >= 0.5) / len(scores))
-            avg_judge = sum(all_scores) / len(all_scores) if all_scores else 0.0
-            avg_precision = sum(all_precisions) / len(all_precisions) if all_precisions else 0.0
-            lines.append(f"  LLM Judge 平均相关度:  {avg_judge:.3f}")
-            lines.append(f"  LLM Context Precision: {avg_precision * 100:.1f}%")
+            if all_scores:
+                all_precisions = []
+                for query in queries:
+                    scores = judge_scores.get(query, [])
+                    if scores:
+                        all_precisions.append(
+                            sum(1 for s in scores if s >= 0.5) / len(scores)
+                        )
+                avg_judge = sum(all_scores) / len(all_scores)
+                avg_precision = (
+                    sum(all_precisions) / len(all_precisions) if all_precisions else 0.0
+                )
+                lines.append(f"  LLM Judge 平均相关度:  {avg_judge:.3f}")
+                lines.append(f"  LLM Context Precision: {avg_precision * 100:.1f}%")
+            else:
+                # judge 一次都没跑成时必须明说 —— 报 0.000 会被当成"全部不相关"
+                lines.append(
+                    f"  LLM Judge 不可用({len(judge_errors) or len(queries)} 次调用失败,"
+                    f"指标已省略,不能视为 0 分)"
+                )
 
         if errors:
             lines.append(f"  搜索错误: {len(errors)} 个")
+        if judge_errors:
+            lines.append(f"  LLM Judge 错误: {len(judge_errors)} 个")
         if not use_llm_judge:
             lines.append("  (未启用 LLM Judge,仅统计检索结果数量)")
         if detail_lines:
             lines.append("-" * 40)
             lines.extend(detail_lines)
-        if errors:
+        all_errors = errors + judge_errors
+        if all_errors:
             lines.append("-" * 40)
             lines.append("错误明细:")
-            lines.extend(f"  - {e}" for e in errors[:10])
+            lines.extend(f"  - {e}" for e in all_errors[:10])
 
         return "\n".join(lines)
     except Exception as e:

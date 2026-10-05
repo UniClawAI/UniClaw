@@ -19,6 +19,7 @@ from uniclaw.tools.shell import (
     smart_decode,
 )
 from uniclaw.utils.constants import TOOL_ERROR
+from uniclaw.utils.process import RunResult
 
 
 class TestFixBashNul:
@@ -405,50 +406,85 @@ class TestGrepTool:
     @pytest.mark.asyncio
     async def test_uses_rg(self, tmp_path):
         """使用 ripgrep。"""
-        proc = AsyncMock()
-        proc.communicate.return_value = (b"a.txt:1:hello\n", b"")
         with patch("uniclaw.tools.shell._has_native_grep", new_callable=AsyncMock, return_value=True), patch(
             "uniclaw.tools.shell._has_rg", new_callable=AsyncMock, return_value=True
-        ), patch("uniclaw.tools.shell.asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=proc) as m:
+        ), patch(
+            "uniclaw.tools.shell.run_command",
+            new_callable=AsyncMock,
+            return_value=RunResult(0, "a.txt:1:hello\n"),
+        ) as m:
             result = await Grep("hello", str(tmp_path))
         assert "hello" in result
-        assert m.await_args.args[0] == "rg"
+        assert m.await_args.args[0][0] == "rg"
 
     @pytest.mark.asyncio
     async def test_uses_grep(self, tmp_path):
         """使用原生 grep。"""
-        proc = AsyncMock()
-        proc.communicate.return_value = (b"a.txt:1:hello\n", b"")
         with patch("uniclaw.tools.shell._has_native_grep", new_callable=AsyncMock, return_value=True), patch(
             "uniclaw.tools.shell._has_rg", new_callable=AsyncMock, return_value=False
-        ), patch("uniclaw.tools.shell.asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=proc) as m:
+        ), patch(
+            "uniclaw.tools.shell.run_command",
+            new_callable=AsyncMock,
+            return_value=RunResult(0, "a.txt:1:hello\n"),
+        ) as m:
             result = await Grep("hello", str(tmp_path))
         assert "hello" in result
-        assert m.await_args.args[0] == "grep"
+        assert m.await_args.args[0][0] == "grep"
 
     @pytest.mark.asyncio
     async def test_no_match(self, tmp_path):
-        """无匹配返回提示。"""
-        proc = AsyncMock()
-        proc.communicate.return_value = (b"", b"")
+        """无匹配返回提示(rg/grep 退出码 1 表示无匹配)。"""
         with patch("uniclaw.tools.shell._has_native_grep", new_callable=AsyncMock, return_value=True), patch(
             "uniclaw.tools.shell._has_rg", new_callable=AsyncMock, return_value=True
-        ), patch("uniclaw.tools.shell.asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=proc):
+        ), patch(
+            "uniclaw.tools.shell.run_command", new_callable=AsyncMock, return_value=RunResult(1, "")
+        ):
+            result = await Grep("hello", str(tmp_path))
+        assert result == "No matches found"
+
+    @pytest.mark.asyncio
+    async def test_error_not_reported_as_no_match(self, tmp_path):
+        """出错(退出码 >=2)必须回报错误,不能伪装成 "No matches found"。
+
+        这是静默假结果 bug 的回归测试: 非法正则 / 路径不存在时 rg 退出码为 2,
+        stdout 为空,旧实现会返回 "No matches found",误导 LLM 认为符号不存在。
+        """
+        with patch("uniclaw.tools.shell._has_native_grep", new_callable=AsyncMock, return_value=True), patch(
+            "uniclaw.tools.shell._has_rg", new_callable=AsyncMock, return_value=True
+        ), patch(
+            "uniclaw.tools.shell.run_command",
+            new_callable=AsyncMock,
+            return_value=RunResult(2, "", "regex parse error: unclosed group\n"),
+        ):
+            result = await Grep("hello(", str(tmp_path))
+        assert "No matches found" not in result
+        assert "退出码 2" in result
+        assert "regex parse error" in result
+        assert "hello(" in result
+
+    @pytest.mark.asyncio
+    async def test_zero_exit_empty_stdout_is_no_match(self, tmp_path):
+        """退出码 0 但 stdout 为空仍视为无匹配(不误报错误)。"""
+        with patch("uniclaw.tools.shell._has_native_grep", new_callable=AsyncMock, return_value=True), patch(
+            "uniclaw.tools.shell._has_rg", new_callable=AsyncMock, return_value=True
+        ), patch(
+            "uniclaw.tools.shell.run_command", new_callable=AsyncMock, return_value=RunResult(0, "")
+        ):
             result = await Grep("hello", str(tmp_path))
         assert result == "No matches found"
 
     @pytest.mark.asyncio
     async def test_timeout(self, tmp_path):
-        """搜索超时。"""
-        proc = AsyncMock()
-        # wait_for 被 mock 抛异常前,Python 已先执行 proc.communicate() 创建
-        # coroutine,该 coroutine 永远不会被 await,产生 "never awaited" 警告。
-        # 用同步 MagicMock 返回普通元组,避免创建未 await 的 coroutine。
-        proc.communicate = MagicMock(return_value=(b"", b""))
+        """搜索超时。
+
+        run_command 把超时收成 RunResult(timed_out=True),不再抛 TimeoutError。
+        """
         with patch("uniclaw.tools.shell._has_native_grep", new_callable=AsyncMock, return_value=True), patch(
             "uniclaw.tools.shell._has_rg", new_callable=AsyncMock, return_value=True
-        ), patch("uniclaw.tools.shell.asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=proc), patch(
-            "uniclaw.tools.shell.asyncio.wait_for", side_effect=asyncio.TimeoutError
+        ), patch(
+            "uniclaw.tools.shell.run_command",
+            new_callable=AsyncMock,
+            return_value=RunResult(-1, timed_out=True),
         ):
             result = await Grep("hello", str(tmp_path))
         assert "搜索超时" in result

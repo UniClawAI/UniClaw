@@ -1,14 +1,15 @@
-import asyncio
-import logging
 import sys
 from uniclaw.tools.base import tool
 from uniclaw.utils.constants import TOOL_ERROR
+from uniclaw.utils.process import run_command, smart_decode
 
-logger = logging.getLogger(__name__)
 
+async def _notify_windows(title: str, message: str) -> str:
+    """Windows Toast 通知。
 
-async def _notify_windows(title: str, message: str) -> bool:
-    """Windows Toast 通知"""
+    Returns:
+        str: 成功返回空串;失败返回具体原因,由调用方转成 TOOL_ERROR。
+    """
     # 用 PowerShell 自带的 AppId,避免自定义 AppId 注册问题
     app_id = (
         r"{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe"
@@ -33,57 +34,64 @@ async def _notify_windows(title: str, message: str) -> bool:
         "Start-Sleep 2"
     )
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "powershell",
-            "-Command",
-            script,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+        r = await run_command(
+            ["powershell", "-Command", script], timeout=15, decode=smart_decode
         )
-        _, stderr = await asyncio.wait_for(proc.communicate(), timeout=15)
-        if proc.returncode != 0:
-            print(f"[notify] PowerShell error: {stderr.decode()}")
-            return False
-        return True
+    except FileNotFoundError:
+        return "找不到 powershell 可执行文件"
     except Exception as e:
-        print(f"[notify] exception: {e}")
-        return False
+        return f"调用 PowerShell 异常: {e}"
+    if r.timed_out:
+        return "PowerShell 超时(15 秒无响应)"
+    if r.code != 0:
+        return f"PowerShell 退出码 {r.code}: {r.stderr.strip()}"
+    return ""
 
 
-async def _notify_macos(title: str, message: str) -> bool:
-    """macOS 通知"""
+async def _notify_macos(title: str, message: str) -> str:
+    """macOS 通知(osascript)。
+
+    Returns:
+        str: 成功返回空串;失败返回具体原因,由调用方转成 TOOL_ERROR。
+    """
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "osascript",
-            "-e",
-            f'display notification "{message}" with title "{title}"',
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
+        r = await run_command(
+            ["osascript", "-e", f'display notification "{message}" with title "{title}"'],
+            timeout=10,
+            decode=smart_decode,
         )
-        await asyncio.wait_for(proc.wait(), timeout=10)
-        return True
+    except FileNotFoundError:
+        return "找不到 osascript 可执行文件"
     except Exception as e:
-        logger.debug("macOS 通知发送失败: %s", e)
-        return False
+        return f"调用 osascript 异常: {e}"
+    if r.timed_out:
+        return "osascript 超时(10 秒无响应)"
+    if r.code != 0:
+        return f"osascript 退出码 {r.code}: {r.stderr.strip()}"
+    return ""
 
 
-async def _notify_linux(title: str, message: str) -> bool:
-    """Linux 通知 (notify-send)"""
+async def _notify_linux(title: str, message: str) -> str:
+    """Linux 通知(notify-send)。
+
+    Returns:
+        str: 成功返回空串;失败返回具体原因,由调用方转成 TOOL_ERROR。
+    """
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "notify-send",
-            "-u",
-            "critical",
-            title,
-            message,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
+        r = await run_command(
+            ["notify-send", "-u", "critical", title, message],
+            timeout=10,
+            decode=smart_decode,
         )
-        await asyncio.wait_for(proc.wait(), timeout=10)
-        return True
+    except FileNotFoundError:
+        return "找不到 notify-send,请先安装: sudo apt install libnotify-bin"
     except Exception as e:
-        logger.debug("Linux 通知发送失败: %s", e)
-        return False
+        return f"调用 notify-send 异常: {e}"
+    if r.timed_out:
+        return "notify-send 超时(10 秒无响应)"
+    if r.code != 0:
+        return f"notify-send 退出码 {r.code}: {r.stderr.strip()}"
+    return ""
 
 
 @tool
@@ -106,16 +114,17 @@ async def push_notification(
         return f"{TOOL_ERROR}: 通知内容不能为空"
 
     if sys.platform == "win32":
-        success = await _notify_windows(title, message)
+        reason = await _notify_windows(title, message)
     elif sys.platform == "darwin":
-        success = await _notify_macos(title, message)
+        reason = await _notify_macos(title, message)
     else:
-        success = await _notify_linux(title, message)
+        reason = await _notify_linux(title, message)
 
-    if success:
+    if not reason:
         return f"已发送桌面通知: [{title}] {message}"
-    else:
-        return f"{TOOL_ERROR}: 当前平台不支持通知: {sys.platform}"
+    # 必须回传真实原因 —— 三个平台都已实现通知,失败一律是环境或内容问题,
+    # 报"平台不支持"会让 LLM 误判为无解而放弃重试
+    return f"{TOOL_ERROR}: 桌面通知发送失败[{sys.platform}]: {reason}"
 
 
 def get_tools() -> list:
