@@ -374,7 +374,11 @@ class TestBash:
 
     @pytest.mark.asyncio
     async def test_exception(self):
-        """创建进程异常直接抛出(create_subprocess_shell 在 try 外)。"""
+        """创建进程异常直接抛出(create_subprocess_shell 在 try 外)。
+
+        走 execute() 而非 __call__: 异常外抛是 execute 的契约,
+        __call__ 只做兜底并返回 TOOL_ERROR 文本。
+        """
         from uniclaw.tools.shell import Bash
 
         with patch(
@@ -383,7 +387,7 @@ class TestBash:
             side_effect=OSError("boom"),
         ):
             with pytest.raises(OSError):
-                await Bash("echo hi", tool_runtime=self._rt())
+                await Bash.execute("echo hi", tool_runtime=self._rt())
 
 
 class TestGrepTool:

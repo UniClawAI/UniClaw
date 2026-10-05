@@ -150,6 +150,86 @@ class TestParallelSafety:
         assert sorted(captured) == [("a", "call_a"), ("b", "call_b")]
 
 
+class TestCallExceptionFallback:
+    """__call__ 异常兜底: 不外抛,返回 TOOL_ERROR; execute 仍外抛。"""
+
+    def _make_raising_tool(self):
+        @tool
+        async def boom(value: str, tool_runtime: ToolRuntime = None) -> str:
+            """Raising tool.
+
+            Args:
+                value: 输入值。
+            """
+            raise ValueError(f"炸了:{value}")
+
+        return boom
+
+    @pytest.mark.asyncio
+    async def test_call_does_not_raise(self):
+        """__call__ 吞掉异常并返回 TOOL_ERROR 文本。"""
+        from uniclaw.utils.constants import TOOL_ERROR
+
+        boom = self._make_raising_tool()
+        result = await boom("x")  # 不应抛出
+        assert isinstance(result, str)
+        assert TOOL_ERROR in result
+        assert "炸了:x" in result
+
+    @pytest.mark.asyncio
+    async def test_execute_still_raises(self):
+        """execute 保留原始异常,便于需要精确断言的调用方使用。"""
+        boom = self._make_raising_tool()
+        with pytest.raises(ValueError, match="炸了:x"):
+            await boom.execute("x")
+
+    @pytest.mark.asyncio
+    async def test_call_reports_via_ui_err(self, monkeypatch):
+        """异常经 console.ui.err 上报,带上调用入参与异常对象以便落堆栈。"""
+        from uniclaw.console import ui
+
+        captured = {}
+
+        async def fake_err(msg, config=None, e=None):
+            captured["msg"] = msg
+            captured["e"] = e
+
+        monkeypatch.setattr(ui, "err", fake_err)
+        boom = self._make_raising_tool()
+        result = await boom(value="y", tool_runtime=ToolRuntime(tool_call_id="c1"))
+        assert "炸了:y" in result
+        assert isinstance(captured["e"], ValueError)
+        # 入参进日志,且过滤掉注入参数 tool_runtime
+        assert "value" in captured["msg"]
+        assert "y" in captured["msg"]
+        assert "tool_runtime" not in captured["msg"]
+
+    @pytest.mark.asyncio
+    async def test_call_logs_positional_args(self, monkeypatch):
+        """位置参数调用时入参同样进日志。"""
+        from uniclaw.console import ui
+
+        captured = {}
+
+        async def fake_err(msg, config=None, e=None):
+            captured["msg"] = msg
+
+        monkeypatch.setattr(ui, "err", fake_err)
+        boom = self._make_raising_tool()
+        await boom("pos")
+        assert "arg0" in captured["msg"]
+        assert "pos" in captured["msg"]
+
+    @pytest.mark.asyncio
+    async def test_positional_error_still_fallback(self):
+        """位置参数触发的 TypeError 同样被兜底。"""
+        from uniclaw.utils.constants import TOOL_ERROR
+
+        sample, _ = TestToolCallPassThrough()._make_async_tool()
+        result = await sample("a", "b", "c")  # 参数过多
+        assert TOOL_ERROR in result
+
+
 class TestSchemaExclusion:
     """schema 生成排除注入参数。"""
 

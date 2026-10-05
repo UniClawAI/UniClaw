@@ -378,7 +378,7 @@ class Tool:
             "input_schema": parameters,
         }
 
-    async def __call__(
+    async def execute(
         self,
         *args,
         **kwargs,
@@ -390,8 +390,10 @@ class Tool:
         - 同步/异步自动适配
 
         支持位置参数和关键字参数,与直接调用函数一致:
-            await tool("ls", timeout=30)
-            await tool(command="ls", timeout=30)
+            await tool.execute("ls", timeout=30)
+            await tool.execute(command="ls", timeout=30)
+
+        异常原样上抛,需要兜底请走 __call__。
         """
         # 将位置参数映射到函数参数名
         sig = inspect.signature(self.func)
@@ -452,6 +454,35 @@ class Tool:
                 cancel_wait.cancel()
             if not task.done():
                 task.cancel()
+
+    async def __call__(
+        self,
+        *args,
+        **kwargs,
+    ):
+        """调用工具(异常兜底):委托 execute(),异常不外抛。
+
+        捕获到的异常经 console.ui.err 输出日志与完整堆栈(含调用入参),并返回
+        `{TOOL_ERROR}: ...` 文本结果,让 LLM 看到失败原因继续对话。
+        asyncio.CancelledError 等 BaseException 仍会上抛,以免吞掉中断信号。
+        """
+        from uniclaw.console.ui import err
+
+        rt = kwargs.get("tool_runtime")
+        try:
+            return await self.execute(*args, **kwargs)
+        except Exception as e:
+            config = getattr(rt, "config", None)
+            # 入参进日志,便于排查;过滤注入参数与 _explain。位置参数退化为 arg0/arg1
+            shown = {
+                k: v
+                for k, v in kwargs.items()
+                if k not in _INJECTED_PARAMS and k != "_explain"
+            }
+            if args:
+                shown = {**{f"arg{i}": a for i, a in enumerate(args)}, **shown}
+            await err(f"{TOOL_ERROR}: [{self.name}] {e}\n参数: {shown}", config, e)
+            return f"{TOOL_ERROR}: {e}"
 
 
 def tool(

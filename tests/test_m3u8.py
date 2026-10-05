@@ -128,7 +128,8 @@ class TestM3u8SavePathRequired:
         from uniclaw.tools.download.m3u8_tools import m3u8_download
 
         kwargs.setdefault("tool_runtime", ToolRuntime())
-        return await m3u8_download(**kwargs)
+        # 走 execute() 而非 __call__: 校验语义(抛 ValueError)是工具自身契约
+        return await m3u8_download.execute(**kwargs)
 
     async def test_relative_path_rejected(self):
         with pytest.raises(ValueError, match="绝对路径"):

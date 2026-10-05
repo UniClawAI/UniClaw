@@ -1113,9 +1113,7 @@ class MultiAgent:
                     if dedup_msg:
                         tool_resp_content = dedup_msg
                 except Exception as e:
-                    await err(
-                        f"{TOOL_ERROR}: [{tc_name}] {e}\n参数: {tc_args}", config, e
-                    )
+                    await err(f"{TOOL_ERROR}: [{tc_name}] {e}", config, e)
                     tool_resp_content = f"{TOOL_ERROR}: {e}"
             else:
                 tool_resp_content = (
