@@ -72,37 +72,38 @@ async def webFetch(url: str, proxy: str | None = None, raw: bool = False) -> str
                 headers={"User-Agent": DEFAULT_UA},
                 follow_redirects=True,
             )
-        r.raise_for_status()
-
-        ct = r.headers.get("content-type", "")
-        text = r.text
-        mime = ct.split(";")[0].strip()
-
-        # 构建统一的元数据头部(状态码 + 类型 + 标题),所有模式均返回
-        meta = f"HTTP {r.status_code} | {mime or 'unknown'}"
-        if "html" in mime:
-            title_m = re.search(
-                r"<title[^>]*>(.*?)</title>", text, re.DOTALL | re.IGNORECASE
-            )
-            if title_m:
-                title = unescape(re.sub(r"<[^>]+>", "", title_m.group(1))).strip()
-                if title:
-                    meta += f" | Title: {title}"
-
-        if raw:
-            # raw 模式:返回完整 HTML/JSON 源码(不清理),但仍带元数据头部
-            if not text:
-                return f"{meta}\n\n(网页内容为空)"
-            return f"{meta}\n\n{text}"
-
-        if "html" in mime:
-            text = _html_to_text(text)
-
-        # 正文为空时明确提示;长度交由 agent 层统一截取
-        body = text if text else "(网页内容为空)"
-        return f"{meta}\n\n{body}"
     except Exception as e:
         return f"{TOOL_ERROR}: {e}"
+
+    r.raise_for_status()
+
+    ct = r.headers.get("content-type", "")
+    text = r.text
+    mime = ct.split(";")[0].strip()
+
+    # 构建统一的元数据头部(状态码 + 类型 + 标题),所有模式均返回
+    meta = f"HTTP {r.status_code} | {mime or 'unknown'}"
+    if "html" in mime:
+        title_m = re.search(
+            r"<title[^>]*>(.*?)</title>", text, re.DOTALL | re.IGNORECASE
+        )
+        if title_m:
+            title = unescape(re.sub(r"<[^>]+>", "", title_m.group(1))).strip()
+            if title:
+                meta += f" | Title: {title}"
+
+    if raw:
+        # raw 模式:返回完整 HTML/JSON 源码(不清理),但仍带元数据头部
+        if not text:
+            return f"{meta}\n\n(网页内容为空)"
+        return f"{meta}\n\n{text}"
+
+    if "html" in mime:
+        text = _html_to_text(text)
+
+    # 正文为空时明确提示;长度交由 agent 层统一截取
+    body = text if text else "(网页内容为空)"
+    return f"{meta}\n\n{body}"
 
 
 def get_tools() -> list:
