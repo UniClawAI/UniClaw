@@ -1332,8 +1332,8 @@ http_download(
 #### 任务清单工具 📋
 
 - **todolist_create** - 创建任务清单(支持任务分解和状态管理)
-- **todolist_update** - 更新任务状态(pending → in_progress → completed,全部完成后自动提示清理清单并汇报完成情况)
-- **todolist_clear** - 清空任务清单
+- **todolist_update** - 更新任务状态(pending → in_progress → completed,全部完成后自动关闭清单并汇报完成情况)
+- **todolist_clear** - 手动清空任务清单(全部步骤完成时自动关闭)
 - **todolist_list** - 列出当前任务清单
 - **todolist_cancel** - 取消任务清单
 

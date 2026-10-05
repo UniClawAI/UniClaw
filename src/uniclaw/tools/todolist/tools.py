@@ -41,6 +41,7 @@ async def todolist_update(
     """
     更新任务清单中指定步骤的状态。
     同一时间只能有一个步骤处于 in_progress 状态,设置新的 in_progress 时,原有的 in_progress 会自动变为 pending。
+    当所有步骤都变为 completed 时,任务清单会自动关闭(清空),无需再调用 todolist_clear。
     监工模式下需提供 reason 说明完成内容。
 
     Args:
@@ -60,13 +61,13 @@ async def todolist_update(
         return f"{TOOL_ERROR}: 当前没有任务清单,请先使用 {todolist_create.name} 创建"
     result = todo.update_status(step, todo_status)
     if not result.startswith(TOOL_ERROR):
-        result += _all_completed_hint(todo)
+        result += _auto_close_if_all_completed(todo)
     return result
 
 
 @tool
 def todolist_clear(tool_runtime: ToolRuntime = None) -> str:
-    """清空当前任务清单。当所有步骤完成后调用此工具。"""
+    """手动清空当前任务清单。所有步骤完成时 todolist_update 会自动关闭清单,此工具用于需要提前手动清空的场景。"""
     config = tool_runtime.config
     todo = config.current_agent.todolist
     count = len(todo.items)
@@ -98,14 +99,15 @@ def todolist_list(tool_runtime: ToolRuntime = None) -> str:
 # ── 内部辅助 ────────────────────────────────────────────────
 
 
-def _all_completed_hint(todo: TodoList) -> str:
-    """所有步骤均为 completed 时返回详细提示引导调用 todolist_clear,否则返回空串"""
-    if any(item.status != TodoStatus.COMPLETED for item in todo.items):
+def _auto_close_if_all_completed(todo: TodoList) -> str:
+    """所有步骤均为 completed 时自动清空(关闭)清单并返回提示,否则返回空串"""
+    if not todo.items or any(item.status != TodoStatus.COMPLETED for item in todo.items):
         return ""
+    total = len(todo.items)
+    todo.clear()
     return (
-        f"\n\n🎉 全部 {len(todo.items)} 个步骤均已完成,整个任务已结束!\n"
-        f"请立即调用 {todolist_clear.name} 工具清空任务清单,"
-        f"然后向用户汇报整体完成情况。"
+        f"\n\n🎉 全部 {total} 个步骤均已完成,任务清单已自动关闭!\n"
+        f"整个任务已结束,请向用户汇报整体完成情况。"
     )
 
 
@@ -171,7 +173,7 @@ async def _overseer_update(
 
     result = todo.update_status(step, status)
     if not result.startswith(TOOL_ERROR):
-        result += _all_completed_hint(todo)
+        result += _auto_close_if_all_completed(todo)
     if status == TodoStatus.COMPLETED:
         return f"✅ 审核通过,步骤 {step} 已标记为完成:\n{result}"
     return f"已更新步骤 {step} 状态为 {status}:\n{result}"
@@ -189,7 +191,7 @@ def get_list_system_prompt(todolist: TodoList) -> str:
         "# TodoList",
         f"- **{todolist_create.name}**:创建任务清单,将复杂任务分解为多个步骤进行跟踪",
         f"- **{todolist_update.name}**:更新指定步骤的状态(pending/in_progress/completed)",
-        f"- **{todolist_clear.name}**:清空任务清单,任务全部完成后调用",
+        f"- **{todolist_clear.name}**:手动清空当前任务清单(全部步骤完成时自动关闭)",
         f"- **{todolist_list.name}**:列出当前任务清单的所有步骤及状态",
     ]
 
@@ -217,7 +219,7 @@ def get_list_system_prompt(todolist: TodoList) -> str:
         lines.append(
             f"- 每完成一步,立即调用 {todolist_update.name} 将状态更新为 {TodoStatus.COMPLETED},然后将下一步更新为 {TodoStatus.IN_PROGRESS},reason 参数无需填写"
         )
-    lines.append(f"- 全部完成后调用 {todolist_clear.name} 清空清单")
+    lines.append(f"- 全部步骤完成后,{todolist_update.name} 会自动关闭清单,无需再调用 {todolist_clear.name}")
 
     lines.append("- 完成当前步骤后,自动开始下一步,不要停下来问用户")
     lines.append("- 如果遇到阻塞,记录问题并继续推进其他步骤")

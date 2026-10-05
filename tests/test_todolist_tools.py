@@ -119,7 +119,8 @@ class TestUpdate:
     async def test_update_completed_flow(self):
         """pending → in_progress → completed 完整流程。"""
         todo = TodoList()
-        todo.add("任务")
+        todo.add("任务1")
+        todo.add("任务2")
         config = _make_config(todo)
         await todolist_update(0, "in_progress", tool_runtime=ToolRuntime(config=config))
         result = await todolist_update(0, "completed", tool_runtime=ToolRuntime(config=config))
@@ -127,30 +128,33 @@ class TestUpdate:
         assert todo.items[0].status == TodoStatus.COMPLETED
 
     @pytest.mark.asyncio
-    async def test_update_all_completed_returns_clear_hint(self):
-        """全部步骤完成时返回 todolist_clear 提示。"""
+    async def test_update_all_completed_auto_close(self):
+        """全部步骤完成时自动关闭(清空)清单。"""
         todo = TodoList()
         todo.add("任务1")
         todo.add("任务2")
         config = _make_config(todo)
         await todolist_update(0, "in_progress", tool_runtime=ToolRuntime(config=config))
         partial = await todolist_update(0, "completed", tool_runtime=ToolRuntime(config=config))
-        assert "todolist_clear" not in partial
+        assert "已自动关闭" not in partial
+        assert len(todo.items) == 2
         await todolist_update(1, "in_progress", tool_runtime=ToolRuntime(config=config))
         result = await todolist_update(1, "completed", tool_runtime=ToolRuntime(config=config))
         assert "全部 2 个步骤均已完成" in result
-        assert f"请立即调用 {todolist_clear.name}" in result
+        assert "已自动关闭" in result
+        assert todo.is_empty()
 
     @pytest.mark.asyncio
-    async def test_update_error_no_hint(self):
-        """更新失败时不附加清空提示。"""
+    async def test_update_error_no_auto_close(self):
+        """更新失败时不触发自动关闭。"""
         todo = TodoList()
         todo.add("任务")
         config = _make_config(todo)
         # pending 不能直接改为 completed
         result = await todolist_update(0, "completed", tool_runtime=ToolRuntime(config=config))
         assert TOOL_ERROR in result
-        assert "todolist_clear" not in result
+        assert "已自动关闭" not in result
+        assert len(todo.items) == 1
 
 
 class TestClear:
@@ -344,8 +348,8 @@ class TestOverseerModeTools:
 
     @pytest.mark.asyncio
     @patch("uniclaw.tools.todolist.overseer._run_reviewer", return_value=(True, ""))
-    async def test_update_overseer_all_completed_hint(self, mock_reviewer):
-        """监工模式下全部完成时同样返回清空提示。"""
+    async def test_update_overseer_all_completed_auto_close(self, mock_reviewer):
+        """监工模式下全部完成时同样自动关闭清单。"""
         todo = TodoList()
         todo.overseer.start()
         todo.add("任务")
@@ -354,7 +358,8 @@ class TestOverseerModeTools:
         result = await todolist_update(
             0, "completed", reason="已完成功能", tool_runtime=ToolRuntime(config=config)
         )
-        assert f"请立即调用 {todolist_clear.name}" in result
+        assert "已自动关闭" in result
+        assert todo.is_empty()
 
     @pytest.mark.asyncio
     @patch(
