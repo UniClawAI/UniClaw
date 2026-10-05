@@ -659,6 +659,15 @@ def cu_locate_on_screen(image_path: str, confidence: float = 0.8) -> str:
         return err
     try:
         location = pa.locateOnScreen(image_path, confidence=confidence)
+    except NotImplementedError as e:
+        # pyscreeze 的 confidence 参数依赖 cv2。opencv-python 已是标准依赖
+        # (见 pyproject.toml), 正常不会走到这里 —— 走到说明安装不完整。
+        # 属环境问题而非代码 bug, 给指引即可, 不该写进错误日志。
+        return (
+            f"{TOOL_ERROR}: 图像定位的 confidence 参数需要 OpenCV, 当前环境缺失"
+            f"(安装可能不完整, 请重装依赖或 pip install opencv-python;"
+            f"也可不传 confidence 参数)。({ctx})"
+        )
     except (OSError, pa.ImageNotFoundException) as e:
         # 图像文件不存在/读失败(OSError)或启用异常模式后未在屏幕上找到(pyscreeze)
         return _pa_error("图像定位", ctx, e)

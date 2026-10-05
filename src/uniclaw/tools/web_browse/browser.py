@@ -17,6 +17,7 @@ from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
+from uniclaw.tools.base import ToolUserError
 from uniclaw.utils.constants import SYSTEM_PREFIX, TOOL_ERROR
 
 # Playwright 异常类。
@@ -1178,21 +1179,30 @@ class WebBrowser:
         return "\n".join(lines)
 
     def _get_page(self, page_id: Optional[int] = None):
-        """获取指定页面,未指定则返回活动页面。"""
+        """获取指定页面,未指定则返回活动页面。
+
+        Raises:
+            ToolUserError: 页面不存在/浏览器未启动/无活动页面 —— 这些是模型传了
+                错误 page_id 或调用顺序不对导致的**预期失败**,不是代码 bug,
+                故用 ToolUserError 让 Tool.__call__ 直接透出消息且不写错误日志。
+        """
         self._ensure_running()
         if page_id is None:
             page = self.active_page
             if page is None:
-                raise RuntimeError("没有活动页面")
+                raise ToolUserError("没有活动页面")
             return page
         if page_id not in self._pages:
-            raise RuntimeError(f"页面 {page_id} 不存在")
+            raise ToolUserError(
+                f"页面 {page_id} 不存在(当前可用 page_id: "
+                f"{sorted(self._pages) or '无'})"
+            )
         return self._pages[page_id]
 
     def _ensure_running(self):
         """确保浏览器已启动,否则抛出异常。"""
         if self._browser is None:
-            raise RuntimeError("浏览器未启动,请先调用 browser_start")
+            raise ToolUserError("浏览器未启动,请先调用 browser_start")
 
     def _get_locator(self, page, selector: str):
         """根据选择器类型获取 locator。"""

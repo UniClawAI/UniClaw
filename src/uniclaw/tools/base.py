@@ -13,9 +13,18 @@ import json
 import logging
 import re
 import time
+import types
 import typing
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, get_type_hints
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Awaitable,
+    Callable,
+    get_args,
+    get_origin,
+    get_type_hints,
+)
 
 if TYPE_CHECKING:
     from uniclaw.config import AppConfig
@@ -23,6 +32,18 @@ if TYPE_CHECKING:
 from uniclaw.utils.constants import TOOL_ERROR
 
 logger = logging.getLogger(__name__)
+
+
+class ToolUserError(RuntimeError):
+    """工具的**预期失败**(状态校验、参数校验等非 bug 原因)。
+
+    helper 层(如 WebBrowser._get_page)拿不到工具函数的返回值语义时,可以抛它
+    来表达"这是给模型看的错误说明",`Tool.__call__` 会转成 `{TOOL_ERROR}: ...`
+    **并且不写错误日志** —— 预期失败不需要堆栈。
+
+    与约定的关系: 工具函数体内的预期失败仍应直接 `return f"{TOOL_ERROR}: ..."`;
+    本异常是给"中间层"用的,避免每个调用点都包一层 try。
+    """
 
 
 # 类型映射: Python type → JSON Schema type
@@ -38,6 +59,41 @@ _TYPE_MAP = {
 
 # 运行时注入的参数,不写入 schema
 _INJECTED_PARAMS = {"tool_runtime"}
+
+def _type_name(tp) -> str:
+    """把注解渲染成可读类型名,失败时退回 repr。"""
+    try:
+        origin = get_origin(tp)
+        if origin in (typing.Union, types.UnionType):
+            return " | ".join(_type_name(a) for a in get_args(tp))
+        if origin is not None:
+            args = ", ".join(_type_name(a) for a in get_args(tp))
+            return f"{getattr(origin, '__name__', origin)}[{args}]"
+        return getattr(tp, "__name__", str(tp))
+    except Exception:
+        return repr(tp)
+
+
+def _value_matches(value, expected) -> bool:
+    """保守的类型匹配: 只判定"明显对不上",拿不准就放行。
+
+    保守是刻意的 —— 误杀正常调用的代价远大于漏判一次传参错误。
+    """
+    origin = get_origin(expected)
+    if origin in (typing.Union, types.UnionType):
+        return any(_value_matches(value, a) for a in get_args(expected))
+    if origin is not None:
+        # list[str] / dict[str, int] 之类: 只看容器外层
+        return isinstance(value, origin)
+    if expected is bool:
+        return isinstance(value, bool)
+    if expected in (int, float):
+        # 数值类型互相放宽: timeout=0.2 给 int 参数是常见且无害的用法。
+        # 只拦跨类别错误(该传数字却传了 str), 那才是模型传参错误。
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if expected in (str, list, dict):
+        return isinstance(value, expected)
+    return True
 
 # 参数行正则: "name: desc" 或 "name (type): desc",冒号前为小写/下划线标识符,冒号后有空格
 _PARAM_LINE_RE = re.compile(r"^[a-z_][a-zA-Z0-9_]*\s*(?:\(.*?\))?\s*:\s")
@@ -494,8 +550,32 @@ class Tool:
                     f"unexpected keyword argument(s): {', '.join(unknown)}"
                 )
 
+        self._check_types(call)
         sig.bind(**call)
         return call
+
+    def _check_types(self, call: dict) -> None:
+        """按注解做保守的参数类型检查。
+
+        模型传错类型(如该传 list 却传了 str、该传 int 却传了 str)属传参错误,
+        应在调用前拦下并给出友好提示 —— 等底层抛 TypeError 就会掉进错误日志。
+
+        Raises:
+            TypeError: 参数类型与注解明显不符。
+        """
+        try:
+            hints = get_type_hints(self.func)
+        except Exception:
+            return  # 注解解析不了就跳过, 不做检查
+        for name, value in call.items():
+            expected = hints.get(name)
+            if expected is None:
+                continue
+            if not _value_matches(value, expected):
+                raise TypeError(
+                    f"Argument '{name}' has incorrect type "
+                    f"(expected {_type_name(expected)}, got {type(value).__name__})"
+                )
 
     def _param_error(self, err: TypeError, args: tuple, kwargs: dict) -> str:
         """把参数绑定失败转成给模型看的友好提示(不记日志 —— 不是代码 bug)。"""
@@ -550,6 +630,9 @@ class Tool:
         rt = bound.get("tool_runtime")
         try:
             return await self.execute(**bound)
+        except ToolUserError as e:
+            # 预期失败(状态/参数校验): 消息已带上下文, 不写错误日志
+            return f"{TOOL_ERROR}: {e}"
         except Exception as e:
             config = getattr(rt, "config", None)
             shown = {

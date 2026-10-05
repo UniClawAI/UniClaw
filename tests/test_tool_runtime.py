@@ -307,6 +307,133 @@ class TestParamErrorFriendly:
         assert "tool_runtime" not in result
 
     @pytest.mark.asyncio
+    async def test_wrong_type_reported_without_log(self, monkeypatch):
+        """类型传错(该传 int 却传 str)→ 友好提示, 不写错误日志。"""
+        from uniclaw.console import ui
+
+        @tool
+        def typed(count: int, names: list = None, tool_runtime: ToolRuntime = None) -> str:
+            """Typed tool.
+
+            Args:
+                count: 数量。
+                names: 名称列表。
+            """
+            return f"{count}"
+
+        logged = []
+        monkeypatch.setattr(
+            ui, "err", AsyncMock(side_effect=lambda *a, **k: logged.append(a))
+        )
+
+        r1 = await typed(count="abc")
+        assert "参数有误" in r1 and "count" in r1 and "int" in r1 and "str" in r1
+
+        r2 = await typed(count=1, names="browser")
+        assert "参数有误" in r2 and "names" in r2 and "list" in r2
+
+        assert logged == []
+
+    @pytest.mark.asyncio
+    async def test_numeric_types_interchangeable(self):
+        """数值类型互相放宽, 不能误杀(timeout=0.2 给 int 参数是常见用法)。"""
+        @tool
+        def f(x: float = 0.5, n: int = 30, tool_runtime: ToolRuntime = None) -> str:
+            """Numeric tool.
+
+            Args:
+                x: 浮点数。
+                n: 整数。
+            """
+            return f"{x}|{n}"
+
+        assert await f(x=3) == "3|30"  # int → float
+        assert await f(n=0.2) == "0.5|0.2"  # float → int (如 Bash 的 timeout=0.2)
+
+    @pytest.mark.asyncio
+    async def test_bool_not_accepted_as_number(self):
+        """bool 不算数字(True 给 count 基本都是错的)。"""
+        @tool
+        def f(n: int = 1, tool_runtime: ToolRuntime = None) -> str:
+            """N tool.
+
+            Args:
+                n: 数量。
+            """
+            return str(n)
+
+        assert "参数有误" in await f(n=True)
+
+    @pytest.mark.asyncio
+    async def test_optional_and_unknown_annotation_pass(self):
+        """Optional[...] 与不认识的注解(Enum 等)不做检查, 不误杀。"""
+        from enum import StrEnum
+
+        class Mode(StrEnum):
+            a = "a"
+
+        @tool
+        def g(x: int | None = None, mode: Mode = Mode.a, tool_runtime: ToolRuntime = None) -> str:
+            """G tool.
+
+            Args:
+                x: 可选数值。
+                mode: 模式。
+            """
+            return f"{x}:{mode}"
+
+        assert await g(x=None) == "None:a"
+        assert await g(mode="a") == "None:a"  # Enum 注解不拦
+
+
+class TestUserErrorNoLog:
+    """ToolUserError: 预期失败, 透出消息且不写错误日志。"""
+
+    @pytest.mark.asyncio
+    async def test_user_error_not_logged(self, monkeypatch):
+        from uniclaw.console import ui
+        from uniclaw.tools.base import ToolUserError
+
+        logged = []
+        monkeypatch.setattr(
+            ui, "err", AsyncMock(side_effect=lambda *a, **k: logged.append(a))
+        )
+
+        @tool
+        def lookup(item_id: int, tool_runtime: ToolRuntime = None) -> str:
+            """Lookup tool.
+
+            Args:
+                item_id: 条目 ID。
+            """
+            raise ToolUserError(f"条目 {item_id} 不存在(可用: [1, 2])")
+
+        result = await lookup(item_id=999)
+
+        assert "条目 999 不存在" in result
+        assert "可用" in result  # 上下文要透出来
+        assert logged == []  # 预期失败不写错误日志
+
+    @pytest.mark.asyncio
+    async def test_other_exception_still_logged(self, monkeypatch):
+        """非 ToolUserError 仍视为 bug, 照常记日志。"""
+        from uniclaw.console import ui
+
+        logged = []
+        monkeypatch.setattr(
+            ui, "err", AsyncMock(side_effect=lambda *a, **k: logged.append(a))
+        )
+
+        @tool
+        def broken(tool_runtime: ToolRuntime = None) -> str:
+            """Broken tool."""
+            raise ValueError("boom")
+
+        result = await broken()
+        assert "boom" in result
+        assert len(logged) == 1
+
+    @pytest.mark.asyncio
     async def test_body_typeerror_still_logged_as_bug(self, monkeypatch):
         """绑定通过后函数体内的 TypeError 是 bug, 照常记日志。"""
         from uniclaw.console import ui

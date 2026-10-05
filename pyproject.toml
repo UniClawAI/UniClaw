@@ -20,6 +20,8 @@ dependencies = [
     "httpx>=0.28.1",
     "mss>=10.0.0",
     "pillow>=10.0.0",
+    # pyscreeze 的 confidence 匹配依赖 cv2(cu_locate_on_screen 用到)
+    "opencv-python>=4.0.0",
     "prompt-toolkit>=3.0.0",
     "pyaml>=26.2.1",
     "pyautogui>=0.9.54",
