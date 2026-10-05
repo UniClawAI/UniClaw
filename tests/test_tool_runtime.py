@@ -206,7 +206,7 @@ class TestCallExceptionFallback:
 
     @pytest.mark.asyncio
     async def test_call_logs_positional_args(self, monkeypatch):
-        """位置参数调用时入参同样进日志。"""
+        """位置参数调用时入参进日志, 且映射成真实参数名(不是 arg0)。"""
         from uniclaw.console import ui
 
         captured = {}
@@ -217,8 +217,7 @@ class TestCallExceptionFallback:
         monkeypatch.setattr(ui, "err", fake_err)
         boom = self._make_raising_tool()
         await boom("pos")
-        assert "arg0" in captured["msg"]
-        assert "pos" in captured["msg"]
+        assert "'value': 'pos'" in captured["msg"]
 
     @pytest.mark.asyncio
     async def test_positional_error_still_fallback(self):
@@ -228,6 +227,108 @@ class TestCallExceptionFallback:
         sample, _ = TestToolCallPassThrough()._make_async_tool()
         result = await sample("a", "b", "c")  # 参数过多
         assert TOOL_ERROR in result
+
+
+class TestParamErrorFriendly:
+    """模型传参错误: 返回友好提示并给出正确签名, 且不写错误日志。"""
+
+    def _tool(self):
+        @tool
+        def sample(value: str, limit: int = 10, tool_runtime: ToolRuntime = None) -> str:
+            """Sample tool.
+
+            Args:
+                value: 输入值。
+                limit: 上限。
+            """
+            return f"{value}:{limit}"
+
+        return sample
+
+    @pytest.mark.asyncio
+    async def test_missing_required_param(self, monkeypatch):
+        """漏传必填参数 → 友好提示 + 正确签名, 不写日志。"""
+        from uniclaw.console import ui
+
+        sample = self._tool()
+        logged = []
+        monkeypatch.setattr(
+            ui, "err", AsyncMock(side_effect=lambda *a, **k: logged.append(a))
+        )
+
+        result = await sample()
+
+        assert "参数有误" in result
+        assert "sample(" in result
+        assert "value" in result
+        assert "limit=" in result  # 含默认值展示
+        assert logged == []  # 关键: 模型传参错误不写错误日志
+
+    @pytest.mark.asyncio
+    async def test_unknown_param_name(self, monkeypatch):
+        """参数名拼错 → 友好提示, 不写日志。"""
+        from uniclaw.console import ui
+
+        sample = self._tool()
+        logged = []
+        monkeypatch.setattr(
+            ui, "err", AsyncMock(side_effect=lambda *a, **k: logged.append(a))
+        )
+
+        result = await sample(valu="x")
+
+        assert "参数有误" in result
+        # 要点出拼错的名字, 不能只报 "missing required argument: 'value'"
+        assert "unexpected keyword" in result
+        assert "valu" in result
+        assert logged == []
+
+    @pytest.mark.asyncio
+    async def test_too_many_positional(self, monkeypatch):
+        """位置参数过多 → 友好提示, 不写日志。"""
+        from uniclaw.console import ui
+
+        sample = self._tool()
+        logged = []
+        monkeypatch.setattr(
+            ui, "err", AsyncMock(side_effect=lambda *a, **k: logged.append(a))
+        )
+
+        result = await sample("a", 1, 2, 3)  # sample 只有 3 个形参
+
+        assert "参数有误" in result
+        assert logged == []
+
+    @pytest.mark.asyncio
+    async def test_signature_hides_injected_params(self):
+        """正确签名里不出现 tool_runtime(schema 里也没有)。"""
+        sample = self._tool()
+        result = await sample()
+        assert "tool_runtime" not in result
+
+    @pytest.mark.asyncio
+    async def test_body_typeerror_still_logged_as_bug(self, monkeypatch):
+        """绑定通过后函数体内的 TypeError 是 bug, 照常记日志。"""
+        from uniclaw.console import ui
+
+        @tool
+        def buggy(value: str, tool_runtime: ToolRuntime = None) -> str:
+            """Buggy tool.
+
+            Args:
+                value: 输入值。
+            """
+            return value + 1  # TypeError: 绑定通过, 是真 bug
+
+        logged = []
+        monkeypatch.setattr(
+            ui, "err", AsyncMock(side_effect=lambda *a, **k: logged.append(a))
+        )
+
+        result = await buggy("x")
+
+        assert "参数有误" not in result
+        assert len(logged) == 1  # bug 要留痕
 
 
 class TestSchemaExclusion:

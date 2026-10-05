@@ -455,6 +455,78 @@ class Tool:
             if not task.done():
                 task.cancel()
 
+    def _bind_call(self, args: tuple, kwargs: dict) -> dict:
+        """把 (args, kwargs) 绑定到函数签名,返回可直接调用的 kwargs。
+
+        显式 bind 校验:漏传必填、参数名拼错、多传不存在的参数 —— 这些是
+        **模型传参错误**,不是代码 bug,应给出友好提示而不是记错误堆栈。
+        绑定通过后再抛出的 TypeError 才是函数体内的真 bug。
+
+        Raises:
+            TypeError: 参数与签名不匹配。
+        """
+        sig = inspect.signature(self.func)
+        params = list(sig.parameters)
+
+        call = dict(kwargs)
+        if args:
+            if len(args) > len(params):
+                raise TypeError(
+                    f"{self.name}() takes {len(params)} positional arguments "
+                    f"but {len(args)} were given"
+                )
+            for i, arg in enumerate(args):
+                call[params[i]] = arg
+        call.pop("_explain", None)
+        for injected in _INJECTED_PARAMS:
+            if injected not in params:
+                call.pop(injected, None)
+
+        # 先查未知参数名 —— 模型拼错参数名是最常见的情况, 而 sig.bind() 会先报
+        # "missing required argument", 定位不到真正的问题
+        accepts_kwargs = any(
+            p.kind is inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+        )
+        if not accepts_kwargs:
+            unknown = sorted(k for k in call if k not in params)
+            if unknown:
+                raise TypeError(
+                    f"unexpected keyword argument(s): {', '.join(unknown)}"
+                )
+
+        sig.bind(**call)
+        return call
+
+    def _param_error(self, err: TypeError, args: tuple, kwargs: dict) -> str:
+        """把参数绑定失败转成给模型看的友好提示(不记日志 —— 不是代码 bug)。"""
+        shown = {
+            k: v
+            for k, v in kwargs.items()
+            if k not in _INJECTED_PARAMS and k != "_explain"
+        }
+        if args:
+            shown = {**{f"arg{i}": a for i, a in enumerate(args)}, **shown}
+
+        visible = []
+        for name, p in inspect.signature(self.func).parameters.items():
+            if name in _INJECTED_PARAMS:
+                continue
+            if p.kind is inspect.Parameter.VAR_KEYWORD:
+                visible.append(f"**{name}")
+            elif p.kind is inspect.Parameter.VAR_POSITIONAL:
+                visible.append(f"*{name}")
+            elif p.default is not inspect.Parameter.empty:
+                visible.append(f"{name}={p.default!r}")
+            else:
+                visible.append(name)
+
+        return (
+            f"{TOOL_ERROR}: {self.name} 参数有误: {err}\n"
+            f"实际传入: {shown}\n"
+            f"正确签名: {self.name}({', '.join(visible)})\n"
+            f"请核对参数名拼写、必填参数是否漏传、是否多传了不存在的参数"
+        )
+
     async def __call__(
         self,
         *args,
@@ -462,25 +534,29 @@ class Tool:
     ):
         """调用工具(异常兜底):委托 execute(),异常不外抛。
 
-        捕获到的异常经 console.ui.err 输出日志与完整堆栈(含调用入参),并返回
-        `{TOOL_ERROR}: ...` 文本结果,让 LLM 看到失败原因继续对话。
+        模型传参错误(漏传/拼错/多传参数)返回友好提示并给出正确签名,**不记日志**
+        —— 那是调用方的问题,不是代码 bug,不需要堆栈。其余异常经 console.ui.err
+        记日志(含调用入参与完整堆栈),并返回 `{TOOL_ERROR}: ...` 文本,让 LLM 看到
+        失败原因继续对话。
         asyncio.CancelledError 等 BaseException 仍会上抛,以免吞掉中断信号。
         """
         from uniclaw.console.ui import err
 
-        rt = kwargs.get("tool_runtime")
         try:
-            return await self.execute(*args, **kwargs)
+            bound = self._bind_call(args, kwargs)
+        except TypeError as e:
+            return self._param_error(e, args, kwargs)
+
+        rt = bound.get("tool_runtime")
+        try:
+            return await self.execute(**bound)
         except Exception as e:
             config = getattr(rt, "config", None)
-            # 入参进日志,便于排查;过滤注入参数与 _explain。位置参数退化为 arg0/arg1
             shown = {
                 k: v
-                for k, v in kwargs.items()
+                for k, v in bound.items()
                 if k not in _INJECTED_PARAMS and k != "_explain"
             }
-            if args:
-                shown = {**{f"arg{i}": a for i, a in enumerate(args)}, **shown}
             await err(f"{TOOL_ERROR}: [{self.name}] {e}\n参数: {shown}", config, e)
             return f"{TOOL_ERROR}: {e}"
 
