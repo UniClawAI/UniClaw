@@ -232,28 +232,60 @@ class TestCheckResult:
 class TestListTasks:
     """subagent_list_tasks 测试。"""
 
+    @staticmethod
+    def _make_sub_config(task: MagicMock) -> MagicMock:
+        """构造一个 sub_config,其 current_agent 为给定任务 mock。"""
+        sub = MagicMock()
+        sub.current_agent = task
+        return sub
+
     @pytest.mark.asyncio
-    async def test_list_empty(self, mock_mgr):
+    async def test_list_empty(self):
         """无任务时返回提示。"""
-        mock_mgr.list_tasks.return_value = []
-        with _patch_get_instance(mock_mgr):
-            result = await subagent_list_tasks()
+        config = MagicMock()
+        config.sub_configs = []
+        result = await subagent_list_tasks(tool_runtime=ToolRuntime(config=config))
         assert "没有子智能体任务" in result
 
     @pytest.mark.asyncio
-    async def test_list_with_tasks(self, mock_mgr):
-        """有任务时返回表格。"""
-        mock_task = MagicMock()
-        mock_task.id = "abc123"
-        mock_task.name = "test"
-        mock_task.status = "running"
-        mock_task.worktree_branch = None
-        mock_task.prompt = "do something"
-        mock_mgr.list_tasks.return_value = [mock_task]
-        with _patch_get_instance(mock_mgr):
-            result = await subagent_list_tasks()
-        assert "ID" in result
-        assert "abc123" in result
+    async def test_list_with_tasks(self):
+        """有任务时每行一个任务,字段用 | 分隔。"""
+        task = MagicMock()
+        task.id = "20261005_105609_eede855b89e3"  # 真实长度 ID(28字符)
+        task.name = "中文代理"
+        task.status = "running"
+        task.worktree_branch = None
+        task.prompt = "do something"
+        config = MagicMock()
+        config.sub_configs = [self._make_sub_config(task)]
+        result = await subagent_list_tasks(tool_runtime=ToolRuntime(config=config))
+        assert "20261005_105609_eede855b89e3" in result
+        assert "中文代理" in result
+        assert "running" in result
+        assert "do something" in result
+        assert " | " in result  # 字段以 | 分隔
+
+    @pytest.mark.asyncio
+    async def test_list_scope_current_config(self):
+        """只列当前 config 的子代理,主/根会话任务不出现(不查全局管理器)。"""
+        sub_task = MagicMock()
+        sub_task.id = "20261005_105610_1234567890ab"
+        sub_task.name = "worker"
+        sub_task.status = "completed"
+        sub_task.worktree_branch = None
+        sub_task.prompt = "子代理任务"
+        config = MagicMock()
+        config.sub_configs = [self._make_sub_config(sub_task)]
+        result = await subagent_list_tasks(tool_runtime=ToolRuntime(config=config))
+        assert "worker" in result
+        # 主/根会话任务不在 sub_configs 中,不应出现
+        assert "root" not in result
+
+    @pytest.mark.asyncio
+    async def test_list_without_runtime(self):
+        """无 tool_runtime(无配置)时返回提示。"""
+        result = await subagent_list_tasks()
+        assert "没有子智能体任务" in result
 
 
 class TestListDefinitions:

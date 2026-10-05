@@ -250,39 +250,34 @@ def subagent_check_result(task_id: str, full: bool = False) -> str:
 
 
 @tool
-def subagent_list_tasks() -> str:
+def subagent_list_tasks(tool_runtime: ToolRuntime = None) -> str:
     """
-    列出所有子智能体任务的当前状态和信息。
+    列出当前 agent 创建的子智能体任务的当前状态和信息。
 
-    该函数通过 MultiAgent 管理器获取所有正在运行的任务,并以格式化的表格形式展示每个任务的关键信息,
-    包括任务ID、名称、状态、工作树分支和提示内容(截断显示)。
+    返回当前 agent 直接创建的子代理任务列表(运行中/等待中/驻留中的),
+    输出带表头,每行一个任务,字段顺序为:任务ID | 名称 | 状态 | 工作树分支(无则-) | 提示。
+    主/根会话任务不会出现在列表中。
 
     Returns:
-        str: 格式化后的任务列表字符串。如果没有任务,返回提示信息;否则返回包含表头和所有任务信息的表格字符串,
-             每行包含任务ID、名称(最多8字符)、状态、工作树分支(最多15字符)和提示内容(最多50字符)。
+        str: 没有子代理任务时返回提示信息;否则第一行为表头,
+             之后每行一个任务,含任务ID、名称、状态、工作树分支和提示内容。
     """
-    from uniclaw.agent import MultiAgent
-
-    mgr = MultiAgent.get_instance()
-    tasks = mgr.list_tasks()
+    config = tool_runtime.config if tool_runtime else None
+    tasks = (
+        [sub.current_agent for sub in config.sub_configs if sub.current_agent]
+        if config
+        else []
+    )
 
     # 检查是否存在任务,若无则返回提示信息
     if not tasks:
         return "没有子智能体任务。"
 
-    # 构建表格头部和分隔线
-    lines = ["ID           | 名称     | 状态      | 工作树分支       | 提示"]
-    lines.append("-------------|----------|-----------|-----------------|------")
-
-    # 遍历所有任务,格式化每个任务的信息并添加到列表中
+    # 每行一个任务,字段用 | 分隔(输出供 AI 阅读,无需表格对齐)
+    lines = ["任务ID | 名称 | 状态 | 工作树分支 | 提示"]
     for task in tasks:
-        prompt_short = task.prompt[:50] + ("..." if len(task.prompt) > 50 else "")
-        wt = task.worktree_branch[:15] if task.worktree_branch else "-"
-        lines.append(
-            f"{task.id} | {task.name[:8]:8s} | {task.status:9s} | {wt:15s} | {prompt_short}"
-        )
-
-    # 将所有行连接成完整的表格字符串并返回
+        wt = task.worktree_branch or "-"
+        lines.append(f"{task.id} | {task.name} | {task.status} | {wt} | {task.prompt}")
     return "\n".join(lines)
 
 
