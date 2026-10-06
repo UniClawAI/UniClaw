@@ -77,12 +77,6 @@ class TestWakeAgentQueueInjection:
         assert await wake_agent("hello", config) is True
         assert task.user_queue.get_nowait() == "hello"
 
-    async def test_waiting_agent_gets_message(self):
-        task = _make_task(AgentStatus.WAITING)
-        config = _make_config(agent=task)
-        assert await wake_agent("hello", config) is True
-        assert task.user_queue.qsize() == 1
-
     async def test_pending_with_alive_future_gets_message(self):
         """PENDING 且 future 存活(进程内未启动但已排队)→ 注入队列。"""
         task = _make_task(AgentStatus.PENDING, future_done=False)

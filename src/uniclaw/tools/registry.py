@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import re
+from collections import deque
 from dataclasses import dataclass
 from typing import Optional
 
@@ -53,6 +55,33 @@ def _build_core_tools() -> list:
 
 CORE_TOOLS = _build_core_tools()
 CORE_TOOL_NAMES = {t.name for t in CORE_TOOLS}
+
+# cu_* 家族共享检索词。查询 "computer_use" 分词为 computer/use,而工具名是
+# cu_* 前缀、类别是中文"计算机操作",与查询无共同词元会导致 BM25 全 0,
+# 搜 "computer_use" 反而命中一堆带 "use"/"computer" 的无关工具。
+_CU_FAMILY_KEYWORDS = [
+    "computer_use",
+    "computer use",
+    "computer-use",
+    "desktop automation",
+    "computer control",
+    "gui automation",
+    "计算机操作",
+    "桌面自动化",
+    "桌面操作",
+]
+
+# 类别英文别名:BM25/名称匹配里的类别是中文,英文查询(如 "computer_use")
+# 无法命中,为常用类别补英文检索词,让"按分类搜"也能命中该类工具。
+_CATEGORY_EN_ALIASES: dict[str, list[str]] = {
+    "计算机操作": [
+        "computer_use",
+        "computer use",
+        "desktop automation",
+        "computer control",
+        "gui automation",
+    ],
+}
 
 
 def _build_extended_keywords() -> dict[str, list[str]]:
@@ -486,12 +515,28 @@ def _build_extended_keywords() -> dict[str, list[str]]:
             "截屏",
             "屏幕截图",
             "capture screen",
+            *_CU_FAMILY_KEYWORDS,
         ],
-        cu_mouse_move.name: ["鼠标移动", "mouse", "移动鼠标", "move mouse", "cursor"],
-        cu_mouse_click.name: ["点击", "click", "鼠标点击", "单击", "tap"],
-        cu_mouse_double_click.name: ["双击", "double click", "鼠标双击"],
-        cu_mouse_drag.name: ["拖拽", "drag", "拖动", "鼠标拖拽", "drag and drop"],
-        cu_mouse_scroll.name: ["滚动", "scroll", "滚轮", "鼠标滚动", "wheel"],
+        cu_mouse_move.name: [
+            "鼠标移动", "mouse", "移动鼠标", "move mouse", "cursor",
+            *_CU_FAMILY_KEYWORDS,
+        ],
+        cu_mouse_click.name: [
+            "点击", "click", "鼠标点击", "单击", "tap",
+            *_CU_FAMILY_KEYWORDS,
+        ],
+        cu_mouse_double_click.name: [
+            "双击", "double click", "鼠标双击",
+            *_CU_FAMILY_KEYWORDS,
+        ],
+        cu_mouse_drag.name: [
+            "拖拽", "drag", "拖动", "鼠标拖拽", "drag and drop",
+            *_CU_FAMILY_KEYWORDS,
+        ],
+        cu_mouse_scroll.name: [
+            "滚动", "scroll", "滚轮", "鼠标滚动", "wheel",
+            *_CU_FAMILY_KEYWORDS,
+        ],
         cu_keyboard_type.name: [
             "输入",
             "type",
@@ -499,8 +544,12 @@ def _build_extended_keywords() -> dict[str, list[str]]:
             "打字",
             "input text",
             "typing",
+            *_CU_FAMILY_KEYWORDS,
         ],
-        cu_keyboard_type_unicode.name: ["unicode输入", "中文输入", "unicode type"],
+        cu_keyboard_type_unicode.name: [
+            "unicode输入", "中文输入", "unicode type",
+            *_CU_FAMILY_KEYWORDS,
+        ],
         cu_keyboard_press.name: [
             "按键",
             "press",
@@ -508,9 +557,16 @@ def _build_extended_keywords() -> dict[str, list[str]]:
             "快捷键",
             "hotkey",
             "key press",
+            *_CU_FAMILY_KEYWORDS,
         ],
-        cu_keyboard_key_down.name: ["按下", "key down", "键盘按下"],
-        cu_keyboard_key_up.name: ["松开", "key up", "键盘松开"],
+        cu_keyboard_key_down.name: [
+            "按下", "key down", "键盘按下",
+            *_CU_FAMILY_KEYWORDS,
+        ],
+        cu_keyboard_key_up.name: [
+            "松开", "key up", "键盘松开",
+            *_CU_FAMILY_KEYWORDS,
+        ],
         cu_locate_on_screen.name: [
             "定位",
             "locate",
@@ -518,6 +574,7 @@ def _build_extended_keywords() -> dict[str, list[str]]:
             "查找图片",
             "find on screen",
             "template match",
+            *_CU_FAMILY_KEYWORDS,
         ],
         cu_get_elements.name: [
             "UI元素",
@@ -530,6 +587,7 @@ def _build_extended_keywords() -> dict[str, list[str]]:
             "UI tree",
             "accessibility",
             "交互元素",
+            *_CU_FAMILY_KEYWORDS,
         ],
         cu_find_element.name: [
             "查找元素",
@@ -538,6 +596,7 @@ def _build_extended_keywords() -> dict[str, list[str]]:
             "查找控件",
             "定位元素",
             "search element",
+            *_CU_FAMILY_KEYWORDS,
         ],
         cu_interact.name: [
             "操作元素",
@@ -548,6 +607,7 @@ def _build_extended_keywords() -> dict[str, list[str]]:
             "focus",
             "UI操作",
             "控件操作",
+            *_CU_FAMILY_KEYWORDS,
         ],
         subagent_create.name: [
             "创建代理",
@@ -1935,6 +1995,86 @@ class ToolEntry:
     category: str
 
 
+# ── 名称匹配(与 BM25 混合排序) ──────────────────────────────
+
+
+def _norm_name(s: str) -> str:
+    """归一化名称: 忽略大小写/下划线/连字符/空格差异。
+
+    >>> _norm_name("DockerSearch") == _norm_name("docker_search") == _norm_name("docker search")
+    True
+    """
+    return re.sub(r"[\s_\-]+", "", s or "").lower()
+
+
+def _name_match_tier(query: str, name: str) -> int:
+    """计算查询词与工具名的匹配层级。
+
+    层级(高到低):
+      3 = 精确匹配 — 查询词与工具名归一化后完全相等
+      2 = 前缀匹配 — 一方是另一方的前缀
+      1 = 子串匹配 — 一方包含另一方(也覆盖"长查询句中嵌入工具名"的情况)
+      0 = 无名称匹配
+
+    归一化让 "DockerSearch" / "docker_search" / "docker search" 视为同一查询,
+    命中 DockerSearch 而不是 kg_search(后者仅因分词出 "search" 而蹭分)。
+    过短的查询词(len < 3)不做前缀/子串匹配,避免 "to" 之类噪声命中一大片。
+    """
+    qn = _norm_name(query)
+    nn = _norm_name(name)
+    if not qn or not nn:
+        return 0
+    if qn == nn:
+        return 3
+    if len(qn) < 3:
+        return 0
+    if nn.startswith(qn) or qn.startswith(nn):
+        return 2
+    if qn in nn or nn in qn:
+        return 1
+    return 0
+
+
+def _keyword_match_tier(query: str, keywords: list[str]) -> int:
+    """查询词与某条检索词归一化后完全一致时返回 3,否则 0。
+
+    只做精确匹配:前缀/子串会把 "text" 之类短检索词蹭进 "text_to_speech"
+    查询,重新引入噪声。精确匹配让 "computer_use" 命中带同名检索词的 cu_* 家族。
+    """
+    qn = _norm_name(query)
+    if not qn or len(qn) < 3:
+        return 0
+    for kw in keywords or ():
+        if qn == _norm_name(kw):
+            return 3
+    return 0
+
+
+def _category_match_tier(query: str, category: str) -> int:
+    """查询词与类别(或其英文别名)归一化后完全一致时返回 3,否则 0。
+
+    类别多为中文("计算机操作"),英文查询 "computer_use" 靠别名对齐,
+    使"按分类搜"也能命中该类工具。
+    """
+    qn = _norm_name(query)
+    if not qn or len(qn) < 3:
+        return 0
+    if qn == _norm_name(category):
+        return 3
+    for alias in _CATEGORY_EN_ALIASES.get(category, ()):
+        if qn == _norm_name(alias):
+            return 3
+    return 0
+
+
+def _entry_match_tier(query: str, name: str, keywords: list[str], category: str) -> int:
+    """名称 / 检索词 / 类别别名三层取最高匹配层级。"""
+    t = _name_match_tier(query, name)
+    if t >= 3:
+        return t
+    return max(t, _keyword_match_tier(query, keywords), _category_match_tier(query, category))
+
+
 class ToolRegistry:
     """工具注册表 — 管理核心工具和扩展工具的发现与加载。"""
 
@@ -1986,8 +2126,12 @@ class ToolRegistry:
         for name, entry in self._entries.items():
             if name in self._core_names:
                 continue  # 核心工具不需要搜索
-            # 构建文档:工具名 + 描述 + 关键词 + 类别
-            doc = f"{name} {entry.tool.description} {' '.join(entry.keywords)} {entry.category}"
+            # 构建文档:工具名 + 描述 + 关键词 + 类别(含英文别名)
+            cat_alias = " ".join(_CATEGORY_EN_ALIASES.get(entry.category, ()))
+            doc = (
+                f"{name} {entry.tool.description} {' '.join(entry.keywords)} "
+                f"{entry.category} {cat_alias}"
+            )
             tokens = _tokenize(doc)
             self._bm25_keys.append(name)
             self._bm25_corpus.append(tokens)
@@ -1997,7 +2141,15 @@ class ToolRegistry:
             self._bm25 = None
 
     def search(self, query: str, top_k: int = 10) -> list[ToolEntry]:
-        """BM25 搜索工具。"""
+        """混合检索: 工具名/检索词/类别精确匹配优先,BM25 关键词检索兜底。
+
+        纯 BM25 的局限: 分词会把 "DockerSearch" 拆成 docker/search,
+        "search" 又是 kg_search/rag_search 等工具的通用词,导致精确工具名查询
+        混入大量无关命中。因此先按匹配分层(名称精确/前缀/子串 + 检索词/类别精确),
+        层内再用 BM25 分排序;一旦存在"真命中"(分层命中且 BM25>0),丢弃纯 BM25 弱命中。
+        无命中时(如中文同义词 "截图")仍走纯 BM25,保留按关键词找同义工具的能力。
+        名称蹭边但内容无关(分层>0 且 BM25=0)不视为真命中,避免误丢内容相关的 BM25 结果。
+        """
         if not self._entries:
             return []
         if self._bm25 is None:
@@ -2008,13 +2160,35 @@ class ToolRegistry:
         query_tokens = _tokenize(query)
         scores = self._bm25.get_scores(query_tokens)
 
-        # 按分数排序,取 top_k
-        scored = sorted(zip(self._bm25_keys, scores), key=lambda x: x[1], reverse=True)
-        results = []
-        for name, score in scored[:top_k]:
-            if score > 0:
-                results.append(self._entries[name])
-        return results
+        tiers: dict[str, int] = {}
+        for name in self._bm25_keys:
+            entry = self._entries[name]
+            tiers[name] = _entry_match_tier(
+                query, name, entry.keywords, entry.category
+            )
+
+        # 真命中 = 分层命中且文档里确有相关词元;仅名字蹭边不算
+        has_real_hit = False
+        for name, score in zip(self._bm25_keys, scores):
+            if tiers[name] > 0 and score > 0:
+                has_real_hit = True
+                break
+
+        scored: list[tuple[int, float, str]] = []
+        for name, score in zip(self._bm25_keys, scores):
+            tier = tiers[name]
+            if tier > 0:
+                scored.append((tier, score, name))
+            elif has_real_hit:
+                continue  # 有真命中时,丢弃纯 BM25 噪声
+            elif score <= 0:
+                continue
+            else:
+                scored.append((tier, score, name))
+
+        # 层级优先(精确 > 前缀 > 子串),同层按 BM25 分排序
+        scored.sort(key=lambda x: (-x[0], -x[1]))
+        return [self._entries[name] for _, _, name in scored[:top_k]]
 
     def get_all_entries(self) -> dict[str, ToolEntry]:
         """获取所有注册的工具条目。"""
@@ -2051,6 +2225,10 @@ def get_builtin_tool_names() -> set[str]:
 
 MAX_LOADED_EXTENDED = 25  # 扩展工具最大加载数量
 EXTENDED_TOOL_ENERGY_MAX = 30  # 扩展工具初始能量,每轮对话-1,被调用/搜索到恢复,为0时卸载
+# 最近调用保护窗口: 淘汰时豁免最近 N 次调用里出现过的工具。
+# 没有这层保护时,search_tools 的容量淘汰只看 MRU 尾部 —— 一旦后续又搜索/加载了
+# 其他工具,刚用过的工具会被迅速挤到尾部并淘汰,紧邻的下一次调用就报"未加载"。
+EXTENDED_TOOL_RECENT_PROTECT = 8
 
 
 class ExtendedToolManager:
@@ -2058,6 +2236,9 @@ class ExtendedToolManager:
 
     能量机制:每个扩展工具有 EXTENDED_TOOL_ENERGY_MAX 点能量,
     每轮对话扣 1 点,被调用或搜索命中恢复满,归零自动卸载。
+
+    最近调用保护:最近 EXTENDED_TOOL_RECENT_PROTECT 次调用里出现过的工具
+    豁免容量淘汰,避免"刚用过就被淘汰"。能量淘汰仍按"N 轮无使用"兜底。
     """
 
     def __init__(self):
@@ -2065,6 +2246,8 @@ class ExtendedToolManager:
         self.energy: dict[str, int] = {}  # tool.name → 能量值
         self.pending_evicted: set[str] = set()  # 待清理的工具名
         self.pending_tools: list = []  # 待加载的 Tool 对象
+        # 最近调用过的工具名(滑动窗口,最新在右)
+        self.recent_uses: deque[str] = deque(maxlen=EXTENDED_TOOL_RECENT_PROTECT)
 
     # ── 查询 ──
 
@@ -2081,8 +2264,12 @@ class ExtendedToolManager:
     # ── 工具使用 ──
 
     def touch(self, tool: Tool | str):
-        """工具被使用或搜索命中:移到 MRU 端并恢复满能量。
-        传入 Tool 对象时同时加入待加载队列(新工具首次加载)。核心工具不参与能量管理。"""
+        """工具被使用或搜索命中:移到 MRU 端、恢复满能量、记入最近调用窗口。
+
+        传入 Tool 对象时同时加入待加载队列(新工具首次加载)。核心工具不参与能量管理。
+        若该工具已被标记 pending_evicted(并行调用里搜索淘汰与实际使用撞车),
+        取消淘汰 —— 刚用过的工具不能被随后的 apply() 卸载。
+        """
         if isinstance(tool, str):
             name = tool
         else:
@@ -2091,12 +2278,40 @@ class ExtendedToolManager:
                 self.pending_tools.append(tool)
         if name in CORE_TOOL_NAMES:
             return
+        # 刚用过 → 取消待淘汰。否则 apply() 会按 pending_evicted 把它从
+        # name2tool 移除,下一次调用就报"扩展工具当前未加载"。
+        self.pending_evicted.discard(name)
+        # 记入最近调用窗口(同名去重后追加到右端,旧条目自然滑出)
+        try:
+            self.recent_uses.remove(name)
+        except ValueError:
+            pass
+        self.recent_uses.append(name)
         try:
             self.loaded.remove(name)
         except ValueError:
             pass
         self.loaded.insert(0, name)
         self.energy[name] = EXTENDED_TOOL_ENERGY_MAX
+
+    def is_recently_used(self, name: str) -> bool:
+        """是否在最近 EXTENDED_TOOL_RECENT_PROTECT 次调用窗口内出现过。"""
+        return name in self.recent_uses
+
+    def pick_eviction_candidates(self, count: int) -> list[str]:
+        """从 MRU 尾部挑选最多 count 个可淘汰工具,跳过最近调用窗口内的。
+
+        返回的候选按"最久未用在前"排序;最近调用过的工具被豁免,
+        因此实际返回数量可能少于 count(此时调用方应少加载,而不是强行淘汰)。
+        """
+        candidates: list[str] = []
+        for name in reversed(self.loaded):  # 尾部 = 最久未用
+            if self.is_recently_used(name):
+                continue
+            candidates.append(name)
+            if len(candidates) >= count:
+                break
+        return candidates
 
     # ── 加载与淘汰 ──
 
@@ -2105,16 +2320,27 @@ class ExtendedToolManager:
         for name in names:
             if name in self.loaded:
                 self.loaded.remove(name)
-                print(f"evict {name}")
             self.energy.pop(name, None)
+            try:
+                self.recent_uses.remove(name)
+            except ValueError:
+                pass
         self.pending_evicted.update(names)
 
     def drain_energy(self) -> list[str]:
-        """每轮工具调用结束时调用:所有已加载工具能量-1,移除耗尽的工具。"""
+        """每轮工具调用结束时调用:所有已加载工具能量-1,移除耗尽的工具。
+
+        能量机制本身就是"N 轮无使用"(EXTENDED_TOOL_ENERGY_MAX 轮),
+        最近调用窗口内的工具额外豁免 —— 能量耗尽但刚用过时保留最低能量,
+        下一轮再判定,避免计时边界把刚用过的工具卸载。
+        """
         exhausted = []
         for name in list(self.loaded):
             e = self.energy.get(name, EXTENDED_TOOL_ENERGY_MAX) - 1
             if e <= 0:
+                if self.is_recently_used(name):
+                    self.energy[name] = 1
+                    continue
                 exhausted.append(name)
             else:
                 self.energy[name] = e
@@ -2223,33 +2449,33 @@ async def search_tools(query: str, tool_runtime: ToolRuntime = None) -> str:
     new_available = [e for e in available if e.tool.name not in mgr.loaded_names]
     if not new_available:
         if not available:
-            lines = [f"未找到匹配 '{query}' 的可用工具。"]
             if blocked:
-                lines.append(
-                    f"以下 {len(blocked)} 个工具存在但当前不可用(未启用或无权限):"
-                )
+                # 命中了但全部不可用 —— 首行必须说"命中 N 个但不可用",
+                # 不能写"未找到匹配"(那会让 agent 误判为查询词没命中)
+                lines = [f"命中 {len(blocked)} 个工具,但当前均不可用(未启用或无权限):"]
                 for entry in blocked:
                     lines.append(_format_blocked(entry))
-            lines.append("尝试其他关键词。")
+                lines.append("尝试其他关键词,或先启用/配置上述工具。")
+            else:
+                lines = [f"未找到匹配 '{query}' 的工具。尝试其他关键词。"]
             return "\n".join(lines)
         # 所有匹配的工具都已加载
         for entry in available:
             mgr.touch(entry.tool.name)
         return f"匹配到 {len(available)} 个工具,均已加载: {', '.join(e.tool.name for e in available)}"
-    # LRU 淘汰:计算可新增的数量
+    # LRU 淘汰:计算可新增的数量(跳过最近调用过的工具,避免刚用过就被淘汰)
     slots_available = MAX_LOADED_EXTENDED - mgr.slot_count
     evicted_names: list[str] = []
     if slots_available <= 0:
         evict_count = min(len(new_available), mgr.slot_count)
-        evicted_names = mgr.loaded[-evict_count:]
-        del mgr.loaded[-evict_count:]
-        slots_available = evict_count
+        evicted_names = mgr.pick_eviction_candidates(evict_count)
+        slots_available = len(evicted_names)
     elif len(new_available) > slots_available:
         evict_count = len(new_available) - slots_available
-        evicted_names = mgr.loaded[-evict_count:]
-        del mgr.loaded[-evict_count:]
-        slots_available = len(new_available)
+        evicted_names = mgr.pick_eviction_candidates(evict_count)
+        slots_available += len(evicted_names)
     if evicted_names:
+        # evict() 内部负责从 loaded 移除 + 清能量 + 压入 pending_evicted
         mgr.evict(evicted_names)
     # 只加载能放下的数量
     to_load = new_available[:slots_available]

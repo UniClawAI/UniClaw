@@ -30,6 +30,7 @@ from uniclaw.tools.lsp.tools import (
     _format_locations,
     _format_symbols,
     _parse_position,
+    _resolve_file,
 )
 
 
@@ -256,18 +257,21 @@ def test_server_install_hint(lang):
 # ── 位置解析 ──────────────────────────────────────────
 
 
-def test_parse_position_plain():
-    path, line, col = _parse_position("src/main.py")
-    assert path.name == "main.py" and line == 0 and col == 0
+def test_parse_position_plain_missing_line_raises():
+    """只给路径不给 line → 参数错误, 不能静默用 (0,0) 去查。"""
+    from uniclaw.tools.base import ToolUserError
+
+    with pytest.raises(ToolUserError, match="line"):
+        _parse_position("src/main.py")
 
 
 def test_parse_position_inline_line():
-    path, line, col = _parse_position("src/main.py:12")
+    path, line, col = _parse_position("src/main.py:12", root_dir=Path.cwd())
     assert line == 11 and col == 0  # 1-based → 0-based
 
 
 def test_parse_position_inline_line_col():
-    path, line, col = _parse_position("src/main.py:12:5")
+    path, line, col = _parse_position("src/main.py:12:5", root_dir=Path.cwd())
     assert line == 11 and col == 4
 
 
@@ -279,8 +283,69 @@ def test_parse_position_windows_drive():
 
 def test_parse_position_explicit_overrides():
     """显式 line/column 参数优先于内嵌后缀。"""
-    path, line, col = _parse_position("src/main.py:5", line=20, column=7)
+    path, line, col = _parse_position("src/main.py:5", line=20, column=7, root_dir=Path.cwd())
     assert line == 19 and col == 6
+
+
+def test_resolve_file_plain_path():
+    """_resolve_file 只解析路径(全文件查询用)。"""
+    path = _resolve_file("src/main.py", root_dir=Path.cwd())
+    assert path.name == "main.py"
+
+
+def test_resolve_file_strips_inline_position():
+    """"路径:行[:列]" 内嵌后缀被剥离(与 lsp_definition 一致),行列被忽略。
+
+    三工具对 file 的接受格式必须一致 —— 否则 "bad.py:1" 在 definition
+    里是文件+行号、在 diagnostics 里却被当成字面文件名。
+    """
+    assert _resolve_file("src/main.py:12:5", root_dir=Path.cwd()).name == "main.py"
+    assert _resolve_file("src/main.py:12", root_dir=Path.cwd()).name == "main.py"
+    # Windows 盘符不被误拆
+    assert _resolve_file("D:\\code\\x.py:10:3").name == "x.py"
+
+
+def test_parse_position_still_requires_line():
+    """_parse_position 仍强制要求 line(definition/hover/references 用)。"""
+    from uniclaw.tools.base import ToolUserError
+
+    with pytest.raises(ToolUserError, match="line"):
+        _parse_position("src/main.py")
+
+
+def test_symbols_diagnostics_signatures_have_no_line():
+    """symbols/diagnostics 签名不含 line/column(全文件查询)。"""
+    import inspect
+
+    from uniclaw.tools.lsp import tools as lsp_tools
+
+    for fn in (lsp_tools.lsp_symbols, lsp_tools.lsp_diagnostics):
+        params = inspect.signature(fn.func).parameters
+        assert "file" in params
+        assert "line" not in params and "column" not in params
+    for fn in (lsp_tools.lsp_definition, lsp_tools.lsp_hover, lsp_tools.lsp_references):
+        params = inspect.signature(fn.func).parameters
+        assert "line" in params and "column" in params
+
+
+def test_symbols_diagnostics_docstrings_match_signature():
+    """文档与签名自洽:全文件查询明示只收 file、不收 line/column,并写明行列会被忽略。
+
+    docstring 会进 schema 给 LLM 看,说支持却不支持会让模型反复重试。
+    """
+    from uniclaw.tools.lsp import tools as lsp_tools
+
+    for fn in (lsp_tools.lsp_symbols, lsp_tools.lsp_diagnostics):
+        doc = fn.func.__doc__ or ""
+        # 明示 file-only,一眼能看出不收 line/column
+        assert "不接受 line/column" in doc
+        assert "本工具只接受 file" in doc
+        assert "lsp_definition" in doc  # 指路到按行定位的工具
+        assert "行列会被忽略" in doc
+        assert "也可单独传入" not in doc
+    for fn in (lsp_tools.lsp_definition, lsp_tools.lsp_hover, lsp_tools.lsp_references):
+        doc = fn.func.__doc__ or ""
+        assert "line" in doc and "column" in doc
 
 
 # ── 结果格式化 ──────────────────────────────────────────
@@ -308,7 +373,10 @@ def test_format_locations_location_and_locationlink():
         "start": {"line": 2, "character": 4}, "end": {"line": 2, "character": 8}}}
     out = _format_locations([loc, link])
     assert "a.py:1:1" in out and "b.py:3:5" in out
-    assert _format_locations([]) == "未找到匹配位置。"
+    empty = _format_locations([])
+    assert "未找到匹配位置" in empty
+    # 空结果要提示可能是源码符号绑定问题(如缺 self),不能让模型以为工具坏了
+    assert "self" in empty
 
 
 def test_format_locations_snippet_from_disk(tmp_path):
@@ -387,3 +455,52 @@ async def test_close_idle_recycles_stale_and_cleans_dead(tmp_path):
     assert n == 1  # stale 是唯一需要 close 的
     assert len(remaining) == 1
     assert remaining[0][1].endswith("live")
+
+
+class TestRelativePathRootDir:
+    """相对路径必须按会话工作目录(root_dir)解析,不是进程 cwd。
+
+    回归测试: 曾用 `Path(...).resolve()` —— 它按 `Path.cwd()` 解析,而进程
+    cwd 是安装目录(如 C:\\Program Files\\uniclaw-windows-x86_64),导致
+    `lsp_diagnostics(file="bad.py")` 报「文件不存在: <安装目录>\\bad.py」。
+    见 CLAUDE.md「root_dir ≠ Path.cwd()」。
+    """
+
+    def test_relative_resolves_against_root_dir(self, tmp_path):
+        p = _resolve_file("sub/bad.py", root_dir=tmp_path)
+        assert p == (tmp_path / "sub" / "bad.py").resolve()
+
+    def test_parse_position_relative_uses_root_dir(self, tmp_path):
+        path, line, col = _parse_position("a.py:3:2", root_dir=tmp_path)
+        assert path == (tmp_path / "a.py").resolve()
+        assert line == 2 and col == 1
+
+    def test_absolute_path_ignores_root_dir(self, tmp_path):
+        """绝对路径照常,不受 root_dir 影响。"""
+        abs_p = tmp_path / "x.py"
+        assert _resolve_file(str(abs_p), root_dir=tmp_path) == abs_p.resolve()
+
+    def test_relative_without_root_dir_raises(self):
+        """没有 root_dir 时不能 fallback 到 cwd —— 那正是 bug 来源。"""
+        from uniclaw.tools.base import ToolUserError
+
+        with pytest.raises(ToolUserError, match="root_dir"):
+            _resolve_file("bad.py")
+
+    def test_tool_uses_config_root_dir(self, tmp_path, monkeypatch):
+        """工具层要从 tool_runtime.config.root_dir 取,不是 Path.cwd()。"""
+        from types import SimpleNamespace
+
+        from uniclaw.tools.lsp.tools import lsp_diagnostics
+
+        monkeypatch.chdir(tmp_path)  # 进程 cwd 指向别处,验证没被用到
+        other = tmp_path / "elsewhere"
+        other.mkdir()
+        cfg = SimpleNamespace(root_dir=other)
+        rt = SimpleNamespace(config=cfg)
+
+        # root_dir 下没有 bad.py → 报错路径应落在 other/ 下
+        import asyncio
+
+        result = asyncio.run(lsp_diagnostics.func(file="bad.py", tool_runtime=rt))
+        assert str(other) in result or "文件不存在" in result

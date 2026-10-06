@@ -725,46 +725,36 @@ class TestHttpDownloader:
         assert not (tmp_path / "file").exists()
 
 
-class TestRemoveTaskNoArg:
-    """http_download_remove 缺 task_id 的处理。
+class TestGetStatusUnknownId:
+    """task_id 不存在 与 "根本没有任务" 必须可区分。
 
-    回归测试: task_id 曾是必填位置参数,无参调用直接抛
-    TypeError("takes exactly 1 positional argument") —— 参数校验失败
-    应返回带 TOOL_ERROR 的说明,而不是 Python 异常。
+    回归测试: 两者曾返回同一句"当前没有下载任务。",调用方无法判断是
+    "ID 不存在"还是"无任务"。
     """
 
-    @pytest.mark.asyncio
-    async def test_no_arg_returns_tool_error(self):
-        """无参调用返回 TOOL_ERROR, 不抛 TypeError。"""
-        from uniclaw.tools.download.http_tools import http_download_remove
-        from uniclaw.utils.constants import TOOL_ERROR
+    def test_unknown_id_reports_not_found(self):
+        from uniclaw.tools.download.manager import HttpDownloadManager
 
-        out = await http_download_remove()
-        assert isinstance(out, str)
-        assert out.startswith(TOOL_ERROR)
-        assert "task_id" in out
+        mgr = HttpDownloadManager()
+        out = mgr.get_status("nonexistent-task-xyz")
+        assert "未找到任务" in out
+        assert "nonexistent-task-xyz" in out
+        assert "当前没有下载任务" not in out
 
-    @pytest.mark.asyncio
-    async def test_empty_string_returns_tool_error(self):
-        """显式传空串同样报错, 且给出查 ID 的指引。"""
-        from uniclaw.tools.download.http_tools import http_download_remove
-        from uniclaw.utils.constants import TOOL_ERROR
+    def test_unknown_id_lists_available(self):
+        from uniclaw.tools.download.manager import HttpDownloadManager
 
-        out = await http_download_remove(task_id="")
-        assert out.startswith(TOOL_ERROR)
-        assert "http_download_status" in out
+        mgr = HttpDownloadManager()
+        dl = MagicMock()
+        dl.progress.format_status.return_value = "下载中"
+        mgr._tasks["t1"] = dl
 
-    @pytest.mark.asyncio
-    async def test_with_task_id_delegates_to_manager(self):
-        """给了 task_id 就转交 manager, 不再校验。"""
-        from uniclaw.tools.download import http_tools as ht
+        out = mgr.get_status("nonexistent-task-xyz")
+        assert "未找到任务" in out
+        assert "t1" in out  # 列出可用 ID, 便于自纠
 
-        with patch.object(ht, "get_http_download_manager") as mock_get:
-            mock_mgr = MagicMock()
-            mock_mgr.remove_task.return_value = "任务 t1 已删除。"
-            mock_get.return_value = mock_mgr
+    def test_empty_list_still_says_no_tasks(self):
+        from uniclaw.tools.download.manager import HttpDownloadManager
 
-            out = await ht.http_download_remove(task_id="t1")
-
-        assert out == "任务 t1 已删除。"
-        mock_mgr.remove_task.assert_called_once_with("t1")
+        mgr = HttpDownloadManager()
+        assert mgr.get_status("") == "当前没有下载任务。"

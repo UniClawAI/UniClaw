@@ -1702,3 +1702,67 @@ class TestRAGEvaluateExtended:
         assert "评估完成" in result
         assert "返回 0 个结果" in result
 
+    @pytest.mark.asyncio
+    @patch("uniclaw.tools.rag.tools._get_manager")
+    @patch("uniclaw.tools.rag.tools._judge_relevance")
+    async def test_llm_judge_failure_not_scored_zero(
+        self, mock_judge, mock_get_manager, tmp_path
+    ):
+        """judge 全部失败时必须写"LLM Judge 不可用",绝不能伪装成 0 分。
+
+        失败伪装成 0.000 会被当成"检索结果全部不相关",悄悄污染评估指标。
+        """
+        config = _create_mock_config(root_dir=tmp_path)
+        mock_manager = MagicMock()
+        mock_get_manager.return_value = mock_manager
+        mock_manager.search = AsyncMock(
+            return_value=[
+                _make_result("doc1 content", "a.txt", rerank_score=0.9),
+                _make_result("doc2 content", "b.txt", rerank_score=0.5),
+            ]
+        )
+        mock_judge.side_effect = RuntimeError("LLM 调用失败: judge backend down")
+
+        result = await rag_evaluate.func(
+            collection="test",
+            queries=["query1", "query2"],
+            use_llm_judge=True,
+            tool_runtime=ToolRuntime(config=config),
+        )
+        assert "LLM Judge 不可用" in result
+        # 失败不能伪装成 0 分
+        assert "0.000" not in result
+        assert "平均相关度" not in result
+        # 具体失败原因要进错误明细
+        assert "judge backend down" in result
+
+    @pytest.mark.asyncio
+    @patch("uniclaw.tools.rag.tools._get_manager")
+    @patch("uniclaw.tools.rag.tools._judge_relevance")
+    async def test_llm_judge_partial_failure_keeps_real_scores(
+        self, mock_judge, mock_get_manager, tmp_path
+    ):
+        """单个问题 judge 失败不影响其余问题出分,失败的不计入均分。"""
+        config = _create_mock_config(root_dir=tmp_path)
+        mock_manager = MagicMock()
+        mock_get_manager.return_value = mock_manager
+        mock_manager.search = AsyncMock(
+            return_value=[_make_result("doc1 content", "a.txt", rerank_score=0.9)]
+        )
+        mock_judge.side_effect = [
+            [0.9],  # query1 成功
+            RuntimeError("LLM 调用失败: timeout"),  # query2 失败
+        ]
+
+        result = await rag_evaluate.func(
+            collection="test",
+            queries=["query1", "query2"],
+            use_llm_judge=True,
+            tool_runtime=ToolRuntime(config=config),
+        )
+        # 成功的那条要出分(0.9 → 0.900)
+        assert "0.900" in result
+        # 失败原因要透出
+        assert "timeout" in result
+        assert "LLM Judge 错误" in result
+

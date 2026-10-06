@@ -484,8 +484,17 @@ class MCPManager:
         await self.load_config(config)
         if name in self._config["servers"]:
             raise ValueError(f"服务器 '{name}' 已存在")
-        if not skip_validation and not await self.test_connection(connection, config):
-            raise ValueError("连接验证失败")
+        if not skip_validation:
+            reason = await self.test_connection(connection, config)
+            if reason:
+                # 把底层原因一起带上 —— 只报"连接验证失败"无法定位到
+                # 超时/DNS/协议握手的哪一环
+                raise ValueError(
+                    f"连接验证失败(name={name}, "
+                    f"transport={connection.get('transport')}, "
+                    f"url={connection.get('url') or connection.get('command')}): "
+                    f"{reason}"
+                )
         connection["enabled"] = enabled
         self._config["servers"][name] = connection
         await self.save_config()
@@ -558,12 +567,13 @@ class MCPManager:
                     f"MCP [{server_name}] 连接成功,发现 {len(tools)} 个工具", config
                 )
             except asyncio.TimeoutError as e:
-                await err(f"MCP [{server_name}] 连接超时", config, e=e)
+                # 超时/网络这类外部失败不传 e —— 堆栈只是 httpx/anyio 的调用链,
+                # 对定位"服务不通"没有帮助,写进日志文件纯属噪音
+                await err(f"MCP [{server_name}] 连接超时", config)
                 self.server2tools[server_name] = []
             except Exception as e:
-                await err(
-                    f"MCP [{server_name}] 连接失败: {_flat_error(e)}", config, e=e
-                )
+                # 连接外部服务失败同理: _flat_error 已压平出原因, 不留堆栈
+                await err(f"MCP [{server_name}] 连接失败: {_flat_error(e)}", config)
                 self.server2tools[server_name] = []
 
         await asyncio.gather(
@@ -640,22 +650,36 @@ class MCPManager:
 
     async def test_connection(
         self, connection: dict, config: AppConfig | None = None
-    ) -> bool:
-        """测试单个 MCP 连接是否可用"""
+    ) -> str:
+        """测试单个 MCP 连接是否可用。
+
+        Returns:
+            str: 成功返回空串;失败返回具体原因(超时/DNS/TLS/HTTP 状态码等)。
+                原因要带回给调用方 —— 只报"连接验证失败"会让模型无从判断是
+                超时、域名解析失败还是协议不匹配,无法据此调整参数重试。
+        """
         timeout = connection.get("timeout", 15)
+        target = (
+            f"transport={connection.get('transport', '?')}, "
+            f"url={connection.get('url') or connection.get('command') or '?'}"
+        )
         try:
             tools = await asyncio.wait_for(
                 _discover_tools_async("test", connection),
                 timeout=timeout,
             )
-            await ok(f"连接验证成功,发现 {len(tools)} 个工具", config)
-            return True
-        except asyncio.TimeoutError as e:
-            await err(f"连接验证超时({timeout}秒)", config, e=e)
-            return False
+        except asyncio.TimeoutError:
+            # 超时/网络这类外部失败不传 e —— 堆栈对定位"服务不通"没帮助,
+            # 写进日志文件纯属噪音。原因已压平在 reason 里返回给调用方
+            reason = f"连接超时({timeout}秒未响应)"
+            await err(f"连接验证失败({target}): {reason}", config)
+            return reason
         except Exception as e:
-            await err(f"连接验证失败: {_flat_error(e)}", config, e=e)
-            return False
+            reason = _flat_error(e)
+            await err(f"连接验证失败({target}): {reason}", config)
+            return reason
+        await ok(f"连接验证成功,发现 {len(tools)} 个工具", config)
+        return ""
 
     async def refresh(self, config: AppConfig | None = None):
         """重新初始化客户端以加载最新配置"""

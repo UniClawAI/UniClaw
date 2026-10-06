@@ -245,3 +245,54 @@ class TestCheckDuplicate:
         kg.add_entity("Python", "technology")
         dups = kg.check_duplicate("Python", "technology")
         assert len(dups) > 0
+
+    def test_no_false_positive_different_names(self, kg):
+        """名称/类型差异明显的实体不应判相似(Acme vs UniClaw 回归)。"""
+        kg.add_entity("UniClaw", "software", description="LLM agent framework")
+        dups = kg.check_duplicate("Acme", "organization")
+        assert dups == [], f"误报相似实体: {dups}"
+
+    def test_description_mention_not_similarity(self, kg):
+        """描述里提到对方名字不算相似实体(FTS 全文匹配误报回归)。"""
+        kg.add_entity("UniClaw", "software", description="Built by Acme for agents")
+        dups = kg.check_duplicate("Acme", "organization")
+        assert dups == [], f"描述撞词被误报为相似: {dups}"
+
+    def test_similar_name_still_reported(self, kg):
+        """真相似实体不能漏报: 包含关系(Python vs Python3)。"""
+        kg.add_entity("Python", "technology")
+        dups = kg.check_duplicate("Python3", "technology")
+        assert len(dups) == 1
+        assert dups[0]["name"] == "Python"
+        assert dups[0]["match_score"] >= 0.72
+        assert dups[0]["match_basis"]
+
+    def test_case_insensitive_exact(self, kg):
+        """大小写不同的同名实体判为精确匹配。"""
+        kg.add_entity("UniClaw", "software")
+        dups = kg.check_duplicate("uniclaw", "software")
+        assert len(dups) == 1
+        assert dups[0]["match_type"] == "exact"
+
+    def test_short_name_one_char_diff(self, kg):
+        """等长短名差 1 字保留提示(避免漏报李明/李鸣类)。"""
+        kg.add_entity("李明", "person")
+        dups = kg.check_duplicate("李鸣", "person")
+        assert len(dups) == 1
+        assert dups[0]["match_score"] >= 0.72
+
+    def test_alias_exact_match(self, kg):
+        """别名精确匹配。"""
+        kg.add_entity("Python", "technology")
+        kg.add_alias("Python", "technology", "CPython")
+        dups = kg.check_duplicate("CPython", "technology")
+        assert any(d["match_type"] == "alias" for d in dups)
+
+    def test_match_basis_present(self, kg):
+        """候选附带 match_basis 供人工判断。"""
+        kg.add_entity("Python", "technology")
+        dups = kg.check_duplicate("Python3", "technology")
+        assert dups and dups[0].get("match_basis")
+        assert "相似度" in str(dups[0].get("match_basis")) or "包含" in str(
+            dups[0].get("match_basis")
+        )

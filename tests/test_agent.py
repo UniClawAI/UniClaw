@@ -212,7 +212,6 @@ class TestAgentStatus:
         """测试状态值"""
         assert AgentStatus.PENDING == "pending"
         assert AgentStatus.RUNNING == "running"
-        assert AgentStatus.WAITING == "waiting"
         assert AgentStatus.COMPLETED == "completed"
         assert AgentStatus.FAILED == "failed"
         assert AgentStatus.CANCELLED == "cancelled"
@@ -293,3 +292,47 @@ class TestEditPermissionDiff:
         new = "\n".join([f"new line {i}" for i in range(200)])
         diff = _edit_permission_diff("test.py", old, new)
         assert "more diff lines hidden" in diff
+
+
+class TestExecuteSingleToolLookup:
+    """_execute_single_tool 工具查找失败分支: 禁用工具要报根因而非"工具不存在"。"""
+
+    def _make_config(self, unavailable: dict) -> MagicMock:
+        config = MagicMock()
+        task = MagicMock()
+        task.allowed_tools_set = set()
+        task.extended_mgr = MagicMock()
+        task.session = MagicMock()
+        task.session.check_dedup = MagicMock(return_value=None)
+        task.cancel_event = MagicMock()
+        task.cancel_event.is_set = MagicMock(return_value=False)
+        config.current_agent = task
+        config.unavailable_tool_reasons = unavailable
+        return config
+
+    async def _call(self, config, name2tool, name="text_to_speech"):
+        from uniclaw.agent.multi_agent import MultiAgent
+
+        agent = MultiAgent.get_instance()
+        agent.send_event_to_user = AsyncMock(return_value=None)
+        tool_call = {"id": "call_1", "name": name, "args": {}}
+        with patch("uniclaw.agent.multi_agent.run_hooks", new=AsyncMock()):
+            return await agent._execute_single_tool(tool_call, name2tool, config)
+
+    @pytest.mark.asyncio
+    async def test_disabled_tool_reports_reason(self):
+        """未启用工具直接调用 → 报"未启用: 原因", 不是"工具不存在"。"""
+        config = self._make_config(
+            {"text_to_speech": "未配置 tts_model 或 audio,TTS 工具不可用"}
+        )
+        _, content = await self._call(config, name2tool={})
+        assert "未启用" in content
+        assert "未配置 tts_model" in content
+        assert "工具不存在" not in content
+
+    @pytest.mark.asyncio
+    async def test_unknown_tool_still_says_not_found(self):
+        """真不存在的工具仍报"工具不存在"。"""
+        config = self._make_config({})
+        _, content = await self._call(config, name2tool={}, name="no_such_tool")
+        assert "工具不存在" in content

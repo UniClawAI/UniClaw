@@ -621,9 +621,10 @@ class MultiAgent:
                 f"任务ID: {task.id}\n"
                 f"状态: {task.status}\n"
                 f"消息: {reason}\n"
-                f'- 请调用 {subagent_check_result.name}(task_id="{task.id}") 来读取结果\n'
+                f'- 请调用 {subagent_check_result.name}(task_id="{task.id}") 来读取结果'
+                f"(读取终态结果后自动回收)\n"
                 f'- 使用 {subagent_send_to_child.name}(task_id="{task.id}", message="...") 发送消息\n'
-                f'- 使用 {subagent_close.name}(task_id="{task.id}") 关闭智能体'
+                f'- 任务仍在运行需提前停止时,使用 {subagent_close.name}(task_id="{task.id}") 关闭'
             )
 
         async def _notify_parent(reason: str):
@@ -643,8 +644,6 @@ class MultiAgent:
             try:
                 task.user_queue.put_nowait(user_message)
                 while not task.cancel_event.is_set():
-                    if keep_alive:
-                        task.status = AgentStatus.WAITING
                     try:
                         msg = await asyncio.wait_for(
                             task.user_queue.get(),
@@ -660,7 +659,13 @@ class MultiAgent:
                         # 取消也通知父 agent,避免父 agent 永远等不到结果
                         await _notify_parent("此子智能体已被取消。")
                         return
-                    task.result = task.session.get_assistant_messages()
+                    # 失败原因(如 _run_init 的深度超限)不得被空 assistant 输出覆盖,
+                    # 否则上层只看到 "(无输出 — 状态: failed)" 无从诊断
+                    if task.status == AgentStatus.FAILED and task.result:
+                        pass
+                    else:
+                        assistant_out = task.session.get_assistant_messages()
+                        task.result = assistant_out if assistant_out else task.result
                     await _notify_parent("此子智能体有新的输出。")
                     if not keep_alive:
                         break
@@ -677,8 +682,8 @@ class MultiAgent:
                 # 失败也通知父 agent,避免父 agent 永远等不到结果
                 await _notify_parent(f"此子智能体执行失败:{e}")
             finally:
-                if task.status == AgentStatus.WAITING:
-                    task.status = AgentStatus.COMPLETED
+                # status 由 _run_cleanup 按回合结果置 COMPLETED/FAILED/CANCELLED,
+                # 此处不覆盖 —— keep_alive 驻留是"存活"维度,不改写回合结果。
                 # notify_parent 的子代理:在 _notify_parent(即 wake_agent)之后
                 # 补发 EndEvent(depth=0)。wake_agent 会重启 bridge,新 bridge
                 # 先消费子代理结果,再读到此 EndEvent 正常退出。
@@ -730,34 +735,53 @@ class MultiAgent:
         task = self.id2AgentTask.get(task_id)
         if task is None:
             return False
-        if task.status not in (
-            AgentStatus.RUNNING,
-            AgentStatus.PENDING,
-            AgentStatus.WAITING,
-        ):
+        if task.closed:
+            return False
+        # 执行过程已真正结束(future 已完成或从未启动且已终态)不能再收消息;
+        # keep_alive 子代理回合结束后 status=COMPLETED 但 future 存活(驻留),
+        # 仍可接收消息 —— 这正是 keep_alive 的用途。
+        if task.is_finished:
             return False
         task.user_queue.put_nowait(message)
         return True
 
-    def close_agent(self, task_id: str) -> bool:
-        task = self.id2AgentTask.get(task_id)
-        if task is None:
-            return False
-        if task.status in (
-            AgentStatus.COMPLETED,
-            AgentStatus.FAILED,
-            AgentStatus.CANCELLED,
-        ):
-            return True
-        task.cancel_event.set()
-        return True
+    def close_agent(self, task: AgentTask) -> str:
+        """关闭子代理: 标记 closed,执行过程仍存活则发取消信号。
+
+        调用方(父 agent)负责把任务从自己的 sub_configs 移除。
+
+        Returns:
+            str: "already_closed" (此前已关闭) 或 "closed" (本次关闭)。
+        """
+        if task.closed:
+            return "already_closed"
+        task.closed = True
+        # 执行过程仍存活(含 keep_alive 驻留: status=COMPLETED 但 future 未结束)
+        # 必须发取消信号,否则 _run_proc 循环继续空转成僵尸。
+        if not task.is_finished:
+            task.cancel_event.set()
+        return "closed"
+
+    def detach_sub_config(self, owner_config: AppConfig, task: AgentTask) -> None:
+        """把 task 对应的 sub_config 从 owner 的 sub_configs 移除,避免 list_tasks 残留。"""
+        if owner_config is None:
+            return
+        owner_config.sub_configs = [
+            sub for sub in owner_config.sub_configs if sub.current_agent is not task
+        ]
 
     async def _run_init(self, user_message, config: AppConfig) -> bool:
         """初始化 run 环境:深度检查、钩子、消息。成功返回 True,失败返回 False。"""
         task = config.current_agent
-        if config.depth >= config.max_agent_depth:
+        # max_agent_depth = 最大子代理嵌套层数(root depth=0 不计):
+        # depth > max 才算超限,因此 max=2 允许子代理 depth=1 和孙代理 depth=2。
+        # (旧判断 depth >= max 会把孙代理挡在默认配置外,嵌套链路直接 failed)
+        if config.depth > config.max_agent_depth:
             task.status = AgentStatus.FAILED
-            task.result = f"错误:超过最大深度 ({config.max_agent_depth})"
+            task.result = (
+                f"错误:超过最大嵌套深度 (depth={config.depth}, "
+                f"max_agent_depth={config.max_agent_depth})"
+            )
             # 补发 EndEvent,否则 WebUI bridge 永不退出、事件无人消费
             await self.send_event_to_user(EndEvent(depth=config.depth), config)
             return False
@@ -1006,7 +1030,13 @@ class MultiAgent:
         try:
             tool = name2tool[tc_name]
         except KeyError:
-            if task.allowed_tools_set and tc_name in task.allowed_tools_set:
+            # 先查"未启用/未配置"清单: 直接调用禁用工具时给出根因,
+            # 而不是误导性的"工具不存在"(search_tools 路径已能显示根因)
+            _reasons = getattr(config, "unavailable_tool_reasons", None) or {}
+            _reason = _reasons.get(tc_name) if hasattr(_reasons, "get") else None
+            if _reason:
+                tool_resp_content = f"{TOOL_ERROR}: 工具 {tc_name} 未启用: {_reason}"
+            elif task.allowed_tools_set and tc_name in task.allowed_tools_set:
                 tool_resp_content = (
                     f"{TOOL_ERROR}: '{tc_name}' 是扩展工具,当前未加载。"
                     f'请先使用 {search_tools.name} 搜索 "{tc_name}" 来加载该工具,然后重试。'
@@ -1245,10 +1275,20 @@ class MultiAgent:
     async def _run_cleanup(self, task, config: AppConfig):
         """设置最终状态,触发 SESSION_END 钩子,保存会话和记忆,发送 EndEvent。"""
         if task.status == AgentStatus.RUNNING:
+            # 本回合已产出最终输出、回合结束 → COMPLETED。
+            # keep_alive 子代理驻留等下一条消息是"存活"维度(future 未结束,
+            # 见 can_accept_messages),不能覆盖"本回合已完成"这个事实 ——
+            # 否则通知/check_result/list_tasks 三处状态对不上,读取后也不回收。
             task.status = AgentStatus.COMPLETED
-        # 从父代理的 sub_configs 中移除自己
+        # 子代理生命周期:完成后保留在父代理 sub_configs 里,父代理才能按
+        # [child_agent] 通知引导的 ID 调 check_result 读到最终输出。
+        # 回收时机:
+        #   - 同步子代理(notify_parent=False):结果已由 subagent_create 内联返回,
+        #     父代理拿到结果后不再需要它,立即回收
+        #   - 异步子代理:check_result 是**纯读**不回收,由显式 subagent_close 回收
+        #     (读操作不该有副作用,否则"读完一轮 → 再派活"的多轮协作走不通)
         parent_config = config.parent_config
-        if parent_config:
+        if parent_config and not task.notify_parent:
             try:
                 parent_config.sub_configs.remove(config)
             except ValueError:
@@ -1411,7 +1451,7 @@ class MultiAgent:
                         else:
                             # 所有模型都失败了
                             detail = "\n  - ".join(errors)
-                            await err(f"所有模型请求失败:\n  - {detail}", config, e=e)
+                            await err(f"所有模型请求失败:\n  - {detail}", config)
                 if resp is None:
                     break
 

@@ -21,6 +21,7 @@ from uniclaw.tools.session.session import (
     Session,
     UserMessage,
     _count_str_chars,
+    _detect_audio_suffix,
     _estimate_audio_tokens,
     _estimate_visual_tokens,
 )
@@ -112,7 +113,58 @@ class TestEstimateAudioTokens:
         assert result == max(50, int((32000 * 3 / 4 / 24000) * 10))
 
 
-# ── MultimodalBlock ──────────────────────────────────────────
+# ── save_audio / _detect_audio_suffix ────────────────────────
+
+
+def _wav_bytes() -> bytes:
+    """构造最小 RIFF/WAVE 头。"""
+    return b"RIFF\x24\x00\x00\x00WAVEfmt " + b"\x00" * 20
+
+
+class TestDetectAudioSuffix:
+    def test_wav(self):
+        assert _detect_audio_suffix(_wav_bytes()) == ".wav"
+
+    def test_mp3_id3(self):
+        assert _detect_audio_suffix(b"ID3\x04\x00" + b"\x00" * 10) == ".mp3"
+
+    def test_flac(self):
+        assert _detect_audio_suffix(b"fLaC" + b"\x00" * 10) == ".flac"
+
+    def test_unknown_returns_empty(self):
+        assert _detect_audio_suffix(b"\x01\x02\x03\x04") == ""
+
+
+class TestSaveAudio:
+    def test_wav_content_named_mp3_gets_corrected(self, tmp_path):
+        """WAV 字节存成 .mp3 会自动改成 .wav, 不产出假 mp3。"""
+        msg = AIMessage(content="hi")
+        import base64 as b64
+
+        msg.audio = b64.b64encode(_wav_bytes()).decode()
+        out = msg.save_audio(tmp_path / "voice.mp3")
+        assert out.suffix == ".wav"
+        assert out.exists()
+        assert out.read_bytes()[:4] == b"RIFF"
+        assert not (tmp_path / "voice.mp3").exists()
+
+    def test_matching_suffix_kept(self, tmp_path):
+        """后缀与实际格式一致时不动。"""
+        msg = AIMessage(content="hi")
+        import base64 as b64
+
+        msg.audio = b64.b64encode(_wav_bytes()).decode()
+        out = msg.save_audio(tmp_path / "voice.wav")
+        assert out.suffix == ".wav"
+
+    def test_no_suffix_gets_added(self, tmp_path):
+        """无扩展名时按实际格式补上。"""
+        msg = AIMessage(content="hi")
+        import base64 as b64
+
+        msg.audio = b64.b64encode(_wav_bytes()).decode()
+        out = msg.save_audio(tmp_path / "voice")
+        assert out.suffix == ".wav"
 
 
 class TestMultimodalBlock:

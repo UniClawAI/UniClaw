@@ -137,6 +137,51 @@ def _count_results(text: str) -> int:
     return len(re.findall(r"(?m)^\s+https?://", text))
 
 
+def _has_items(text: str) -> bool:
+    """文本里是否含实际结果条目(而非只有平台分隔头/空壳)。
+
+    判定标准是出现 URL —— 各平台条目都带链接, 而多平台空结果只拼出
+    `==== PLATFORM ====` 分隔头。不能用 _count_results(按"缩进链接行"启发式
+    统计, 部分平台格式不含这种行时恒为 0)。
+    """
+    return bool(text) and bool(re.search(r"https?://", text))
+
+
+def _has_literal_overlap(query: str, text: str) -> bool:
+    """查询词与结果文本是否有字面重合(4 字符连续子串)。
+
+    用 n-gram 而不是整词当子串: 整词匹配对随机串几乎不可能命中(分支形同虚设),
+    而平台兜底页常含查询碎片 —— 4 字符连续子串是"真有关系"的合理下限。
+    短于 4 字符的词元退化为整词匹配。
+    """
+    low = text.lower()
+    for tok in _query_tokens(query):
+        n = 4 if len(tok) >= 4 else len(tok)
+        if n <= 0:
+            continue
+        if any(tok[i : i + n] in low for i in range(len(tok) - n + 1)):
+            return True
+    return False
+
+
+def _query_tokens(query: str) -> list[str]:
+    """提取查询词 token, 用于结果相关性粗筛(与 bing._tokens 同思路)。
+
+    - ASCII 词: 长度 >= 3
+    - 中文连续段: 长度 >= 4 取相邻二字组合, 否则整段
+    """
+    tokens: list[str] = []
+    for raw in query.split():
+        for word in re.findall(r"[A-Za-z0-9]{3,}", raw):
+            tokens.append(word.lower())
+        for cjk in re.findall(r"[一-鿿]{2,}", raw):
+            if len(cjk) >= 4:
+                tokens.extend(cjk[i : i + 2] for i in range(len(cjk) - 1))
+            else:
+                tokens.append(cjk)
+    return list(dict.fromkeys(tokens))
+
+
 def _with_unsupported_hint(platform: str, result: str, *, has_range: bool) -> str:
     """显式传入 time_range 时, 给不支持时间过滤的平台结果附加提示。
 
@@ -245,6 +290,11 @@ async def webSearch(
     if not query or not query.strip():
         return f"{TOOL_ERROR}: 搜索关键词不能为空, 请提供 query 参数"
 
+    # 乱码/纯符号查询: 各平台对无匹配查询会返回兜底推荐
+    # (如"随机生成器"类页面), 直接如实报未找到, 不透传垃圾结果
+    if not re.search(r"\w", query):
+        return f"未找到与 {query!r} 相关的结果(查询词不含有效关键词)"
+
     # 入口统一校验: 非法 time_range 快速失败, 避免每个平台重复报错
     if time_range.strip():
         parse_time_range(time_range)
@@ -306,10 +356,26 @@ async def webSearch(
     combined = _join_results(success)
 
     # 超过阈值时用 LLM 重排、剔除低价值项目 (失败则回退原文本)
+    reranked = None
     if _count_results(combined) > RERANK_THRESHOLD:
         reranked = await _rerank_with_llm(query, combined, config, intent)
         if reranked:
             combined = reranked
+
+    # 平台对无匹配查询会返回兜底/近邻结果(如"随机生成器"类推荐页、whois/主页)。
+    # 查询词与结果零字面重合 = 无语义价值, 直接报未找到, 不透传垃圾结果。
+    # 两个要点:
+    #   1. 保留 `reranked is None` 逃生口 —— LLM 重排是语义筛过的结果, 信任它;
+    #   2. 只在**确实有结果条目**时才判, 且判定用 _has_items 而非 _count_results
+    #      —— 后者按"缩进链接行"启发式统计, 部分平台格式不含这种行时恒为 0,
+    #      判定整条被跳过(实测噪声串因此全部漏过)。
+    if (
+        reranked is None
+        and combined
+        and _has_items(combined)
+        and not _has_literal_overlap(query, combined)
+    ):
+        return f"未找到与 {query!r} 相关的结果(返回结果与查询词零字面重合, 已过滤)"
 
     # 最终返回必须包含失败平台的错误信息
     if errors:

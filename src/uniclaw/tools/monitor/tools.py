@@ -1,5 +1,22 @@
+import sys
+
 from uniclaw.tools.base import tool, ToolRuntime
 from uniclaw.utils.constants import TOOL_ERROR
+
+
+def _screen_supported() -> bool:
+    """monitor_screen 是否有真实屏幕可看。
+
+    真实屏幕快照依赖 ConPTY,前置条件是 Windows + pywinpty。其余平台/环境
+    只能退化成"返回输出历史",与 monitor_output 重复 —— 不注册,免得误导调用方。
+    """
+    if sys.platform != "win32":
+        return False
+    try:
+        import pywinpty  # noqa: F401
+    except ImportError:
+        return False
+    return True
 
 
 @tool
@@ -27,11 +44,14 @@ async def monitor_start(
             确保命令结束时一定触发通知,不会无限制等待。
         notify_on_match: 匹配时是否通知模型(默认 True)
         timeout: 超时时间(秒),0 表示不限制,默认 0
-        visible: 可视模式(默认 False)。True 时弹出一个真实控制台窗口,
-            进程输出实时显示在窗口中,用户可直接在窗口里键入内容与进程交互;
+        visible: 可视模式(默认 False)。True 时弹出一个控制台窗口显示
+            进程输出,用户可在窗口里键入内容与进程交互;
             同时 AI 仍可通过 monitor_output 查看、monitor_input 发送输入。
             适合人机配合场景,如需要用户登录账号、输入验证码、
             确认交互式安装提示等 AI 无法独立完成的步骤。
+            注意: 真实控制台(ConPTY,支持 monitor_screen 整屏快照)需要
+            Windows + shell 类命令(cmd/bash/powershell 等) + pywinpty 库;
+            不满足条件时退化为管道输出镜像窗口(monitor_screen 返回输出历史)。
 
     Returns:
         str: 启动结果,包含进程 ID
@@ -112,14 +132,15 @@ async def monitor_screen(monitor_id: str) -> str:
     获取控制台当前屏幕上显示的全部内容(整屏快照,类似 tmux capture-pane)。
     与 monitor_output 返回滚动输出历史不同,本工具返回此刻的画面,
     包含提示符同行内容、尚未回车的键入内容以及 vim/htop 等全屏程序界面。
-    仅可视模式启动的 shell 类进程(ConPTY 会话)拥有真实屏幕;
-    其他进程没有独立控制台,退化为返回全部输出历史。
+    前置条件: 仅 Windows + shell 类命令 + visible=True + pywinpty 的
+    ConPTY 会话拥有真实屏幕;其他情况退化为返回全部输出历史,
+    并在返回中说明缺少真实控制台的根因。
 
     Args:
         monitor_id: 进程 ID,通过 monitor_start 返回值或 monitor_list 获取
 
     Returns:
-        str: 控制台当前屏幕内容
+        str: 控制台当前屏幕内容;无真实控制台时为输出历史及原因说明
     """
     from .manager import MonitorManager
 
@@ -167,6 +188,8 @@ async def monitor_update_pattern(monitor_id: str, new_pattern: str) -> str:
     """
     修改运行中进程的匹配模式(watch_pattern)。
     支持动态切换监控的正则表达式,无需重启进程。
+    会清空旧匹配记录,并用新模式回扫已有输出(历史行也会被匹配),
+    之后的新输出按新模式实时匹配。
 
     Args:
         monitor_id: 进程 ID,通过 monitor_start 返回值或 monitor_list 获取
@@ -198,8 +221,12 @@ async def monitor_clear() -> str:
     return await manager.clear_monitors()
 
 
-def get_tools() -> list:
-    """获取监控工具列表"""
+def get_all_tools() -> list:
+    """获取所有监控工具(全量,不受运行环境限制)。
+
+    供登记/目录等需要知道"模块提供了哪些工具"的场合使用;
+    运行时该用哪些请用 get_tools()。
+    """
     return [
         monitor_start,
         monitor_stop,
@@ -213,6 +240,13 @@ def get_tools() -> list:
     ]
 
 
-def get_all_tools() -> list:
-    """获取所有监控工具"""
-    return get_tools()
+def get_tools() -> list:
+    """获取当前环境可用的监控工具列表(按运行环境裁剪)。
+
+    monitor_screen 仅在 Windows + pywinpty 下注册 —— 没有真实屏幕时它
+    只能退化成"返回输出历史",与 monitor_output 重复。
+    """
+    tools = get_all_tools()
+    if not _screen_supported():
+        tools = [t for t in tools if t is not monitor_screen]
+    return tools

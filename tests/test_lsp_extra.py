@@ -310,18 +310,34 @@ def test_format_locations_many_truncated():
 @pytest.mark.parametrize(
     "text,path_sub,line,col",
     [
-        ("", None, 0, 0),                          # 空串 → 当前目录
-        ("a.py", "a.py", 0, 0),
-        ("a.py:0", "a.py", 0, 0),                  # 行 0 → 0-based 0
-        ("a.py:-3", "a.py:-3", 0, 0),              # 负行号当作路径一部分
         # 三层冒号:从右数两位是行/列,其余是路径
         ("a.py:10:5:3", "a.py:10", 4, 2),
         ("D:/x/y.py:2", "y.py", 1, 0),             # 正斜杠盘符
     ],
 )
 def test_parse_position_edges(text, path_sub, line, col):
-    got_path, got_line, got_col = _parse_position(text)
+    got_path, got_line, got_col = _parse_position(text, root_dir=Path.cwd())
     assert got_line == line and got_col == col
     if path_sub is None:
         return  # 空串解析到当前目录,不校验具体路径
     assert got_path.name == path_sub or str(got_path).endswith(path_sub)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "",                    # 空串
+        "a.py",                # 完全没给位置
+        "a.py:0",              # 行 0 不是合法 1-based 行号
+        "a.py:-3",             # 负行号当作路径一部分, 等于没给位置
+    ],
+)
+def test_parse_position_missing_line_raises(text):
+    """缺 line 必须报参数错误, 不能返回 (0,0) 让上层报"未找到匹配位置"。
+
+    "未找到匹配位置"会被误读成"符号无定义",掩盖真正的缺参问题。
+    """
+    from uniclaw.tools.base import ToolUserError
+
+    with pytest.raises(ToolUserError, match="line"):
+        _parse_position(text)

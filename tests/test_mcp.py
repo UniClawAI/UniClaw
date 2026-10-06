@@ -346,12 +346,14 @@ class TestConnectionErrorDisplay:
                 {"transport": "sse", "url": "http://127.0.0.1:1/sse"}
             )
 
-        assert ok is False
+        assert ok  # 非空串 = 失败原因
+        assert "All connection attempts failed" in ok
+        assert "TaskGroup" not in ok
         msg = err_mock.await_args.args[0]
         assert "All connection attempts failed" in msg
         assert "TaskGroup" not in msg
-        # 异常对象原样传给 err,完整堆栈由 err 落日志
-        assert err_mock.await_args.kwargs["e"] is group
+        # 外部连接失败不传 e —— 堆栈写进日志文件对定位"服务不通"没帮助
+        assert "e" not in err_mock.await_args.kwargs
 
     async def test_timeout_passes_exception(self):
         """超时分支同样传异常对象,方便排查卡在哪个环节。"""
@@ -365,9 +367,40 @@ class TestConnectionErrorDisplay:
                 {"transport": "sse", "url": "http://127.0.0.1:1/sse"}
             )
 
-        assert ok is False
+        assert ok  # 非空串 = 失败原因
+        assert "超时" in ok
         assert "超时" in err_mock.await_args.args[0]
-        assert isinstance(err_mock.await_args.kwargs["e"], TimeoutError)
+        # 超时属预期失败, 不写堆栈到日志文件
+        assert "e" not in err_mock.await_args.kwargs
+
+    async def test_add_server_carries_reason(self):
+        """add_server 的错误要带 name/transport/url 与底层原因。
+
+        回归测试: 曾只报一句"连接验证失败",无从判断是超时、DNS 解析失败
+        还是协议不匹配,模型无法据此调整参数重试。
+        """
+        from uniclaw.tools.mcp import MCPManager
+
+        with patch("uniclaw.tools.mcp.err", new=AsyncMock()), patch(
+            "uniclaw.tools.mcp.ok", new=AsyncMock()
+        ), patch(
+            "uniclaw.tools.mcp._discover_tools_async",
+            new=AsyncMock(side_effect=OSError("getaddrinfo failed: example.invalid")),
+        ), patch.object(MCPManager, "load_config", new=AsyncMock()):
+            mgr = MCPManager.get_instance()
+            mgr._config = {"servers": {}}
+            with pytest.raises(ValueError) as ei:
+                await mgr.add_server(
+                    "test",
+                    {"transport": "streamable_http", "url": "https://example.invalid/mcp"},
+                )
+
+        msg = str(ei.value)
+        assert msg != "连接验证失败"  # 不能是干巴巴那一句
+        assert "test" in msg
+        assert "streamable_http" in msg
+        assert "example.invalid" in msg
+        assert "getaddrinfo failed" in msg  # 底层原因必须透出
 
 
 class TestMcp2xApi:

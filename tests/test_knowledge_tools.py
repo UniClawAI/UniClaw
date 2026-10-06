@@ -5,6 +5,7 @@ import pytest
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from uniclaw.agent import AgentStatus
 from uniclaw.context import Scope
 from uniclaw.tools.base import ToolRuntime
 from uniclaw.utils.constants import TOOL_ERROR
@@ -216,6 +217,23 @@ class TestAddAlias:
         assert TOOL_ERROR in result
         assert "不存在" in result
 
+    @pytest.mark.asyncio
+    async def test_empty_alias_rejected(self, tmp_path):
+        """空别名不能静默入库。"""
+        config = _make_config(tmp_path)
+        await kg_add_entity("Python", type="technology", tool_runtime=ToolRuntime(config=config))
+        result = await kg_add_alias("Python", "", tool_runtime=ToolRuntime(config=config))
+        assert TOOL_ERROR in result
+        assert "alias 不能为空" in result
+
+    @pytest.mark.asyncio
+    async def test_blank_alias_rejected(self, tmp_path):
+        """纯空白别名同样拒绝。"""
+        config = _make_config(tmp_path)
+        await kg_add_entity("Python", type="technology", tool_runtime=ToolRuntime(config=config))
+        result = await kg_add_alias("Python", "   ", tool_runtime=ToolRuntime(config=config))
+        assert TOOL_ERROR in result
+
 
 class TestUpdateEntity:
     """kg_update_entity 测试。"""
@@ -414,18 +432,19 @@ class TestNeighbors:
 
     @pytest.mark.asyncio
     async def test_empty(self, tmp_path):
-        """无邻居。"""
+        """实体存在但无关系 —— 要与"实体不存在"区分开。"""
         config = _make_config(tmp_path)
         await kg_add_entity("A", type="concept", tool_runtime=ToolRuntime(config=config))
         result = await kg_neighbors("A", tool_runtime=ToolRuntime(config=config))
-        assert "实体 'A' 没有邻居" in result
+        assert "存在" in result and "没有邻居" in result
 
     @pytest.mark.asyncio
     async def test_entity_missing(self, tmp_path):
-        """实体不存在视为无邻居。"""
+        """实体不存在要报"不存在", 不能说成"没有邻居"(否则像实体已入库)。"""
         config = _make_config(tmp_path)
         result = await kg_neighbors("Nonexistent", tool_runtime=ToolRuntime(config=config))
-        assert "没有邻居" in result
+        assert "不存在" in result
+        assert "没有邻居" not in result
 
 
 class TestPath:
@@ -591,6 +610,13 @@ class TestClear:
 class TestExtract:
     """kg_extract 测试。"""
 
+    def test_docstring_mentions_nesting_limit(self):
+        """docstring 必须注明嵌套深度限制 — 否则子代理内调用会先失败一次才得知。"""
+        doc = kg_extract.description
+        assert "子代理" in doc
+        assert "嵌套" in doc
+        assert "主会话" in doc
+
     @pytest.mark.asyncio
     async def test_no_input(self, tmp_path):
         """未提供 text 和 path。"""
@@ -619,7 +645,7 @@ class TestExtract:
         mock_defs.return_value = {"kg-extract": MagicMock(name="kg-extract-def")}
         mgr = MagicMock()
         task = MagicMock()
-        task.status = "ok"
+        task.status = AgentStatus.COMPLETED
         task.result = "subagent output"
         mgr.start_sub_agent = AsyncMock(return_value=task)
         mgr.wait = AsyncMock()
@@ -657,7 +683,7 @@ class TestExtract:
         mock_defs.return_value = {"kg-extract": MagicMock()}
         mgr = MagicMock()
         task = MagicMock()
-        task.status = "ok"
+        task.status = AgentStatus.COMPLETED
         task.result = "not json"
         mgr.start_sub_agent = AsyncMock(return_value=task)
         mgr.wait = AsyncMock()
@@ -717,4 +743,5 @@ class TestExtract:
         mock_get.return_value = mgr
 
         result = await kg_extract(text="hello", tool_runtime=ToolRuntime(config=config))
-        assert "subagent 启动失败: 初始化错误" in result
+        assert "subagent 启动失败" in result
+        assert "初始化错误" in result

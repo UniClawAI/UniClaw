@@ -25,22 +25,24 @@ async def subagent_create(
         name (str): 智能体名称
         wait (bool, optional): 是否等待任务完成,默认True。
             - True: 同步执行,等待任务完成后返回结果,不需要调用 subagent_close
-            - False: 异步执行,立即返回任务信息,需要使用 subagent_close 关闭智能体
+            - False: 异步执行,立即返回任务信息;回合结束后用 subagent_check_result
+              读取结果。任务保留到显式 subagent_close 才回收,可多轮 send_to_child 协作
         isolation (bool, optional): 是否启用隔离模式,默认False
 
     Returns:
         str: 执行结果或任务信息。异步模式(wait=False)下可使用 subagent_check_result 查询状态、
-             subagent_send_to_child 发送消息,任务完成后需调用 subagent_close 关闭智能体
+             subagent_send_to_child 发送消息;任务保留到显式 subagent_close 才回收
 
     Example:
         >>> # 同步执行(不需要关闭)
         >>> result = subagent_create(prompt="分析代码", subagent_type="code_analyzer", name="task1")
         >>>
-        >>> # 异步执行,需要使用 subagent_close 关闭
+        >>> # 异步执行: 可多轮派活/读取,任务保留到显式 close
         >>> task_info = subagent_create(prompt="编写测试", subagent_type="test_writer", name="task2", wait=False)
-        >>> subagent_check_result("task2")  # 查询结果
-        >>> subagent_send_to_child("task2", "补充要求")  # 发送消息
-        >>> subagent_close("task2")  # 任务完成后必须关闭
+        >>> subagent_check_result("task2")           # 读取结果
+        >>> subagent_send_to_child("task2", "补充要求")  # 继续派活
+        >>> subagent_check_result("task2")           # 再读下一轮
+        >>> subagent_close("task2")                  # 结束协作时显式关闭
     """
     from uniclaw.agent import MultiAgent
 
@@ -67,13 +69,26 @@ async def subagent_create(
 
     # 检查任务启动是否失败,如果失败则返回错误信息
     if task.status == AgentStatus.FAILED:
-        return f"{TOOL_ERROR}: 生成智能体时出错: {task.result}"
+        if wait:
+            # 同步: 错误已内联返回,调用方不会再碰这个任务,直接回收
+            mgr.detach_sub_config(config, task)
+            return f"{TOOL_ERROR}: 生成智能体时出错: {task.result}"
+        # 异步: 任务保留到显式 subagent_close(不 close 就一直留在
+        # subagent_list_tasks 里),故报错要带 task_id 供调用方关闭
+        return (
+            f"{TOOL_ERROR}: 生成智能体时出错(name={task.name}, 任务ID={task.id}): "
+            f"{task.result}\n"
+            f"任务已保留在 subagent_list_tasks 中,可用 {subagent_close.name}(task_id=\"{task.id}\") 关闭。"
+        )
 
     # 根据 wait 参数决定是同步等待还是异步返回
     if wait:
-        # 异步等待任务完成,每次超时300秒
+        # 同步等待任务完成,每次超时300秒
         await mgr.wait(task.id, timeout=300, config=config)
         result = task.result or f"(无输出 — 状态:{task.status})"
+        # 同步结果已内联返回给调用方,回收 sub_config
+        # (_run_cleanup 对同步子代理也会回收,此处双保险)
+        mgr.detach_sub_config(config, task)
         header = f"[智能体:{task.name}"
         if subagent_type:
             header += f" ({subagent_type})"
@@ -86,7 +101,7 @@ async def subagent_create(
         info_parts = [
             f"任务 ID: {task.id}",
             f"名称:{task.name}",
-            f"状态:{task.status}",
+            f"状态:{_status_text(task)}",
         ]
         if subagent_type:
             info_parts.append(f"类型:{subagent_type}")
@@ -98,40 +113,102 @@ async def subagent_create(
         info_parts.append(
             f"子智能体完成/失败/被取消时会以 {SYSTEM_PREFIX}[child_agent] 前缀消息唤醒你(消息中的 状态 字段标明具体情形);请使用任务ID调用 {subagent_check_result.name} 来读取结果。"
         )
-        info_parts.append(f"使用 {subagent_close.name} 可关闭智能体释放资源。")
+        info_parts.append(
+            f"任务仍在运行需提前停止时,使用 {subagent_close.name} 关闭智能体释放资源。"
+        )
         return "\n".join(info_parts)
 
 
+def _status_text(task) -> str:
+    """状态的可读表达,额外标出驻留态。
+
+    `status` 只表"本回合结果";keep_alive 子代理回合结束后 status=COMPLETED
+    但 future 仍存活(驻留等下一条消息),只显示 completed 会让人以为彻底结束。
+    """
+    from uniclaw.agent import AgentStatus
+
+    if task.status == AgentStatus.COMPLETED and task.can_accept_messages:
+        return f"{task.status}(驻留待消息)"
+    return str(task.status)
+
+
+def _resolve_child(config, ref: str):
+    """从**当前 agent 自己**的 sub_configs 里解析子代理。
+
+    send_to_child 是父→子单向,只能触达自己创建的子代理。这里不能用
+    全局 id2AgentTask 查表,否则会越过边界打到
+    别的 agent 的任务、甚至打回自己的父级 —— 也与 subagent_list_tasks 展示的
+    范围(list 只列 config.sub_configs)对不上。
+
+    Args:
+        config: 当前 agent 的 AppConfig(tool_runtime.config)。
+        ref: 子代理名称或 ID。
+
+    Returns:
+        (task, err): 成功时 (task, "");失败时 (None, 报错),
+        报错列出当前可用的 name/ID 便于调用方自纠。
+    """
+    if config is None:
+        return None, "无法获取当前 agent 配置"
+    subs = [
+        sub.current_agent
+        for sub in (config.sub_configs or [])
+        if sub.current_agent is not None
+    ]
+    if not subs:
+        return None, "当前 agent 没有子智能体(可用 subagent_list_tasks 确认)"
+    exact = [t for t in subs if t.id == ref]
+    if exact:
+        return exact[0], ""
+    matches = [t for t in subs if t.name == ref]
+    available = ", ".join(f"{t.name}/{t.id}" for t in subs) or "无"
+    if len(matches) == 1:
+        return matches[0], ""
+    if len(matches) > 1:
+        return (
+            None,
+            f"'{ref}' 匹配到 {len(matches)} 个同名子智能体,请改用任务 ID。"
+            f"当前 agent 可用: {available}",
+        )
+    return None, f"未找到名为 '{ref}' 的子智能体。当前 agent 可用: {available}"
+
+
 @tool
-def subagent_send_to_child(task_id: str, message: str) -> str:
+def subagent_send_to_child(
+    task_id: str, message: str, tool_runtime: ToolRuntime = None
+) -> str:
     """
     向指定的子智能体发送消息(父智能体专用,与 subagent_send_to_parent 方向相反)。
 
     该函数尝试将消息发送给目标子智能体。如果子智能体正在运行,消息会被排队等待处理；
     如果子智能体不存在或未运行,则返回相应的错误信息。
+    只能发给**当前 agent 创建的**子智能体(与 subagent_list_tasks 同范围)。
 
     Args:
-        task_id (str): 目标智能体的名称或ID。
+        task_id (str): 目标子智能体的名称或ID(仅限当前 agent 的子智能体)。
         message (str): 要发送给智能体的消息内容。
 
     Returns:
         str: 操作结果的状态信息,包含以下情况:
             - 成功时:返回消息已排队的确认信息
-            - 智能体不存在时:返回无法找到智能体的错误提示
-            - 智能体未运行时:返回包含智能体当前状态的错误信息
+            - 智能体不存在时:返回无法找到智能体的错误提示(含可用 name/ID)
+            - 智能体未运行/已关闭时:返回包含智能体当前状态的错误信息
     """
     from uniclaw.agent import MultiAgent
 
     mgr = MultiAgent.get_instance()
-    ok = mgr.send_message(task_id, message)
+    config = tool_runtime.config if tool_runtime else None
+    task, err = _resolve_child(config, task_id)
+    if err:
+        return f"{TOOL_ERROR}: {err}"
+    if task.closed:
+        return f"{TOOL_ERROR}: 智能体 '{task.name}' (ID: {task.id}) 已关闭,无法发送消息。"
+    ok = mgr.send_message(task.id, message)
     if ok:
-        return f"消息已排队发送给智能体 '{task_id}'。它将在当前工作完成后处理。"
-
-    task = mgr.id2AgentTask.get(task_id)
-    if task is None:
-        return f"{TOOL_ERROR}: 无法找到智能体 '{task_id}'。请检查名称是否正确。"
+        return f"消息已排队发送给智能体 '{task.name}' (ID: {task.id})。它将在当前工作完成后处理。"
     return (
-        f"{TOOL_ERROR}: 智能体 '{task_id}' 未运行(状态: {task.status})。无法发送消息。"
+        f"{TOOL_ERROR}: 智能体 '{task.name}' (ID: {task.id}) 未运行"
+        f"(状态: {task.status})。无法发送消息。"
     )
 
 
@@ -157,11 +234,13 @@ async def subagent_send_to_parent(message: str, tool_runtime: ToolRuntime = None
     from uniclaw.utils.wakeup import wake_agent
 
     config = tool_runtime.config
-    parent_config = config.parent_config
-    if parent_config is None:
-        return f"{TOOL_ERROR}: 当前没有父智能体,无法发送消息。"
-
     task = config.current_agent
+    parent_config = config.parent_config
+    parent_task = config.parent_agent
+    # 前置校验: 根 agent(或父级链断裂/自指)不能假装发送成功
+    if parent_config is None or parent_task is None or parent_task is task:
+        return f"{TOOL_ERROR}: 当前是根 agent,没有父智能体可发送"
+
     if not task.notify_parent:
         return (
             f"{TOOL_ERROR}: 同步子智能体不能向父智能体发送消息(父智能体正阻塞"
@@ -178,40 +257,69 @@ async def subagent_send_to_parent(message: str, tool_runtime: ToolRuntime = None
         f'- 使用 {subagent_send_to_child.name}(task_id="{task.id}", message="...") 回复该智能体'
     )
     if await wake_agent(text, parent_config):
-        return "消息已发送给父智能体,它将在下次处理消息时看到。"
+        # 报明收件方身份 —— 否则调用方无法确认消息发给了谁、是否真是父级
+        return (
+            f"消息已发送给父智能体 '{parent_task.name}' (ID: {parent_task.id}),"
+            f"它将在下次处理消息时看到。"
+        )
     return f"{TOOL_ERROR}: 向父智能体发送消息失败。"
 
 
 @tool
-def subagent_close(task_id: str) -> str:
+def subagent_close(task_id: str, tool_runtime: ToolRuntime = None) -> str:
     """
     关闭后台子智能体,当父智能体决定其任务已完成时调用。
 
+    支持按名称或任务 ID 定位(与 subagent_check_result 一致)。
+    **只能关闭当前 agent 自己创建的子智能体**(与 subagent_list_tasks 同范围)。
+    关闭后任务从 subagent_list_tasks 列表中移除,不再出现;再次调用同一 task_id
+    会报「未找到」。
+
     Args:
-        task_id (str): 要关闭的子智能体任务ID
+        task_id (str): 要关闭的子智能体名称或任务ID(仅限当前 agent 的子智能体)。
 
     Returns:
-        str: 操作结果信息
+        str: 操作结果信息(已关闭/已关闭过/未找到,未找到时列出可用 name/ID)。
     """
-    from uniclaw.agent import MultiAgent
+    from uniclaw.agent import MultiAgent, AgentStatus
 
     mgr = MultiAgent.get_instance()
-    ok = mgr.close_agent(task_id)
-    if ok:
-        return f"已向子智能体 '{task_id}' 发送关闭信号。"
-    return f"{TOOL_ERROR}: 未找到子智能体 '{task_id}'。"
+    config = tool_runtime.config if tool_runtime else None
+    # 只能关自己的子代理 —— 全局 id2AgentTask 查表会越界关掉别人的任务,
+    # 而下面的 detach_sub_config 只在自己的 sub_configs 里找,静默空转
+    task, err = _resolve_child(config, task_id)
+    if err:
+        return f"{TOOL_ERROR}: {err}"
+    name_id = f"'{task.name}' (ID: {task.id})"
+    if task.closed:
+        return f"子智能体 {name_id} 已关闭过,无需重复关闭。"
+    was_finished = task.is_finished
+    status = mgr.close_agent(task)
+    mgr.detach_sub_config(config, task)
+    if status == "already_closed":
+        return f"子智能体 {name_id} 已关闭过,无需重复关闭。"
+    if was_finished:
+        return (
+            f"子智能体 {name_id} 已结束(状态: {task.status}),"
+            f"已从任务列表移除。"
+        )
+    return f"已关闭子智能体 {name_id} 并从任务列表移除。"
 
 
 @tool
-def subagent_check_result(task_id: str, full: bool = False) -> str:
+def subagent_check_result(
+    task_id: str, full: bool = False, tool_runtime: ToolRuntime = None
+) -> str:
     """
-    检查指定任务ID的执行结果和状态信息。
+    检查指定任务的执行结果和状态信息。
 
-    该函数通过 MultiAgent 管理器查询指定任务的状态、名称、工作树分支和执行结果,
-    并以格式化的字符串形式返回这些信息。如果任务不存在,则返回错误提示。
+    该函数查询指定任务的状态、名称、工作树分支和执行结果,并以格式化的字符串
+    形式返回这些信息。支持按名称或任务 ID 定位(与 subagent_close 一致)。
+    **只能查询当前 agent 自己创建的子智能体**(与 subagent_list_tasks 同范围)。
+    如果任务不存在,则返回错误提示并列出可用的 name/ID。
 
     Args:
-        task_id (str): 要查询的任务唯一标识符。
+        task_id (str): 要查询的子智能体名称或唯一标识符(仅限当前 agent 的子智能体)。
         full (bool): 是否返回完整的历史消息。默认为 False,仅返回最新结果。
 
     Returns:
@@ -220,15 +328,16 @@ def subagent_check_result(task_id: str, full: bool = False) -> str:
              - 名称:任务的名称
              - 工作树分支(如果存在):任务关联的工作树分支信息
              - 结果(如果存在):任务的执行结果内容
-             如果任务不存在,返回错误提示信息。
+             如果任务不存在,返回错误提示信息(含可用 name/ID)。
     """
-    from uniclaw.agent import MultiAgent
-
-    mgr = MultiAgent.get_instance()
-    task = mgr.id2AgentTask.get(task_id)
-    if task is None:
-        return f"{TOOL_ERROR}: 不存在 ID 为 '{task_id}' 的任务"
-    lines = [f"状态:{task.status}", f"名称:{task.name}"]
+    config = tool_runtime.config if tool_runtime else None
+    # 只查自己的子代理 —— 全局 id2AgentTask 查表会把别的 agent 的任务结果也泄露出来
+    task, err = _resolve_child(config, task_id)
+    if err:
+        return f"{TOOL_ERROR}: {err}"
+    lines = [f"状态:{_status_text(task)}", f"名称:{task.name}"]
+    if task.closed:
+        lines.append("已关闭: 是")
     if task.worktree_branch:
         lines.append(f"工作树分支:{task.worktree_branch}")
     assistant_items = task.session.get_assistant_messages(separator=None)
@@ -237,15 +346,15 @@ def subagent_check_result(task_id: str, full: bool = False) -> str:
         if result:
             lines.append(f"\n结果: \n{result}")
         task.result_read_index = len(assistant_items)
-        return "\n".join(lines)
-
-    start = min(task.result_read_index, len(assistant_items))
-    new_items = assistant_items[start:]
-    task.result_read_index = len(assistant_items)
-    if new_items:
-        lines.append("\n新增结果: \n" + "\n".join(new_items))
     else:
-        lines.append("\n新增结果: \n(暂无新增输出)")
+        start = min(task.result_read_index, len(assistant_items))
+        new_items = assistant_items[start:]
+        task.result_read_index = len(assistant_items)
+        if new_items:
+            lines.append("\n新增结果: \n" + "\n".join(new_items))
+        else:
+            lines.append("\n新增结果: \n(暂无新增输出)")
+
     return "\n".join(lines)
 
 
@@ -254,9 +363,9 @@ def subagent_list_tasks(tool_runtime: ToolRuntime = None) -> str:
     """
     列出当前 agent 创建的子智能体任务的当前状态和信息。
 
-    返回当前 agent 直接创建的子代理任务列表(运行中/等待中/驻留中的),
+    返回当前 agent 直接创建的子代理任务列表(运行中/驻留待消息/已结束的),
     输出带表头,每行一个任务,字段顺序为:任务ID | 名称 | 状态 | 工作树分支(无则-) | 提示。
-    主/根会话任务不会出现在列表中。
+    主/根会话任务不会出现在列表中;只有经 subagent_close 关闭的任务才不再出现。
 
     Returns:
         str: 没有子代理任务时返回提示信息;否则第一行为表头,
@@ -264,7 +373,11 @@ def subagent_list_tasks(tool_runtime: ToolRuntime = None) -> str:
     """
     config = tool_runtime.config if tool_runtime else None
     tasks = (
-        [sub.current_agent for sub in config.sub_configs if sub.current_agent]
+        [
+            sub.current_agent
+            for sub in config.sub_configs
+            if sub.current_agent and not sub.current_agent.closed
+        ]
         if config
         else []
     )
@@ -277,7 +390,7 @@ def subagent_list_tasks(tool_runtime: ToolRuntime = None) -> str:
     lines = ["任务ID | 名称 | 状态 | 工作树分支 | 提示"]
     for task in tasks:
         wt = task.worktree_branch or "-"
-        lines.append(f"{task.id} | {task.name} | {task.status} | {wt} | {task.prompt}")
+        lines.append(f"{task.id} | {task.name} | {_status_text(task)} | {wt} | {task.prompt}")
     return "\n".join(lines)
 
 
@@ -307,11 +420,7 @@ async def subagent_discuss(topic: str, participants: list[str], rounds: int = 2)
         task = mgr.id2AgentTask.get(task_id)
         if task is None:
             return f"{TOOL_ERROR}: child agent '{task_id}' was not found."
-        if task.status not in (
-            AgentStatus.RUNNING,
-            AgentStatus.PENDING,
-            AgentStatus.WAITING,
-        ):
+        if task.status not in (AgentStatus.RUNNING, AgentStatus.PENDING):
             return f"{TOOL_ERROR}: child agent '{task_id}' is not available (status: {task.status})."
         tasks.append(task)
 
@@ -342,10 +451,10 @@ async def subagent_discuss(topic: str, participants: list[str], rounds: int = 2)
             while time.time() < deadline:
                 if task.status in (AgentStatus.FAILED, AgentStatus.CANCELLED):
                     break
-                # 检查是否有新消息且状态为WAITING(表示已完成回复)
+                # 检查是否有新消息且状态为 COMPLETED(本回合已结束,表示已完成回复)
                 if (
                     len(task.session) > before_count
-                    and task.status == AgentStatus.WAITING
+                    and task.status == AgentStatus.COMPLETED
                 ):
                     break
                 await asyncio.sleep(0.2)

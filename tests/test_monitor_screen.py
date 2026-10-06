@@ -1,7 +1,8 @@
 """monitor_screen 工具测试 — ScreenBuffer 全屏快照能力。"""
 
-from unittest.mock import AsyncMock, MagicMock, Mock
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
+from uniclaw.tools.monitor import tools as monitor_tools
 from uniclaw.tools.monitor.manager import MonitorManager
 from uniclaw.tools.monitor.models import Monitor
 from uniclaw.tools.monitor.pty_session import PtySession, ScreenBuffer, VtLineParser
@@ -206,9 +207,35 @@ class TestManagerGetScreen:
 
         result = await mgr.get_screen("m1")
 
-        assert "管道模式无真实控制台" in result
+        # 返回全部输出历史, 并说明缺少真实控制台的根因
+        assert "返回全部输出历史" in result
         assert "ready in 300ms" in result
         assert "listening :8080" in result
+
+    async def test_pipe_mode_visible_non_shell_reason(self):
+        """visible=True 但非 shell 命令: 说明命令类型原因。"""
+        mgr = self._make_manager()
+        m = Monitor("m1", "npm run dev", "", "dev server", 0, visible=True)
+        m.output_lines.extend(["ready"])
+        mgr._monitors["m1"] = m
+
+        result = await mgr.get_screen("m1")
+        assert "命令非 shell 类" in result
+
+    async def test_pipe_mode_visible_shell_reason(self):
+        """visible=True + shell 命令但无 ConPTY: 提示 pywinpty。"""
+        import os as _os
+
+        mgr = self._make_manager()
+        m = Monitor("m1", "cmd /c echo hi", "", "", 0, visible=True)
+        m.output_lines.extend(["hi"])
+        mgr._monitors["m1"] = m
+
+        result = await mgr.get_screen("m1")
+        if _os.name == "nt":
+            assert "pywinpty" in result or "ConPTY" in result
+        else:
+            assert "非 Windows" in result
 
     async def test_pipe_mode_empty_history(self):
         mgr = self._make_manager()
@@ -240,3 +267,63 @@ async def test_monitor_screen_tool_delegates(monkeypatch):
     result = await monitor_tools.monitor_screen("m1")
     assert result == "screen-ok"
     mgr.get_screen.assert_awaited_once_with("m1")
+
+
+class TestGetToolsGating:
+    """get_tools 按运行环境裁剪 monitor_screen。
+
+    没有真实屏幕(非 Windows / 缺 pywinpty)时它只能退化成"返回输出历史",
+    与 monitor_output 重复 —— 不注册,免得误导调用方。
+    """
+
+    def test_excluded_when_unsupported(self):
+        """环境不支持时 monitor_screen 不进工具列表。"""
+        with patch.object(monitor_tools, "_screen_supported", return_value=False):
+            names = [t.name for t in monitor_tools.get_tools()]
+        assert "monitor_screen" not in names
+        # 其余工具不受影响
+        assert "monitor_start" in names
+        assert "monitor_output" in names
+        assert "monitor_input" in names
+        assert "monitor_update_pattern" in names
+
+    def test_all_tools_always_includes_screen(self):
+        """get_all_tools 是全量, 不随运行环境裁剪。"""
+        with patch.object(monitor_tools, "_screen_supported", return_value=False):
+            names = [t.name for t in monitor_tools.get_all_tools()]
+        assert "monitor_screen" in names
+        assert len(names) == 9
+
+    def test_all_tools_superset_of_tools(self):
+        """get_tools 是 get_all_tools 的子集。"""
+        with patch.object(monitor_tools, "_screen_supported", return_value=False):
+            all_ids = {id(t) for t in monitor_tools.get_all_tools()}
+            runtime_ids = {id(t) for t in monitor_tools.get_tools()}
+        assert runtime_ids < all_ids
+
+    def test_included_when_supported(self):
+        """Windows + pywinpty 时才注册。"""
+        with patch.object(monitor_tools, "_screen_supported", return_value=True):
+            names = [t.name for t in monitor_tools.get_tools()]
+        assert "monitor_screen" in names
+
+    def test_screen_supported_requires_windows(self):
+        """非 Windows 一律不支持。"""
+        with patch.object(monitor_tools.sys, "platform", "linux"):
+            assert monitor_tools._screen_supported() is False
+
+    def test_screen_supported_requires_pywinpty(self):
+        """Windows 但 pywinpty 装不上 → 不支持。"""
+        import builtins
+
+        real_import = builtins.__import__
+
+        def fake_import(name, *args, **kwargs):
+            if name == "pywinpty":
+                raise ImportError("no pywinpty")
+            return real_import(name, *args, **kwargs)
+
+        with patch.object(monitor_tools.sys, "platform", "win32"), patch(
+            "builtins.__import__", side_effect=fake_import
+        ):
+            assert monitor_tools._screen_supported() is False

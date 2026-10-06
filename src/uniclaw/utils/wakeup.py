@@ -48,10 +48,10 @@ async def wake_agent(message: str, config: AppConfig) -> bool:
         # 是从磁盘加载后尚未启动的(如进程重启恢复),应走 start_agent 分支
         future_alive = task.future is not None and not task.future.done()
 
-        # Agent 正在处理中 → 注入到队列
-        if status in (AgentStatus.RUNNING, AgentStatus.WAITING) or (
-            status == AgentStatus.PENDING and future_alive
-        ):
+        # Agent 执行循环仍存活 → 注入到队列。
+        # future 存活覆盖 keep_alive 驻留(status=COMPLETED 但 future 未结束,
+        # 等下一条消息),此时不能走 start_agent 另起 future。
+        if status == AgentStatus.RUNNING or future_alive:
             task.user_queue.put_nowait(message)
             return True
 

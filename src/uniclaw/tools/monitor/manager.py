@@ -871,13 +871,32 @@ class MonitorManager:
                 pipe_fallback = True
 
         if pipe_fallback:
+            # 给出准确的根因, 而非笼统的"管道模式无真实控制台"
+            reason = self._explain_no_console(monitor)
             if not body.strip():
-                return f"{header}\n暂无输出。"
-            return f"{header} (管道模式无真实控制台, 返回全部输出历史):\n{body}"
+                return f"{header}\n暂无输出。({reason})"
+            return f"{header} ({reason}, 返回全部输出历史):\n{body}"
 
         if not body.strip():
             return f"{header}\n屏幕空白。"
         return f"{header} 当前屏幕:\n{body}"
+
+    @staticmethod
+    def _explain_no_console(monitor: Monitor) -> str:
+        """解释为何没有真实控制台(ConPTY), 给出可操作的根因。"""
+        if not monitor.visible:
+            return "非可视模式,无真实控制台"
+        # visible=True 但未走 ConPTY 的可能原因
+        if os.name != "nt":
+            return "当前平台非 Windows,不支持 ConPTY 伪控制台"
+        if not MonitorManager._SHELL_CMD_RE.match(monitor.command):
+            return (
+                "命令非 shell 类(cmd/bash/powershell 等),"
+                "未启用 ConPTY 伪控制台"
+            )
+        # shell 命令 + Windows + visible=True 理论上应走 ConPTY,
+        # 落到此处说明 pywinpty 缺失时回退了管道模式(或 ConPTY 启动失败)
+        return "ConPTY 伪控制台不可用(可能缺少 pywinpty,可 pip install pywinpty)"
 
     async def send_input(self, monitor_id: str, input_text: str) -> str:
         """向进程发送输入"""
@@ -918,11 +937,20 @@ class MonitorManager:
         await monitor.process.stdin.drain()
 
     async def update_pattern(self, monitor_id: str, new_pattern: str) -> str:
-        """修改进程的匹配模式"""
+        """修改进程的匹配模式。
+
+        切换 pattern 语义上等同于"重新开始匹配", 因此同时:
+        - 清空旧 pattern 累积的 matched_lines(避免新旧匹配混在一起)
+        - 重置通知节流(新 pattern 的首次匹配可立即通知)
+        - 回扫 output_lines 中已消费的历史输出(快脚本场景下目标行可能
+          在 update 之前已经流过管道; 不回扫会让新 pattern 永远等不到
+          "未来再出现一次", 表现为 get_matched 恒空)
+        """
         # 验证正则表达式
+        regex = None
         if new_pattern:
             try:
-                re.compile(new_pattern)
+                regex = re.compile(new_pattern)
             except re.error as e:
                 return f"{TOOL_ERROR}: 无效的正则表达式 - {e}"
 
@@ -932,7 +960,26 @@ class MonitorManager:
                 return f"{TOOL_ERROR}: 进程 '{monitor_id}' 不存在"
 
             old_pattern = monitor.pattern or "无"
+            old_matched_count = len(monitor.matched_lines)
             monitor.pattern = new_pattern
+            # 清空旧匹配记录: 切换 pattern 后旧结果已无意义
+            monitor.matched_lines.clear()
+            monitor.match_time = None
+            # 重置通知节流: 新 pattern 首次匹配应立即通知, 不被旧 pattern 的
+            # 通知时间压制(否则高频匹配场景下会出现"零通知"假象)
+            monitor.last_notify_time = None
+
+            # 回扫历史输出: 与 _read_output 的匹配口径保持一致 ——
+            # 存进 output_lines 的 stderr 行带 "[stderr] " 前缀, 匹配时用正文
+            rescanned = 0
+            if regex is not None:
+                for raw in monitor.output_lines:
+                    text = raw[9:] if raw.startswith("[stderr] ") else raw
+                    if text and regex.search(text):
+                        monitor.matched_lines.append(text)
+                        rescanned += 1
+                if rescanned:
+                    monitor.match_time = datetime.now()
 
         notify_info = ""
         if new_pattern:
@@ -942,11 +989,21 @@ class MonitorManager:
         else:
             notify_info = "(仅记录输出)"
 
+        clear_note = (
+            f"\n  已清空旧匹配记录({old_matched_count} 条)"
+            if old_matched_count
+            else ""
+        )
+        rescan_note = ""
+        if new_pattern:
+            rescan_note = f"\n  回扫历史输出: 新模式命中 {rescanned} 条"
         return (
             f"进程 {monitor_id} 匹配模式已更新\n"
             f"  旧模式: {old_pattern}\n"
             f"  新模式: {new_pattern or '无'}\n"
             f"  通知: {notify_info}"
+            f"{clear_note}"
+            f"{rescan_note}"
         )
 
     async def get_matched(self, monitor_id: str) -> str:

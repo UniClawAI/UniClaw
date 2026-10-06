@@ -127,6 +127,11 @@ async def wechat_send_text(
     if config is None:
         return f"{TOOL_ERROR}: 无法获取配置"
 
+    # 空文本必须前置拦截 —— 否则会走到真实发送流程,被微信服务器拒绝后
+    # 报"会话上下文已过期"之类的错误,把排查方向带偏
+    if not text or not text.strip():
+        return f"{TOOL_ERROR}: text 不能为空(收到: {text!r})"
+
     bot, err = _resolve_bot(config, bot_name)
     if err:
         return err

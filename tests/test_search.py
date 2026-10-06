@@ -1863,6 +1863,52 @@ class TestMultiPlatformSearch:
     """webSearch 多平台并发搜索测试"""
 
     @pytest.mark.asyncio
+    async def test_garbage_query_no_word_chars(self, mock_config):
+        """纯符号/乱码查询直接返回未找到, 不透传平台兜底推荐。"""
+        with _patch_all_platforms(_empty_mock()):
+            result = await _search(
+                query="!!!@@@###$$$%%%",
+                tool_runtime=ToolRuntime(config=mock_config),
+            )
+        assert "未找到" in result
+        assert "!!!@@@###$$$%%%" in result
+
+    @pytest.mark.asyncio
+    async def test_zero_overlap_returns_not_found(self, mock_config):
+        """结果与查询词零字面重合时直接报未找到, 不透传平台兜底推荐。"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "items": [
+                {
+                    "full_name": "user/random-generator",
+                    "description": "在线随机生成器",
+                    "stargazers_count": 1,
+                    "language": "Python",
+                    "html_url": "https://github.com/user/random-generator",
+                }
+            ]
+        }
+        mock_response.raise_for_status = MagicMock()
+        with (
+            _patch_base(_empty_mock()),
+            _patch_mcp(),
+            patch(
+                "uniclaw.tools.search.github.http_get",
+                new=AsyncMock(return_value=mock_response),
+            ),
+        ):
+            result = await _search(
+                query="zzzqqqxxx",
+                platforms="github",
+                tool_runtime=ToolRuntime(config=mock_config),
+            )
+        assert "未找到与" in result
+        assert "zzzqqqxxx" in result
+        assert "相关度可能较低" not in result
+        assert "random-generator" not in result
+
+    @pytest.mark.asyncio
     async def test_default_platforms_is_exa(self, mock_config):
         """默认只搜 Exa (通用网页搜索), 不发起其他平台的请求"""
         with _patch_all_platforms(_empty_mock()):
@@ -2389,3 +2435,72 @@ class TestStreamingOutput:
 
         assert result_stream == result_plain
         assert len(streamed) == len(PLATFORM_SEARCHERS)
+
+
+class TestNoiseQueryShortCircuit:
+    """噪声查询与结果零字面重合时必须报未找到, 不透传垃圾结果。
+
+    回归测试(第 15 轮 BUG-001): 曾用 `_count_results(combined) > 0` 作前置
+    条件, 而它按"缩进链接行"启发式统计 —— 部分平台输出格式不含这种行时恒为 0,
+    整条判定被跳过。3 个噪声串因此全部漏过, 返回 Discord/whois/比特币等
+    与查询无关的结果。
+    """
+
+    @staticmethod
+    def _github_mock(n: int):
+        items = [
+            {
+                "full_name": f"user/repo{i}",
+                "description": f"desc {i}",
+                "stargazers_count": i,
+                "language": "Python",
+                "html_url": f"https://github.com/user/repo{i}",
+            }
+            for i in range(n)
+        ]
+        m = MagicMock()
+        m.status_code = 200
+        m.json.return_value = {"items": items}
+        m.raise_for_status = MagicMock()
+        return m
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "noise",
+        ["kqx9vzm2nw7rb4jd", "x9q7z2m4v8b1n6c3", "zxvqkjsdfh9081243qweirtu"],
+    )
+    async def test_noise_query_filtered(self, mock_config, noise):
+        """报告里的 3 个噪声串都应短路报未找到。"""
+        with _patch_all_with_github(self._github_mock(3)):
+            result = await _search(
+                query=noise,
+                platforms="github",
+                tool_runtime=ToolRuntime(config=mock_config),
+            )
+        assert "未找到" in result
+        assert "user/repo" not in result  # 垃圾结果不透传
+
+    @pytest.mark.asyncio
+    async def test_overlapping_query_keeps_results(self, mock_config):
+        """与结果有字面重合的查询照常返回, 不误杀。"""
+        with _patch_all_with_github(self._github_mock(3)):
+            result = await _search(
+                query="repo",
+                platforms="github",
+                tool_runtime=ToolRuntime(config=mock_config),
+            )
+        assert "user/repo" in result
+
+    def test_has_items_requires_url(self):
+        """纯平台分隔头(多平台空结果拼接)不算结果条目。"""
+        from uniclaw.tools.search.tools import _has_items
+
+        assert _has_items("\n==== GITHUB ====\n\n==== BING ====\n") is False
+        assert _has_items("  https://example.com/x\n") is True
+
+    def test_overlap_uses_four_char_ngram(self):
+        """重合按 4 字符连续子串判定, 整词匹配对随机串形同虚设。"""
+        from uniclaw.tools.search.tools import _has_literal_overlap
+
+        assert _has_literal_overlap("kqx9vzm2nw7rb4jd", "Kx (@q9zw) Discord 用户") is False
+        assert _has_literal_overlap("DockerSearch", "DockerSearch 不可用") is True

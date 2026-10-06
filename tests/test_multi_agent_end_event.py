@@ -169,3 +169,36 @@ class TestRunCleanupNotifyParent:
 
         assert mock_multi_agent.send_event_to_user.call_count == 1
         assert mock_multi_agent.send_event_to_user.call_args_list[0][0][0].depth == 1
+
+
+class TestRunCleanupSubConfigLifecycle:
+    """_run_cleanup 的 sub_configs 回收时机 —— 完成后父代理仍需能 check_result 读结果。"""
+
+    @pytest.mark.asyncio
+    async def test_async_sub_config_kept_after_run(self, mock_multi_agent):
+        """notify_parent=True(异步)子代理完成后保留在父代理 sub_configs,
+        通知引导的 check_result 读取路径必须有效。"""
+        config, parent_config = _make_config()
+        sub_list = []
+        parent_config.sub_configs = sub_list
+        sub_list.append(config)  # 模拟 create_sub_config 挂载
+        task = _make_task(notify_parent=True)
+
+        with patch("uniclaw.agent.multi_agent.run_hooks", new_callable=AsyncMock):
+            await mock_multi_agent._run_cleanup(task, config)
+
+        assert config in sub_list  # 未被移除
+
+    @pytest.mark.asyncio
+    async def test_sync_sub_config_removed_after_run(self, mock_multi_agent):
+        """notify_parent=False(同步)子代理结果已内联返回,完成后立即回收。"""
+        config, parent_config = _make_config()
+        sub_list = []
+        parent_config.sub_configs = sub_list
+        sub_list.append(config)
+        task = _make_task(notify_parent=False)
+
+        with patch("uniclaw.agent.multi_agent.run_hooks", new_callable=AsyncMock):
+            await mock_multi_agent._run_cleanup(task, config)
+
+        assert config not in sub_list  # 已回收

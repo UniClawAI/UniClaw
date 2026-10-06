@@ -206,6 +206,9 @@ def kg_add_alias(
         scope: 作用域,"user" 为用户级(跨项目共享),"project" 为项目级(默认)
     """
     config = tool_runtime.config
+    # 前置校验: 空/纯空白别名入库只会得到无意义的空白别名项, 直接拒绝
+    if not alias or not alias.strip():
+        return f"{TOOL_ERROR}: alias 不能为空(收到: {alias!r})"
     graph = _get_graph(config, scope)
     try:
         result = graph.add_alias(name, type, alias)
@@ -475,11 +478,19 @@ def kg_neighbors(
     graph = _get_graph(config, scope)
     try:
         depth = min(depth, 3)
+        # 先确认实体存在 —— 否则"实体不存在"与"实体存在但无关系"都会返回
+        # "没有邻居",调用方无法区分(可能误以为实体已入库)
+        if not graph.get_entity(name, entity_type=type):
+            return (
+                f"{TOOL_ERROR}: 实体 '{name}' 不存在"
+                f"({'type=' + type if type else '未指定 type'}"
+                f", scope={scope.value});可先用 {kg_search.name} 查找或 {kg_add_entity.name} 创建"
+            )
         neighbors = graph.get_neighbors(
             name, depth=depth, entity_type=type, relation_type=relation_type
         )
         if not neighbors:
-            return f"实体 '{name}' 没有邻居。"
+            return f"实体 '{name}' 存在,但没有邻居(当前无任何关系)。"
 
         lines = [f"实体 '{name}' 的邻居 (depth={depth}):"]
         for n in neighbors:
@@ -644,6 +655,26 @@ def kg_list(
         graph.close()
 
 
+def _subagent_failure(task, stage: str) -> str:
+    """subagent 失败/无产出时的报错。
+
+    必须带上 name/status/task_id —— task.result 常常是空字符串,
+    只报 "subagent 执行失败: " 会让调用方完全无从诊断。
+    """
+    detail = (task.result or "").strip()
+    if detail:
+        body = detail[:800]
+    else:
+        body = (
+            "(subagent 无任何输出;可查看 .UniClaw/logs/ 下的 agent 日志"
+            "定位失败环节)"
+        )
+    return (
+        f"{TOOL_ERROR}: subagent {stage}失败"
+        f"(name={task.name}, task_id={task.id}, status={task.status}): {body}"
+    )
+
+
 @tool
 async def kg_extract(
     text: str = "",
@@ -658,6 +689,10 @@ async def kg_extract(
     subagent 会自动读取文件、分块处理,返回结构化 JSON 后写入图谱。
 
     实体类型不限于 person/place/concept 等常用类型,subagent 会根据内容灵活定义。
+
+    注意:本工具会派生 subagent,需在主会话调用。在子代理内调用会因
+    嵌套深度限制失败(超过最大嵌套深度 depth=3, max_agent_depth=2)——
+    这是平台限制,不是工具缺陷。
 
     Args:
         text: 要分析的文本内容(直接传入)
@@ -727,16 +762,19 @@ async def kg_extract(
             )
 
         if task.status == AgentStatus.FAILED:
-            return f"{TOOL_ERROR}: subagent 启动失败: {task.result}"
+            return _subagent_failure(task, "启动")
 
         # 等待完成(subagent 的 ToolStartEvent/ThinkingChunkEvent 等
         # 会通过 bridge_events 自动广播到前端,无需在此重复)
         await mgr.wait(task.id, timeout=300, config=config)
 
-        if task.status == AgentStatus.FAILED:
-            return f"{TOOL_ERROR}: subagent 执行失败: {task.result}"
+        # 不只看 FAILED —— 超时/取消/lost 也拿不到可用结果,必须一并回报
+        if task.status != AgentStatus.COMPLETED:
+            return _subagent_failure(task, "执行")
 
-        result_text = task.result or ""
+        result_text = (task.result or "").strip()
+        if not result_text:
+            return _subagent_failure(task, "执行")
 
         # 解析 JSON
         data = parse_json_from_llm(result_text)
@@ -761,14 +799,13 @@ async def kg_extract(
                 source="auto",
                 confidence=e.get("confidence", 0.8),
             )
-            status = (
-                "已添加"
-                if "id" in result and not result.get("duplicate_warning")
-                else "已存在"
-            )
-            warning = ""
-            if result.get("duplicate_warning"):
-                warning = f" ⚠ {result['duplicate_warning']}"
+            status = "已添加" if "id" in result else "失败"
+            dw = result.get("duplicate_warning") or ""
+            # "已存在" 仅用于 IntegrityError(同名同类型已存在,复用旧 ID);
+            # "发现相似实体" 只是提示,实体本身是新建的,不能标成"已存在"
+            if "已存在" in dw:
+                status = "已存在"
+            warning = f" ⚠ {dw}" if dw else ""
             lines.append(
                 f"  实体 [{e.get('type', 'concept')}] {e['name']}: {status}{warning}"
             )

@@ -87,6 +87,33 @@ def test_read_empty_file(tmp_path):
     assert "空文件" in result
 
 
+def test_read_binary_png_rejected(tmp_path):
+    """PNG 等二进制文件不能按文本读出乱码。"""
+    f = tmp_path / "img.png"
+    f.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00\x01\x02\x03" * 32)
+    result = Read.func(file_path=str(f))
+    assert "二进制文件" in result
+    assert "PNG" in result
+    assert "ReadMedia" in result
+
+
+def test_read_binary_with_nul_rejected(tmp_path):
+    """含 NUL 字节的未知二进制也拒绝。"""
+    f = tmp_path / "data.bin"
+    f.write_bytes(b"hello\x00world\x00")
+    result = Read.func(file_path=str(f))
+    assert "二进制文件" in result
+
+
+def test_read_utf16_text_allowed(tmp_path):
+    """UTF-16 文本天然含 NUL, 不应误判为二进制。"""
+    f = tmp_path / "u16.txt"
+    f.write_text("你好\nworld\n", encoding="utf-16")
+    result = Read.func(file_path=str(f), encoding="utf-16")
+    assert "二进制" not in result
+    assert "你好" in result or "world" in result
+
+
 # ── Write tool ────────────────────────────────────────────
 
 

@@ -26,6 +26,8 @@ async def text_to_speech(
                多粒度控制(段落级基调→句子级节奏→词级重音→字粒度哽咽拖音)。
                不填则使用默认风格。
         save_path: 保存路径(如 output.wav),不填则不保存文件。
+               实际保存格式为 WAV;扩展名与实际格式不符时自动纠正
+               (如传 output.mp3 实际会存为 output.wav)。
         play: 是否播放语音,默认 false。
 
     Returns:

@@ -33,9 +33,13 @@ def _is_agent_busy(task) -> bool:
     """
     from uniclaw.agent import AgentStatus
 
-    if task.status in (AgentStatus.RUNNING, AgentStatus.WAITING):
+    if task.status == AgentStatus.RUNNING:
         return True
-    return task.status == AgentStatus.PENDING and task.future is not None
+    if task.status == AgentStatus.PENDING and task.future is not None:
+        return True
+    # keep_alive 驻留: status=COMPLETED 但 future 未结束 —— 也算占用,
+    # 重启会丢失内存中的待处理消息
+    return task.future is not None and not task.future.done()
 
 
 def find_running_other_sessions(config: AppConfig) -> list[str]:

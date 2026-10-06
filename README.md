@@ -1086,7 +1086,7 @@ lsp_references(file="src/uniclaw/config.py", line=42)
 lsp_symbols(file="src/uniclaw/agent/multi_agent.py")
 ```
 
-> 💡 **提示**: 服务器按"语言 + 项目根目录"管理多个会话,首次查询时自动启动;崩溃后下次查询自动重启,空闲自动回收。Windows 上 npm 全局安装的 `.cmd` 包装器会自动解析真实入口点。位置参数统一支持 `"路径:行[:列]"` 内嵌格式与独立 `line`/`column` 参数(均为 1-based)。语言服务器未安装时,工具会返回对应语言的安装指引。
+> 💡 **提示**: 服务器按"语言 + 项目根目录"管理多个会话,首次查询时自动启动;崩溃后下次查询自动重启,空闲自动回收。Windows 上 npm 全局安装的 `.cmd` 包装器会自动解析真实入口点。定位查询(`lsp_definition`/`lsp_hover`/`lsp_references`)支持 `"路径:行[:列]"` 内嵌格式与独立 `line`/`column` 参数(均为 1-based);全文件查询(`lsp_diagnostics`/`lsp_symbols`)只接受文件路径,内嵌行列会被忽略,也没有独立的 `line`/`column` 参数。语言服务器未安装时,工具会返回对应语言的安装指引。
 
 #### Web 工具
 

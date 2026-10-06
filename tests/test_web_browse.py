@@ -475,14 +475,71 @@ class TestSinglePageOperations:
         mock_page.mouse.wheel.assert_called_once_with(0, -300)
 
     @pytest.mark.asyncio
+    @staticmethod
+    def _nav(page, nav_method: str):
+        """让 mock page 的 url 随 go_back/go_forward 变化, 模拟真实导航。"""
+        page.evaluate = AsyncMock(return_value=2)
+        page.url = "https://example.com/before"
+
+        async def _navigate():
+            page.url = "https://example.com/after"
+
+        setattr(page, nav_method, AsyncMock(side_effect=_navigate))
+
+    @pytest.mark.asyncio
     async def test_back(self, web_browser, mock_page):
         """测试后退"""
         web_browser._browser = MagicMock()
         web_browser._pages = {1: mock_page}
         web_browser._active_page_id = 1
+        self._nav(mock_page, "go_back")
 
         result = await web_browser.back()
         assert "已后退" in result
+        # 成功消息必须带 URL: 退回 about:blank 等无标题页时只靠 title 会误判
+        assert "URL:" in result
+        assert "https://example.com/after" in result
+        # 退到普通页面: 仍可继续后退(about:blank 是起点,普通页前面多半还有)
+        assert "仍可继续后退" in result
+
+    @pytest.mark.asyncio
+    async def test_back_to_about_blank_says_boundary(self, web_browser, mock_page):
+        """退回 about:blank 时要提示已达历史起点,无法再后退。"""
+        web_browser._browser = MagicMock()
+        web_browser._pages = {1: mock_page}
+        web_browser._active_page_id = 1
+        mock_page.evaluate = AsyncMock(return_value=2)
+        mock_page.url = "https://example.com/test.html"
+        mock_page.title = AsyncMock(return_value="test")
+
+        async def _go_back():
+            mock_page.url = "about:blank"
+            mock_page.title = AsyncMock(return_value="")
+
+        mock_page.go_back = AsyncMock(side_effect=_go_back)
+
+        result = await web_browser.back()
+        assert "已后退" in result
+        assert "about:blank" in result
+        # 边界提示要说明这是起始页(browser_start 先建空白页再导航,首次 back 必然落这里)
+        assert "起始页" in result
+        assert "历史起点" in result
+        assert "无法再后退" in result
+
+    @pytest.mark.asyncio
+    async def test_back_no_history(self, web_browser, mock_page):
+        """无历史可退时不能报成功(go_back 是静默 no-op)。"""
+        web_browser._browser = MagicMock()
+        web_browser._pages = {1: mock_page}
+        web_browser._active_page_id = 1
+        mock_page.evaluate = AsyncMock(return_value=1)
+        mock_page.url = "https://example.com"
+        mock_page.go_back = AsyncMock()  # url 不变
+
+        result = await web_browser.back()
+        assert "无法后退" in result
+        assert "已是历史起点" in result
+        assert "无更早记录" in result
 
     @pytest.mark.asyncio
     async def test_forward(self, web_browser, mock_page):
@@ -490,9 +547,89 @@ class TestSinglePageOperations:
         web_browser._browser = MagicMock()
         web_browser._pages = {1: mock_page}
         web_browser._active_page_id = 1
+        self._nav(mock_page, "go_forward")
 
         result = await web_browser.forward()
         assert "已前进" in result
+        assert "URL:" in result
+        assert "https://example.com/after" in result
+
+    @pytest.mark.asyncio
+    async def test_forward_from_blank_hist2_says_boundary(self, web_browser, mock_page):
+        """从 about:blank 前进且 history.length<=2 → 唯一后续页即历史终点。"""
+        web_browser._browser = MagicMock()
+        web_browser._pages = {1: mock_page}
+        web_browser._active_page_id = 1
+        mock_page.evaluate = AsyncMock(return_value=2)
+        mock_page.url = "about:blank"
+
+        async def _go_forward():
+            mock_page.url = "https://example.com/page"
+
+        mock_page.go_forward = AsyncMock(side_effect=_go_forward)
+
+        result = await web_browser.forward()
+        assert "已前进" in result
+        assert "历史终点" in result
+        assert "无法再前进" in result
+
+    @pytest.mark.asyncio
+    async def test_forward_from_blank_longer_hist_says_can_continue(
+        self, web_browser, mock_page
+    ):
+        """从 about:blank 前进但 history.length>2 → 后面还有页面,仍可继续前进。"""
+        web_browser._browser = MagicMock()
+        web_browser._pages = {1: mock_page}
+        web_browser._active_page_id = 1
+        mock_page.evaluate = AsyncMock(return_value=3)
+        mock_page.url = "about:blank"
+
+        async def _go_forward():
+            mock_page.url = "https://example.com/a"
+
+        mock_page.go_forward = AsyncMock(side_effect=_go_forward)
+
+        result = await web_browser.forward()
+        assert "已前进" in result
+        assert "仍可继续前进" in result
+
+    @pytest.mark.asyncio
+    async def test_forward_to_last_navigated_url_says_boundary(
+        self, web_browser, mock_page
+    ):
+        """前进到最近一次 navigate 的 URL 时视为历史终点。"""
+        web_browser._browser = MagicMock()
+        web_browser._pages = {1: mock_page}
+        web_browser._active_page_id = 1
+        web_browser._last_urls = {1: "https://example.com/b"}
+        mock_page.evaluate = AsyncMock(return_value=3)
+        mock_page.url = "https://example.com/a"
+
+        async def _go_forward():
+            mock_page.url = "https://example.com/b"
+
+        mock_page.go_forward = AsyncMock(side_effect=_go_forward)
+
+        result = await web_browser.forward()
+        assert "已前进" in result
+        assert "历史终点" in result
+        assert "无法再前进" in result
+
+    @pytest.mark.asyncio
+    async def test_forward_no_history(self, web_browser, mock_page):
+        """无历史可进时不能报成功。"""
+        web_browser._browser = MagicMock()
+        web_browser._pages = {1: mock_page}
+        web_browser._active_page_id = 1
+        mock_page.evaluate = AsyncMock(return_value=1)
+        mock_page.url = "https://example.com"
+        mock_page.go_forward = AsyncMock()
+
+        result = await web_browser.forward()
+        assert "无法前进" in result
+        # 与 back 的"已是历史起点"对称 —— 不能一个用边界框架、一个只说"无记录"
+        assert "已是历史末尾" in result
+        assert "无后续记录" in result
 
     @pytest.mark.asyncio
     async def test_reload(self, web_browser, mock_page):
@@ -1004,3 +1141,176 @@ class TestInsertTextEditableCheck:
 
         assert "已插入文本: HELLO" in result
         mock_page.keyboard.insert_text.assert_awaited_once_with("HELLO")
+
+
+class TestBrowserParamValidation:
+    """参数校验: 非法值不能静默降级成"成功"。"""
+
+    def _running(self, web_browser, mock_page):
+        web_browser._browser = MagicMock()
+        web_browser._pages = {1: mock_page}
+        web_browser._active_page_id = 1
+        return mock_page
+
+    @pytest.mark.asyncio
+    async def test_scroll_illegal_direction(self, web_browser, mock_page):
+        """非法 direction 必须报错, 不能静默按"向上"处理。"""
+        self._running(web_browser, mock_page)
+        result = await web_browser.scroll(direction="left-down", amount=100)
+        assert "direction 非法" in result
+        mock_page.mouse.wheel.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_scroll_negative_amount(self, web_browser, mock_page):
+        """负数 amount 必须拒绝, 不能静默接受。"""
+        self._running(web_browser, mock_page)
+        result = await web_browser.scroll(direction="down", amount=-100)
+        assert "amount" in result and "-100" in result
+        mock_page.mouse.wheel.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_scroll_all_four_directions(self, web_browser, mock_page):
+        """left/right 是合法方向, 要真正生效(原先只有 down/up)。"""
+        page = self._running(web_browser, mock_page)
+        await web_browser.scroll(direction="right", amount=50)
+        page.mouse.wheel.assert_awaited_once_with(50, 0)
+        page.mouse.wheel.reset_mock()
+        await web_browser.scroll(direction="left", amount=50)
+        page.mouse.wheel.assert_awaited_once_with(-50, 0)
+
+    @pytest.mark.asyncio
+    async def test_focus_disabled_element(self, web_browser, mock_page):
+        """disabled 元素聚焦必须报错, 不能报成功(焦点根本没转移)。"""
+        page = self._running(web_browser, mock_page)
+        locator = page.locator.return_value
+        locator.is_disabled = AsyncMock(return_value=True)
+
+        result = await web_browser.focus("#disabled-input")
+
+        assert "disabled" in result
+        locator.focus.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_focus_no_op_detected(self, web_browser, mock_page):
+        """focus() 是 no-op 时(不可聚焦元素)不能报成功。"""
+        page = self._running(web_browser, mock_page)
+        locator = page.locator.return_value
+        locator.is_disabled = AsyncMock(return_value=False)
+        locator.focus = AsyncMock()
+        locator.evaluate = AsyncMock(return_value=False)  # activeElement 不是它
+
+        result = await web_browser.focus(".desc")
+
+        assert "未能获得焦点" in result
+
+    @pytest.mark.asyncio
+    async def test_keyboard_type_readonly_rejected(self, web_browser, mock_page):
+        """焦点在 readonly 元素上时必须报错, 不能报"已输入"(实际无效)。"""
+        page = self._running(web_browser, mock_page)
+        page.evaluate = AsyncMock(return_value=False)  # 不可输入
+
+        result = await web_browser.keyboard_type("X")
+
+        assert "不可输入" in result
+        page.keyboard.type.assert_not_called()
+
+
+class TestConnectKeepsExistingSession:
+    """browser_connect 失败不能连带销毁现有浏览器会话。
+
+    回归测试: 旧实现先 await close() 再尝试连接,连不上时原有会话已被销毁,
+    后续 get_url/close 全报"浏览器未启动"。
+    """
+
+    @pytest.mark.asyncio
+    async def test_connect_failure_keeps_session(self, web_browser, mock_page):
+        """连不上时现有会话要保持可用。"""
+        old_browser = AsyncMock()
+        web_browser._browser = old_browser
+        web_browser._pages = {1: mock_page}
+        web_browser._active_page_id = 1
+
+        fake_pw = AsyncMock()
+        fake_pw.start = AsyncMock(return_value=fake_pw)  # .start() 要返回自身
+        fake_pw.chromium.connect_over_cdp = AsyncMock(side_effect=OSError("refused"))
+
+        with patch(
+            "uniclaw.tools.web_browse.browser._get_async_playwright",
+            return_value=lambda: fake_pw,
+        ):
+            result = await web_browser.connect_over_cdp("http://localhost:9999")
+
+        assert "无法连接" in result
+        assert "未受影响" in result
+        # 关键: 现有会话不能被销毁
+        old_browser.close.assert_not_called()
+        assert web_browser._browser is old_browser
+        assert web_browser._active_page_id == 1
+        assert 1 in web_browser._pages
+
+
+class TestScreenshotNoSilentOverwrite:
+    """截图不静默覆盖已有文件(曾把 test.html 覆盖成 PNG)。"""
+
+    @pytest.mark.asyncio
+    async def test_refuses_to_overwrite(self, web_browser, mock_page, tmp_path):
+        """目标文件已存在时拒绝写入。"""
+        web_browser._browser = MagicMock()
+        web_browser._pages = {1: mock_page}
+        web_browser._active_page_id = 1
+        mock_page.screenshot = AsyncMock(return_value=b"\x89PNG fake")
+
+        target = tmp_path / "test.html"
+        target.write_text("<html>原始内容</html>", encoding="utf-8")
+
+        result = await web_browser.screenshot(save_path=str(target))
+
+        assert "拒绝覆盖" in str(result)
+        assert target.read_text(encoding="utf-8") == "<html>原始内容</html>"
+
+    @pytest.mark.asyncio
+    async def test_writes_when_absent(self, web_browser, mock_page, tmp_path):
+        """目标不存在时正常写入。"""
+        web_browser._browser = MagicMock()
+        web_browser._pages = {1: mock_page}
+        web_browser._active_page_id = 1
+        mock_page.screenshot = AsyncMock(return_value=b"\x89PNG fake")
+
+        target = tmp_path / "shot.png"
+        result = await web_browser.screenshot(save_path=str(target))
+        assert target.exists()
+
+
+class TestDragNeedsDraggable:
+    """对非 draggable 元素不能静默报成功。"""
+
+    @pytest.mark.asyncio
+    async def test_non_draggable_rejected(self, web_browser, mock_page):
+        """源元素不可拖拽时直接报错, 不执行拖拽。"""
+        web_browser._browser = MagicMock()
+        web_browser._pages = {1: mock_page}
+        web_browser._active_page_id = 1
+        src = AsyncMock()
+        src.evaluate = AsyncMock(return_value=False)
+        tgt = AsyncMock()
+        mock_page.locator = MagicMock(side_effect=[src, tgt])
+
+        result = await web_browser.drag(".item", ".zone")
+
+        assert "不可拖拽" in result
+        src.drag_to.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_draggable_element_dragged(self, web_browser, mock_page):
+        """可拖拽元素照常拖拽。"""
+        web_browser._browser = MagicMock()
+        web_browser._pages = {1: mock_page}
+        web_browser._active_page_id = 1
+        src = AsyncMock()
+        src.evaluate = AsyncMock(return_value=True)
+        tgt = AsyncMock()
+        mock_page.locator = MagicMock(side_effect=[src, tgt])
+
+        result = await web_browser.drag(".item", ".zone")
+        assert "已将 .item 拖拽到 .zone" in result
+        src.drag_to.assert_awaited_once()

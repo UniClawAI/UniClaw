@@ -33,6 +33,13 @@ def session_list(
         # 列出最近50个会话
         session_list(limit=50)
     """
+    # limit<=0 必须校验 —— 否则会被当成"不限量",一次返回全部会话(实测 52 个)
+    if limit <= 0:
+        return (
+            f"{TOOL_ERROR}: limit 必须是正整数,收到: {limit!r}"
+            f"(默认 20;不要用 0 表示不限量)"
+        )
+
     sessions = SessionManager.list_sessions(limit=limit)
 
     if not sessions:

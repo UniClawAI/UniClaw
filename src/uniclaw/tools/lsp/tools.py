@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from uniclaw.tools.base import tool, ToolRuntime
+from uniclaw.tools.base import tool, ToolRuntime, ToolUserError
 from uniclaw.utils.constants import TOOL_ERROR
 
 from .client import LspRpcError
@@ -44,24 +44,14 @@ _SYMBOL_KINDS = {
 
 # ── 参数解析 ──────────────────────────────────────────
 
-def _parse_position(
-    file: str, line: int = 0, column: int = 0
-) -> tuple[Path, int, int]:
-    """解析文件位置参数,返回 (绝对路径, 0-based line, 0-based column)。
+def _split_inline_suffix(path_str: str) -> tuple[str, int, int]:
+    """拆分 "路径:行[:列]" 内嵌后缀,返回 (路径, 行, 列)。
 
-    支持三种形态:
-    - "path/to/file.py" + line/column 参数
-    - "path/to/file.py:12"  (行号内嵌, 1-based)
-    - "path/to/file.py:12:5" (行+列内嵌, 1-based)
-    显式 line / column 参数优先于内嵌值。
+    行/列以 1-based 原样返回,0 表示未给。Windows 盘符(如 D:)不参与
+    拆分:只有纯数字结尾的后缀才被当作行/列。
     """
-    # 兼容 Path 对象输入(工具直接调用时可能传入 WindowsPath)
-    if not isinstance(file, str):
-        file = str(file)
-    path_str = file.strip()
     inline_line = inline_col = 0
 
-    # 拆分行内嵌的 ":line[:col]" 后缀(Windows 盘符如 D:\ 不参与拆分:只拆数字结尾的后缀)
     parts = path_str.rsplit(":", 2)
     if len(parts) >= 2 and parts[-1].isdigit():
         inline_col = int(parts[-1])
@@ -75,12 +65,81 @@ def _parse_position(
             inline_col = 0
             path_str = remainder
 
+    return path_str, inline_line, inline_col
+
+
+def _root_dir_of(tool_runtime) -> Path | None:
+    """取会话工作目录(tool_runtime.config.root_dir)。"""
+    try:
+        return tool_runtime.config.root_dir
+    except AttributeError:
+        return None
+
+
+def _to_abs(path_str: str, root_dir: Path | None) -> Path:
+    """把 file 参数解析成绝对路径。
+
+    相对路径必须按**会话工作目录**(config.root_dir)解析 —— `Path.cwd()`
+    是**进程**工作目录(启动时固定,常为安装目录),两者不能混用
+    (见 CLAUDE.md「root_dir ≠ Path.cwd()」)。
+    """
+    p = Path(path_str).expanduser()
+    if p.is_absolute():
+        return p.resolve()
+    if root_dir is None:
+        raise ToolUserError(
+            f"相对路径 {path_str!r} 需要会话工作目录才能解析,但当前没有 root_dir。"
+            f"请改用绝对路径"
+        )
+    return (Path(root_dir) / p).resolve()
+
+
+def _resolve_file(file: str, root_dir: Path | None = None) -> Path:
+    """把 file 参数解析成路径,剥离 ":行[:列]" 内嵌后缀但不使用行列。
+
+    用于 lsp_diagnostics / lsp_symbols 这类全文件查询 —— 与 lsp_definition
+    一致接受 "路径:行[:列]" 内嵌格式,避免同一 file 参数三工具行为分裂;
+    剥离后的行列被忽略(全文件查询用不上)。
+    """
+    if not isinstance(file, str):
+        file = str(file)
+    path_str, _, _ = _split_inline_suffix(file.strip())
+    return _to_abs(path_str, root_dir)
+
+
+def _parse_position(
+    file: str, line: int = 0, column: int = 0, root_dir: Path | None = None
+) -> tuple[Path, int, int]:
+    """解析文件位置参数,返回 (绝对路径, 0-based line, 0-based column)。
+
+    支持三种形态:
+    - "path/to/file.py" + line/column 参数
+    - "path/to/file.py:12"  (行号内嵌, 1-based)
+    - "path/to/file.py:12:5" (行+列内嵌, 1-based)
+    显式 line / column 参数优先于内嵌值。
+
+    只用于需要坐标的定位查询(definition/hover/references);全文件查询
+    (diagnostics/symbols)请用 _resolve_file(同样支持内嵌格式,但忽略行列)。
+    """
+    # 兼容 Path 对象输入(工具直接调用时可能传入 WindowsPath)
+    if not isinstance(file, str):
+        file = str(file)
+    path_str, inline_line, inline_col = _split_inline_suffix(file.strip())
+
     if line > 0:
         inline_line = line
     if column > 0:
         inline_col = column
 
-    path = Path(path_str).expanduser().resolve()
+    # line 全未指定时必须报参数错误 —— 否则会拿 (0,0) 去查, 返回
+    # "未找到匹配位置",被误读成"符号无定义"。line 是 1-based, 0 只表示"未传"
+    if inline_line <= 0:
+        raise ToolUserError(
+            "缺少 line 参数(1-based)。请传 line/column,"
+            '或用 "文件路径:行[:列]" 内嵌格式,如 "src/main.py:10:5"'
+        )
+
+    path = _to_abs(path_str, root_dir)
     return path, max(inline_line - 1, 0), max(inline_col - 1, 0)
 
 
@@ -106,6 +165,16 @@ def _p1(line0: int, col0: int) -> tuple[int, int]:
 
 
 # ── 结果格式化 ──────────────────────────────────────────
+
+# 查询命中文件、LSP 正常响应但结果为空时追加的提示。
+# 空结果多数不是工具坏了,而是符号本身绑定不了(如实例方法缺 self)。
+_EMPTY_RESULT_HINT = (
+    "文件已同步且查询成功,但语言服务器未返回结果。"
+    "可能原因:光标处不是符号,或源码存在语法/符号绑定问题"
+    "(如 class 内实例方法缺少 self),导致语言服务器无法绑定该符号;"
+    "请检查源码本身,不要重复调用本工具。"
+)
+
 
 def _format_diagnostics(path: Path, diags: list) -> str:
     if not diags:
@@ -147,7 +216,7 @@ def _format_locations(items: list, limit: int = 100) -> str:
     """
     locs = []
     if items is None:
-        return "未找到匹配位置。"
+        return f"未找到匹配位置。{_EMPTY_RESULT_HINT}"
     for item in items:
         if not isinstance(item, dict):
             continue
@@ -156,7 +225,7 @@ def _format_locations(items: list, limit: int = 100) -> str:
         elif item.get("targetUri") and item.get("targetRange"):  # LocationLink
             locs.append({"uri": item["targetUri"], "range": item["targetRange"]})
     if not locs:
-        return "未找到匹配位置。"
+        return f"未找到匹配位置。{_EMPTY_RESULT_HINT}"
     out = []
     for loc in locs[:limit]:
         uri = loc["uri"]
@@ -176,7 +245,7 @@ def _format_locations(items: list, limit: int = 100) -> str:
 
 def _format_hover(hover_result: object) -> str:
     if hover_result is None:
-        return "无悬停信息。"
+        return f"无悬停信息。{_EMPTY_RESULT_HINT}"
     if isinstance(hover_result, dict):
         contents = hover_result.get("contents")
     else:
@@ -194,7 +263,7 @@ def _format_hover(hover_result: object) -> str:
     elif isinstance(contents, dict):
         pieces.append(contents.get("value") or "")
     text = "\n".join(x.strip() for x in pieces if x and x.strip())
-    return f"悬停信息:\n{text}" if text else "无悬停信息。"
+    return f"悬停信息:\n{text}" if text else f"无悬停信息。{_EMPTY_RESULT_HINT}"
 
 
 def _format_symbols(symbols, indent: int = 0) -> list[str]:
@@ -345,14 +414,19 @@ async def lsp_diagnostics(file: str, tool_runtime: ToolRuntime = None) -> str:
 
     最常用于:修改代码后自检、定位类型不匹配、查找未定义符号。
     输出按严重程度排序(错误在前),包含行/列与消息(超长消息截断到 200 字符)。
+    诊断始终针对整个文件。
+
+    本工具只接受 file,不接受 line/column 参数;需要按行定位请用
+    lsp_definition / lsp_hover / lsp_references。file 写成 "路径:行[:列]"
+    内嵌格式时行列会被忽略。
 
     Args:
-        file: 文件路径(可带行号后缀,仅用于路径解析;诊断始终针对整个文件)。
+        file: 文件路径。不收 line/column 参数;内嵌 "路径:行[:列]" 时行列会被忽略,如 "src/main.py"。
 
     Returns:
         str: 格式化后的诊断列表;无问题时提示通过。
     """
-    path, _, _ = _parse_position(file)
+    path = _resolve_file(file, root_dir=_root_dir_of(tool_runtime))
     try:
         _require_file(path)
         lang = detect_language(str(path))
@@ -377,17 +451,20 @@ async def lsp_definition(
 ) -> str:
     """跳转到符号定义位置(精确解析,支持跨文件、继承与 re-export)。
 
-    参数 file 支持 "路径:行[:列]" 内嵌格式;line/column 也可单独传入(1-based)。
+    定位坐标:file 内嵌 "路径:行[:列]"(1-based),或单独传 line/column,
+    显式参数优先。必须提供行号(内嵌或 line 参数),否则返回参数错误。
 
     Args:
-        file: 文件路径,可带行号后缀,如 "src/main.py:10:5"。
-        line: 行号(1-based),优先于路径内嵌。
-        column: 列号(1-based),优先于路径内嵌。
+        file: 文件路径,支持 "路径:行[:列]" 内嵌格式(1-based),如 "src/main.py:10:5"。
+        line: 行号(1-based),优先于路径内嵌行号;必须提供 line 或内嵌行号。
+        column: 列号(1-based),优先于路径内嵌列号。
 
     Returns:
         str: 定义位置列表(目标文件:行:列 + 代码摘录)。
     """
-    path, line0, col0 = _parse_position(file, line, column)
+    path, line0, col0 = _parse_position(
+        file, line, column, root_dir=_root_dir_of(tool_runtime)
+    )
     try:
         _require_file(path)
         bounds_err = _check_line_bounds(path, line0)
@@ -424,15 +501,20 @@ async def lsp_hover(
 ) -> str:
     """获取符号悬停信息(类型签名、文档),用于确认类型或 API 用法。
 
+    定位坐标:file 内嵌 "路径:行[:列]"(1-based),或单独传 line/column,
+    显式参数优先。必须提供行号(内嵌或 line 参数),否则返回参数错误。
+
     Args:
-        file: 文件路径,可带行号后缀,如 "src/main.py:10:5"。
-        line: 行号(1-based),优先于路径内嵌。
-        column: 列号(1-based),优先于路径内嵌。
+        file: 文件路径,支持 "路径:行[:列]" 内嵌格式(1-based),如 "src/main.py:10:5"。
+        line: 行号(1-based),优先于路径内嵌行号;必须提供 line 或内嵌行号。
+        column: 列号(1-based),优先于路径内嵌列号。
 
     Returns:
         str: 类型/文档信息。
     """
-    path, line0, col0 = _parse_position(file, line, column)
+    path, line0, col0 = _parse_position(
+        file, line, column, root_dir=_root_dir_of(tool_runtime)
+    )
     try:
         _require_file(path)
         bounds_err = _check_line_bounds(path, line0)
@@ -467,15 +549,20 @@ async def lsp_references(
 ) -> str:
     """查找符号的所有引用位置(含声明处),用于评估重构影响面。
 
+    定位坐标:file 内嵌 "路径:行[:列]"(1-based),或单独传 line/column,
+    显式参数优先。必须提供行号(内嵌或 line 参数),否则返回参数错误。
+
     Args:
-        file: 文件路径,可带行号后缀,如 "src/main.py:10:5"。
-        line: 行号(1-based),优先于路径内嵌。
-        column: 列号(1-based),优先于路径内嵌。
+        file: 文件路径,支持 "路径:行[:列]" 内嵌格式(1-based),如 "src/main.py:10:5"。
+        line: 行号(1-based),优先于路径内嵌行号;必须提供 line 或内嵌行号。
+        column: 列号(1-based),优先于路径内嵌列号。
 
     Returns:
         str: 引用位置列表(最多 100 处,超出截断并提示)。
     """
-    path, line0, col0 = _parse_position(file, line, column)
+    path, line0, col0 = _parse_position(
+        file, line, column, root_dir=_root_dir_of(tool_runtime)
+    )
     try:
         _require_file(path)
         bounds_err = _check_line_bounds(path, line0)
@@ -510,7 +597,7 @@ async def lsp_references(
             )
         )
         n = min(rendered, 100)
-        return f"共找到 {n} 处引用:\n{locs}" if n else "未找到引用。"
+        return f"共找到 {n} 处引用:\n{locs}" if n else f"未找到引用。{_EMPTY_RESULT_HINT}"
     except _QUERY_ERRORS as e:
         return _query_error(REFERENCES, path, e)
 
@@ -519,13 +606,19 @@ async def lsp_references(
 async def lsp_symbols(file: str, tool_runtime: ToolRuntime = None) -> str:
     """列出文档的符号大纲(类/函数/变量等及其行号),快速了解文件结构。
 
+    符号提取针对整个文件。
+
+    本工具只接受 file,不接受 line/column 参数;需要按行定位请用
+    lsp_definition / lsp_hover / lsp_references。file 写成 "路径:行[:列]"
+    内嵌格式时行列会被忽略。
+
     Args:
-        file: 文件路径。
+        file: 文件路径。不收 line/column 参数;内嵌 "路径:行[:列]" 时行列会被忽略,如 "src/main.py"。
 
     Returns:
         str: 符号树(缩进表示嵌套层级)。
     """
-    path, _, _ = _parse_position(file)
+    path = _resolve_file(file, root_dir=_root_dir_of(tool_runtime))
     try:
         _require_file(path)
         lang = detect_language(str(path))

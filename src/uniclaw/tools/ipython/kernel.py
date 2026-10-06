@@ -8,9 +8,26 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+class IopubMsgType(StrEnum):
+    """Jupyter iopub 通道的消息类型(见 Jupyter messaging spec)。
+
+    只列本模块 `_collect()` 会处理的几种,其余类型静默跳过。
+    用 StrEnum 是因为 `msg["header"]["msg_type"]` 拿到的是裸字符串,
+    StrEnum 与 str 相等,比较时可直接用成员名,拼写由类型检查兜住。
+    """
+
+    EXECUTE_INPUT = "execute_input"
+    STREAM = "stream"
+    EXECUTE_RESULT = "execute_result"
+    DISPLAY_DATA = "display_data"
+    ERROR = "error"
+    STATUS = "status"
 
 # ============================================================
 # 数据结构
@@ -121,12 +138,30 @@ class IPythonKernelManager:
 
     def __init__(self):
         self.kernels: dict[str, KernelInfo] = {}
+        # get-or-create 必须串行: 否则并行的首次 execute 会各自启动一个内核,
+        # 后者覆盖 self.kernels[kernel_id],前者成为孤儿 —— 表现为并行两次都拿到
+        # [In 1](各自计数从 0 开始),且其中一个内核的 history 永久丢失
+        self._start_lock = asyncio.Lock()
 
     @classmethod
     def get_instance(cls) -> "IPythonKernelManager":
         if cls._instance is None:
             cls._instance = cls()
         return cls._instance
+
+    async def ensure_kernel(
+        self, kernel_id: str = "default", kernel_name: str = "python3"
+    ) -> KernelInfo:
+        """获取内核,不存在则启动 —— 并发调用只会启动一个。
+
+        自动启动场景(ipython_execute 未显式 start 时)必须走这里,
+        直接 start_kernel 的"先查再建"在并发下是 TOCTOU 竞态。
+        """
+        async with self._start_lock:
+            info = self.kernels.get(kernel_id)
+            if info is not None:
+                return info
+            return await self.start_kernel(kernel_id, kernel_name)
 
     async def start_kernel(
         self, kernel_id: str = "default", kernel_name: str = "python3"
@@ -275,11 +310,15 @@ class IPythonKernelManager:
             ExecutionResult: 执行结果。
         """
         info = self.get_kernel(kernel_id)
-        info.history.append(code)
-        info.execution_count += 1
 
         # 同一内核串行执行,避免并发读取 iopub 队列导致消息错乱
         async with info.exec_lock:
+            # 计数与历史追加放在锁内: 并发时两次 execute 若在锁外各自
+            # +=  再回读共享变量,会拿到同一个编号(如都返回 [In 3])
+            info.history.append(code)
+            info.execution_count += 1
+            # 先记下本次分配值作兜底;内核返回 execute_input 时以它为准
+            local_count = info.execution_count
             msg_id = info.client.execute(code)
 
             def _collect():
@@ -287,6 +326,7 @@ class IPythonKernelManager:
                 stderr_parts = []
                 rich_outputs = []
                 error_info = None
+                kernel_count = None
 
                 while True:
                     try:
@@ -303,14 +343,23 @@ class IPythonKernelManager:
                     msg_type = msg["header"]["msg_type"]
                     content = msg["content"]
 
-                    if msg_type == "stream":
+                    if msg_type == IopubMsgType.EXECUTE_INPUT:
+                        # 内核实际分配的 [In N] 编号,并发下比共享计数器可靠
+                        kc = content.get("execution_count")
+                        if isinstance(kc, int):
+                            kernel_count = kc
+
+                    elif msg_type == IopubMsgType.STREAM:
                         text = content.get("text", "")
                         if content.get("name") == "stdout":
                             stdout_parts.append(text)
                         else:
                             stderr_parts.append(text)
 
-                    elif msg_type == "execute_result":
+                    elif msg_type == IopubMsgType.EXECUTE_RESULT:
+                        kc = content.get("execution_count")
+                        if isinstance(kc, int):
+                            kernel_count = kc
                         data = content.get("data", {})
                         for mime, val in data.items():
                             if mime == "text/plain":
@@ -318,12 +367,12 @@ class IPythonKernelManager:
                             else:
                                 rich_outputs.append({"type": mime, "data": val})
 
-                    elif msg_type == "display_data":
+                    elif msg_type == IopubMsgType.DISPLAY_DATA:
                         data = content.get("data", {})
                         for mime, val in data.items():
                             rich_outputs.append({"type": mime, "data": val})
 
-                    elif msg_type == "error":
+                    elif msg_type == IopubMsgType.ERROR:
                         ename = content.get("ename", "Error")
                         evalue = content.get("evalue", "")
                         traceback = content.get("traceback", [])
@@ -337,15 +386,15 @@ class IPythonKernelManager:
                             "traceback": clean_tb,
                         }
 
-                    elif msg_type == "status":
+                    elif msg_type == IopubMsgType.STATUS:
                         if content.get("execution_state") == "idle":
                             if parent.get("msg_id") == msg_id:
                                 break
 
-                return stdout_parts, stderr_parts, rich_outputs, error_info
+                return stdout_parts, stderr_parts, rich_outputs, error_info, kernel_count
 
             try:
-                stdout_parts, stderr_parts, rich_outputs, error_info = (
+                stdout_parts, stderr_parts, rich_outputs, error_info, kernel_count = (
                     await asyncio.to_thread(_collect)
                 )
             except Exception as e:
@@ -354,8 +403,12 @@ class IPythonKernelManager:
                     output="",
                     error=f"执行超时或通信失败: {e}",
                     rich_outputs=[],
-                    execution_count=info.execution_count,
+                    execution_count=local_count,
                 )
+
+        # 优先用内核实际分配的 execution_count(即 [In N] 的 N),
+        # 否则用本次在锁内记下的 local_count — 二者都与"本条执行"绑定
+        exec_count = kernel_count if isinstance(kernel_count, int) else local_count
 
         stdout = "".join(stdout_parts).rstrip()
         stderr = "".join(stderr_parts).rstrip()
@@ -368,7 +421,7 @@ class IPythonKernelManager:
                 output=stdout,
                 error=error_text,
                 rich_outputs=rich_outputs,
-                execution_count=info.execution_count,
+                execution_count=exec_count,
             )
 
         return ExecutionResult(
@@ -376,7 +429,7 @@ class IPythonKernelManager:
             output=stdout,
             error=stderr if stderr else None,
             rich_outputs=rich_outputs,
-            execution_count=info.execution_count,
+            execution_count=exec_count,
         )
 
     async def inspect_variable(

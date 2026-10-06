@@ -40,14 +40,17 @@ class DownloadManager:
 
     def get_status(self, task_id: str = "") -> str:
         """获取任务状态。为空则返回所有任务。"""
-        if not self._tasks:
-            return "当前没有下载任务。"
-
+        # 先按 task_id 找 —— 否则"任务列表为空"会盖掉"ID 不存在",
+        # 两种情况返回同一句话,调用方无法区分
         if task_id:
             dl = self._tasks.get(task_id)
             if not dl:
-                return f"未找到任务: {task_id}"
+                available = ", ".join(self._tasks) or "无"
+                return f"未找到任务: {task_id}(当前已有任务: {available})"
             return dl.progress.format_status()
+
+        if not self._tasks:
+            return "当前没有下载任务。"
 
         lines = []
         for tid, dl in self._tasks.items():

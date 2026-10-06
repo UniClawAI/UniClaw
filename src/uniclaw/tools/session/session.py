@@ -20,6 +20,22 @@ from uniclaw.provider.types import Usage
 
 _INT16_MAX = 32768.0  # int16 归一化除数
 
+
+def _detect_audio_suffix(data: bytes) -> str:
+    """按文件头推断音频容器格式,返回对应的扩展名(如 .wav/.mp3)。
+
+    无法识别时返回空字符串,调用方保留原扩展名。
+    """
+    if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WAVE":
+        return ".wav"
+    if data[:3] == b"ID3" or (len(data) >= 2 and data[0] == 0xFF and data[1] in (0xFB, 0xF3, 0xF2)):
+        return ".mp3"
+    if data[:4] == b"fLaC":
+        return ".flac"
+    if data[:4] == b"OggS":
+        return ".ogg"
+    return ""
+
 if TYPE_CHECKING:
     from uniclaw.config import AppConfig
 
@@ -334,16 +350,24 @@ class AIMessage(BaseMessage):
     def save_audio(self, path: str | Path) -> Path:
         """保存音频到文件。
 
+        写入的是 TTS 返回的原始音频字节(当前后端返回 WAV)。
+        若传入路径的扩展名与实际字节格式不符,自动改为与实际格式一致的
+        扩展名(如请求 .mp3 但内容是 WAV 时存为 .wav),返回值是实际路径。
+
         Args:
-            path: 输出文件路径,格式由扩展名决定(如 .wav, .flac, .ogg)。
+            path: 输出文件路径。扩展名与实际音频格式不符时会被纠正。
 
         Returns:
-            Path: 保存的文件路径。
+            Path: 实际保存的文件路径(扩展名与音频格式一致)。
         """
         if not self.audio:
             raise ValueError("当前消息没有音频数据")
         audio_bytes = base64.b64decode(self.audio)
         out = Path(path)
+        actual_suffix = _detect_audio_suffix(audio_bytes)
+        # 后缀跟实际格式对齐,避免 WAV 字节存成 .mp3 这类"假 mp3"
+        if actual_suffix and out.suffix.lower() != actual_suffix:
+            out = out.with_suffix(actual_suffix)
         with open(out, "wb") as f:
             f.write(audio_bytes)
         return out

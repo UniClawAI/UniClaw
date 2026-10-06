@@ -4,6 +4,7 @@ import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 
 from uniclaw.tools.base import ToolRuntime
+from uniclaw.utils.constants import TOOL_ERROR
 from uniclaw.tools.session.tools import (
     session_list,
     session_detail,
@@ -134,6 +135,31 @@ class TestSessionList:
         assert "测试会话" in result
         assert "s1" in result
         assert "10" in result
+
+    @pytest.mark.asyncio
+    @patch("uniclaw.tools.session.tools.SessionManager.list_sessions")
+    async def test_limit_zero_rejected(self, mock_list):
+        """limit=0 必须报参数错误, 不能被当成"不限量"一次返回全部会话。"""
+        result = await session_list(limit=0)
+        assert "limit" in result
+        assert "正整数" in result
+        mock_list.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch("uniclaw.tools.session.tools.SessionManager.list_sessions")
+    async def test_limit_negative_rejected(self, mock_list):
+        """limit 为负数同样拒绝。"""
+        result = await session_list(limit=-5)
+        assert "limit" in result
+        mock_list.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch("uniclaw.tools.session.tools.SessionManager.list_sessions")
+    async def test_limit_passed_through(self, mock_list):
+        """合法 limit 照常透传。"""
+        mock_list.return_value = []
+        await session_list(limit=5)
+        mock_list.assert_called_once_with(limit=5)
 
 
 class TestSessionDetail:
@@ -315,12 +341,42 @@ class TestGetHistoryRange:
         assert "无效范围" in result
 
     @pytest.mark.asyncio
-    async def test_boundary_clamped(self):
-        """越界被修正。"""
+    async def test_negative_start_rejected(self):
+        """负数 start 报错说明有效范围, 不静默钳制。"""
+        s = Session()
+        s.history = [UserMessage(content=f"m{i}") for i in range(3)]
+        result = await get_history_range(-2, 2, tool_runtime=ToolRuntime(config=_make_config(s)))
+        assert TOOL_ERROR in result
+        assert "不能为负数" in result
+        assert "有效范围" in result
+
+    @pytest.mark.asyncio
+    async def test_negative_end_rejected(self):
+        """负数 end 同样报错(旧行为只钳 start 不钳 end, 不对称)。"""
+        s = Session()
+        s.history = [UserMessage(content=f"m{i}") for i in range(3)]
+        result = await get_history_range(0, -1, tool_runtime=ToolRuntime(config=_make_config(s)))
+        assert TOOL_ERROR in result
+        assert "不能为负数" in result
+
+    @pytest.mark.asyncio
+    async def test_boundary_out_of_range_rejected(self):
+        """越界不再静默钳制, 报错并说明有效范围。"""
         s = Session()
         s.history = [UserMessage(content=f"m{i}") for i in range(3)]
         result = await get_history_range(0, 99, tool_runtime=ToolRuntime(config=_make_config(s)))
+        assert TOOL_ERROR in result
+        assert "超出历史范围" in result
+        assert "有效范围" in result
+
+    @pytest.mark.asyncio
+    async def test_end_equals_total_ok(self):
+        """end == total 是合法的(左闭右开区间)。"""
+        s = Session()
+        s.history = [UserMessage(content=f"m{i}") for i in range(3)]
+        result = await get_history_range(0, 3, tool_runtime=ToolRuntime(config=_make_config(s)))
         assert "m0" in result
+        assert "m2" in result
 
     @pytest.mark.asyncio
     async def test_archived_boundary_after_compact(self):

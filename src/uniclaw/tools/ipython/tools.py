@@ -61,13 +61,15 @@ async def ipython_execute(
     """
     mgr = IPythonKernelManager.get_instance()
 
-    # 自动启动默认内核
-    if kernel_id not in mgr.kernels:
-        try:
-            await mgr.start_kernel(kernel_id)
-        except RuntimeError as e:
-            # 多内核场景下补上 kernel_id,便于定位是哪个内核启动失败
-            return f"{TOOL_ERROR}: 自动启动内核失败(kernel_id={kernel_id!r}): {e}"
+    # 自动启动默认内核 —— 必须用 ensure_kernel(原子 get-or-create)。
+    # 原先的"先查 self.kernels 再 start_kernel"在并行首次调用下是 TOCTOU 竞态:
+    # 两个调用都看到内核不存在,各起一个,后者覆盖前者 —— 表现为并行两次都拿到
+    # [In 1](各自计数从 0 开始),且其中一个内核的 history 永久丢失
+    try:
+        await mgr.ensure_kernel(kernel_id)
+    except RuntimeError as e:
+        # 多内核场景下补上 kernel_id,便于定位是哪个内核启动失败
+        return f"{TOOL_ERROR}: 自动启动内核失败(kernel_id={kernel_id!r}): {e}"
 
     try:
         result = await mgr.execute(code, kernel_id, timeout)

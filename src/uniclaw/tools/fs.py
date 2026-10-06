@@ -12,6 +12,33 @@ def _read_preserving_newlines(p: Path, encoding: str = "utf-8") -> str:
         return f.read()
 
 
+def _binary_file_kind(head: bytes) -> str | None:
+    """检测文件头是否为二进制,返回类型描述;可作文本读取时返回 None。
+
+    启发式: 含 NUL 字节即视为二进制(UTF-16/32 文本除外,由调用方按
+    encoding/BOM 豁免),再按常见魔数给出更具体类型。
+    """
+    # 常见二进制魔数 → 类型说明(便于报错里直接告诉调用方该用什么工具)
+    magic_map = (
+        (b"\x89PNG\r\n\x1a\n", "PNG 图片"),
+        (b"\xff\xd8\xff", "JPEG 图片"),
+        (b"GIF87a", "GIF 图片"),
+        (b"GIF89a", "GIF 图片"),
+        (b"%PDF", "PDF 文档"),
+        (b"PK\x03\x04", "ZIP 压缩包"),
+        (b"\x1f\x8b", "GZIP 压缩包"),
+        (b"RIFF", "RIFF 多媒体(WAV/AVI 等)"),
+        (b"\x7fELF", "ELF 可执行文件"),
+        (b"MZ", "Windows 可执行文件"),
+    )
+    for magic, kind in magic_map:
+        if head.startswith(magic):
+            return kind
+    if b"\x00" in head:
+        return "二进制数据(含 NUL 字节)"
+    return None
+
+
 # ── Diff helpers ──────────────────────────────────────────────────────────
 
 
@@ -61,6 +88,25 @@ def Read(
         return f"{TOOL_ERROR}: {file_path} 是一个目录"
 
     try:
+        # 二进制防护: 先看文件头,避免 PNG 等被按文本解码输出乱码
+        # (UTF-16/32 文本天然含 NUL,按编码豁免;BOM 检测同 read_text)
+        with p.open("rb") as f:
+            head = f.read(8192)
+        enc_norm = (encoding or "").lower().replace("_", "-")
+        is_nul_safe = enc_norm in ("utf-16", "utf-32") or (
+            len(head) >= 2
+            and (
+                head.startswith((b"\xff\xfe", b"\xfe\xff", b"\xff\xfe\x00\x00", b"\x00\x00\xfe\xff"))
+            )
+        )
+        if not is_nul_safe:
+            kind = _binary_file_kind(head)
+            if kind:
+                return (
+                    f"{TOOL_ERROR}: {file_path} 是二进制文件({kind}),"
+                    f"不适合文本读取。图片请用 ReadMedia,其他请用专用工具"
+                )
+
         lines = _read_preserving_newlines(p, encoding).splitlines(keepends=True)
         start = offset or 0
         chunk = lines[start : start + limit] if limit else lines[start:]

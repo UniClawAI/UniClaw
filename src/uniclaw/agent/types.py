@@ -23,7 +23,6 @@ if TYPE_CHECKING:
 class AgentStatus(StrEnum):
     PENDING = "pending"
     RUNNING = "running"
-    WAITING = "waiting"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
@@ -43,6 +42,7 @@ class AgentTask:
     result_read_index: int = 0
     notify_parent: bool = False  # 异步子代理:执行中/结束时唤醒父 agent(run 主循环读取)
     keep_alive: bool = False  # 异步子代理:回合结束后驻留等待消息(sleep_timer 等唤醒依赖此)
+    closed: bool = False  # 已被 subagent_close 关闭(从列表移除,重复 close 提示已关闭)
 
     worktree_path: str = ""
     worktree_branch: str = ""
@@ -59,6 +59,34 @@ class AgentTask:
     @property
     def id(self) -> str:
         return self.session.id
+
+    @property
+    def is_finished(self) -> bool:
+        """执行过程是否已真正结束(future 已完成,或从未启动且已终态)。
+
+        与 status 的"本回合结果"维度正交: keep_alive 子代理回合结束后
+        status=COMPLETED 但 future 未完成(驻留等下一条消息),此时仍算
+        "未结束"。用于 close_agent 判断是否需要发取消信号。
+        """
+        if self.future is not None:
+            return self.future.done()
+        return self.status in (
+            AgentStatus.COMPLETED,
+            AgentStatus.FAILED,
+            AgentStatus.CANCELLED,
+        )
+
+    @property
+    def can_accept_messages(self) -> bool:
+        """是否还能接收消息(存活/驻留维度,与 status 的回合结果维度正交)。
+
+        keep_alive 子代理回合结束后 status=COMPLETED 但 future 存活(驻留),
+        仍可接收消息 —— 这正是 keep_alive 的用途。已关闭或执行过程已真正
+        结束的任务不能再收消息。
+        """
+        if self.closed:
+            return False
+        return not self.is_finished
 
     async def drain_user_queue(self, multi_agent: MultiAgent, config: AppConfig) -> str:
         """从 user_queue 取出所有待处理消息,分类处理:

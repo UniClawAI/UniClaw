@@ -3,14 +3,78 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+# 名称相似度阈值: >= 此值才提示"相似实体"(避免描述撞词/弱相关误报)
+_NAME_SIMILAR_THRESHOLD = 0.72
+# 达到此值视为高置信相似,措辞更强
+_NAME_SIMILAR_STRONG = 0.85
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _norm_name(name: str) -> str:
+    """归一化实体名: 小写、去首尾空白、压缩内部空白。"""
+    return re.sub(r"\s+", " ", (name or "").strip().casefold())
+
+
+def _levenshtein(a: str, b: str) -> int:
+    """编辑距离(短名用,长度乘积可控)。"""
+    if a == b:
+        return 0
+    if not a:
+        return len(b)
+    if not b:
+        return len(a)
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        cur = [i]
+        for j, cb in enumerate(b, 1):
+            cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (ca != cb)))
+        prev = cur
+    return prev[-1]
+
+
+def _name_similarity(a: str, b: str) -> tuple[float, str]:
+    """计算两个实体名的相似度。
+
+    仅比较名称本身(不看 description),避免"某实体描述里提到另一个名字"
+    被 FTS 全文检索命中而误判为相似实体。
+
+    Args:
+        a: 待查实体名。
+        b: 图谱中已有实体名。
+
+    Returns:
+        tuple[float, str]: (相似度 0.0~1.0, 可读匹配依据)。
+    """
+    from difflib import SequenceMatcher
+
+    na, nb = _norm_name(a), _norm_name(b)
+    if not na or not nb:
+        return 0.0, ""
+    if na == nb:
+        return 1.0, "名称相同(忽略大小写/空白)"
+
+    # 包含关系: "Python" ⊂ "Python3", "李明" ⊂ "李明华"
+    shorter, longer = (na, nb) if len(na) <= len(nb) else (nb, na)
+    if shorter in longer:
+        min_len = 2 if any(ord(c) > 127 for c in shorter) else 3
+        if len(shorter) >= min_len:
+            return 0.9, f"名称包含: '{shorter}' ⊂ '{longer}'"
+
+    # 等长短名差 1 字: "李明"/"李鸣" — difflib 仅 0.5,单独放宽以免漏报
+    if len(na) == len(nb) and len(na) <= 4 and _levenshtein(na, nb) == 1:
+        return 0.72, f"等长短名仅 1 字之差: '{na}' vs '{nb}'"
+
+    ratio = SequenceMatcher(None, na, nb).ratio()
+    return ratio, f"名称编辑相似度 {ratio:.2f}: '{na}' vs '{nb}'"
 
 
 class KnowledgeGraph:
@@ -150,8 +214,17 @@ class KnowledgeGraph:
             entity_id = c.lastrowid
             warning = None
             if duplicates:
-                dup_names = [d["name"] for d in duplicates[:3]]
-                warning = f"发现相似实体: {', '.join(dup_names)}。如果是同一实体,请使用 kg_add_alias 添加别名。"
+                parts = []
+                for d in duplicates[:3]:
+                    score = d.get("match_score", 0.0)
+                    basis = d.get("match_basis") or d.get("match_type", "名称相似")
+                    # 降低置信度表述 + 附判断依据,便于人工区分"同一实体"与"只是有点像"
+                    label = "疑似同一实体" if score >= _NAME_SIMILAR_STRONG else "名称相似"
+                    parts.append(f"{d['name']}({label}, 相似度 {score:.2f}, {basis})")
+                warning = (
+                    f"发现相似实体: {'; '.join(parts)}。"
+                    f"如确为同一实体请使用 kg_add_alias 添加别名,否则请忽略此提示。"
+                )
             return {"id": entity_id, "duplicate_warning": warning}
         except sqlite3.IntegrityError:
             # 已存在,返回已有实体
@@ -693,8 +766,40 @@ class KnowledgeGraph:
         return paths
 
     def check_duplicate(self, name: str, entity_type: str = "") -> list[dict]:
-        """检查是否存在相似实体,返回候选列表。"""
-        candidates = []
+        """检查是否存在相似实体,返回候选列表。
+
+        匹配顺序(从强到弱):
+        1. 别名精确匹配
+        2. 名称精确匹配(忽略大小写)
+        3. 名称相似度(名称编辑相似度/包含关系/短名差 1 字)
+
+        注意: 不再用 FTS5 对 name+description 全文匹配 —
+        那会把"描述里提到对方名字"的无关实体误报成相似实体。
+        每个候附带 match_type / match_score / match_basis 供人工判断。
+
+        Args:
+            name: 待查实体名。
+            entity_type: 实体类型(仅作提示,类型不同不直接排除,避免漏报)。
+
+        Returns:
+            list[dict]: 相似度 >= 0.72 的候选,按相似度降序。
+        """
+        candidates: list[dict] = []
+        seen: set[int] = set()
+
+        def _add(row: dict, match_type: str, score: float, basis: str) -> None:
+            if row["id"] in seen:
+                return
+            seen.add(row["id"])
+            d = dict(row)
+            if d.get("properties"):
+                d["properties"] = json.loads(d["properties"])
+            d["match_type"] = match_type
+            d["match_score"] = round(score, 3)
+            d["match_basis"] = basis
+            if entity_type and d.get("type") and d["type"] != entity_type:
+                d["match_basis"] += f"(类型不同: {d['type']} vs {entity_type})"
+            candidates.append(d)
 
         # 1. 精确匹配别名
         alias_match = self.conn.execute(
@@ -702,28 +807,25 @@ class KnowledgeGraph:
             (name,),
         ).fetchone()
         if alias_match:
-            d = dict(alias_match)
-            if d.get("properties"):
-                d["properties"] = json.loads(d["properties"])
-            d["match_type"] = "alias"
-            candidates.append(d)
+            _add(dict(alias_match), "alias", 1.0, f"别名精确匹配: '{name}'")
 
-        # 2. FTS5 模糊搜索
-        try:
-            fts_matches = self.conn.execute(
-                "SELECT e.* FROM entities_fts f JOIN entities e ON f.rowid=e.id WHERE entities_fts MATCH ?",
-                (name,),
-            ).fetchall()
-            for m in fts_matches:
-                d = dict(m)
-                if d.get("properties"):
-                    d["properties"] = json.loads(d["properties"])
-                if d["id"] not in [c["id"] for c in candidates]:
-                    d["match_type"] = "fts"
-                    candidates.append(d)
-        except sqlite3.OperationalError:
-            pass
+        # 2. 全量名称对比(名称相似度判定,不看 description)
+        #    规模可控(实体数以千计),精确对比比 FTS 更可靠
+        rows = self.conn.execute("SELECT * FROM entities").fetchall()
+        norm_q = _norm_name(name)
+        for row in rows:
+            d = dict(row)
+            if d["id"] in seen:
+                continue
+            cand_name = d.get("name") or ""
+            if _norm_name(cand_name) == norm_q:
+                _add(d, "exact", 1.0, f"名称精确匹配(忽略大小写): '{cand_name}'")
+                continue
+            score, basis = _name_similarity(name, cand_name)
+            if score >= _NAME_SIMILAR_THRESHOLD:
+                _add(d, "name", score, basis)
 
+        candidates.sort(key=lambda c: -c.get("match_score", 0.0))
         return candidates
 
     def list_entities(self, entity_type: str = "", limit: int = 100) -> list[dict]:

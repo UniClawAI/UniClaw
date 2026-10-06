@@ -6,8 +6,9 @@ from uniclaw.config import AppConfig
 from uniclaw.tools.base import tool
 from uniclaw.utils.constants import TOOL_ERROR
 
-# Docker 检测结果缓存(30 分钟过期)
-_docker_cache: dict = {"result": None, "time": 0}
+# Docker 检测结果缓存(30 分钟过期)。error 一并缓存,
+# 命中缓存时也要把它写回当前 config 的 unavailable_tool_reasons
+_docker_cache: dict = {"result": None, "time": 0, "error": None}
 _docker_cache_ttl = 60 * 30
 
 
@@ -323,32 +324,40 @@ _ALL_TOOLS = [
 
 
 async def get_tools(config: AppConfig = None) -> list:
-    """获取 Docker 工具列表(根据 Docker 可用性动态返回,带缓存)。"""
+    """获取 Docker 工具列表(根据 Docker 可用性动态返回,带缓存)。
+
+    无论是否命中缓存,都会把不可用根因同步到传入的 config
+    (与 advisor / GenerateImage 的 record_unavailable_tools 机制一致),
+    保证后续直接调用 DockerCreate 时报"工具 X 未启用: 根因"而非"工具不存在"。
+    """
     now = time.monotonic()
-    if (
+    cache_hit = (
         _docker_cache["result"] is not None
         and now - _docker_cache["time"] < _docker_cache_ttl
-    ):
-        return _docker_cache["result"]
+    )
+    if cache_hit:
+        result = _docker_cache["result"]
+        docker_err = _docker_cache["error"]
+    else:
+        from .manager import DockerManager
 
-    from .manager import DockerManager
+        manager = DockerManager.get_instance()
+        docker_err = await manager.check_docker()
+        result = [] if docker_err else list(_ALL_TOOLS)
+        _docker_cache["result"] = result
+        _docker_cache["error"] = docker_err
+        _docker_cache["time"] = now
 
-    manager = DockerManager.get_instance()
-    docker_err = await manager.check_docker()
-    if docker_err:
-        if config:
+    # 同步原因到当前 config: 缓存命中时也必须写,否则新会话的
+    # unavailable_tool_reasons 为空,直接调用会落到"工具不存在"
+    if config is not None:
+        if docker_err:
             config.record_unavailable_tools(
                 [t.name for t in _ALL_TOOLS],
                 f"Docker 不可用: {docker_err}",
             )
-        result = []
-    else:
-        if config:
+        else:
             config.clear_unavailable_tools([t.name for t in _ALL_TOOLS])
-        result = list(_ALL_TOOLS)
-
-    _docker_cache["result"] = result
-    _docker_cache["time"] = now
     return result
 
 

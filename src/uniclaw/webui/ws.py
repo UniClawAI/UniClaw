@@ -109,15 +109,7 @@ async def get_or_load_session(session_id: str) -> AppConfig:
         task = config.current_agent
         future_alive = task.future is not None and not task.future.done()
         has_pending = not task.user_queue.empty()
-        if (
-            future_alive
-            or has_pending
-            or task.status
-            in (
-                AgentStatus.RUNNING,
-                AgentStatus.WAITING,
-            )
-        ):
+        if future_alive or has_pending or task.status == AgentStatus.RUNNING:
             if task.event_queue is None:
                 task.event_queue = asyncio.Queue()
             session_cache[session_id] = config

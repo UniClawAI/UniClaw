@@ -217,12 +217,23 @@ def get_history_range(
         )
     start, end = start_i, end_i
 
-    # 边界修正
-    start = max(0, start)
-    end = min(total, end)
+    # 边界校验: 负数/越界直接报错说明有效范围, 不做静默钳制 ——
+    # 静默改值会让调用方拿到的区间和请求不一致还以为是对的。
+    # (旧行为把 start 钳到 0 却保留负 end, 钳制不对称还会连带触发 start>=end 的误导性报错)
+    valid_range = f"有效范围: 0 <= start < end <= {total}(历史消息共 {total} 条, 序号 0 ~ {total - 1})"
+    if start < 0 or end < 0:
+        return (
+            f"{TOOL_ERROR}: start/end 不能为负数"
+            f"(收到 start={start}, end={end})。{valid_range}"
+        )
+    if start >= total or end > total:
+        return (
+            f"{TOOL_ERROR}: start/end 超出历史范围"
+            f"(收到 start={start}, end={end})。{valid_range}"
+        )
 
     if start >= end:
-        return f"{TOOL_ERROR}: 无效范围: start({start}) >= end({end})。历史消息共 {total} 条(序号 0 ~ {total - 1})。"
+        return f"{TOOL_ERROR}: 无效范围: start({start}) >= end({end})。{valid_range}"
 
     # 限制单次返回量,避免上下文爆炸
     if end - start > 100:
