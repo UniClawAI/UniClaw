@@ -60,6 +60,12 @@ _TYPE_MAP = {
 # 运行时注入的参数,不写入 schema
 _INJECTED_PARAMS = {"tool_runtime"}
 
+def _shorten(value, limit: int = 200) -> str:
+    """把参数值渲染成短字符串,超长截断 —— 报错文本不能被大值撑爆。"""
+    text = value if isinstance(value, str) else repr(value)
+    return text if len(text) <= limit else text[: limit - 3] + "..."
+
+
 def _type_name(tp) -> str:
     """把注解渲染成可读类型名,失败时退回 repr。"""
     try:
@@ -463,6 +469,11 @@ class Tool:
                 kwargs[params[i]] = arg
         kwargs.pop("_explain", None)
 
+        # 先取出 tool_runtime: 取消竞争要靠它拿 cancel_event,而下面会按签名
+        # 过滤掉 func 不收的注入参数 —— 否则不收 tool_runtime 的 async 工具
+        # (如 Grep/browser_*)根本进不了取消竞争,ESC 打不断
+        rt = kwargs.get("tool_runtime")
+
         # 过滤函数签名中不接受的注入参数(如 MCP **kwargs 动态函数)
         # tool_runtime 本身按普通 kwargs 透传,由调用方负责构造传入
         for injected in _INJECTED_PARAMS:
@@ -474,7 +485,6 @@ class Tool:
 
         # 异步工具:包装为 task,与 cancel_event 竞争
         # cancel_event 触发时自动取消工具执行,各工具无需单独检查
-        rt = kwargs.get("tool_runtime")
         cancel_event = None
         if rt is not None:
             try:
@@ -505,11 +515,15 @@ class Tool:
             elapsed = time.monotonic() - start
             return f"{TOOL_ERROR}: {self.name} 被用户中断(已执行 {elapsed:.1f} 秒)"
         finally:
-            # 清理:确保两个 task 都被关闭
-            if not cancel_wait.done():
-                cancel_wait.cancel()
-            if not task.done():
-                task.cancel()
+            # 清理:确保两个 task 都被关闭。cancel 后必须 await —— 否则任务
+            # 悬挂到 GC,会报 "Task was destroyed but it is pending"
+            for t in (cancel_wait, task):
+                if not t.done():
+                    t.cancel()
+                    try:
+                        await t
+                    except asyncio.CancelledError:
+                        pass
 
     def _bind_call(self, args: tuple, kwargs: dict) -> dict:
         """把 (args, kwargs) 绑定到函数签名,返回可直接调用的 kwargs。
@@ -532,10 +546,18 @@ class Tool:
                     f"but {len(args)} were given"
                 )
             for i, arg in enumerate(args):
-                call[params[i]] = arg
+                name = params[i]
+                if name in call:
+                    # 与 Python 语义一致: 同一参数不能既位置又关键字传入
+                    raise TypeError(
+                        f"{self.name}() got multiple values for argument {name!r}"
+                    )
+                call[name] = arg
         call.pop("_explain", None)
+        # 注入参数里只有 tool_runtime 要保留 —— execute 靠它拿 cancel_event 做
+        # async 工具的取消竞争(即使目标函数不收这个形参)。其余注入参数照旧剔除。
         for injected in _INJECTED_PARAMS:
-            if injected not in params:
+            if injected != "tool_runtime" and injected not in params:
                 call.pop(injected, None)
 
         # 先查未知参数名 —— 模型拼错参数名是最常见的情况, 而 sig.bind() 会先报
@@ -543,15 +565,20 @@ class Tool:
         accepts_kwargs = any(
             p.kind is inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
         )
+        bindable = {
+            k: v for k, v in call.items() if accepts_kwargs or k in params
+        }
         if not accepts_kwargs:
-            unknown = sorted(k for k in call if k not in params)
+            unknown = sorted(
+                k for k in call if k not in params and k not in _INJECTED_PARAMS
+            )
             if unknown:
                 raise TypeError(
                     f"unexpected keyword argument(s): {', '.join(unknown)}"
                 )
 
-        self._check_types(call)
-        sig.bind(**call)
+        self._check_types(bindable)
+        sig.bind(**bindable)
         return call
 
     def _check_types(self, call: dict) -> None:
@@ -580,12 +607,12 @@ class Tool:
     def _param_error(self, err: TypeError, args: tuple, kwargs: dict) -> str:
         """把参数绑定失败转成给模型看的友好提示(不记日志 —— 不是代码 bug)。"""
         shown = {
-            k: v
+            k: _shorten(v)
             for k, v in kwargs.items()
             if k not in _INJECTED_PARAMS and k != "_explain"
         }
         if args:
-            shown = {**{f"arg{i}": a for i, a in enumerate(args)}, **shown}
+            shown = {**{f"arg{i}": _shorten(a) for i, a in enumerate(args)}, **shown}
 
         visible = []
         for name, p in inspect.signature(self.func).parameters.items():
@@ -636,7 +663,7 @@ class Tool:
         except Exception as e:
             config = getattr(rt, "config", None)
             shown = {
-                k: v
+                k: _shorten(v)
                 for k, v in bound.items()
                 if k not in _INJECTED_PARAMS and k != "_explain"
             }

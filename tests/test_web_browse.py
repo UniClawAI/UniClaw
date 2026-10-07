@@ -540,6 +540,9 @@ class TestSinglePageOperations:
         assert "无法后退" in result
         assert "已是历史起点" in result
         assert "无更早记录" in result
+        # history.length 是浏览器内部量(含 browser_start 预建的 about:blank),
+        # 对调用方无可操作信息 —— 不能外显
+        assert "history.length" not in result
 
     @pytest.mark.asyncio
     async def test_forward(self, web_browser, mock_page):
@@ -594,14 +597,21 @@ class TestSinglePageOperations:
         assert "仍可继续前进" in result
 
     @pytest.mark.asyncio
-    async def test_forward_to_last_navigated_url_says_boundary(
-        self, web_browser, mock_page
-    ):
-        """前进到最近一次 navigate 的 URL 时视为历史终点。"""
+    async def test_forward_to_last_entry_says_boundary(self, web_browser, mock_page):
+        """前进到历史最后一项时**当次**即提示「已是历史终点」。
+
+        回归测试: 曾用"最近一次 navigate 的 URL"启发式,在 new_page 建的页、
+        重定向落地上判错 —— 到达末尾那一次仍报「仍可继续前进」,滞后一帧。
+        现在由历史位置跟踪直接判定。
+        """
         web_browser._browser = MagicMock()
         web_browser._pages = {1: mock_page}
         web_browser._active_page_id = 1
-        web_browser._last_urls = {1: "https://example.com/b"}
+        # 历史 [blank, a, b],当前在 a(idx=1),forward 到 b 即末尾
+        web_browser._hist_urls = {
+            1: ["about:blank", "https://example.com/a", "https://example.com/b"]
+        }
+        web_browser._hist_idx = {1: 1}
         mock_page.evaluate = AsyncMock(return_value=3)
         mock_page.url = "https://example.com/a"
 
@@ -630,6 +640,7 @@ class TestSinglePageOperations:
         # 与 back 的"已是历史起点"对称 —— 不能一个用边界框架、一个只说"无记录"
         assert "已是历史末尾" in result
         assert "无后续记录" in result
+        assert "history.length" not in result  # 内部量不外显(同 back)
 
     @pytest.mark.asyncio
     async def test_reload(self, web_browser, mock_page):

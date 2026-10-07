@@ -15,8 +15,18 @@ from uniclaw.utils.constants import TOOL_ERROR
 from .graph import KnowledgeGraph
 
 
+def _as_scope(scope) -> Scope:
+    """把 scope 归一化为 Scope 枚举。
+
+    工具注解写的是 Scope,但 LLM 传的是字符串("project"/"user")——
+    Python 不做运行时强制转换,直接 `scope.value` 会 AttributeError。
+    """
+    return scope if isinstance(scope, Scope) else Scope(scope)
+
+
 def _get_db_path(config: AppConfig, scope: Scope = Scope.PROJECT) -> Path:
     """解析知识图谱数据库路径。scope: "user" 用户级 / "project" 项目级(默认)。"""
+    scope = _as_scope(scope)
     resolved = (
         config.root_dir if scope == Scope.PROJECT and config.root_dir else Scope.USER
     )
@@ -31,13 +41,13 @@ def _get_graph(config: AppConfig, scope: Scope = Scope.PROJECT) -> KnowledgeGrap
 def _kg_error(
     func_name: str, sig: inspect.Signature, exc: BaseException, args, kwargs
 ) -> str:
-    """生成带上下文的 TOOL_ERROR: 工具名 + 关键参数 + scope + db 路径。"""
-    scope = Scope.PROJECT
-    tool_runtime = None
+    """生成带上下文的 TOOL_ERROR: 工具名 + 关键参数 + scope。
+
+    不带 db 路径 —— 那是内部实现细节,对调用方(模型)无用。
+    """
     ctx: list[str] = []
     bound = sig.bind(*args, **kwargs)
     bound.apply_defaults()
-    tool_runtime = bound.arguments.get("tool_runtime")
     scope = bound.arguments.get("scope") or Scope.PROJECT
     for key, val in bound.arguments.items():
         if key in ("tool_runtime", "scope") or val is None:
@@ -48,11 +58,9 @@ def _kg_error(
         if len(text) > 80:
             text = text[:77] + "..."
         ctx.append(f"{key}={text}")
-    config = getattr(tool_runtime, "config", None)
     parts = [f"工具={func_name}", f"scope={scope}"]
     parts.extend(ctx)
-    if config is not None:
-        parts.append(f"db={_get_db_path(config, scope)}")
+    # 不带 db 路径 —— 那是内部实现细节,对调用方(模型)无用
     return (
         f"{TOOL_ERROR}: 知识图谱操作失败({', '.join(parts)}): "
         f"{type(exc).__name__}: {exc}"
@@ -475,6 +483,7 @@ def kg_neighbors(
         scope: 作用域,"user" 为用户级(跨项目共享),"project" 为项目级(默认)
     """
     config = tool_runtime.config
+    scope = _as_scope(scope)
     graph = _get_graph(config, scope)
     try:
         depth = min(depth, 3)
@@ -484,7 +493,8 @@ def kg_neighbors(
             return (
                 f"{TOOL_ERROR}: 实体 '{name}' 不存在"
                 f"({'type=' + type if type else '未指定 type'}"
-                f", scope={scope.value});可先用 {kg_search.name} 查找或 {kg_add_entity.name} 创建"
+                f", scope={scope.value});"
+                f"可先用 {kg_search.name} 查找或 {kg_add_entity.name} 创建"
             )
         neighbors = graph.get_neighbors(
             name, depth=depth, entity_type=type, relation_type=relation_type
@@ -526,9 +536,20 @@ def kg_path(
     config = tool_runtime.config
     graph = _get_graph(config, scope)
     try:
+        # 先区分"实体不存在"与"确实无路径" —— 否则目标缺失时只报
+        # "未找到路径",调用方分不清是实体没入库还是图里真不连通
+        missing = [
+            f"'{n}'" for n in (source, target) if not graph.get_entity(n)
+        ]
+        if missing:
+            return (
+                f"{TOOL_ERROR}: 实体不存在: {', '.join(missing)}"
+                f"(scope={_as_scope(scope).value});"
+                f"可先用 {kg_search.name} 查找或 {kg_add_entity.name} 创建"
+            )
         paths = graph.find_path(source, target, max_depth=max_depth)
         if not paths:
-            return f"未找到 '{source}' 到 '{target}' 的路径。"
+            return f"未找到 '{source}' 到 '{target}' 的路径(两个实体都存在,但图中不连通)。"
 
         lines = [f"找到 {len(paths)} 条路径:"]
         for i, path in enumerate(paths, 1):
@@ -699,6 +720,7 @@ async def kg_extract(
         path: 文件或目录路径(由 subagent 自行读取分析)
         scope: 作用域,"user" 为用户级(跨项目共享),"project" 为项目级(默认)
     """
+    scope = _as_scope(scope)
     if not text and not path:
         return f"{TOOL_ERROR}: 请提供 text 或 path 参数。"
 
@@ -757,7 +779,8 @@ async def kg_extract(
             # KeyError/AttributeError/TypeError 等编程错误原样抛给 Tool.__call__
             src = path or f"text({len(text)} 字符)"
             return (
-                f"{TOOL_ERROR}: subagent 启动失败(scope={scope.value}, source={src}): "
+                f"{TOOL_ERROR}: subagent 启动失败"
+                f"(scope={scope.value}, source={src}): "
                 f"{type(e).__name__}: {e}"
             )
 

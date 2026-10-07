@@ -110,7 +110,11 @@ class WebBrowser:
         self._context = None
         self._pages: dict[int, object] = {}  # page_id -> page
         self._active_page_id: Optional[int] = None
-        self._last_urls: dict[int, str] = {}  # page_id -> 最近一次 navigate 的 URL(前进终点启发式)
+        # 历史位置跟踪: 浏览器没有"当前历史下标"API, back/forward 的边界提示
+        # (是否已到起点/末尾)只能自己记。_last_urls 那种"最近一次 navigate 的
+        # URL"启发式在 new_page 建的页、重定向落地上都会判错。
+        self._hist_urls: dict[int, list[str]] = {}  # page_id -> 访问过的 URL(时间序)
+        self._hist_idx: dict[int, int] = {}  # page_id -> 当前下标
         self._headless = True
         self._next_id = 1
         self._connected_cdp = False  # 是否通过 CDP 连接外部浏览器
@@ -259,7 +263,8 @@ class WebBrowser:
             cdp_url = self._cdp_url
             self._pages.clear()
             self._active_page_id = None
-            self._last_urls.clear()
+            self._hist_urls.clear()
+            self._hist_idx.clear()
             self._connected_cdp = False
             self._cdp_url = None
             self._context = None
@@ -288,7 +293,8 @@ class WebBrowser:
                 errors.append(f"关闭页面 {page_id} 失败: {e}")
         self._pages.clear()
         self._active_page_id = None
-        self._last_urls.clear()
+        self._hist_urls.clear()
+        self._hist_idx.clear()
 
         if self._context:
             try:
@@ -329,7 +335,7 @@ class WebBrowser:
             self._next_id += 1
             self._pages[page_id] = page
             self._active_page_id = page_id
-            self._last_urls.pop(page_id, None)
+            self._hist_init(page_id, page.url or "about:blank")
             return page_id, f"已创建新页面,ID: {page_id}"
         except (PlaywrightError, PlaywrightTimeoutError) as e:
             return -1, f"{TOOL_ERROR}: 创建新页面失败: {e}"
@@ -351,7 +357,7 @@ class WebBrowser:
             page = self._pages[page_id]
             await page.close()
             del self._pages[page_id]
-            self._last_urls.pop(page_id, None)
+            self._hist_drop(page_id)
 
             # 如果关闭的是活动页面,切换到其他页面
             if self._active_page_id == page_id:
@@ -415,8 +421,8 @@ class WebBrowser:
             title = await page.title()
             status = response.status if response else "未知"
             pid = page_id or self._active_page_id
-            if pid is not None:
-                self._last_urls[pid] = url
+            # 记落地 URL 而非请求 URL —— 重定向/规范化后两者不一致
+            self._hist_push(pid, page.url or url)
             return f"已导航到: {url}\n页面标题: {title}\n状态码: {status}"
         except (PlaywrightError, PlaywrightTimeoutError) as e:
             return f"{TOOL_ERROR}: 导航到 {url} 失败 (timeout=30000ms): {e}"
@@ -910,21 +916,26 @@ class WebBrowser:
         page = self._get_page(page_id)
         try:
             before = page.url
-            hist_len = await page.evaluate("() => window.history.length")
             await page.go_back()
             # 无历史可退时 go_back 是静默 no-op —— 必须比对 URL,
             # 否则会返回"已后退,当前页面: <原标题>",误导调用方
             if page.url == before:
                 return (
                     f"{TOOL_ERROR}: 无法后退 —— 已是历史起点,当前无更早记录"
-                    f"(history.length={hist_len}, 页面 {before})"
+                    f"(页面 {before})"
                 )
             title = await page.title()
+            pid = page_id or self._active_page_id
+            self._hist_move(pid, -1)
             # 带上 URL: 退回 about:blank 等无标题页面时, 仅标题会让人误以为没退成功
             msg = f"已后退,当前页面: {title}(URL: {page.url})"
-            # 边界提示: 退回 about:blank 基本就是历史起点(browser_start 先建空白页再导航)
             if _is_initial_page(page.url):
                 msg += "。已退回起始页 about:blank(browser_start 先建空白页再导航)"
+            at_start = self._hist_at_start(pid)
+            if at_start is None:
+                # 无跟踪信息(CDP 导入的外部标签页等)→ 启发式兜底
+                at_start = _is_initial_page(page.url)
+            if at_start:
                 msg += "。已是历史起点,无法再后退"
             else:
                 msg += "。仍可继续后退"
@@ -943,19 +954,18 @@ class WebBrowser:
             if page.url == before:
                 return (
                     f"{TOOL_ERROR}: 无法前进 —— 已是历史末尾,当前无后续记录"
-                    f"(history.length={hist_len}, 页面 {before})"
+                    f"(页面 {before})"
                 )
             title = await page.title()
+            pid = page_id or self._active_page_id
+            self._hist_move(pid, +1)
             # 同 back: 带上 URL, 无标题页面(about:blank)也能看出确实导航了
             msg = f"已前进,当前页面: {title}(URL: {page.url})"
-            # 前进终点启发式(浏览器无"当前历史位置"API):
-            # 1) 从 about:blank(idx 0)前进且 history.length<=2 → 唯一后续页即终点
-            # 2) 落在最近一次 navigate 的 URL 上 → 多半是最后一次主动导航
-            pid = page_id or self._active_page_id
-            last_nav = self._last_urls.get(pid) if pid is not None else None
-            at_end = (_is_initial_page(before) and hist_len <= 2) or (
-                last_nav is not None and page.url == last_nav
-            )
+            at_end = self._hist_at_end(pid)
+            if at_end is None:
+                # 无跟踪信息(CDP 导入的外部标签页等)→ 启发式兜底:
+                # 从 about:blank 前进且 history.length<=2 → 唯一后续页即终点
+                at_end = _is_initial_page(before) and hist_len <= 2
             if at_end:
                 msg += "。已是历史终点,无法再前进"
             else:
@@ -1333,6 +1343,55 @@ class WebBrowser:
         for prop, value in styles.items():
             lines.append(f"  {prop}: {value}")
         return "\n".join(lines)
+
+    # ── 历史位置跟踪(back/forward 边界提示用)────────────────────
+
+    def _hist_init(self, pid: Optional[int], url: str) -> None:
+        """新页面: 历史只有一项(初始页),游标停在起点。"""
+        if pid is None:
+            return
+        self._hist_urls[pid] = [url]
+        self._hist_idx[pid] = 0
+
+    def _hist_push(self, pid: Optional[int], url: str) -> None:
+        """navigate: 截掉前进分支后追加一项,游标移到末尾。"""
+        if pid is None:
+            return
+        urls = self._hist_urls.setdefault(pid, [])
+        idx = self._hist_idx.get(pid, 0)
+        del urls[idx + 1 :]
+        urls.append(url)
+        self._hist_idx[pid] = len(urls) - 1
+
+    def _hist_move(self, pid: Optional[int], step: int) -> bool:
+        """back/forward 后把游标移动 step(-1/+1);已到边界则不动并返回 False。"""
+        if pid is None:
+            return False
+        urls = self._hist_urls.get(pid) or []
+        idx = self._hist_idx.get(pid, 0)
+        new = idx + step
+        if not urls or new < 0 or new >= len(urls):
+            return False
+        self._hist_idx[pid] = new
+        return True
+
+    def _hist_at_start(self, pid: Optional[int]) -> Optional[bool]:
+        """是否已在历史起点;无跟踪信息时返回 None,由调用方用启发式兜底。"""
+        urls = self._hist_urls.get(pid)
+        if not urls:
+            return None
+        return self._hist_idx.get(pid, 0) <= 0
+
+    def _hist_at_end(self, pid: Optional[int]) -> Optional[bool]:
+        """是否已在历史末尾;无跟踪信息时返回 None,由调用方用启发式兜底。"""
+        urls = self._hist_urls.get(pid)
+        if not urls:
+            return None
+        return self._hist_idx.get(pid, 0) >= len(urls) - 1
+
+    def _hist_drop(self, pid: int) -> None:
+        self._hist_urls.pop(pid, None)
+        self._hist_idx.pop(pid, None)
 
     def _get_page(self, page_id: Optional[int] = None):
         """获取指定页面,未指定则返回活动页面。

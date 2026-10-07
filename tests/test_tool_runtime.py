@@ -1,6 +1,7 @@
 """ToolRuntime 测试 — 覆盖透传、schema 排除、stream() 与并行安全。"""
 
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -468,3 +469,69 @@ class TestSchemaExclusion:
         props = schema["function"]["parameters"]["properties"]
         assert "tool_runtime" not in props
         assert "value" in props
+
+
+class TestExecuteBugs:
+    """__call__/execute 的边界行为回归。"""
+
+    @pytest.mark.asyncio
+    async def test_async_tool_without_runtime_still_cancellable(self):
+        """不收 tool_runtime 的 async 工具也必须能被 cancel_event 中断。
+
+        回归测试: _bind_call 会按签名过滤掉 tool_runtime,execute 再去
+        `kwargs.get("tool_runtime")` 就拿到 None —— 取消竞争对 89 个这类
+        工具(Grep/browser_*/Docker_* 等)完全失效,ESC 打不断。
+        """
+        cancel_event = asyncio.Event()
+
+        @tool
+        async def slow(value: str) -> str:
+            """Slow tool.
+
+            Args:
+                value: 输入值。
+            """
+            await asyncio.sleep(30)
+            return "done"
+
+        rt = ToolRuntime(
+            config=SimpleNamespace(current_agent=SimpleNamespace(cancel_event=cancel_event))
+        )
+        asyncio.get_event_loop().call_later(0.05, cancel_event.set)
+        result = await slow("x", tool_runtime=rt)  # 目标函数不收 tool_runtime
+        assert "被用户中断" in result
+
+    @pytest.mark.asyncio
+    async def test_multiple_values_for_argument(self):
+        """同一参数不能既位置又关键字传入(与 Python 语义一致)。"""
+
+        @tool
+        def f(a: str, b: int = 1, tool_runtime: ToolRuntime = None) -> str:
+            """F tool.
+
+            Args:
+                a: 参数 a。
+                b: 参数 b。
+            """
+            return f"{a}{b}"
+
+        result = await f("x", a="y")
+        assert "参数有误" in result
+        assert "multiple values" in result
+
+    @pytest.mark.asyncio
+    async def test_param_error_truncates_large_values(self):
+        """报错里的入参要截断, 大值不能撑爆报错文本。"""
+
+        @tool
+        def g(value: str = "", tool_runtime: ToolRuntime = None) -> str:
+            """G tool.
+
+            Args:
+                value: 输入值。
+            """
+            return value
+
+        result = await g(valu="x" * 5000)  # 拼错参数名 + 大值
+        assert "参数有误" in result
+        assert len(result) < 1000

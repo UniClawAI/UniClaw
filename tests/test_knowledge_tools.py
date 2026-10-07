@@ -446,6 +446,21 @@ class TestNeighbors:
         assert "不存在" in result
         assert "没有邻居" not in result
 
+    @pytest.mark.asyncio
+    async def test_scope_accepts_plain_str(self, tmp_path):
+        """scope 传字符串不能炸 —— LLM 传的就是字符串。
+
+        回归测试(第 17 轮): `kg_neighbors(scope="project")` 报
+        `AttributeError: 'str' object has no attribute 'value'` ——
+        Scope 是 StrEnum,与 str 相等性能过,但 `.value` 成员访问会炸。
+        """
+        config = _make_config(tmp_path)
+        result = await kg_neighbors(
+            "Nonexistent", scope="project", tool_runtime=ToolRuntime(config=config)
+        )
+        assert "不存在" in result
+        assert "scope=project" in result   # 字符串也能渲染出 scope
+
 
 class TestPath:
     """kg_path 测试。"""
