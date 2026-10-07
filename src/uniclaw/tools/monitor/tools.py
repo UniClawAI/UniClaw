@@ -240,13 +240,25 @@ def get_all_tools() -> list:
     ]
 
 
-def get_tools() -> list:
+def get_tools(config=None) -> list:
     """获取当前环境可用的监控工具列表(按运行环境裁剪)。
 
     monitor_screen 仅在 Windows + pywinpty 下注册 —— 没有真实屏幕时它
-    只能退化成"返回输出历史",与 monitor_output 重复。
+    只能退化成"返回输出历史",与 monitor_output 重复。裁剪时同步把根因
+    写入 config.unavailable_tool_reasons(与 Docker/顾问域口径一致),
+    直接调用 monitor_screen 时报"工具 X 未启用: 根因"而非"工具不存在"。
+
+    Args:
+        config: AppConfig 实例,用于记录/清除工具不可用原因;可为 None。
     """
     tools = get_all_tools()
     if not _screen_supported():
         tools = [t for t in tools if t is not monitor_screen]
+        if config is not None:
+            config.record_unavailable_tools(
+                [monitor_screen.name],
+                "缺少真实屏幕快照支持(需要 Windows + pywinpty)",
+            )
+    elif config is not None:
+        config.clear_unavailable_tools([monitor_screen.name])
     return tools

@@ -281,6 +281,44 @@ class TestCheckDuplicate:
         assert len(dups) == 1
         assert dups[0]["match_score"] >= 0.72
 
+    def test_short_ascii_names_not_flagged(self, kg):
+        """纯 ASCII 短名差 1 字不应误报(t_a/t_b 回归)。
+
+        短串的编辑距离没有统计意义,t_a/t_b 共用前缀只是巧合,
+        误报会误导调用方去合并两个不同的实体。
+        """
+        kg.add_entity("t_a", "concept")
+        dups = kg.check_duplicate("t_b", "concept")
+        assert dups == [], f"短 ASCII 名被误报为相似: {dups}"
+
+    def test_add_entity_short_names_no_warning(self, kg):
+        """add_entity 创建 t_a 后再建 t_b 不应产生相似警告。"""
+        r1 = kg.add_entity("t_a", "concept")
+        assert not r1.get("duplicate_warning"), r1
+        r2 = kg.add_entity("t_b", "concept")
+        assert not r2.get("duplicate_warning"), r2
+
+    def test_short_ascii_single_letter_not_flagged(self, kg):
+        """单字母 ASCII 实体(A/B)同样不误报。"""
+        kg.add_entity("A", "concept")
+        dups = kg.check_duplicate("B", "concept")
+        assert dups == [], f"单字母名被误报为相似: {dups}"
+
+    def test_type_mismatch_downweights(self, kg):
+        """类型不同时下调置信度 —— 不同类型的两个实体很少是同一个东西。"""
+        kg.add_entity("Python", "person")
+        dups = kg.check_duplicate("Python3", "technology")
+        # 同类型时包含关系给 0.9;类型不同 ×0.7 = 0.63,低于 0.72 阈值不报
+        assert dups == [], f"异型候选未被收紧: {dups}"
+
+    def test_type_mismatch_same_type_still_reported(self, kg):
+        """同类型的真相似仍须召回(Python/Python3)。"""
+        kg.add_entity("Python", "technology")
+        dups = kg.check_duplicate("Python3", "technology")
+        assert len(dups) == 1
+        assert dups[0]["match_score"] >= 0.72
+        assert dups[0]["match_basis"]
+
     def test_alias_exact_match(self, kg):
         """别名精确匹配。"""
         kg.add_entity("Python", "technology")

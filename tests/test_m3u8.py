@@ -528,6 +528,74 @@ seg1.ts
         assert (tmp_path / "v.ts").exists(), "合并后的最终文件应存在"
         assert (tmp_path / "v.ts").read_bytes() == b"seg-0seg-1"
 
+    def test_cancel_cleans_tmp_dir(self, tmp_path):
+        """取消下载时应清理中间分片工作目录(不删最终交付物)。"""
+        dl = M3u8Downloader(url="http://x/playlist.m3u8", save_path=tmp_path / "v.ts")
+        dl._tmp_dir.mkdir(parents=True, exist_ok=True)
+        (dl._tmp_dir / "progress.json").write_text("{}")
+        (dl._tmp_dir / "seg_000000.ts").write_bytes(b"seg0")
+        dl._record.mark_downloaded(0)
+
+        dl.cancel()
+
+        assert dl._cancelled is True
+        assert dl.progress.status == M3u8Status.CANCELLED
+        assert not dl._tmp_dir.exists(), "取消后临时分片工作目录应被清理"
+
+    def test_cancel_cleans_tmp_dir_but_not_save_path(self, tmp_path):
+        """取消清理只删中间工作目录,不碰最终交付物 save_path。"""
+        final = tmp_path / "v.ts"
+        final.write_bytes(b"already-merged")
+        dl = M3u8Downloader(url="http://x/playlist.m3u8", save_path=final)
+        dl._tmp_dir.mkdir(parents=True, exist_ok=True)
+        (dl._tmp_dir / "seg_000000.ts").write_bytes(b"seg0")
+
+        dl.cancel()
+
+        assert not dl._tmp_dir.exists(), "临时目录应被清理"
+        assert final.exists(), "最终交付物不应被删除"
+        assert final.read_bytes() == b"already-merged"
+
+    def test_cancel_cleanup_failure_does_not_break_cancel(self, tmp_path, monkeypatch):
+        """清理失败不应影响取消操作本身(尽力而为)。"""
+        dl = M3u8Downloader(url="http://x/playlist.m3u8", save_path=tmp_path / "v.ts")
+        dl._tmp_dir.mkdir(parents=True, exist_ok=True)
+
+        def boom():
+            raise OSError("disk error")
+
+        monkeypatch.setattr(dl, "cleanup", boom)
+        dl.cancel()  # 不应抛异常
+
+        assert dl._cancelled is True
+        assert dl.progress.status == M3u8Status.CANCELLED
+
+    @pytest.mark.asyncio
+    async def test_cancel_during_download_cleans_tmp_dir(self, tmp_path, monkeypatch):
+        """下载进行中取消: start() 返回后临时目录应被清理。"""
+        dl = M3u8Downloader(url="http://x/playlist.m3u8", save_path=tmp_path / "v.ts")
+        dl._base_url = "http://x/"
+        dl._segments = [
+            M3u8Segment(
+                index=0, duration=10, uri="seg0.ts", url="http://x/seg0.ts", key=None
+            ),
+            M3u8Segment(
+                index=1, duration=10, uri="seg1.ts", url="http://x/seg1.ts", key=None
+            ),
+        ]
+
+        async def cancelling_download(self, client, seg, callback=None):
+            dl.cancel()
+            raise IOError("下载已取消")
+
+        monkeypatch.setattr(M3u8Downloader, "_download_segment", cancelling_download)
+        dl._tmp_dir.mkdir(parents=True, exist_ok=True)
+
+        progress = await dl.start()
+
+        assert progress.status == M3u8Status.CANCELLED
+        assert not dl._tmp_dir.exists(), "取消后临时分片工作目录应被清理"
+
     @pytest.mark.asyncio
     async def test_start_aborts_on_consecutive_failures(self, tmp_path):
         """连续失败达到阈值应提前终止,不再下载后续分片。"""

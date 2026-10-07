@@ -17,6 +17,7 @@ import pytest
 
 from uniclaw.tools.base import ToolRuntime
 from uniclaw.context import Scope
+from uniclaw.utils.constants import TOOL_ERROR
 from uniclaw.tools.rag.loader import (
     TEXT_EXTENSIONS,
     Document,
@@ -915,7 +916,7 @@ class TestRAGListCollections:
 
     @patch("uniclaw.tools.rag.tools._get_manager")
     def test_no_collections(self, mock_get_manager, tmp_path):
-        """测试无集合"""
+        """测试无集合: 空状态不是错误,不带 TOOL_ERROR 前缀。"""
         config = _create_mock_config(root_dir=tmp_path)
         mock_manager = MagicMock()
         mock_get_manager.return_value = mock_manager
@@ -923,6 +924,9 @@ class TestRAGListCollections:
 
         result = rag_list_collections.func(tool_runtime=ToolRuntime(config=config))
         assert "没有任何集合" in result
+        # 空状态不得伪装成错误 —— 否则调用方会以为操作失败
+        assert TOOL_ERROR not in result
+        assert "rag_ingest" in result  # 提示如何创建集合
 
     @patch("uniclaw.tools.rag.tools._get_manager")
     def test_with_collections(self, mock_get_manager, tmp_path):
@@ -1567,6 +1571,24 @@ class TestRAGEvaluate:
             tool_runtime=ToolRuntime(config=config),
         )
         assert "返回 1 个结果" in result
+
+    @pytest.mark.asyncio
+    @patch("uniclaw.tools.rag.tools._get_manager")
+    async def test_evaluate_nonexistent_collection(self, mock_get_manager, tmp_path):
+        """集合不存在时应报 TOOL_ERROR 而非静默返回 0.0"""
+        config = _create_mock_config(root_dir=tmp_path)
+        mock_manager = MagicMock()
+        mock_manager.get_collection_info.return_value = None  # 集合不存在
+        mock_get_manager.return_value = mock_manager
+
+        result = await rag_evaluate.func(
+            collection="no-such-collection",
+            queries=["query1"],
+            tool_runtime=ToolRuntime(config=config),
+        )
+        assert TOOL_ERROR in result
+        assert "不存在" in result
+        assert "no-such-collection" in result
 
 
 class TestJudgeRelevance:

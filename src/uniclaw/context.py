@@ -171,9 +171,7 @@ def get_claude_md(session) -> str:
 
 def get_platform_hints() -> str:
     """返回针对当前操作系统的 shell 提示信息。"""
-    import platform as _plat
-
-    if _plat.system() == "Windows":
+    if platform.system() == "Windows":
         from uniclaw.tools.shell import GIT_BASH_PATH
 
         if GIT_BASH_PATH:

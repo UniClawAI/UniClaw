@@ -336,3 +336,36 @@ class TestExecuteSingleToolLookup:
         config = self._make_config({})
         _, content = await self._call(config, name2tool={}, name="no_such_tool")
         assert "工具不存在" in content
+
+    @pytest.mark.asyncio
+    async def test_catalog_tool_not_enabled_says_disabled(self):
+        """在全量清单(get_all_tools)里但当前未启用 → 报"未启用",不是"工具不存在"。
+
+        典型场景: monitor_screen 在非 Windows/缺 pywinpty 环境被 get_tools 裁掉,
+        直接调用若报"工具不存在"会误导调用方改工具名。
+        """
+        config = self._make_config({})
+        fake_registry = MagicMock()
+        fake_registry.get_all_entries.return_value = {"monitor_screen": object()}
+        with patch(
+            "uniclaw.tools.registry.ToolRegistry.get_instance",
+            return_value=fake_registry,
+        ):
+            _, content = await self._call(config, name2tool={}, name="monitor_screen")
+        assert "未启用" in content
+        assert "monitor_screen" in content
+        assert "工具不存在" not in content
+
+    @pytest.mark.asyncio
+    async def test_disabled_with_reason_still_beats_catalog(self):
+        """有记录的根因时优先报根因,不落到目录兜底的泛化措辞。"""
+        config = self._make_config({"monitor_screen": "缺少真实屏幕快照支持(需要 Windows + pywinpty)"})
+        fake_registry = MagicMock()
+        fake_registry.get_all_entries.return_value = {"monitor_screen": object()}
+        with patch(
+            "uniclaw.tools.registry.ToolRegistry.get_instance",
+            return_value=fake_registry,
+        ):
+            _, content = await self._call(config, name2tool={}, name="monitor_screen")
+        assert "未启用" in content
+        assert "缺少真实屏幕快照支持" in content

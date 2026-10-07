@@ -350,3 +350,676 @@ class TestEnsureKernelRace:
             fake.assert_not_awaited()
         finally:
             mgr.kernels.pop("reuse-test", None)
+
+
+class TestListVariablesFilters:
+    """ipython_vars 不应把内建/IPython 注入变量列为用户变量。"""
+
+    def _make_fake_client(self, output: str):
+        """构造假 client: execute 吐固定 stdout + idle。"""
+        state = {"queue": []}
+
+        def execute(code):
+            msg_id = "msg-0"
+            state["queue"].append(
+                {
+                    "parent_header": {"msg_id": msg_id},
+                    "header": {"msg_type": "execute_input"},
+                    "content": {"code": code, "execution_count": 1},
+                }
+            )
+            state["queue"].append(
+                {
+                    "parent_header": {"msg_id": msg_id},
+                    "header": {"msg_type": "stream"},
+                    "content": {"name": "stdout", "text": output},
+                }
+            )
+            state["queue"].append(
+                {
+                    "parent_header": {"msg_id": msg_id},
+                    "header": {"msg_type": "status"},
+                    "content": {"execution_state": "idle"},
+                }
+            )
+            return msg_id
+
+        def get_iopub_msg(timeout=None):
+            if state["queue"]:
+                return state["queue"].pop(0)
+            raise Exception("no message")
+
+        client = MagicMock()
+        client.execute.side_effect = execute
+        client.get_iopub_msg.side_effect = get_iopub_msg
+        return client
+
+    @pytest.mark.asyncio
+    async def test_list_variables_skips_builtins_and_ipython_injected(self):
+        """内建(open/len 等)和 IPython 注入(In/Out/exit 等)不出现在结果中。"""
+        from uniclaw.tools.ipython.kernel import IPythonKernelManager, KernelInfo
+
+        mgr = IPythonKernelManager.get_instance()
+        # 模拟内核返回: 过滤后的用户变量列表(过滤逻辑在内核侧代码中)
+        output = '[{"name": "x", "type": "int", "repr": "42"}]'
+        client = self._make_fake_client(output)
+        info = KernelInfo(
+            kernel_id="vars-filter-test", kernel_manager=MagicMock(), client=client
+        )
+        mgr.kernels["vars-filter-test"] = info
+        try:
+            vars_list = await mgr.list_variables("vars-filter-test")
+            assert len(vars_list) == 1
+            assert vars_list[0].name == "x"
+        finally:
+            mgr.kernels.pop("vars-filter-test", None)
+
+    @pytest.mark.asyncio
+    async def test_list_variables_code_filters_builtins_and_injected(self):
+        """探查代码本身包含内建和 IPython 注入变量的过滤逻辑。"""
+        from uniclaw.tools.ipython.kernel import IPythonKernelManager, KernelInfo
+
+        mgr = IPythonKernelManager.get_instance()
+        captured = {}
+        client = self._make_fake_client("[]")
+
+        original_execute = client.execute.side_effect
+
+        def capture_execute(code):
+            captured["code"] = code
+            return original_execute(code)
+
+        client.execute.side_effect = capture_execute
+        info = KernelInfo(
+            kernel_id="vars-code-test", kernel_manager=MagicMock(), client=client
+        )
+        mgr.kernels["vars-code-test"] = info
+        try:
+            await mgr.list_variables("vars-code-test")
+            code = captured["code"]
+            assert "user_ns_hidden" in code, "应使用 user_ns_hidden 过滤 IPython 注入变量"
+            assert "builtins" in code, "应使用 builtins 过滤内建函数"
+        finally:
+            mgr.kernels.pop("vars-code-test", None)
+
+
+class TestProbeCodeNotInHistory:
+    """工具自身的探查代码不应混入 ipython_history。"""
+
+    def _make_fake_client(self):
+        state = {"queue": []}
+
+        def execute(code):
+            msg_id = f"msg-{len(state['queue'])}"
+            state["queue"].append(
+                {
+                    "parent_header": {"msg_id": msg_id},
+                    "header": {"msg_type": "execute_input"},
+                    "content": {"code": code, "execution_count": 1},
+                }
+            )
+            state["queue"].append(
+                {
+                    "parent_header": {"msg_id": msg_id},
+                    "header": {"msg_type": "stream"},
+                    "content": {"name": "stdout", "text": "[]"},
+                }
+            )
+            state["queue"].append(
+                {
+                    "parent_header": {"msg_id": msg_id},
+                    "header": {"msg_type": "status"},
+                    "content": {"execution_state": "idle"},
+                }
+            )
+            return msg_id
+
+        def get_iopub_msg(timeout=None):
+            if state["queue"]:
+                return state["queue"].pop(0)
+            raise Exception("no message")
+
+        client = MagicMock()
+        client.execute.side_effect = execute
+        client.get_iopub_msg.side_effect = get_iopub_msg
+        return client
+
+    @pytest.mark.asyncio
+    async def test_execute_record_history_false_skips_history(self):
+        """record_history=False 时不追加到 history。"""
+        from uniclaw.tools.ipython.kernel import IPythonKernelManager, KernelInfo
+
+        mgr = IPythonKernelManager.get_instance()
+        client = self._make_fake_client()
+        info = KernelInfo(
+            kernel_id="hist-test", kernel_manager=MagicMock(), client=client
+        )
+        mgr.kernels["hist-test"] = info
+        try:
+            await mgr.execute("user_code = 1", "hist-test", record_history=True)
+            await mgr.execute("probe_code = 2", "hist-test", record_history=False)
+            assert info.history == ["user_code = 1"]
+        finally:
+            mgr.kernels.pop("hist-test", None)
+
+    @pytest.mark.asyncio
+    async def test_list_variables_and_inspect_not_in_history(self):
+        """list_variables / inspect_variable 的探查代码不进 history。"""
+        from uniclaw.tools.ipython.kernel import IPythonKernelManager, KernelInfo
+
+        mgr = IPythonKernelManager.get_instance()
+        client = self._make_fake_client()
+        info = KernelInfo(
+            kernel_id="hist-test2", kernel_manager=MagicMock(), client=client
+        )
+        mgr.kernels["hist-test2"] = info
+        try:
+            await mgr.execute("user_var = 99", "hist-test2")
+            await mgr.list_variables("hist-test2")
+            assert len(info.history) == 1
+            assert info.history[0] == "user_var = 99"
+        finally:
+            mgr.kernels.pop("hist-test2", None)
+
+
+class TestTracebackTempFilename:
+    """语法错误 traceback 中的临时文件名应替换为可读标识。"""
+
+    def _make_error_client(self, evalue: str, traceback_lines: list[str]):
+        state = {"queue": []}
+
+        def execute(code):
+            msg_id = "msg-0"
+            state["queue"].append(
+                {
+                    "parent_header": {"msg_id": msg_id},
+                    "header": {"msg_type": "execute_input"},
+                    "content": {"code": code, "execution_count": 1},
+                }
+            )
+            state["queue"].append(
+                {
+                    "parent_header": {"msg_id": msg_id},
+                    "header": {"msg_type": "error"},
+                    "content": {
+                        "ename": "SyntaxError",
+                        "evalue": evalue,
+                        "traceback": traceback_lines,
+                    },
+                }
+            )
+            state["queue"].append(
+                {
+                    "parent_header": {"msg_id": msg_id},
+                    "header": {"msg_type": "status"},
+                    "content": {"execution_state": "idle"},
+                }
+            )
+            return msg_id
+
+        def get_iopub_msg(timeout=None):
+            if state["queue"]:
+                return state["queue"].pop(0)
+            raise Exception("no message")
+
+        client = MagicMock()
+        client.execute.side_effect = execute
+        client.get_iopub_msg.side_effect = get_iopub_msg
+        return client
+
+    @pytest.mark.asyncio
+    async def test_temp_filename_replaced_with_input(self):
+        """evalue 中的 3524816064.py 等临时文件名替换为 <input>。"""
+        from uniclaw.tools.ipython.kernel import IPythonKernelManager, KernelInfo
+
+        mgr = IPythonKernelManager.get_instance()
+        client = self._make_error_client(
+            "incomplete input (3524816064.py, line 1)",
+            ["  Cell In[1], line 1", "    def broken(", "               ^"],
+        )
+        info = KernelInfo(
+            kernel_id="tb-test", kernel_manager=MagicMock(), client=client
+        )
+        mgr.kernels["tb-test"] = info
+        try:
+            r = await mgr.execute("def broken(", "tb-test")
+            assert "3524816064.py" not in (r.error or "")
+            assert "<input>" in (r.error or "")
+        finally:
+            mgr.kernels.pop("tb-test", None)
+
+    @pytest.mark.asyncio
+    async def test_temp_filename_replaced_in_traceback(self):
+        """traceback 行中的临时文件名也替换为 <input>。"""
+        import re
+
+        from uniclaw.tools.ipython.kernel import IPythonKernelManager, KernelInfo
+
+        mgr = IPythonKernelManager.get_instance()
+        client = self._make_error_client(
+            "invalid syntax (1240104730.py, line 1)",
+            ["  File \"1240104730.py\", line 1", "    x === 1", "        ^"],
+        )
+        info = KernelInfo(
+            kernel_id="tb-test2", kernel_manager=MagicMock(), client=client
+        )
+        mgr.kernels["tb-test2"] = info
+        try:
+            r = await mgr.execute("x === 1", "tb-test2")
+            assert not re.search(r"\b\d+\.py\b", r.error or "")
+            assert "<input>" in (r.error or "")
+        finally:
+            mgr.kernels.pop("tb-test2", None)
+
+
+class TestInspectTruncatesLargeContainers:
+    """ipython_inspect 的大容器必须在内核侧截断,不能把全量 repr 穿过 IPC。"""
+
+    def _make_fake_client(self, output: str):
+        state = {"queue": []}
+
+        def execute(code):
+            msg_id = "msg-0"
+            state["queue"].append(
+                {
+                    "parent_header": {"msg_id": msg_id},
+                    "header": {"msg_type": "execute_input"},
+                    "content": {"code": code, "execution_count": 1},
+                }
+            )
+            state["queue"].append(
+                {
+                    "parent_header": {"msg_id": msg_id},
+                    "header": {"msg_type": "stream"},
+                    "content": {"name": "stdout", "text": output},
+                }
+            )
+            state["queue"].append(
+                {
+                    "parent_header": {"msg_id": msg_id},
+                    "header": {"msg_type": "status"},
+                    "content": {"execution_state": "idle"},
+                }
+            )
+            return msg_id
+
+        def get_iopub_msg(timeout=None):
+            if state["queue"]:
+                return state["queue"].pop(0)
+            raise Exception("no message")
+
+        client = MagicMock()
+        client.execute.side_effect = execute
+        client.get_iopub_msg.side_effect = get_iopub_msg
+        return client
+
+    async def _capture_inspect_code(self, name: str) -> str:
+        """跑一遍 inspect_variable 拿到注入内核的探查代码。"""
+        import json
+
+        from uniclaw.tools.ipython.kernel import IPythonKernelManager, KernelInfo
+
+        mgr = IPythonKernelManager.get_instance()
+        captured = {}
+        stub = json.dumps(
+            {
+                "name": name,
+                "type": "list",
+                "summary": None,
+                "repr": "[]",
+                "str": "[]",
+                "doc": None,
+                "len": 0,
+                "shape": None,
+                "dtype": None,
+            }
+        )
+        client = self._make_fake_client(stub)
+        original_execute = client.execute.side_effect
+
+        def capture_execute(code):
+            captured["code"] = code
+            return original_execute(code)
+
+        client.execute.side_effect = capture_execute
+        info = KernelInfo(
+            kernel_id="inspect-cap-test", kernel_manager=MagicMock(), client=client
+        )
+        mgr.kernels["inspect-cap-test"] = info
+        try:
+            await mgr.inspect_variable(name, "inspect-cap-test")
+        finally:
+            mgr.kernels.pop("inspect-cap-test", None)
+        return captured["code"]
+
+    def _run_probe(self, code: str, namespace: dict) -> dict:
+        """在本地执行探查代码,解析它 print 出的 JSON(等价于内核侧行为)。"""
+        import contextlib
+        import io
+        import json
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            exec(code, namespace)  # noqa: S102 - 测试里执行自产探查代码
+        return json.loads(buf.getvalue())
+
+    @pytest.mark.asyncio
+    async def test_probe_code_has_kernel_side_truncation(self):
+        """探查代码内含截断与摘要逻辑(截断发生在内核侧,不是 Python 侧)。"""
+        code = await self._capture_inspect_code("big")
+        assert "_trunc" in code
+        assert "_summary" in code
+        assert "截断" in code
+
+    @pytest.mark.asyncio
+    async def test_large_list_not_fully_serialized(self):
+        """20 万元素 list: 返回带长度摘要,repr 被截断且不含全量元素。"""
+        from uniclaw.tools.ipython.kernel import INSPECT_TEXT_LIMIT
+
+        code = await self._capture_inspect_code("big")
+        data = self._run_probe(code, {"big": list(range(200000))})
+
+        # 摘要格式: list, 长度 200000
+        assert data["summary"] == "list, 长度 200000"
+        # repr 被截断到上限附近(上限 + 截断标注)
+        assert "截断" in data["repr"]
+        assert len(data["repr"]) < INSPECT_TEXT_LIMIT + 100
+        assert len(data["str"]) < INSPECT_TEXT_LIMIT + 100
+        # 不含全量 20 万元素(全量 repr 约百万字符)
+        assert "199999" not in data["repr"]
+        assert len(data["repr"]) < 5000
+
+    @pytest.mark.asyncio
+    async def test_large_dict_and_str_summaries(self):
+        """5000 项 dict / 20000 字符 str 同样内核侧截断并给摘要。"""
+        from uniclaw.tools.ipython.kernel import INSPECT_TEXT_LIMIT
+
+        code = await self._capture_inspect_code("obj")
+        big_dict = {f"k{i}": i for i in range(5000)}
+        data_d = self._run_probe(code, {"obj": big_dict})
+        assert data_d["summary"] == "dict, 5000 项"
+        assert "截断" in data_d["repr"]
+        assert len(data_d["repr"]) < INSPECT_TEXT_LIMIT + 100
+
+        big_str = "x" * 20000
+        data_s = self._run_probe(code, {"obj": big_str})
+        assert data_s["summary"] == "str, 20000 字符"
+        assert "截断" in data_s["repr"]
+        assert len(data_s["repr"]) < INSPECT_TEXT_LIMIT + 100
+        assert len(data_s["str"]) < INSPECT_TEXT_LIMIT + 100
+
+    @pytest.mark.asyncio
+    async def test_small_values_not_truncated(self):
+        """正常尺寸的 inspect 不受影响(现有测试覆盖的 None/小对象场景)。"""
+        code = await self._capture_inspect_code("obj")
+        data = self._run_probe(code, {"obj": [1, 2, 3]})
+        assert data["repr"] == "[1, 2, 3]"
+        assert "截断" not in data["repr"]
+        assert data["summary"] == "list, 长度 3"
+
+        data2 = self._run_probe(code, {"obj": 42})
+        assert data2["repr"] == "42"
+        assert data2["summary"] is None
+        assert "截断" not in data2["str"]
+
+
+class TestDeadKernelDetection:
+    """死内核必须给出明确报错和重启指引,不能静默返回空结果。"""
+
+    def _make_dead_info(self, kernel_id: str = "dead-test") -> KernelInfo:
+        km = MagicMock()
+        km.is_alive.return_value = False
+        client = MagicMock()
+        return KernelInfo(kernel_id=kernel_id, kernel_manager=km, client=client)
+
+    @pytest.mark.asyncio
+    async def test_execute_raises_on_dead_kernel(self):
+        from uniclaw.tools.ipython.kernel import IPythonKernelManager
+
+        mgr = IPythonKernelManager.get_instance()
+        mgr.kernels["dead-test"] = self._make_dead_info()
+        try:
+            with pytest.raises(RuntimeError, match="已终止") as exc:
+                await mgr.execute("print(1)", "dead-test", timeout=5)
+            assert "ipython_start" in str(exc.value)
+        finally:
+            mgr.kernels.pop("dead-test", None)
+
+    @pytest.mark.asyncio
+    async def test_ipython_execute_tool_error_on_dead_kernel(self):
+        from uniclaw.tools.ipython import tools as ipy_tools
+        from uniclaw.tools.ipython.kernel import IPythonKernelManager
+        from uniclaw.utils.constants import TOOL_ERROR
+
+        mgr = IPythonKernelManager.get_instance()
+        mgr.kernels["dead-tool-test"] = self._make_dead_info("dead-tool-test")
+        try:
+            result = await ipy_tools.ipython_execute("print(1)", "dead-tool-test")
+            assert TOOL_ERROR in result
+            assert "已终止" in result
+            assert "ipython_start" in result
+        finally:
+            mgr.kernels.pop("dead-tool-test", None)
+
+    @pytest.mark.asyncio
+    async def test_death_during_execution_detected(self):
+        """执行中内核挂掉(os._exit): 收不到 idle 且 is_alive=False → 报已终止。"""
+        from uniclaw.tools.ipython.kernel import IPythonKernelManager, KernelInfo
+
+        mgr = IPythonKernelManager.get_instance()
+        km = MagicMock()
+        # 执行前存活,执行后死亡
+        km.is_alive.side_effect = [True, False]
+        state = {"queue": []}
+
+        def execute(code):
+            msg_id = "msg-0"
+            state["queue"].append(
+                {
+                    "parent_header": {"msg_id": msg_id},
+                    "header": {"msg_type": "execute_input"},
+                    "content": {"code": code, "execution_count": 1},
+                }
+            )
+            return msg_id
+
+        def get_iopub_msg(timeout=None):
+            if state["queue"]:
+                return state["queue"].pop(0)
+            raise Exception("timeout")  # 内核已死,收不到 idle
+
+        client = MagicMock()
+        client.execute.side_effect = execute
+        client.get_iopub_msg.side_effect = get_iopub_msg
+        info = KernelInfo(kernel_id="death-during", kernel_manager=km, client=client)
+        mgr.kernels["death-during"] = info
+        try:
+            with pytest.raises(RuntimeError, match="已终止"):
+                await mgr.execute("import os; os._exit(0)", "death-during", timeout=1)
+        finally:
+            mgr.kernels.pop("death-during", None)
+
+    @pytest.mark.asyncio
+    async def test_slow_execution_not_misclassified_as_dead(self):
+        """慢执行(超时但 is_alive=True)不能报"已终止"。"""
+        from uniclaw.tools.ipython.kernel import IPythonKernelManager, KernelInfo
+
+        mgr = IPythonKernelManager.get_instance()
+        km = MagicMock()
+        km.is_alive.return_value = True
+        state = {"queue": []}
+
+        def execute(code):
+            msg_id = "msg-0"
+            state["queue"].append(
+                {
+                    "parent_header": {"msg_id": msg_id},
+                    "header": {"msg_type": "execute_input"},
+                    "content": {"code": code, "execution_count": 1},
+                }
+            )
+            return msg_id
+
+        def get_iopub_msg(timeout=None):
+            if state["queue"]:
+                return state["queue"].pop(0)
+            raise Exception("timeout")
+
+        client = MagicMock()
+        client.execute.side_effect = execute
+        client.get_iopub_msg.side_effect = get_iopub_msg
+        info = KernelInfo(
+            kernel_id="slow-alive", kernel_manager=km, client=client
+        )
+        mgr.kernels["slow-alive"] = info
+        try:
+            r = await mgr.execute("import time; time.sleep(99)", "slow-alive", timeout=1)
+            # 慢执行: 不能抛"已终止"
+            assert r.success is True or (r.error and "已终止" not in r.error)
+        finally:
+            mgr.kernels.pop("slow-alive", None)
+
+    @pytest.mark.asyncio
+    async def test_vars_on_dead_kernel_has_clear_reason(self):
+        """死内核的 ipython_vars 不能出现"解析变量列表失败:"(冒号后为空)。"""
+        from uniclaw.tools.ipython import tools as ipy_tools
+        from uniclaw.tools.ipython.kernel import IPythonKernelManager
+        from uniclaw.utils.constants import TOOL_ERROR
+
+        mgr = IPythonKernelManager.get_instance()
+        mgr.kernels["dead-vars"] = self._make_dead_info("dead-vars")
+        try:
+            result = await ipy_tools.ipython_vars("dead-vars")
+            assert TOOL_ERROR in result
+            assert "已终止" in result
+            assert "解析变量列表失败:" not in result or result.strip() != "解析变量列表失败:"
+            # 不能是空原因
+            assert not result.rstrip().endswith("失败:")
+        finally:
+            mgr.kernels.pop("dead-vars", None)
+
+    @pytest.mark.asyncio
+    async def test_inspect_on_dead_kernel_has_clear_reason(self):
+        from uniclaw.tools.ipython import tools as ipy_tools
+        from uniclaw.tools.ipython.kernel import IPythonKernelManager
+        from uniclaw.utils.constants import TOOL_ERROR
+
+        mgr = IPythonKernelManager.get_instance()
+        mgr.kernels["dead-inspect"] = self._make_dead_info("dead-inspect")
+        try:
+            result = await ipy_tools.ipython_inspect("x", "dead-inspect")
+            assert TOOL_ERROR in result
+            assert "已终止" in result
+            assert "ipython_start" in result
+        finally:
+            mgr.kernels.pop("dead-inspect", None)
+
+    @pytest.mark.asyncio
+    async def test_start_kernel_replaces_dead_instead_of_already_exists(self):
+        """死内核不应报'已存在',应清掉旧条目后允许 ipython_start 重启。"""
+        from unittest.mock import MagicMock, patch
+
+        from uniclaw.tools.ipython.kernel import IPythonKernelManager, KernelInfo
+
+        mgr = IPythonKernelManager.get_instance()
+        dead = self._make_dead_info("restart-dead")
+        mgr.kernels["restart-dead"] = dead
+        try:
+            with patch("jupyter_client.manager.KernelManager") as mock_cls:
+                km = MagicMock()
+                mock_cls.return_value = km
+                kc = MagicMock()
+                km.client.return_value = kc
+                info = await mgr.start_kernel("restart-dead")
+            assert info.kernel_id == "restart-dead"
+            assert mgr.kernels["restart-dead"] is info
+            # 旧死内核的通道被关闭
+            dead.client.stop_channels.assert_called()
+        finally:
+            mgr.kernels.pop("restart-dead", None)
+
+
+class TestStringResultUnescape:
+    """%lsmagic 等返回字符串的魔术命令,输出应还原真实换行而非字面 \\n。"""
+
+    def _make_result_client(self, text_plain: str):
+        state = {"queue": []}
+
+        def execute(code):
+            msg_id = "msg-0"
+            state["queue"].append(
+                {
+                    "parent_header": {"msg_id": msg_id},
+                    "header": {"msg_type": "execute_input"},
+                    "content": {"code": code, "execution_count": 1},
+                }
+            )
+            state["queue"].append(
+                {
+                    "parent_header": {"msg_id": msg_id},
+                    "header": {"msg_type": "execute_result"},
+                    "content": {
+                        "execution_count": 1,
+                        "data": {"text/plain": text_plain},
+                    },
+                }
+            )
+            state["queue"].append(
+                {
+                    "parent_header": {"msg_id": msg_id},
+                    "header": {"msg_type": "status"},
+                    "content": {"execution_state": "idle"},
+                }
+            )
+            return msg_id
+
+        def get_iopub_msg(timeout=None):
+            if state["queue"]:
+                return state["queue"].pop(0)
+            raise Exception("no message")
+
+        client = MagicMock()
+        client.execute.side_effect = execute
+        client.get_iopub_msg.side_effect = get_iopub_msg
+        return client
+
+    def test_unwrap_str_repr_restores_newlines(self):
+        from uniclaw.tools.ipython.kernel import _unwrap_str_repr
+
+        raw = "Available line magics:\n%alias %cd\nAutomagic is ON"
+        assert _unwrap_str_repr(repr(raw)) == raw
+
+    def test_unwrap_str_repr_keeps_plain_short_repr(self):
+        from uniclaw.tools.ipython.kernel import _unwrap_str_repr
+
+        assert _unwrap_str_repr("'hi'") == "'hi'"
+        assert _unwrap_str_repr("42") == "42"
+        assert _unwrap_str_repr("[1, 2]") == "[1, 2]"
+
+    def test_unwrap_str_repr_invalid_literal_unchanged(self):
+        from uniclaw.tools.ipython.kernel import _unwrap_str_repr
+
+        s = "'not a valid \\u literal"
+        assert _unwrap_str_repr(s) == s
+
+    @pytest.mark.asyncio
+    async def test_lsmagic_like_output_has_real_newlines(self):
+        """模拟 %lsmagic 的 execute_result: 输出含真实换行,不含字面 \\n。"""
+        from uniclaw.tools.ipython.kernel import IPythonKernelManager, KernelInfo
+
+        raw = "Available line magics:\n%alias %cd %lsmagic\nAvailable cell magics:\n%%bash %%time"
+        mgr = IPythonKernelManager.get_instance()
+        client = self._make_result_client(repr(raw))
+        info = KernelInfo(
+            kernel_id="lsmagic-test", kernel_manager=MagicMock(), client=client
+        )
+        mgr.kernels["lsmagic-test"] = info
+        try:
+            r = await mgr.execute("%lsmagic", "lsmagic-test")
+            assert r.success
+            assert "\n" in r.output
+            assert "\\n" not in r.output
+            assert "Available line magics:" in r.output
+            assert r.output == raw
+        finally:
+            mgr.kernels.pop("lsmagic-test", None)

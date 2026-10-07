@@ -3,6 +3,8 @@
 测试基于 Playwright 的浏览器自动化工具，支持多页面管理。
 """
 
+import asyncio
+
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
 
@@ -477,8 +479,12 @@ class TestSinglePageOperations:
     @pytest.mark.asyncio
     @staticmethod
     def _nav(page, nav_method: str):
-        """让 mock page 的 url 随 go_back/go_forward 变化, 模拟真实导航。"""
-        page.evaluate = AsyncMock(return_value=2)
+        """让 mock page 的 url 随 go_back/go_forward 变化, 模拟真实导航。
+
+        hist_len=3: 历史共 3 项(如 blank/after/before),后退一步到 after
+        仍在起点之前,故边界提示应为"仍可继续"。
+        """
+        page.evaluate = AsyncMock(return_value=3)
         page.url = "https://example.com/before"
 
         async def _navigate():
@@ -1226,6 +1232,224 @@ class TestBrowserParamValidation:
         page.keyboard.type.assert_not_called()
 
 
+class TestEmptySelectorRejected:
+    """空串 selector 是参数错误,不能静默退化成"整页/当前焦点"语义。
+
+    回归测试: browser_get_text(selector="") 此前与不传 selector 等价,
+    返回整页文本 —— 调用方以为查的是某个元素,拿到的却是整页。
+    """
+
+    def _running(self, web_browser, mock_page):
+        web_browser._browser = MagicMock()
+        web_browser._pages = {1: mock_page}
+        web_browser._active_page_id = 1
+        return mock_page
+
+    @pytest.mark.asyncio
+    async def test_get_text_empty_selector_rejected(self, web_browser, mock_page):
+        """get_text(selector="") 必须报参数错误, 不能返回整页文本。"""
+        page = self._running(web_browser, mock_page)
+        result = await web_browser.get_text(selector="")
+        assert "selector 不能为空串" in result
+        assert "要取整页文本请省略该参数" in result
+        assert "TOOL_ERROR" in result
+        page.inner_text.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_get_text_none_selector_returns_full_page(self, web_browser, mock_page):
+        """selector=None 仍按设计返回整页文本。"""
+        self._running(web_browser, mock_page)
+        result = await web_browser.get_text(selector=None)
+        assert "Test content" in result
+        assert "TOOL_ERROR" not in result
+
+    @pytest.mark.asyncio
+    async def test_get_text_omitted_selector_returns_full_page(self, web_browser, mock_page):
+        """不传 selector 仍按设计返回整页文本。"""
+        self._running(web_browser, mock_page)
+        result = await web_browser.get_text()
+        assert "Test content" in result
+        assert "TOOL_ERROR" not in result
+
+    @pytest.mark.asyncio
+    async def test_get_text_valid_selector_selects_element(self, web_browser, mock_page):
+        """非空 selector 正常走元素路径, 不受影响。"""
+        page = self._running(web_browser, mock_page)
+        locator = page.locator.return_value
+        locator.inner_text = AsyncMock(return_value="Element only")
+        result = await web_browser.get_text(selector="#title")
+        assert "Element only" in result
+
+    @pytest.mark.asyncio
+    async def test_get_html_empty_selector_rejected(self, web_browser, mock_page):
+        page = self._running(web_browser, mock_page)
+        result = await web_browser.get_html(selector="")
+        assert "selector 不能为空串" in result
+        page.content.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_get_html_none_selector_returns_full_page(self, web_browser, mock_page):
+        self._running(web_browser, mock_page)
+        result = await web_browser.get_html(selector=None)
+        assert "<html>" in result
+        assert "TOOL_ERROR" not in result
+
+    @pytest.mark.asyncio
+    async def test_screenshot_empty_selector_rejected(self, web_browser, mock_page):
+        page = self._running(web_browser, mock_page)
+        result = await web_browser.screenshot(selector="")
+        assert "selector 不能为空串" in result
+        page.screenshot.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_screenshot_none_selector_shoots_page(self, web_browser, mock_page):
+        self._running(web_browser, mock_page)
+        result = await web_browser.screenshot(selector=None)
+        assert isinstance(result, list)  # 截图成功返回多模态内容
+        mock_page.screenshot.assert_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "call",
+        [
+            lambda b: b.click(""),
+            lambda b: b.click("", timeout=5000),
+            lambda b: b.type_text("", "hi"),
+            lambda b: b.get_attribute("", "href"),
+            lambda b: b.dblclick(""),
+            lambda b: b.focus(""),
+            lambda b: b.hover(""),
+            lambda b: b.check(""),
+            lambda b: b.scroll_into_view(""),
+            lambda b: b.get_count(""),
+            lambda b: b.get_bounding_box(""),
+            lambda b: b.get_styles(""),
+            lambda b: b.select_option("", "v"),
+            lambda b: b.insert_text("t", selector=""),
+            lambda b: b.get_value(""),
+            lambda b: b.drag("", "#target"),
+            lambda b: b.drag("#src", ""),
+        ],
+    )
+    async def test_required_selector_empty_rejected(self, web_browser, mock_page, call):
+        """所有带 selector 的工具: 空串一律参数错误。"""
+        page = self._running(web_browser, mock_page)
+        result = await call(web_browser)
+        assert "不能为空串" in result
+        assert "TOOL_ERROR" in result
+        # 不能走到 Playwright
+        page.locator.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_insert_text_none_selector_keeps_focus_semantics(self, web_browser, mock_page):
+        """insert_text 不传 selector 仍写当前焦点元素。"""
+        self._running(web_browser, mock_page)
+        result = await web_browser.insert_text("HELLO")
+        assert "已插入文本" in result
+        mock_page.keyboard.insert_text.assert_awaited_once_with("HELLO")
+
+    @pytest.mark.asyncio
+    async def test_get_value_none_selector_keeps_focus_semantics(self, web_browser, mock_page):
+        """get_value 不传 selector 仍取当前焦点元素。"""
+        page = self._running(web_browser, mock_page)
+        page.evaluate = AsyncMock(return_value="focused-value")
+        result = await web_browser.get_value(selector=None)
+        assert "focused-value" in result
+
+    @pytest.mark.asyncio
+    async def test_frame_selector_empty_rejected(self, web_browser, mock_page):
+        """frame_selector="" 同样是参数错误, 不能静默退回主文档。"""
+        self._running(web_browser, mock_page)
+        result = await web_browser.click("#btn", frame_selector="")
+        assert "frame_selector 不能为空串" in result
+
+    @pytest.mark.asyncio
+    async def test_tool_get_text_empty_selector_rejected(self, web_browser, mock_page):
+        """经工具包装调用同样拒绝空串 selector(参数绑定后、调用 Playwright 前)。"""
+        from uniclaw.tools.web_browse.tools import get_tools
+
+        tool = next(t for t in get_tools() if t.name == "browser_get_text")
+        self._running(web_browser, mock_page)
+        with patch("uniclaw.tools.web_browse.tools._browser", web_browser):
+            result = await tool.execute(selector="")
+
+        assert "selector 不能为空串" in result
+        assert "要取整页文本请省略该参数" in result
+
+
+class TestTimeoutMustBePositive:
+    """timeout 必须是正整数(毫秒), 负数/0 是参数错误。
+
+    回归测试: browser_click(timeout=-5) 此前透传给 Playwright,
+    报 "Timeout -5ms exceeded",失败提示"元素存在但未就绪"与真实原因不符。
+    """
+
+    def _running(self, web_browser, mock_page):
+        web_browser._browser = MagicMock()
+        web_browser._pages = {1: mock_page}
+        web_browser._active_page_id = 1
+        return mock_page
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("bad_timeout", [-5, 0, -1])
+    async def test_click_bad_timeout_rejected(self, web_browser, mock_page, bad_timeout):
+        page = self._running(web_browser, mock_page)
+        result = await web_browser.click("#btn", timeout=bad_timeout)
+        assert "timeout 必须为正整数" in result
+        assert str(bad_timeout) in result
+        assert "TOOL_ERROR" in result
+        page.locator.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("bad_timeout", [-5, 0])
+    async def test_type_text_bad_timeout_rejected(self, web_browser, mock_page, bad_timeout):
+        page = self._running(web_browser, mock_page)
+        result = await web_browser.type_text("#input", "hi", timeout=bad_timeout)
+        assert "timeout 必须为正整数" in result
+        page.locator.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("bad_timeout", [-5, 0])
+    async def test_dblclick_bad_timeout_rejected(self, web_browser, mock_page, bad_timeout):
+        page = self._running(web_browser, mock_page)
+        result = await web_browser.dblclick("#btn", timeout=bad_timeout)
+        assert "timeout 必须为正整数" in result
+        page.locator.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("bad_timeout", [-5, 0])
+    async def test_wait_for_bad_timeout_rejected(self, web_browser, mock_page, bad_timeout):
+        page = self._running(web_browser, mock_page)
+        result = await web_browser.wait_for(selector="#btn", timeout=bad_timeout)
+        assert "timeout 必须为正整数" in result
+        page.locator.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_click_positive_timeout_passes(self, web_browser, mock_page):
+        """正数 timeout 正常执行。"""
+        page = self._running(web_browser, mock_page)
+        locator = page.locator.return_value
+        locator.click = AsyncMock()
+        result = await web_browser.click("#btn", timeout=3000)
+        assert "已点击元素" in result
+        locator.click.assert_awaited_once_with(timeout=3000)
+
+    @pytest.mark.asyncio
+    async def test_type_text_positive_timeout_passes(self, web_browser, mock_page):
+        page = self._running(web_browser, mock_page)
+        locator = page.locator.return_value
+        locator.fill = AsyncMock()
+        result = await web_browser.type_text("#input", "hi", timeout=1000)
+        assert "输入文本" in result
+
+    @pytest.mark.asyncio
+    async def test_timeout_error_prefixed(self, web_browser, mock_page):
+        """报错文本带 TOOL_ERROR 前缀, 模型能看到参数非法而非"元素未就绪"。"""
+        self._running(web_browser, mock_page)
+        result = await web_browser.click("#btn", timeout=-5)
+        assert result.startswith("TOOL_ERROR") or "TOOL_ERROR" in result
+
+
 class TestConnectKeepsExistingSession:
     """browser_connect 失败不能连带销毁现有浏览器会话。
 
@@ -1325,3 +1549,1221 @@ class TestDragNeedsDraggable:
         result = await web_browser.drag(".item", ".zone")
         assert "已将 .item 拖拽到 .zone" in result
         src.drag_to.assert_awaited_once()
+
+
+# ── 超时分类提示(元素不存在 vs 存在但未就绪)──────────────────
+
+
+class TestTimeoutClassification:
+    """超时错误要区分「元素不存在」与「元素存在但未就绪」,并给可自纠建议。
+
+    回归测试: 曾只报 `Timeout 5000ms exceeded`,不区分选择器写错与
+    元素被遮挡/未渲染完 —— 两者排查方向相反,只给通用超时等于没说。
+    """
+
+    def _running(self, web_browser, mock_page):
+        web_browser._browser = MagicMock()
+        web_browser._pages = {1: mock_page}
+        web_browser._active_page_id = 1
+        return mock_page.locator.return_value
+
+    @pytest.mark.asyncio
+    async def test_click_timeout_element_missing(self, web_browser, mock_page):
+        """元素不存在时要明说「选择器未匹配到任何节点」。"""
+        from uniclaw.tools.web_browse.browser import PlaywrightTimeoutError
+
+        locator = self._running(web_browser, mock_page)
+        locator.click = AsyncMock(
+            side_effect=PlaywrightTimeoutError("Timeout 5000ms exceeded")
+        )
+        locator.count = AsyncMock(return_value=0)
+
+        result = await web_browser.click("#no-such-element")
+
+        assert "TOOL_ERROR" in result
+        assert "点击元素" in result
+        assert "元素不存在" in result
+        assert "选择器未匹配到任何节点" in result
+        # Playwright 原始错误(含 call log)要保留
+        assert "Timeout 5000ms exceeded" in result
+        # 任务 2: 通用建议与分类提示合并在同一条里
+        assert "browser_wait" in result
+        assert result.count("提示:") == 1
+
+    @pytest.mark.asyncio
+    async def test_click_timeout_element_exists_not_ready(self, web_browser, mock_page):
+        """元素在 DOM 中但未就绪时要明说「存在但未就绪」。"""
+        from uniclaw.tools.web_browse.browser import PlaywrightTimeoutError
+
+        locator = self._running(web_browser, mock_page)
+        locator.click = AsyncMock(
+            side_effect=PlaywrightTimeoutError("Timeout 5000ms exceeded")
+        )
+        locator.count = AsyncMock(return_value=1)
+
+        result = await web_browser.click("#covered-btn")
+
+        assert "TOOL_ERROR" in result
+        assert "元素存在但未就绪" in result
+        assert "被遮挡" in result
+        assert "元素不存在" not in result
+        assert "browser_wait" in result
+
+    @pytest.mark.asyncio
+    async def test_click_timeout_probe_failure_still_reports(self, web_browser, mock_page):
+        """探测本身抛异常时不能掩盖原始超时错误。"""
+        from uniclaw.tools.web_browse.browser import PlaywrightTimeoutError
+
+        locator = self._running(web_browser, mock_page)
+        locator.click = AsyncMock(
+            side_effect=PlaywrightTimeoutError("Timeout 5000ms exceeded")
+        )
+        locator.count = AsyncMock(side_effect=RuntimeError("page navigated away"))
+
+        result = await web_browser.click("#gone")
+
+        assert "TOOL_ERROR" in result
+        assert "Timeout 5000ms exceeded" in result
+        assert "browser_wait" in result
+        assert "无法确认" in result
+
+    @pytest.mark.asyncio
+    async def test_non_timeout_error_has_no_classify_hint(self, web_browser, mock_page):
+        """非超时错误不走探测,不贴「元素不存在/未就绪」分类。"""
+        from uniclaw.tools.web_browse.browser import PlaywrightError
+
+        locator = self._running(web_browser, mock_page)
+        locator.click = AsyncMock(side_effect=PlaywrightError("Element is not enabled"))
+
+        result = await web_browser.click("#btn")
+
+        assert "TOOL_ERROR" in result
+        assert "Element is not enabled" in result
+        assert "提示:" not in result
+        assert "元素不存在" not in result
+
+    @pytest.mark.asyncio
+    async def test_scroll_into_view_timeout_missing(self, web_browser, mock_page):
+        """scroll_into_view(元素滚动族)与 click 同样分类。"""
+        from uniclaw.tools.web_browse.browser import PlaywrightTimeoutError
+
+        locator = self._running(web_browser, mock_page)
+        locator.scroll_into_view_if_needed = AsyncMock(
+            side_effect=PlaywrightTimeoutError("Timeout 5000ms exceeded")
+        )
+        locator.count = AsyncMock(return_value=0)
+
+        result = await web_browser.scroll_into_view("#footer")
+
+        assert "滚动元素到可见区域" in result
+        assert "元素不存在" in result
+        assert "browser_wait" in result
+
+    @pytest.mark.asyncio
+    async def test_type_text_timeout_not_ready(self, web_browser, mock_page):
+        """type_text 同族超时也要分类。"""
+        from uniclaw.tools.web_browse.browser import PlaywrightTimeoutError
+
+        locator = self._running(web_browser, mock_page)
+        locator.fill = AsyncMock(
+            side_effect=PlaywrightTimeoutError("Timeout 5000ms exceeded")
+        )
+        locator.count = AsyncMock(return_value=1)
+
+        result = await web_browser.type_text("#search", "hello")
+
+        assert "元素存在但未就绪" in result
+        assert "browser_wait" in result
+
+    @pytest.mark.asyncio
+    async def test_hover_timeout_missing(self, web_browser, mock_page):
+        """hover 同族超时也要分类。"""
+        from uniclaw.tools.web_browse.browser import PlaywrightTimeoutError
+
+        locator = self._running(web_browser, mock_page)
+        locator.hover = AsyncMock(
+            side_effect=PlaywrightTimeoutError("Timeout 5000ms exceeded")
+        )
+        locator.count = AsyncMock(return_value=0)
+
+        result = await web_browser.hover("#menu")
+
+        assert "元素不存在" in result
+
+    @pytest.mark.asyncio
+    async def test_select_option_timeout_missing(self, web_browser, mock_page):
+        """select_option 同族超时也要分类。"""
+        from uniclaw.tools.web_browse.browser import PlaywrightTimeoutError
+
+        locator = self._running(web_browser, mock_page)
+        locator.select_option = AsyncMock(
+            side_effect=PlaywrightTimeoutError("Timeout 5000ms exceeded")
+        )
+        locator.count = AsyncMock(return_value=0)
+
+        result = await web_browser.select_option("#dropdown", "a")
+
+        assert "元素不存在" in result
+
+    @pytest.mark.asyncio
+    async def test_check_timeout_missing(self, web_browser, mock_page):
+        """check 同族超时也要分类。"""
+        from uniclaw.tools.web_browse.browser import PlaywrightTimeoutError
+
+        locator = self._running(web_browser, mock_page)
+        locator.check = AsyncMock(
+            side_effect=PlaywrightTimeoutError("Timeout 5000ms exceeded")
+        )
+        locator.count = AsyncMock(return_value=0)
+
+        result = await web_browser.check("#agree", True)
+
+        assert "元素不存在" in result
+
+    @pytest.mark.asyncio
+    async def test_dblclick_timeout_not_ready(self, web_browser, mock_page):
+        """dblclick 同族超时也要分类。"""
+        from uniclaw.tools.web_browse.browser import PlaywrightTimeoutError
+
+        locator = self._running(web_browser, mock_page)
+        locator.dblclick = AsyncMock(
+            side_effect=PlaywrightTimeoutError("Timeout 5000ms exceeded")
+        )
+        locator.count = AsyncMock(return_value=1)
+
+        result = await web_browser.dblclick("#item")
+
+        assert "元素存在但未就绪" in result
+
+    @pytest.mark.asyncio
+    async def test_drag_timeout_reports_both_ends(self, web_browser, mock_page):
+        """drag 超时要分别探测源/目标,免得只报一侧误导排查。"""
+        from uniclaw.tools.web_browse.browser import PlaywrightTimeoutError
+
+        web_browser._browser = MagicMock()
+        web_browser._pages = {1: mock_page}
+        web_browser._active_page_id = 1
+
+        src = AsyncMock()
+        src.evaluate = AsyncMock(return_value=True)  # draggable
+        src.drag_to = AsyncMock(
+            side_effect=PlaywrightTimeoutError("Timeout 5000ms exceeded")
+        )
+        src.count = AsyncMock(return_value=1)  # 源存在
+        tgt = AsyncMock()
+        tgt.count = AsyncMock(return_value=0)  # 目标不存在
+        mock_page.locator = MagicMock(side_effect=[src, tgt])
+
+        result = await web_browser.drag(".item", ".zone")
+
+        assert "TOOL_ERROR" in result
+        assert "源元素:" in result
+        assert "目标元素:" in result
+        assert "元素存在但未就绪" in result
+        assert "元素不存在" in result
+        assert "browser_wait" in result
+
+
+# ── browser_get_elements 推荐选择器唯一性 ────────────────────
+
+
+class TestGetElementsSelectorUniqueness:
+    """推荐选择器必须唯一,否则明确标注匹配数,供 nth()/文本二次定位。
+
+    回归测试: microsoft.com 3 个 Cookie 按钮共用同一推荐选择器,
+    按推荐执行 click/get_attribute 必报 strict mode violation。
+    """
+
+    def _running(self, web_browser, mock_page):
+        web_browser._browser = MagicMock()
+        web_browser._pages = {1: mock_page}
+        web_browser._active_page_id = 1
+        return mock_page
+
+    @staticmethod
+    def _el(index=0, tag="button", selector="button", **over):
+        base = {
+            "index": index,
+            "tag": tag,
+            "type": "",
+            "id": "",
+            "name": "",
+            "text": "OK",
+            "placeholder": "",
+            "href": "",
+            "role": "",
+            "ariaLabel": "",
+            "selector": selector,
+            "selectorUnique": True,
+            "selectorMatchCount": 1,
+            "selectorNth": -1,
+            "rect": {"x": 0, "y": 0, "width": 10, "height": 10},
+        }
+        base.update(over)
+        return base
+
+    @pytest.mark.asyncio
+    async def test_unique_selector_plain(self, web_browser, mock_page):
+        """唯一选择器直接给出,不加冗余标注。"""
+        page = self._running(web_browser, mock_page)
+        page.evaluate = AsyncMock(
+            return_value=[self._el(selector="#accept-btn", id="accept-btn")]
+        )
+
+        result = await web_browser.get_interactive_elements()
+
+        assert "selector=#accept-btn" in result
+        assert "匹配" not in result.split("selector=")[-1]
+
+    @pytest.mark.asyncio
+    async def test_non_unique_selector_annotated(self, web_browser, mock_page):
+        """非唯一选择器必须标注匹配数 + nth,不能装作能直接用。"""
+        page = self._running(web_browser, mock_page)
+        page.evaluate = AsyncMock(
+            return_value=[
+                self._el(
+                    index=0,
+                    selector="button.cookie",
+                    selectorUnique=False,
+                    selectorMatchCount=3,
+                    selectorNth=0,
+                    text="Accept",
+                ),
+                self._el(
+                    index=1,
+                    selector="button.cookie",
+                    selectorUnique=False,
+                    selectorMatchCount=3,
+                    selectorNth=1,
+                    text="Reject",
+                ),
+            ]
+        )
+
+        result = await web_browser.get_interactive_elements()
+
+        assert "button.cookie" in result
+        assert "该选择器匹配 3 个元素" in result
+        assert "nth()" in result
+        assert "二次定位" in result
+        assert "nth=0" in result
+        assert "nth=1" in result
+
+    @pytest.mark.asyncio
+    async def test_js_validates_uniqueness(self, web_browser, mock_page):
+        """生成推荐选择器的 JS 必须做唯一性校验,而不是盲拼 CSS。"""
+        page = self._running(web_browser, mock_page)
+        page.evaluate = AsyncMock(return_value=[])
+
+        await web_browser.get_interactive_elements()
+        js = page.evaluate.call_args[0][0]
+
+        assert "matchCount" in js
+        assert "querySelectorAll" in js
+        assert "selectorUnique" in js
+        # 找不到唯一选择器时走标注分支,而不是硬造 nth-child 长路径
+        assert "selectorMatchCount" in js
+
+
+# ── browser_get_styles 计算样式取值 ─────────────────────────
+
+
+class TestGetStylesComputedValues:
+    """getPropertyValue 要用 CSS 属性名(kebab-case),简写拆成长胡子属性。
+
+    回归测试: backgroundColor/fontSize/zIndex 等 camelCase 取值返回空,
+    对 #sb_form_q 查询样式时复现。
+    """
+
+    def _running(self, web_browser, mock_page):
+        web_browser._browser = MagicMock()
+        web_browser._pages = {1: mock_page}
+        web_browser._active_page_id = 1
+        return mock_page
+
+    @pytest.mark.asyncio
+    async def test_js_uses_kebab_case_property_names(self, web_browser, mock_page):
+        """JS 必须用 background-color/font-size/z-index 等解析后的属性名取值。"""
+        page = self._running(web_browser, mock_page)
+        page.evaluate = AsyncMock(return_value={"background-color": "red"})
+
+        await web_browser.get_styles("#sb_form_q")
+        js = page.evaluate.call_args[0][0]
+
+        assert "getPropertyValue" in js
+        assert "'background-color'" in js
+        assert "'font-size'" in js
+        assert "'z-index'" in js
+        # camelCase 传给 getPropertyValue 会拿到空串 —— 不能出现在取值列表里
+        assert "getPropertyValue('backgroundColor')" not in js
+        assert "getPropertyValue('fontSize')" not in js
+        assert "getPropertyValue('zIndex')" not in js
+        assert "'backgroundColor'" not in js
+        assert "'fontSize'" not in js
+        assert "'zIndex'" not in js
+
+    @pytest.mark.asyncio
+    async def test_js_expands_shorthand_properties(self, web_browser, mock_page):
+        """margin/padding/border/background/font 简写要拆成子属性读取。"""
+        page = self._running(web_browser, mock_page)
+        page.evaluate = AsyncMock(return_value={})
+
+        await web_browser.get_styles("#box")
+        js = page.evaluate.call_args[0][0]
+
+        assert "'margin-top'" in js
+        assert "'padding-left'" in js
+        assert "'border-color'" in js
+        assert "'background-color'" in js
+        assert "'font-weight'" in js
+        # 简写本身不再作为取值键(部分浏览器对简写返回空)
+        props_block = js.split("const props =")[1].split("];")[0]
+        for shorthand in ("'margin'", "'padding'", "'border'", "'background'", "'font'"):
+            assert shorthand not in props_block
+
+    @pytest.mark.asyncio
+    async def test_formats_computed_styles(self, web_browser, mock_page):
+        """取到的计算样式要完整格式化输出。"""
+        page = self._running(web_browser, mock_page)
+        page.evaluate = AsyncMock(
+            return_value={
+                "background-color": "rgb(255, 255, 255)",
+                "font-size": "16px",
+                "z-index": "auto",
+            }
+        )
+
+        result = await web_browser.get_styles("#sb_form_q")
+
+        assert "background-color: rgb(255, 255, 255)" in result
+        assert "font-size: 16px" in result
+        assert "z-index: auto" in result
+
+    @pytest.mark.asyncio
+    async def test_missing_element_reports_error(self, web_browser, mock_page):
+        """元素不存在时返回 TOOL_ERROR,而不是空样式表。"""
+        page = self._running(web_browser, mock_page)
+        page.evaluate = AsyncMock(return_value=None)
+
+        result = await web_browser.get_styles("#no-such")
+
+        assert "TOOL_ERROR" in result
+        assert "不存在" in result
+
+
+# ── 并发导航串行化(browser_back 竞态)────────────────────────
+
+
+class TestConcurrentNavigation:
+    """并发 back/forward/navigate 必须串行化, 历史游标不乱。
+
+    回归测试: 同一条消息里并发调 2~3 个 browser_back 时, Playwright
+    go_back 相互打断报 net::ERR_ABORTED, 且 _hist_move 与真实导航交错后
+    游标与实际位置脱节 —— 后续操作全基于错误位置, forward 栈也被破坏。
+    """
+
+    def _setup_stack(self, web_browser, mock_page, urls, start_idx):
+        """建立可真实前进/后退的 mock 页面(按索引移动, 与历史一致)。"""
+        web_browser._browser = MagicMock()
+        web_browser._pages = {1: mock_page}
+        web_browser._active_page_id = 1
+        web_browser._hist_urls = {1: list(urls)}
+        web_browser._hist_idx = {1: start_idx}
+
+        pos = {"i": start_idx}
+        mock_page.url = urls[start_idx]
+        mock_page.evaluate = AsyncMock(return_value=len(urls))
+
+        async def go_back():
+            if pos["i"] > 0:
+                pos["i"] -= 1
+            mock_page.url = urls[pos["i"]]
+
+        async def go_forward():
+            if pos["i"] < len(urls) - 1:
+                pos["i"] += 1
+            mock_page.url = urls[pos["i"]]
+
+        mock_page.go_back = AsyncMock(side_effect=go_back)
+        mock_page.go_forward = AsyncMock(side_effect=go_forward)
+        mock_page.title = AsyncMock(return_value="t")
+        return pos
+
+    @pytest.mark.asyncio
+    async def test_concurrent_back_all_succeed_and_cursor_correct(
+        self, web_browser, mock_page
+    ):
+        """并发 3 个 back 全部成功, 历史游标准确, forward 栈完好。"""
+        # 4 项历史(blank/A/B/C)起点在 C(idx=3): 3 次 back 刚好到 blank, 全部成功
+        urls = [
+            "about:blank",
+            "https://a.example/",
+            "https://b.example/",
+            "https://c.example/",
+        ]
+        pos = self._setup_stack(web_browser, mock_page, urls, start_idx=3)
+
+        results = await asyncio.gather(
+            web_browser.back(), web_browser.back(), web_browser.back()
+        )
+
+        # 全部成功(不报 ERR_ABORTED / 无法后退)
+        for r in results:
+            assert "已后退" in r, f"并发 back 应全部成功: {r}"
+            assert "ERR_ABORTED" not in r
+            assert "TOOL_ERROR" not in r
+
+        # 历史游标与真实位置一致(退 3 步到 blank 即起点)
+        assert pos["i"] == 0
+        assert web_browser._hist_idx[1] == 0
+        assert mock_page.url == urls[0]
+
+        # forward 栈完好: 3 次 forward 应能回到原位
+        fwd = await asyncio.gather(
+            web_browser.forward(), web_browser.forward(), web_browser.forward()
+        )
+        for r in fwd:
+            assert "已前进" in r, f"并发 forward 应全部成功: {r}"
+        assert pos["i"] == 3
+        assert web_browser._hist_idx[1] == 3
+
+    @pytest.mark.asyncio
+    async def test_concurrent_back_serialized_by_lock(self, web_browser, mock_page):
+        """并发 back 必须排队串行, 不能交叉执行 go_back。"""
+        urls = [
+            "about:blank",
+            "https://a.example/",
+            "https://b.example/",
+            "https://c.example/",
+        ]
+        order = []
+        self._setup_stack(web_browser, mock_page, urls, start_idx=3)
+
+        orig_back = mock_page.go_back
+
+        async def tracked_back():
+            order.append("start")
+            await orig_back()
+            order.append("end")
+
+        mock_page.go_back = AsyncMock(side_effect=tracked_back)
+
+        await asyncio.gather(web_browser.back(), web_browser.back(), web_browser.back())
+
+        # 串行: start/end 交替, 不允许 start-start-start
+        assert order == ["start", "end", "start", "end", "start", "end"]
+
+    @pytest.mark.asyncio
+    async def test_nav_lock_covers_navigate_and_back(self, web_browser, mock_page):
+        """navigate 与 back 并发时也串行 —— 历史游标不交叉更新。"""
+        urls = ["https://a.example/", "https://b.example/", "https://c.example/"]
+        pos = self._setup_stack(web_browser, mock_page, urls, start_idx=2)
+
+        async def do_navigate():
+            return await web_browser.navigate("https://d.example/")
+
+        async def do_back():
+            return await web_browser.back()
+
+        r1, r2 = await asyncio.gather(do_navigate(), do_back())
+
+        # navigate 会截掉前进分支; back 与 navigate 串行后游标仍一致
+        assert "已导航到" in r1 or "已后退" in r1
+        assert "已导航到" in r2 or "已后退" in r2
+        assert web_browser._hist_idx[1] == len(web_browser._hist_urls[1]) - 1 or (
+            web_browser._hist_idx[1] >= 0
+        )
+        # 不应出现游标越界
+        assert 0 <= web_browser._hist_idx[1] < len(web_browser._hist_urls[1])
+
+    @pytest.mark.asyncio
+    async def test_err_aborted_gets_concurrency_hint(self, web_browser, mock_page):
+        """ERR_ABORTED 报错必须附并发导航提示, 不能只丢引擎原文。"""
+        from uniclaw.tools.web_browse.browser import PlaywrightError
+
+        web_browser._browser = MagicMock()
+        web_browser._pages = {1: mock_page}
+        web_browser._active_page_id = 1
+        mock_page.evaluate = AsyncMock(return_value=3)
+        mock_page.url = "https://a.example/"
+        mock_page.go_back = AsyncMock(
+            side_effect=PlaywrightError(
+                "net::ERR_ABORTED; maybe frame was detached?"
+            )
+        )
+
+        result = await web_browser.back()
+
+        assert "TOOL_ERROR" in result
+        assert "ERR_ABORTED" in result
+        assert "并发导航" in result
+        assert "串行" in result
+
+
+# ── back/forward 边界提示(当次正确, 不滞后)──────────────────
+
+
+class TestHistoryBoundaryHints:
+    """back/forward 边界提示必须**当次**正确。
+
+    回归测试: 曾差一格 —— back 到栈底当次仍报"仍可继续后退"(下次才报
+    边界), forward 到末尾当次报"仍可继续前进", 或倒数第 2 页即误报
+    "已是历史终点"。根因是 _hist_move 拒绝时游标未对齐真实位置,
+    边界判定基于过期下标。
+    """
+
+    def _setup_stack(self, web_browser, mock_page, urls, start_idx, tracked=True):
+        """建立 A→B→C 之类的多页历史 mock。"""
+        web_browser._browser = MagicMock()
+        web_browser._pages = {1: mock_page}
+        web_browser._active_page_id = 1
+        if tracked:
+            web_browser._hist_urls = {1: list(urls)}
+            web_browser._hist_idx = {1: start_idx}
+
+        pos = {"i": start_idx}
+        mock_page.url = urls[start_idx]
+        mock_page.evaluate = AsyncMock(return_value=len(urls))
+
+        async def go_back():
+            if pos["i"] > 0:
+                pos["i"] -= 1
+            mock_page.url = urls[pos["i"]]
+
+        async def go_forward():
+            if pos["i"] < len(urls) - 1:
+                pos["i"] += 1
+            mock_page.url = urls[pos["i"]]
+
+        mock_page.go_back = AsyncMock(side_effect=go_back)
+        mock_page.go_forward = AsyncMock(side_effect=go_forward)
+        mock_page.title = AsyncMock(return_value="t")
+        return pos
+
+    @pytest.mark.asyncio
+    async def test_back_to_bottom_reports_boundary_same_call(self, web_browser, mock_page):
+        """A→B→C 串行 back 到 A, **当次**即报"已是历史起点"(不是下次)。"""
+        urls = ["https://a.example/", "https://b.example/", "https://c.example/"]
+        self._setup_stack(web_browser, mock_page, urls, start_idx=2)
+
+        r1 = await web_browser.back()  # C → B
+        assert "已后退" in r1
+        assert "仍可继续后退" in r1, f"到 B 时还有 A 可退: {r1}"
+
+        r2 = await web_browser.back()  # B → A (栈底)
+        assert "已后退" in r2
+        assert "已是历史起点" in r2, f"到 A 即栈底, 当次须报边界: {r2}"
+        assert "无法再后退" in r2
+        assert "仍可继续后退" not in r2
+
+        # 再 back 应报"无法后退", 而不是"仍可继续"
+        r3 = await web_browser.back()
+        assert "无法后退" in r3 or "已是历史起点" in r3
+
+    @pytest.mark.asyncio
+    async def test_forward_to_top_reports_boundary_same_call(self, web_browser, mock_page):
+        """A→B→C 串行 forward 到 C, **当次**即报"已是历史终点"。"""
+        urls = ["https://a.example/", "https://b.example/", "https://c.example/"]
+        self._setup_stack(web_browser, mock_page, urls, start_idx=0)
+
+        r1 = await web_browser.forward()  # A → B
+        assert "已前进" in r1
+        assert "仍可继续前进" in r1, f"到 B 时还有 C 可进: {r1}"
+
+        r2 = await web_browser.forward()  # B → C (末尾)
+        assert "已前进" in r2
+        assert "已是历史终点" in r2, f"到 C 即末尾, 当次须报边界: {r2}"
+        assert "无法再前进" in r2
+        assert "仍可继续前进" not in r2
+
+    @pytest.mark.asyncio
+    async def test_back_to_bottom_without_tracking(self, web_browser, mock_page):
+        """无跟踪(CDP 导入页等)时 back 到栈底也要当次报边界。"""
+        urls = ["https://a.example/", "https://b.example/", "https://c.example/"]
+        self._setup_stack(web_browser, mock_page, urls, start_idx=2, tracked=False)
+
+        r1 = await web_browser.back()  # C → B
+        assert "已后退" in r1
+        assert "仍可继续后退" in r1
+
+        r2 = await web_browser.back()  # B → A (栈底)
+        assert "已后退" in r2
+        assert "已是历史起点" in r2, f"无跟踪时 back 到栈底也须当次报边界: {r2}"
+
+    @pytest.mark.asyncio
+    async def test_forward_to_top_without_tracking(self, web_browser, mock_page):
+        """无跟踪时 forward 到末尾也要当次报边界。"""
+        urls = ["https://a.example/", "https://b.example/", "https://c.example/"]
+        self._setup_stack(web_browser, mock_page, urls, start_idx=0, tracked=False)
+
+        r1 = await web_browser.forward()  # A → B
+        assert "已前进" in r1
+        assert "仍可继续前进" in r1
+
+        r2 = await web_browser.forward()  # B → C (末尾)
+        assert "已前进" in r2
+        assert "已是历史终点" in r2, f"无跟踪时 forward 到末尾也须当次报边界: {r2}"
+
+    @pytest.mark.asyncio
+    async def test_second_to_last_forward_not_premature_boundary(
+        self, web_browser, mock_page
+    ):
+        """倒数第 2 页 forward 到末尾: 不允许提前报"已是历史终点"。"""
+        urls = ["https://a.example/", "https://b.example/", "https://c.example/"]
+        self._setup_stack(web_browser, mock_page, urls, start_idx=1)
+
+        r = await web_browser.forward()  # B → C (末尾)
+        assert "已前进" in r
+        # 到末尾当次就报边界, 而不是"仍可继续"
+        assert "已是历史终点" in r, f"到末尾当次须报边界: {r}"
+
+    @pytest.mark.asyncio
+    async def test_mid_stack_forward_says_can_continue(self, web_browser, mock_page):
+        """中间位置 forward 后不能误报边界(差一格提前)。"""
+        urls = ["https://a.example/", "https://b.example/", "https://c.example/"]
+        self._setup_stack(web_browser, mock_page, urls, start_idx=0)
+
+        r = await web_browser.forward()  # A → B (中间)
+        assert "已前进" in r
+        assert "仍可继续前进" in r, f"B 不是末尾, 不得误报终点: {r}"
+        assert "已是历史终点" not in r
+
+    @pytest.mark.asyncio
+    async def test_hist_move_rejected_reports_boundary(self, web_browser, mock_page):
+        """_hist_move 因边界被拒时, 必须报边界而非"仍可继续"。"""
+        urls = ["https://a.example/", "https://b.example/", "https://c.example/"]
+        self._setup_stack(web_browser, mock_page, urls, start_idx=2)
+
+        # 手动把游标压到起点, 模拟 _hist_move 拒绝移动的情形
+        web_browser._hist_idx[1] = 0
+
+        r = await web_browser.back()  # 浏览器能退(reality 有 2 项), 但跟踪在起点
+        assert "已后退" in r
+        # 跟踪对齐后应在真实起点
+        assert "已是历史起点" in r or "仍可继续后退" in r
+        # 关键: 不能因 _hist_move 拒绝就停留旧下标而报"仍可继续"到错误位置
+        assert web_browser._hist_idx[1] == max(
+            0, web_browser._hist_idx.get(1, 0)
+        )
+
+    @pytest.mark.asyncio
+    async def test_two_page_stack_back_reports_boundary_same_call(
+        self, web_browser, mock_page
+    ):
+        """干净 2 项历史: back 一步到栈底, 当次报边界。"""
+        urls = ["https://a.example/", "https://b.example/"]
+        self._setup_stack(web_browser, mock_page, urls, start_idx=1)
+
+        r = await web_browser.back()
+        assert "已后退" in r
+        assert "已是历史起点" in r, f"2 项历史退 1 步即起点: {r}"
+
+    @pytest.mark.asyncio
+    async def test_two_page_stack_forward_reports_boundary_same_call(
+        self, web_browser, mock_page
+    ):
+        """干净 2 项历史: forward 一步到末尾, 当次报边界。"""
+        urls = ["https://a.example/", "https://b.example/"]
+        self._setup_stack(web_browser, mock_page, urls, start_idx=0)
+
+        r = await web_browser.forward()
+        assert "已前进" in r
+        assert "已是历史终点" in r, f"2 项历史进 1 步即末尾: {r}"
+
+
+# ── 任务 1: 超时提示按真实原因分类(不再一律建议 browser_wait)─────────
+
+
+class TestTimeoutReasonClassification:
+    """超时提示要看 Playwright 异常文本, 按真实原因给建议。
+
+    回归测试: disabled 点击、select 值不匹配时 call log 已写明
+    "element is not enabled" / "did not find some options", 但提示仍固定为
+    「元素存在但未就绪…请 browser_wait」—— 等待解决不了 disabled/值不匹配,
+    属误导。
+    """
+
+    def _running(self, web_browser, mock_page):
+        web_browser._browser = MagicMock()
+        web_browser._pages = {1: mock_page}
+        web_browser._active_page_id = 1
+        return mock_page.locator.return_value
+
+    @pytest.mark.asyncio
+    async def test_disabled_click_hint_is_not_wait_advice(
+        self, web_browser, mock_page
+    ):
+        """disabled 元素超时: 提示说清 disabled, 且**不**建议 browser_wait。"""
+        from uniclaw.tools.web_browse.browser import PlaywrightTimeoutError
+
+        locator = self._running(web_browser, mock_page)
+        locator.click = AsyncMock(
+            side_effect=PlaywrightTimeoutError(
+                "Timeout 5000ms exceeded.\nCall log:\n  - element is not enabled"
+            )
+        )
+
+        result = await web_browser.click("#submit-btn")
+
+        assert "TOOL_ERROR" in result
+        assert "disabled" in result
+        assert "等待无效" in result
+        # 核心断言: 误导性的等待建议必须消失
+        assert "browser_wait" not in result
+        # Playwright 原始错误(含 call log)原样保留
+        assert "element is not enabled" in result
+        assert "Timeout 5000ms exceeded" in result
+
+    @pytest.mark.asyncio
+    async def test_select_option_mismatch_hint_lists_options(
+        self, web_browser, mock_page
+    ):
+        """选项值不匹配: 提示核对可选值, 不建议 browser_wait。"""
+        from uniclaw.tools.web_browse.browser import PlaywrightTimeoutError
+
+        locator = self._running(web_browser, mock_page)
+        locator.select_option = AsyncMock(
+            side_effect=PlaywrightTimeoutError(
+                "Timeout 5000ms exceeded.\nCall log:\n  - did not find some options"
+            )
+        )
+        option_loc = MagicMock()
+        option_loc.all_text_contents = AsyncMock(return_value=["red", "green", "blue"])
+        locator.locator = MagicMock(return_value=option_loc)
+
+        result = await web_browser.select_option("#color", "purple")
+
+        assert "TOOL_ERROR" in result
+        assert "选项值不匹配" in result
+        assert "browser_wait" not in result
+        # 可选值列表让调用方能自纠
+        assert "red" in result and "green" in result and "blue" in result
+        # 原始错误保留
+        assert "did not find some options" in result
+
+    @pytest.mark.asyncio
+    async def test_not_a_select_hint(self, web_browser, mock_page):
+        """目标不是下拉框: 提示不是下拉框, 不建议 browser_wait。"""
+        from uniclaw.tools.web_browse.browser import PlaywrightTimeoutError
+
+        locator = self._running(web_browser, mock_page)
+        locator.select_option = AsyncMock(
+            side_effect=PlaywrightTimeoutError(
+                "Timeout 5000ms exceeded.\n"
+                "Call log:\n  - Element is not a <select> element"
+            )
+        )
+
+        result = await web_browser.select_option("#div", "a")
+
+        assert "不是下拉框" in result
+        assert "browser_wait" not in result
+
+    @pytest.mark.asyncio
+    async def test_not_visible_hint(self, web_browser, mock_page):
+        """元素不可见: 提示不可见/被遮挡, 不建议 browser_wait。"""
+        from uniclaw.tools.web_browse.browser import PlaywrightTimeoutError
+
+        locator = self._running(web_browser, mock_page)
+        locator.click = AsyncMock(
+            side_effect=PlaywrightTimeoutError(
+                "Timeout 5000ms exceeded.\nCall log:\n  - element is not visible"
+            )
+        )
+
+        result = await web_browser.click("#hidden-btn")
+
+        assert "不可见" in result
+        assert "browser_wait" not in result
+
+    @pytest.mark.asyncio
+    async def test_detached_hint(self, web_browser, mock_page):
+        """元素已脱离 DOM: 提示已移除, 不建议 browser_wait。"""
+        from uniclaw.tools.web_browse.browser import PlaywrightTimeoutError
+
+        locator = self._running(web_browser, mock_page)
+        locator.click = AsyncMock(
+            side_effect=PlaywrightTimeoutError(
+                "Timeout 5000ms exceeded.\n"
+                "Call log:\n  - Element is not attached to the DOM"
+            )
+        )
+
+        result = await web_browser.click("#gone")
+
+        assert "已从 DOM 移除" in result
+        assert "browser_wait" not in result
+
+    @pytest.mark.asyncio
+    async def test_selector_name_not_missclassified_as_disabled(
+        self, web_browser, mock_page
+    ):
+        """选择器名含 "disabled" 不能误判成元素 disabled —— 引号内的文本不参与匹配。"""
+        from uniclaw.tools.web_browse.browser import PlaywrightTimeoutError
+
+        locator = self._running(web_browser, mock_page)
+        locator.click = AsyncMock(
+            side_effect=PlaywrightTimeoutError(
+                "Timeout 5000ms exceeded.\n"
+                'Call log:\n  - waiting for locator("#disabled-btn")'
+            )
+        )
+        locator.count = AsyncMock(return_value=0)
+
+        result = await web_browser.click("#disabled-btn")
+
+        # 引号内是选择器名, 不是元素状态 → 走三态判定(元素不存在)
+        assert "元素不存在" in result
+        assert "disabled 状态" not in result
+
+    @pytest.mark.asyncio
+    async def test_unmatched_reason_falls_back_to_three_state(
+        self, web_browser, mock_page
+    ):
+        """无已知原因命中时退回三态判定 + browser_wait 建议。"""
+        from uniclaw.tools.web_browse.browser import PlaywrightTimeoutError
+
+        locator = self._running(web_browser, mock_page)
+        locator.click = AsyncMock(
+            side_effect=PlaywrightTimeoutError("Timeout 5000ms exceeded")
+        )
+        locator.count = AsyncMock(return_value=1)
+
+        result = await web_browser.click("#slow-btn")
+
+        assert "元素存在但未就绪" in result
+        assert "browser_wait" in result
+
+    @pytest.mark.asyncio
+    async def test_reason_hint_wins_over_existence_probe(self, web_browser, mock_page):
+        """命中真实原因时不再做三态探测(元素存在也不报"未就绪")。"""
+        from uniclaw.tools.web_browse.browser import PlaywrightTimeoutError
+
+        locator = self._running(web_browser, mock_page)
+        locator.click = AsyncMock(
+            side_effect=PlaywrightTimeoutError(
+                "Timeout 5000ms exceeded.\nCall log:\n  - element is not enabled"
+            )
+        )
+        locator.count = AsyncMock(return_value=1)  # 元素存在, 但原因已确定
+
+        result = await web_browser.click("#btn")
+
+        assert "disabled" in result
+        assert "元素存在但未就绪" not in result
+        assert "browser_wait" not in result
+
+
+# ── 任务 2: iframe 边界提示 + frame_selector ─────────────────────
+
+
+class TestIframeAwareness:
+    """元素在 iframe 内时不能只报"元素不存在"。
+
+    回归测试: get_elements 不列 iframe、click 报"元素不存在"且从不提 iframe,
+    调用方无从知道目标可能在 frame 里。
+    """
+
+    def _running(self, web_browser, mock_page):
+        web_browser._browser = MagicMock()
+        web_browser._pages = {1: mock_page}
+        web_browser._active_page_id = 1
+        return mock_page
+
+    @pytest.mark.asyncio
+    async def test_missing_element_error_mentions_iframe(
+        self, web_browser, mock_page
+    ):
+        """元素找不到且页面有 iframe 时, 报错要说清可能在 frame 里。"""
+        from uniclaw.tools.web_browse.browser import PlaywrightTimeoutError
+
+        page = self._running(web_browser, mock_page)
+        locator = page.locator.return_value
+        locator.click = AsyncMock(
+            side_effect=PlaywrightTimeoutError("Timeout 5000ms exceeded")
+        )
+        locator.count = AsyncMock(return_value=0)
+        # 主文档 + 2 个子 frame
+        locator.page = page
+        page.frames = [MagicMock(), MagicMock(), MagicMock()]
+
+        result = await web_browser.click("#iframe-btn")
+
+        assert "元素不存在" in result
+        assert "2 个 iframe" in result
+        assert "frame_selector" in result
+        # 明确说清不跨 frame, 不给错的选择器
+        assert "不自动跨 frame" in result or "browser_evaluate" in result
+
+    @pytest.mark.asyncio
+    async def test_missing_element_without_iframe_keeps_wait_advice(
+        self, web_browser, mock_page
+    ):
+        """页面没有 iframe 时不提 iframe, 保持 browser_wait 建议。"""
+        from uniclaw.tools.web_browse.browser import PlaywrightTimeoutError
+
+        page = self._running(web_browser, mock_page)
+        locator = page.locator.return_value
+        locator.click = AsyncMock(
+            side_effect=PlaywrightTimeoutError("Timeout 5000ms exceeded")
+        )
+        locator.count = AsyncMock(return_value=0)
+        locator.page = page
+        page.frames = [MagicMock()]  # 只有主文档
+
+        result = await web_browser.click("#nope")
+
+        assert "元素不存在" in result
+        assert "iframe" not in result
+        assert "browser_wait" in result
+
+    @pytest.mark.asyncio
+    async def test_get_elements_lists_iframes(self, web_browser, mock_page):
+        """browser_get_elements 要标注检测到的 iframe(selector/src)。"""
+        page = self._running(web_browser, mock_page)
+        # 第 1 次 evaluate: iframe 探测; 第 2 次: 元素列表
+        page.evaluate = AsyncMock(
+            side_effect=[
+                [{"selector": "#my-iframe", "src": "https://x.example/embed", "id": "my-iframe", "name": ""}],
+                [
+                    {
+                        "index": 0,
+                        "tag": "button",
+                        "type": "",
+                        "id": "outer-btn",
+                        "name": "",
+                        "text": "OK",
+                        "placeholder": "",
+                        "href": "",
+                        "role": "",
+                        "ariaLabel": "",
+                        "selector": "#outer-btn",
+                        "selectorUnique": True,
+                        "selectorMatchCount": 1,
+                        "selectorNth": -1,
+                        "rect": {"x": 0, "y": 0, "width": 10, "height": 10},
+                    }
+                ],
+            ]
+        )
+
+        result = await web_browser.get_interactive_elements()
+
+        assert "#my-iframe" in result
+        assert "https://x.example/embed" in result
+        assert "iframe" in result
+        # 说清边界: 主文档元素不含 frame 内元素
+        assert "frame" in result
+
+    @pytest.mark.asyncio
+    async def test_get_elements_no_iframe_no_noise(self, web_browser, mock_page):
+        """页面无 iframe 时不输出 iframe 段。"""
+        page = self._running(web_browser, mock_page)
+        page.evaluate = AsyncMock(
+            side_effect=[
+                [],
+                [
+                    {
+                        "index": 0,
+                        "tag": "button",
+                        "type": "",
+                        "id": "b",
+                        "name": "",
+                        "text": "OK",
+                        "placeholder": "",
+                        "href": "",
+                        "role": "",
+                        "ariaLabel": "",
+                        "selector": "#b",
+                        "selectorUnique": True,
+                        "selectorMatchCount": 1,
+                        "selectorNth": -1,
+                        "rect": {"x": 0, "y": 0, "width": 10, "height": 10},
+                    }
+                ],
+            ]
+        )
+
+        result = await web_browser.get_interactive_elements()
+
+        assert "找到 1 个可交互元素" in result
+        assert "iframe" not in result
+
+    @pytest.mark.asyncio
+    async def test_frame_selector_enters_frame(self, web_browser, mock_page):
+        """frame_selector 提供时走 page.frame_locator, 在 frame 内定位。"""
+        page = self._running(web_browser, mock_page)
+        frame_locator = MagicMock()
+        inner = AsyncMock()
+        frame_locator.locator = MagicMock(return_value=inner)
+        page.frame_locator = MagicMock(return_value=frame_locator)
+
+        result = await web_browser.click("#iframe-btn", frame_selector="#my-iframe")
+
+        assert "已点击" in result
+        page.frame_locator.assert_called_once_with("#my-iframe")
+        frame_locator.locator.assert_called_once_with("#iframe-btn")
+        inner.click.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_without_frame_selector_does_not_touch_frame_locator(
+        self, web_browser, mock_page
+    ):
+        """不传 frame_selector 时行为不变, 不碰 frame_locator。"""
+        page = self._running(web_browser, mock_page)
+        page.frame_locator = MagicMock()
+
+        result = await web_browser.click("#btn")
+
+        assert "已点击" in result
+        page.frame_locator.assert_not_called()
+
+
+# ── 任务 3: browser_select_option 多选 ─────────────────────────────
+
+
+class TestSelectOptionMultiSelect:
+    """select_option 支持多选, 参数形状不对要报错而不是超时。
+
+    回归测试: 签名只有 (selector, value), 传数组被 str 化当单值匹配 → 超时;
+    HTML5 multiple select 无法一次选多项; 不存在的 option 还会误导提示。
+    """
+
+    def _running(self, web_browser, mock_page):
+        web_browser._browser = MagicMock()
+        web_browser._pages = {1: mock_page}
+        web_browser._active_page_id = 1
+        return mock_page.locator.return_value
+
+    @pytest.mark.asyncio
+    async def test_multi_select_accepts_list(self, web_browser, mock_page):
+        """multiple select + 列表 → 一次选中多项。"""
+        locator = self._running(web_browser, mock_page)
+        locator.evaluate = AsyncMock(return_value=True)  # el.multiple === true
+        locator.select_option = AsyncMock(return_value=["a", "b"])
+
+        result = await web_browser.select_option("#multi", ["a", "b"])
+
+        assert "已选择选项" in result
+        locator.select_option.assert_awaited_once()
+        assert locator.select_option.await_args.args[0] == ["a", "b"]
+
+    @pytest.mark.asyncio
+    async def test_single_select_rejects_list(self, web_browser, mock_page):
+        """单选 select 传列表 → 参数错误, 不进 Playwright。"""
+        locator = self._running(web_browser, mock_page)
+        locator.evaluate = AsyncMock(return_value=False)  # 不是 multiple
+        locator.select_option = AsyncMock()
+
+        result = await web_browser.select_option("#single", ["a", "b"])
+
+        assert "TOOL_ERROR" in result
+        assert "multiple" in result or "单选" in result
+        locator.select_option.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_single_select_still_accepts_str(self, web_browser, mock_page):
+        """单选 select 传字符串照常工作(不触发 multiple 检查)。"""
+        locator = self._running(web_browser, mock_page)
+        locator.select_option = AsyncMock(return_value=["a"])
+
+        result = await web_browser.select_option("#single", "a")
+
+        assert "已选择选项: a" in result
+        locator.select_option.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_bad_value_type_rejected(self, web_browser, mock_page):
+        """value 既不是 str 也不是 list[str] → 参数错误。"""
+        locator = self._running(web_browser, mock_page)
+
+        result = await web_browser.select_option("#sel", 123)
+
+        assert "TOOL_ERROR" in result
+        assert "str" in result
+
+    @pytest.mark.asyncio
+    async def test_list_with_non_str_rejected(self, web_browser, mock_page):
+        """列表里混非字符串 → 参数错误。"""
+        locator = self._running(web_browser, mock_page)
+
+        result = await web_browser.select_option("#sel", ["a", 1])
+
+        assert "TOOL_ERROR" in result
+        locator.select_option.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_empty_list_rejected(self, web_browser, mock_page):
+        """空列表 → 参数错误。"""
+        locator = self._running(web_browser, mock_page)
+
+        result = await web_browser.select_option("#sel", [])
+
+        assert "TOOL_ERROR" in result
+        locator.select_option.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_missing_option_lists_available_choices(
+        self, web_browser, mock_page
+    ):
+        """选项不存在时列出可选值, 让调用方一次改对。"""
+        from uniclaw.tools.web_browse.browser import PlaywrightTimeoutError
+
+        locator = self._running(web_browser, mock_page)
+        locator.select_option = AsyncMock(
+            side_effect=PlaywrightTimeoutError(
+                "Timeout 5000ms exceeded.\nCall log:\n  - did not find some options"
+            )
+        )
+        option_loc = MagicMock()
+        option_loc.all_text_contents = AsyncMock(return_value=["red", "green"])
+        locator.locator = MagicMock(return_value=option_loc)
+
+        result = await web_browser.select_option("#color", "purple")
+
+        assert "可选值" in result
+        assert "red" in result and "green" in result
+        assert "purple" in result  # 带上实际传的值
+        assert "browser_wait" not in result
+
+    def test_tool_schema_value_is_str_or_list(self):
+        """@tool schema 里 value 要能表达 str | list[str], 不能塌缩成单类型。"""
+        from uniclaw.tools.web_browse.tools import get_tools
+
+        tool = next(t for t in get_tools() if t.name == "browser_select_option")
+        schema = tool.parameters["properties"]["value"]
+        # anyOf: string + array-of-string
+        assert "anyOf" in schema, f"value schema 应为 anyOf, 实际: {schema}"
+        types = {s.get("type") for s in schema["anyOf"]}
+        assert types == {"string", "array"}
+        arr = next(s for s in schema["anyOf"] if s.get("type") == "array")
+        assert arr.get("items", {}).get("type") == "string"
+
+    def test_tool_signature_accepts_list(self):
+        """工具函数签名/类型检查要放行 list[str]。"""
+        from uniclaw.tools.web_browse.tools import get_tools
+
+        tool = next(t for t in get_tools() if t.name == "browser_select_option")
+        sig = __import__("inspect").signature(tool.func)
+        assert "value" in sig.parameters
+        ann = str(sig.parameters["value"].annotation)
+        assert "list" in ann, f"value 注解应含 list: {ann}"
+
+    @pytest.mark.asyncio
+    async def test_tool_call_with_list_no_type_error(self, web_browser, mock_page):
+        """经 Tool 包装调用(含 _check_types)传列表不应被参数检查拦下。"""
+        from uniclaw.tools.web_browse.tools import get_tools
+
+        tool = next(t for t in get_tools() if t.name == "browser_select_option")
+        locator = self._running(web_browser, mock_page)
+        locator.evaluate = AsyncMock(return_value=True)
+        locator.select_option = AsyncMock(return_value=["a", "b"])
+
+        # 工具走模块级 _browser 单例 —— 指到 fixture 实例上
+        with patch(
+            "uniclaw.tools.web_browse.tools._browser", web_browser
+        ):
+            result = await tool.execute(selector="#multi", value=["a", "b"])
+
+        assert "已选择选项" in result
+        assert "incorrect type" not in str(result)

@@ -173,7 +173,7 @@ async def get_tools(config) -> list:
         *scheduler_get_tools(),
         # sleep_timer 仅主 agent 与异步子代理可用,同步子代理由 get_tools 过滤
         *sleep_get_tools(config),
-        *process_get_tools(),
+        *process_get_tools(config),
         *mcp_management_get_tools(),
         *session_get_tools(),
         *recall_get_tools(),

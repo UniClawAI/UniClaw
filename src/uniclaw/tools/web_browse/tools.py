@@ -133,7 +133,10 @@ async def browser_navigate(url: str, page_id: Optional[int] = None) -> str:
 
 @tool
 async def browser_click(
-    selector: str, timeout: int = 5000, page_id: Optional[int] = None
+    selector: str,
+    timeout: int = 5000,
+    page_id: Optional[int] = None,
+    frame_selector: Optional[str] = None,
 ) -> str:
     """点击页面元素。
 
@@ -141,11 +144,13 @@ async def browser_click(
         selector: CSS 选择器或 XPath 表达式(以 // 开头表示 XPath)。
         timeout: 等待元素出现的超时时间(毫秒),默认 5000。
         page_id: 可选,指定操作的页面 ID。不提供则使用当前活动页面。
+        frame_selector: 可选,iframe 元素的 CSS 选择器(如 "#my-iframe")。提供时
+            在该 iframe 内查找 selector(工具定位默认不跨 frame)。
 
     Returns:
         操作结果消息。
     """
-    return await _browser.click(selector, timeout, page_id)
+    return await _browser.click(selector, timeout, page_id, frame_selector)
 
 
 @tool
@@ -155,6 +160,7 @@ async def browser_type(
     clear: bool = True,
     timeout: int = 5000,
     page_id: Optional[int] = None,
+    frame_selector: Optional[str] = None,
 ) -> str:
     """在指定元素中输入文本。
 
@@ -164,11 +170,12 @@ async def browser_type(
         clear: 是否先清空输入框,默认 True。
         timeout: 等待元素出现的超时时间(毫秒),默认 5000。
         page_id: 可选,指定操作的页面 ID。不提供则使用当前活动页面。
+        frame_selector: 可选,iframe 元素的 CSS 选择器。提供时在该 iframe 内查找 selector。
 
     Returns:
         操作结果消息。
     """
-    return await _browser.type_text(selector, text, clear, timeout, page_id)
+    return await _browser.type_text(selector, text, clear, timeout, page_id, frame_selector)
 
 
 @tool
@@ -197,39 +204,48 @@ async def browser_screenshot(
 
 @tool
 async def browser_get_text(
-    selector: Optional[str] = None, page_id: Optional[int] = None
+    selector: Optional[str] = None,
+    page_id: Optional[int] = None,
+    frame_selector: Optional[str] = None,
 ) -> str:
     """获取页面或指定元素的文本内容。
 
     Args:
         selector: 可选,CSS 选择器或 XPath 表达式。不提供则获取整个页面文本。
         page_id: 可选,指定操作的页面 ID。不提供则使用当前活动页面。
+        frame_selector: 可选,iframe 元素的 CSS 选择器。提供时在该 iframe 内查找 selector。
 
     Returns:
         文本内容。
     """
-    return await _browser.get_text(selector, page_id)
+    return await _browser.get_text(selector, page_id, frame_selector)
 
 
 @tool
 async def browser_get_html(
-    selector: Optional[str] = None, page_id: Optional[int] = None
+    selector: Optional[str] = None,
+    page_id: Optional[int] = None,
+    frame_selector: Optional[str] = None,
 ) -> str:
     """获取页面或指定元素的 HTML 内容。
 
     Args:
         selector: 可选,CSS 选择器或 XPath 表达式。不提供则获取整个页面 HTML。
         page_id: 可选,指定操作的页面 ID。不提供则使用当前活动页面。
+        frame_selector: 可选,iframe 元素的 CSS 选择器。提供时在该 iframe 内查找 selector。
 
     Returns:
         HTML 内容。
     """
-    return await _browser.get_html(selector, page_id)
+    return await _browser.get_html(selector, page_id, frame_selector)
 
 
 @tool
 async def browser_get_attribute(
-    selector: str, attribute: str, page_id: Optional[int] = None
+    selector: str,
+    attribute: str,
+    page_id: Optional[int] = None,
+    frame_selector: Optional[str] = None,
 ) -> str:
     """获取指定元素的属性值。
 
@@ -237,11 +253,12 @@ async def browser_get_attribute(
         selector: CSS 选择器或 XPath 表达式。
         attribute: 属性名称(如 href、src、value 等)。
         page_id: 可选,指定操作的页面 ID。不提供则使用当前活动页面。
+        frame_selector: 可选,iframe 元素的 CSS 选择器。提供时在该 iframe 内查找 selector。
 
     Returns:
         属性值。
     """
-    return await _browser.get_attribute(selector, attribute, page_id)
+    return await _browser.get_attribute(selector, attribute, page_id, frame_selector)
 
 
 @tool
@@ -262,6 +279,9 @@ async def browser_get_elements(
     - placeholder、href、role、aria-label 等属性
     - 推荐的 CSS 选择器(可直接用于 click/type 等操作)
     - 元素位置和尺寸
+
+    ⚠️ 只查主文档: 页面含 iframe 时会另外列出每个 iframe 的 selector/src,
+    frame 内元素不在列表中 —— 操作它们需给 click/type 等传 frame_selector。
 
     Args:
         page_id: 可选,指定操作的页面 ID。不提供则使用当前活动页面。
@@ -459,24 +479,32 @@ async def browser_press_key(key: str, page_id: Optional[int] = None) -> str:
 
 @tool
 async def browser_select_option(
-    selector: str, value: str, page_id: Optional[int] = None
+    selector: str,
+    value: str | list[str],
+    page_id: Optional[int] = None,
+    frame_selector: Optional[str] = None,
 ) -> str:
     """选择下拉框选项。
 
     Args:
         selector: CSS 选择器或 XPath 表达式。
-        value: 要选择的选项值。
+        value: 要选择的选项值。单选 select 传字符串;multiple 多选 select 可传
+            字符串列表一次选中多项。选项不存在时会列出全部可选值。
         page_id: 可选,指定操作的页面 ID。不提供则使用当前活动页面。
+        frame_selector: 可选,iframe 元素的 CSS 选择器。提供时在该 iframe 内查找 selector。
 
     Returns:
         操作结果消息。
     """
-    return await _browser.select_option(selector, value, page_id)
+    return await _browser.select_option(selector, value, page_id, frame_selector)
 
 
 @tool
 async def browser_check(
-    selector: str, checked: bool = True, page_id: Optional[int] = None
+    selector: str,
+    checked: bool = True,
+    page_id: Optional[int] = None,
+    frame_selector: Optional[str] = None,
 ) -> str:
     """勾选或取消勾选复选框。
 
@@ -484,25 +512,31 @@ async def browser_check(
         selector: CSS 选择器或 XPath 表达式。
         checked: True 为勾选,False 为取消勾选。
         page_id: 可选,指定操作的页面 ID。不提供则使用当前活动页面。
+        frame_selector: 可选,iframe 元素的 CSS 选择器。提供时在该 iframe 内查找 selector。
 
     Returns:
         操作结果消息。
     """
-    return await _browser.check(selector, checked, page_id)
+    return await _browser.check(selector, checked, page_id, frame_selector)
 
 
 @tool
-async def browser_hover(selector: str, page_id: Optional[int] = None) -> str:
+async def browser_hover(
+    selector: str,
+    page_id: Optional[int] = None,
+    frame_selector: Optional[str] = None,
+) -> str:
     """鼠标悬停在元素上。
 
     Args:
         selector: CSS 选择器或 XPath 表达式。
         page_id: 可选,指定操作的页面 ID。不提供则使用当前活动页面。
+        frame_selector: 可选,iframe 元素的 CSS 选择器。提供时在该 iframe 内查找 selector。
 
     Returns:
         操作结果消息。
     """
-    return await _browser.hover(selector, page_id)
+    return await _browser.hover(selector, page_id, frame_selector)
 
 
 @tool
@@ -522,7 +556,10 @@ async def browser_drag(source: str, target: str, page_id: Optional[int] = None) 
 
 @tool
 async def browser_dblclick(
-    selector: str, timeout: int = 5000, page_id: Optional[int] = None
+    selector: str,
+    timeout: int = 5000,
+    page_id: Optional[int] = None,
+    frame_selector: Optional[str] = None,
 ) -> str:
     """双击页面元素。
 
@@ -530,39 +567,50 @@ async def browser_dblclick(
         selector: CSS 选择器或 XPath 表达式。
         timeout: 等待元素出现的超时时间(毫秒),默认 5000。
         page_id: 可选,指定操作的页面 ID。不提供则使用当前活动页面。
+        frame_selector: 可选,iframe 元素的 CSS 选择器。提供时在该 iframe 内查找 selector。
 
     Returns:
         操作结果消息。
     """
-    return await _browser.dblclick(selector, timeout, page_id)
+    return await _browser.dblclick(selector, timeout, page_id, frame_selector)
 
 
 @tool
-async def browser_focus(selector: str, page_id: Optional[int] = None) -> str:
+async def browser_focus(
+    selector: str,
+    page_id: Optional[int] = None,
+    frame_selector: Optional[str] = None,
+) -> str:
     """聚焦到指定元素。
 
     Args:
         selector: CSS 选择器或 XPath 表达式。
         page_id: 可选,指定操作的页面 ID。不提供则使用当前活动页面。
+        frame_selector: 可选,iframe 元素的 CSS 选择器。提供时在该 iframe 内查找 selector。
 
     Returns:
         操作结果消息。
     """
-    return await _browser.focus(selector, page_id)
+    return await _browser.focus(selector, page_id, frame_selector)
 
 
 @tool
-async def browser_scroll_into_view(selector: str, page_id: Optional[int] = None) -> str:
+async def browser_scroll_into_view(
+    selector: str,
+    page_id: Optional[int] = None,
+    frame_selector: Optional[str] = None,
+) -> str:
     """将指定元素滚动到可见区域。适用于需要操作屏幕外的元素时。
 
     Args:
         selector: CSS 选择器或 XPath 表达式。
         page_id: 可选,指定操作的页面 ID。不提供则使用当前活动页面。
+        frame_selector: 可选,iframe 元素的 CSS 选择器。提供时在该 iframe 内查找 selector。
 
     Returns:
         操作结果消息。
     """
-    return await _browser.scroll_into_view(selector, page_id)
+    return await _browser.scroll_into_view(selector, page_id, frame_selector)
 
 
 @tool
@@ -610,7 +658,10 @@ async def browser_keyboard_type(text: str, page_id: Optional[int] = None) -> str
 
 @tool
 async def browser_insert_text(
-    text: str, selector: Optional[str] = None, page_id: Optional[int] = None
+    text: str,
+    selector: Optional[str] = None,
+    page_id: Optional[int] = None,
+    frame_selector: Optional[str] = None,
 ) -> str:
     """插入文本(不触发按键事件)。适用于 input/textarea 的快速填充。
 
@@ -619,55 +670,69 @@ async def browser_insert_text(
         selector: 可选,CSS 选择器或 XPath 表达式。提供时先聚焦到该元素再插入,
                   不提供则向当前聚焦元素插入。
         page_id: 可选,指定操作的页面 ID。不提供则使用当前活动页面。
+        frame_selector: 可选,iframe 元素的 CSS 选择器。提供时在该 iframe 内查找 selector。
 
     Returns:
         操作结果消息。
     """
-    return await _browser.insert_text(text, selector, page_id)
+    return await _browser.insert_text(text, selector, page_id, frame_selector)
 
 
 @tool
 async def browser_get_value(
-    selector: Optional[str] = None, page_id: Optional[int] = None
+    selector: Optional[str] = None,
+    page_id: Optional[int] = None,
+    frame_selector: Optional[str] = None,
 ) -> str:
     """获取表单元素的当前值(input/textarea/select)。不提供 selector 则获取当前聚焦元素的值。
 
     Args:
         selector: 可选,CSS 选择器或 XPath 表达式。不提供则获取当前聚焦元素。
         page_id: 可选,指定操作的页面 ID。不提供则使用当前活动页面。
+        frame_selector: 可选,iframe 元素的 CSS 选择器。提供时在该 iframe 内查找 selector。
 
     Returns:
         元素的当前值。
     """
-    return await _browser.get_value(selector, page_id)
+    return await _browser.get_value(selector, page_id, frame_selector)
 
 
 @tool
-async def browser_get_count(selector: str, page_id: Optional[int] = None) -> str:
+async def browser_get_count(
+    selector: str,
+    page_id: Optional[int] = None,
+    frame_selector: Optional[str] = None,
+) -> str:
     """统计匹配选择器的元素数量。
 
     Args:
         selector: CSS 选择器或 XPath 表达式。
         page_id: 可选,指定操作的页面 ID。不提供则使用当前活动页面。
+        frame_selector: 可选,iframe 元素的 CSS 选择器。提供时在该 iframe 内查找 selector。
 
     Returns:
         匹配元素的数量。
     """
-    return await _browser.get_count(selector, page_id)
+    return await _browser.get_count(selector, page_id, frame_selector)
 
 
 @tool
-async def browser_get_box(selector: str, page_id: Optional[int] = None) -> str:
+async def browser_get_box(
+    selector: str,
+    page_id: Optional[int] = None,
+    frame_selector: Optional[str] = None,
+) -> str:
     """获取元素的边界框(位置和尺寸)。返回 x, y, width, height。
 
     Args:
         selector: CSS 选择器或 XPath 表达式。
         page_id: 可选,指定操作的页面 ID。不提供则使用当前活动页面。
+        frame_selector: 可选,iframe 元素的 CSS 选择器。提供时在该 iframe 内查找 selector。
 
     Returns:
         元素的边界框信息。
     """
-    return await _browser.get_bounding_box(selector, page_id)
+    return await _browser.get_bounding_box(selector, page_id, frame_selector)
 
 
 @tool

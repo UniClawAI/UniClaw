@@ -410,6 +410,122 @@ def test_format_symbols_tree():
     assert any("L2 [方法] bar" in ln for ln in out)
 
 
+def test_format_symbols_sorts_children_by_line():
+    """子节点按行号稳定排序 —— 服务器乱序(如 L11 排在 L13 后)要被纠正。"""
+    symbols = [{
+        "name": "Animal", "kind": 5,
+        "selectionRange": {"start": {"line": 0, "character": 0}},
+        "children": [
+            {"name": "__init__", "kind": 9,
+             "selectionRange": {"start": {"line": 9, "character": 4}}},
+            {"name": "name", "kind": 7,
+             "selectionRange": {"start": {"line": 9, "character": 8}}},
+            {"name": "speak", "kind": 6,
+             "selectionRange": {"start": {"line": 12, "character": 4}}},
+            {"name": "name", "kind": 7,
+             "selectionRange": {"start": {"line": 10, "character": 8}}},
+        ],
+    }]
+    out = _format_symbols(symbols)
+    # 只取子节点行(缩进一层),按输出顺序断言行号递增
+    child_lines = [ln for ln in out if ln.startswith("  L")]
+    assert ["L10", "L10", "L11", "L13"] == [ln.strip().split(" ")[0] for ln in child_lines]
+
+
+def test_format_symbols_same_line_sorts_by_name_then_column():
+    """同行号时按名称/列号定序,保证输出可复现。"""
+    symbols = [
+        {"name": "bbb", "kind": 7,
+         "selectionRange": {"start": {"line": 4, "character": 10}}},
+        {"name": "aaa", "kind": 7,
+         "selectionRange": {"start": {"line": 4, "character": 20}}},
+        {"name": "mid", "kind": 7,
+         "selectionRange": {"start": {"line": 3, "character": 0}}},
+    ]
+    out = _format_symbols(symbols)
+    names = [ln.split("] ", 1)[1] for ln in out]
+    assert names == ["mid", "aaa", "bbb"]
+
+
+def test_query_error_hides_internal_class_names():
+    """失败文案不透出 LspBizError/LspRpcError 等内部类名。
+
+    回归: 曾以 `{type(e).__name__}: {e}` 拼接,lsp_symbols 报
+    「LspBizError: 文件不存在:…」,与 lsp_diagnostics 的「文件不存在:…」不一致。
+    """
+    from uniclaw.tools.lsp.client import LspRpcError
+    from uniclaw.tools.lsp.protocol import LspBizError
+    from uniclaw.tools.lsp.tools import _query_error
+
+    biz = _query_error("textDocument/documentSymbol", Path("gone.py"),
+                       LspBizError("文件不存在: gone.py"))
+    assert "文件不存在: gone.py" in biz
+    assert "LspBizError" not in biz
+
+    rpc = _query_error("textDocument/hover", Path("a.py"), LspRpcError(-32601, "no"))
+    assert "LspRpcError" not in rpc
+    assert "no" in rpc
+
+
+def test_lsp_query_tools_missing_file_wording_matches_diagnostics(tmp_path):
+    """缺文件时 lsp_symbols/definition/hover/references 与 lsp_diagnostics 同措辞。"""
+    import asyncio
+    from types import SimpleNamespace
+
+    from uniclaw.tools.lsp.tools import (
+        lsp_definition,
+        lsp_diagnostics,
+        lsp_hover,
+        lsp_references,
+        lsp_symbols,
+    )
+
+    cfg = SimpleNamespace(root_dir=tmp_path)
+    rt = SimpleNamespace(config=cfg)
+    gone = str(tmp_path / "gone.py")
+
+    results = {
+        "diagnostics": asyncio.run(lsp_diagnostics.func(file=gone, tool_runtime=rt)),
+        "symbols": asyncio.run(lsp_symbols.func(file=gone, tool_runtime=rt)),
+        "definition": asyncio.run(
+            lsp_definition.func(file=f"{gone}:1:1", tool_runtime=rt)
+        ),
+        "hover": asyncio.run(lsp_hover.func(file=f"{gone}:1:1", tool_runtime=rt)),
+        "references": asyncio.run(
+            lsp_references.func(file=f"{gone}:1:1", tool_runtime=rt)
+        ),
+    }
+    expected = "文件不存在"
+    for name, result in results.items():
+        assert expected in result, f"{name}: {result}"
+        assert "LspBizError" not in result, f"{name} 泄漏内部类名: {result}"
+        assert "LspRpcError" not in result, f"{name} 泄漏内部类名: {result}"
+        # 对齐 lsp_diagnostics:只说「文件不存在: xxx」,不套「LSP xxx 查询失败」壳
+        assert "查询失败" not in result, f"{name} 措辞未对齐 diagnostics: {result}"
+
+
+def test_symbol_count_and_format_no_stray_l():
+    """符号计数格式应为 '符号大纲(21 个)',不应有多余的 L 前缀。"""
+    from uniclaw.tools.lsp.tools import _symbol_count
+
+    symbols = [
+        {"name": "Foo", "kind": 5, "children": [
+            {"name": "bar", "kind": 6, "children": []},
+            {"name": "baz", "kind": 6, "children": []},
+        ]},
+        {"name": "Qux", "kind": 5, "children": []},
+    ]
+    assert _symbol_count(symbols) == 4
+
+    # 回归: 格式串中不应有 "L{_symbol_count" (会渲染成 "符号大纲(L4 个)")
+    import inspect as _inspect
+    from uniclaw.tools.lsp import tools as _lsp_tools_mod
+
+    src = _inspect.getsource(_lsp_tools_mod)
+    assert "L{_symbol_count" not in src, "格式串不应包含多余的 L 前缀"
+    assert "符号大纲({_symbol_count" in src
+
+
 # ── 会话键控与生命周期 ──────────────────────────────────────────
 
 

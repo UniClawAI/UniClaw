@@ -411,6 +411,29 @@ class TestSearch:
         assert "[concept] Python" in result
         assert "[technology] Python" not in result
 
+    @pytest.mark.asyncio
+    async def test_empty_keyword_rejected(self, tmp_path):
+        """空关键词不能当成"列出所有"返回全部实体。"""
+        config = _make_config(tmp_path)
+        await kg_add_entity("Python", type="technology", tool_runtime=ToolRuntime(config=config))
+        await kg_add_entity("Java", type="technology", tool_runtime=ToolRuntime(config=config))
+        result = await kg_search("", tool_runtime=ToolRuntime(config=config))
+        assert TOOL_ERROR in result
+        assert "keyword 不能为空" in result
+        # 不得退化成"列出所有" —— 空查询不应泄露实体列表
+        assert "找到" not in result
+        assert "[technology] Python" not in result
+        assert "kg_list" in result  # 提示用 kg_list 列全部实体
+
+    @pytest.mark.asyncio
+    async def test_blank_keyword_rejected(self, tmp_path):
+        """纯空白关键词同样拒绝。"""
+        config = _make_config(tmp_path)
+        await kg_add_entity("Python", type="technology", tool_runtime=ToolRuntime(config=config))
+        result = await kg_search("   ", tool_runtime=ToolRuntime(config=config))
+        assert TOOL_ERROR in result
+        assert "keyword 不能为空" in result
+
 
 class TestNeighbors:
     """kg_neighbors 测试。"""

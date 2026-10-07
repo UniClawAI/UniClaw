@@ -327,3 +327,24 @@ class TestGetToolsGating:
             "builtins.__import__", side_effect=fake_import
         ):
             assert monitor_tools._screen_supported() is False
+
+    def test_unsupported_records_unavailable_reason(self):
+        """环境不支持时把根因写进 config — 直调才能报"未启用"而非"不存在"。"""
+        config = MagicMock()
+        with patch.object(monitor_tools, "_screen_supported", return_value=False):
+            tools = monitor_tools.get_tools(config)
+        assert "monitor_screen" not in [t.name for t in tools]
+        config.record_unavailable_tools.assert_called_once()
+        names, reason = config.record_unavailable_tools.call_args.args
+        assert names == ["monitor_screen"]
+        assert "pywinpty" in reason
+        config.clear_unavailable_tools.assert_not_called()
+
+    def test_supported_clears_unavailable_reason(self):
+        """环境支持时清除原因记录,保持与当前状态一致。"""
+        config = MagicMock()
+        with patch.object(monitor_tools, "_screen_supported", return_value=True):
+            tools = monitor_tools.get_tools(config)
+        assert "monitor_screen" in [t.name for t in tools]
+        config.clear_unavailable_tools.assert_called_once_with(["monitor_screen"])
+        config.record_unavailable_tools.assert_not_called()

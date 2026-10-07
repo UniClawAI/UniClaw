@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from collections.abc import Callable, Awaitable
 from uniclaw.utils.constants import TOOL_ERROR
 from uniclaw.utils.logger import get_logger
@@ -22,21 +23,151 @@ def _build_message(text: str, style: str) -> list[dict]:
     return message
 
 
+# ── 长文本分段 ────────────────────────────────────────────────
+
+# 单段最大字数。实测整段长文本送 TTS 引擎会语速骤降/生成冗余
+# (2115 字整段时长 1.9 倍于单遍,585 字整段慢 42%),分段合成再拼接恢复正常语速。
+TTS_SEGMENT_MAX_CHARS = 200
+
+# 句末标点:切分点只落在这些标点之后,不劈开句子
+_PRIMARY_BREAKS = "。！？!?；;\n"
+# 子句标点:单句超长时的二级切分点
+_SECONDARY_BREAKS = "，,、：:…"
+
+_SENTENCE_SPLIT_DOT_NEXT = "\"')」”’"
+
+
+def _is_speakable(seg: str) -> bool:
+    """段内是否含可朗读内容(跳过空段/纯标点段)。"""
+    return any(ch.isalnum() for ch in seg)
+
+
+def _split_sentences(text: str) -> list[str]:
+    """按句末标点切分,标点保留在句尾。数字中的小数点不切断。"""
+    sentences = []
+    buf = []
+    n = len(text)
+    for i, ch in enumerate(text):
+        buf.append(ch)
+        if ch in _PRIMARY_BREAKS:
+            sentences.append("".join(buf))
+            buf = []
+        elif ch == ".":
+            nxt = text[i + 1] if i + 1 < n else ""
+            if nxt == "" or nxt.isspace() or nxt in _SENTENCE_SPLIT_DOT_NEXT:
+                sentences.append("".join(buf))
+                buf = []
+    if buf:
+        sentences.append("".join(buf))
+    return sentences
+
+
+def _split_oversized(text: str, max_len: int) -> list[str]:
+    """单句超长时:先按子句标点切并合并到 max_len,仍超长则硬切。"""
+    pieces = []
+    buf = []
+    for ch in text:
+        buf.append(ch)
+        if ch in _SECONDARY_BREAKS:
+            pieces.append("".join(buf))
+            buf = []
+    if buf:
+        pieces.append("".join(buf))
+
+    merged = []
+    cur = ""
+    for piece in pieces:
+        if cur and len(cur) + len(piece) > max_len:
+            merged.append(cur)
+            cur = piece
+        else:
+            cur += piece
+    if cur:
+        merged.append(cur)
+
+    out = []
+    for seg in merged:
+        while len(seg) > max_len:
+            out.append(seg[:max_len])
+            seg = seg[max_len:]
+        if seg:
+            out.append(seg)
+    return out
+
+
+def split_text_for_tts(text: str, max_len: int = TTS_SEGMENT_MAX_CHARS) -> list[str]:
+    """按句末标点把长文本切分为多个 TTS 合成段。
+
+    整段送 TTS 时引擎会语速骤降/生成冗余内容,分段合成再拼接可恢复正常语速。
+    切分点在句末,不劈开句子;空段/纯标点段跳过。
+    单句超长时退化为按子句标点切分,子句仍超长则硬切(保证段长上限)。
+
+    Args:
+        text: 要合成的完整文本。
+        max_len: 单段最大字数,默认 TTS_SEGMENT_MAX_CHARS。
+
+    Returns:
+        list[str]: 合成段列表,按原文顺序。文本为空或无可朗读内容时返回空列表。
+    """
+    text = text.strip()
+    if not text or not _is_speakable(text):
+        return []
+    if len(text) <= max_len:
+        return [text]
+
+    segments: list[str] = []
+    for para in re.split(r"\n\s*\n", text):
+        para = para.strip()
+        if not para:
+            continue
+        # 超长句先拆到段长上限以内
+        expanded: list[str] = []
+        for sent in _split_sentences(para):
+            if len(sent) <= max_len:
+                expanded.append(sent)
+            else:
+                expanded.extend(_split_oversized(sent, max_len))
+        # 贪心合并:段末落句末标点,段长不超过 max_len
+        cur = ""
+        for sent in expanded:
+            if cur and len(cur) + len(sent) > max_len:
+                if _is_speakable(cur):
+                    segments.append(cur.strip())
+                cur = sent
+            else:
+                cur += sent
+        if cur and _is_speakable(cur):
+            segments.append(cur.strip())
+    return segments
+
+
 # ── 流式回调 ──────────────────────────────────────────────────
 
 
 async def _stream_with_callback(
     chunks, on_chunk: Callable[[StreamChunk], Awaitable[None]] | None = None
 ):
-    """通用流式处理:累积 chunk 并调用回调。返回累积的 AIMessage。"""
+    """通用流式处理:累积 chunk 并调用回调。返回累积的 AIMessage。
+
+    音频按字节拼接(StreamChunk 的字符串拼接会让 base64 中间的
+    padding 截断后续数据,只剩第一块)。
+    """
+    import base64
+
     ai_message = None
+    audio_raw_parts: list[bytes] = []
     async for chunk in chunks:
         if ai_message is None:
             ai_message = chunk
         else:
             ai_message += chunk
+        if chunk.audio:
+            audio_raw_parts.append(base64.b64decode(chunk.audio))
         if on_chunk and chunk.audio:
             await on_chunk(chunk)
+    if ai_message is not None and audio_raw_parts:
+        merged = b"".join(audio_raw_parts)
+        ai_message.audio = base64.b64encode(merged).decode("ascii")
     return ai_message
 
 
@@ -80,15 +211,16 @@ async def _send_wechat_voice(_chunk: StreamChunk, config) -> None:
     import base64
     import os
     import tempfile
-    from uniclaw.utils.audio import pcm_to_wav
+    from uniclaw.utils.audio import ensure_wav
 
     ctx = getattr(config, "wechat_ctx", None)
     if not ctx:
         return
     bot = ctx
     try:
-        pcm_bytes = base64.b64decode(_chunk.audio)
-        wav_bytes = pcm_to_wav(pcm_bytes)
+        raw_bytes = base64.b64decode(_chunk.audio)
+        # 兼容 WAV 与裸 PCM16:是 WAV 原样发,裸 PCM 包上 WAV 头
+        wav_bytes = ensure_wav(raw_bytes)
         fd, tmp_path = tempfile.mkstemp(suffix=".wav")
         try:
             os.write(fd, wav_bytes)
@@ -245,6 +377,10 @@ async def tts(
 ) -> str:
     """将文本转换为语音。
 
+    长文本会按句末标点切分为多个合成段(单段不超过 TTS_SEGMENT_MAX_CHARS 字),
+    各段分别送 TTS 引擎后按序拼接 —— 整段长文本直接合成会语速骤降/内容冗余,
+    分段合成是修复手段而非绕过。切分点在句末,空段/纯标点段跳过。
+
     Args:
         text: 要转换的文本内容。支持在文本中嵌入风格标签与音频标签进行精细控制。
                风格标签:在文本开头添加括号 (风格) 标签,如"(开心)你好世界""(唱歌)歌词"。
@@ -264,49 +400,89 @@ async def tts(
         操作结果描述。
     """
     from uniclaw.provider.openai_provider import astream, achat
+    from uniclaw.utils.audio import concat_audio_b64
 
     if not text:
         return f"{TOOL_ERROR}: 文本不能为空"
 
-    audio = dict(config.audio)
+    audio = dict(config.audio) if config.audio else {}
     model = config.tts_model
 
     if not model:
         return f"{TOOL_ERROR}: 未配置 TTS 模型,请先使用 /model 命令设置 TTS 模型"
 
-    message = _build_message(text, style)
+    segments = split_text_for_tts(text)
+    if not segments:
+        return f"{TOOL_ERROR}: 文本无可朗读内容"
+
     result_parts = []
+    audio_parts: list[str] = []
+    total = len(segments)
 
     if play:
-        # 流式播放
+        # 流式播放:各段依次推流,播放端自然按序衔接
         import uuid
 
         stream_id = uuid.uuid4().hex[:8]
         on_chunk = _get_on_chunk(config, stream_id)
-        chunks = astream(message, model_name=model, audio=audio or None, config=config)
-        ai_message = await _stream_with_callback(chunks, on_chunk)
-        await _finish_stream(config, ai_message, stream_id)
-        result_parts.append("已播放")
-    else:
-        # 非流式:获取完整音频
-        try:
-            ai_message = await achat(
-                message,
+        for i, seg in enumerate(segments):
+            chunks = astream(
+                _build_message(seg, style),
                 model_name=model,
                 audio=audio or None,
                 config=config,
             )
-        except Exception as e:
-            return f"{TOOL_ERROR}: TTS 调用失败 - {e}"
+            ai_message = await _stream_with_callback(chunks, on_chunk)
+            if ai_message is None or not ai_message.audio:
+                await _finish_stream(config, None, stream_id)
+                return (
+                    f"{TOOL_ERROR}: 未获取到音频数据 (段 {i + 1}/{total},"
+                    f"{len(seg)} 字): {seg[:30]}"
+                )
+            audio_parts.append(ai_message.audio)
+        result_parts.append("已播放")
+    else:
+        # 非流式:逐段获取完整音频
+        for i, seg in enumerate(segments):
+            try:
+                ai_message = await achat(
+                    _build_message(seg, style),
+                    model_name=model,
+                    audio=audio or None,
+                    config=config,
+                )
+            except Exception as e:
+                return (
+                    f"{TOOL_ERROR}: TTS 调用失败 (段 {i + 1}/{total},"
+                    f"{len(seg)} 字): {e}"
+                )
+            if not ai_message.audio:
+                return (
+                    f"{TOOL_ERROR}: 未获取到音频数据 (段 {i + 1}/{total},"
+                    f"{len(seg)} 字): {seg[:30]}"
+                )
+            audio_parts.append(ai_message.audio)
 
-        if not ai_message.audio:
-            return f"{TOOL_ERROR}: 未获取到音频数据"
+    # 各段按序拼接为单个 WAV(段间格式参数不一致属外部服务异常,转 TOOL_ERROR)
+    try:
+        combined_audio = concat_audio_b64(audio_parts)
+    except ValueError as e:
+        return f"{TOOL_ERROR}: 音频段拼接失败 ({total} 段): {e}"
 
-    # 保存文件
-    if save_path and ai_message and ai_message.audio:
-        path = ai_message.save_audio(save_path)
+    if play:
+        from uniclaw.tools.session.session import AIMessage
+
+        await _finish_stream(config, AIMessage(content="", audio=combined_audio), stream_id)
+
+    # 保存文件:走 save_audio 的魔数扩展名纠正(拼接结果是带头 WAV)
+    if save_path:
+        from uniclaw.tools.session.session import AIMessage
+
+        path = AIMessage(content="", audio=combined_audio).save_audio(save_path)
         result_parts.append(f"已保存到 {path}")
 
+    if total > 1:
+        result_parts.append(f"分 {total} 段合成")
     if not result_parts:
         result_parts.append("已生成语音")
 

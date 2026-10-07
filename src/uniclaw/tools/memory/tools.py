@@ -81,6 +81,8 @@ def memory_save(
         return f"{TOOL_ERROR}: 记忆名称 name 不能为空"
     if not content.strip():
         return f"{TOOL_ERROR}: 记忆内容 content 不能为空"
+    if not (0 <= confidence <= 1):
+        return f"{TOOL_ERROR}: confidence 必须在 0~1 之间,收到: {confidence}"
 
     memory_scope: Scope | Path = (
         config.root_dir if scope == Scope.PROJECT and config.root_dir else Scope.USER
@@ -288,6 +290,8 @@ async def memory_search(query: str, max_results: int, tool_runtime: ToolRuntime 
         - 返回的记忆条目会自动更新最后使用时间
     """
     config = tool_runtime.config
+    if not query or not query.strip():
+        return f"{TOOL_ERROR}: query 不能为空(收到: {query!r});请提供要搜索的关键词"
     root_dir = config.root_dir
 
     # 收集所有记忆目录(传给 fts_search 定位数据库文件)

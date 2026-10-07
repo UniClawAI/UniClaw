@@ -6,6 +6,31 @@ import httpx
 from uniclaw.tools.base import tool
 from uniclaw.tools.search.base import DEFAULT_UA
 from uniclaw.utils.constants import TOOL_ERROR
+from uniclaw.utils.http_download import format_network_error
+
+
+def _is_connect_error(exc: BaseException) -> bool:
+    """异常(含异常链)是否属于连接建立失败(连不上代理/目标)。
+
+    只有建连失败才可能是"代理不可达";读超时(已连上)、HTTP 状态码错误不算。
+    覆盖 httpx.ConnectError / ConnectTimeout / ProxyError 及被包装的
+    ConnectionRefusedError 等。
+    """
+    connect_types: tuple[type, ...] = (
+        httpx.ConnectError,
+        httpx.ConnectTimeout,
+        httpx.ProxyError,
+        ConnectionRefusedError,
+        ConnectionResetError,
+    )
+    cur: BaseException | None = exc
+    seen: set[int] = set()
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        if isinstance(cur, connect_types):
+            return True
+        cur = cur.__cause__ or (None if cur.__suppress_context__ else cur.__context__)
+    return False
 
 
 def _html_to_text(text: str) -> str:
@@ -83,10 +108,12 @@ async def webFetch(url: str, proxy: str | None = None, raw: bool = False) -> str
             f"(content-type: {ct or 'unknown'}, proxy={proxy}): {e}"
         )
     except (httpx.HTTPError, httpx.InvalidURL) as e:
-        return (
-            f"{TOOL_ERROR}: 请求失败 {url} (proxy={proxy}, timeout=30s): "
-            f"{type(e).__name__}: {e}"
-        )
+        # 复用 http_download 的网络错误解释(DNS/连接被拒/超时),保留原始错误
+        detail = format_network_error(e)
+        tip = ""
+        if proxy and _is_connect_error(e):
+            tip = "\n代理不可达,可去掉 proxy 参数直连重试"
+        return f"{TOOL_ERROR}: 请求失败 {url} (proxy={proxy}, timeout=30s): {detail}{tip}"
 
     ct = r.headers.get("content-type", "")
     text = r.text

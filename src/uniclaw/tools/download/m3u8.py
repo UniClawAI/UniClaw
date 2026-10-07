@@ -859,9 +859,10 @@ class M3u8Downloader(BaseDownloader):
                         if isinstance(result, Exception):
                             raise result
 
-            # 取消时保留临时文件供续传
+            # 取消时清理中间分片工作目录(不删最终交付物 save_path)
             if self._cancelled:
                 self.progress.finish(M3u8Status.CANCELLED, "用户取消")
+                self._cleanup_quiet()
                 return self.progress
 
             # 校验所有分片
@@ -886,7 +887,10 @@ class M3u8Downloader(BaseDownloader):
             return self.progress
 
         except Exception as e:
-            if not self._cancelled:
+            if self._cancelled:
+                # 取消导致的异常(如分片下载中止): 清理中间工作目录
+                self._cleanup_quiet()
+            else:
                 self.progress.finish(M3u8Status.FAILED, str(e))
                 logger.error("M3U8 下载失败: %s", e)
             return self.progress
@@ -917,10 +921,25 @@ class M3u8Downloader(BaseDownloader):
         self.progress.status = M3u8Status.DOWNLOADING
 
     def cancel(self) -> None:
-        """取消下载。"""
+        """取消下载,并清理中间分片工作目录。
+
+        合并阶段(MERGING)的取消不清理临时目录 —— 合并是本地快速操作,
+        不应中断,见 start() 中"合并期间取消仍完成合并"的约定。
+        清理为尽力而为,失败不影响取消本身。
+        """
+        merging = self.progress.status == M3u8Status.MERGING
         self._cancelled = True
         self._pause_event.set()
         self.progress.finish(M3u8Status.CANCELLED, "用户取消")
+        if not merging:
+            self._cleanup_quiet()
+
+    def _cleanup_quiet(self) -> None:
+        """尽力而为清理临时目录,失败不影响调用方。"""
+        try:
+            self.cleanup()
+        except Exception:
+            pass
 
     def cleanup(self) -> None:
         """清理临时目录(分片文件与进度记录)。"""

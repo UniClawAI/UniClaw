@@ -13,6 +13,10 @@ from typing import Any
 _NAME_SIMILAR_THRESHOLD = 0.72
 # 达到此值视为高置信相似,措辞更强
 _NAME_SIMILAR_STRONG = 0.85
+# 短名长度上限: 归一化后长度 < 此值的名称不做模糊编辑相似判定(短串编辑距离无统计意义)
+_SHORT_NAME_LEN = 4
+# 候选类型与查询类型不同时的置信折扣: 不同类型的两个实体很少是同一个东西
+_TYPE_MISMATCH_FACTOR = 0.7
 
 
 def _now() -> str:
@@ -47,12 +51,17 @@ def _name_similarity(a: str, b: str) -> tuple[float, str]:
     仅比较名称本身(不看 description),避免"某实体描述里提到另一个名字"
     被 FTS 全文检索命中而误判为相似实体。
 
+    短名收紧(避免 t_a/t_b 类误报):
+    - 等长短名差 1 字的放宽仅对非 ASCII(中日韩)短名生效,保留"李明/李鸣"召回
+    - 纯 ASCII 短名(长度 < _SHORT_NAME_LEN)不做模糊编辑相似判定,
+      只认精确/包含 —— 短串的编辑距离没有统计意义,差 1 字几乎必然不是同一实体
+
     Args:
         a: 待查实体名。
         b: 图谱中已有实体名。
 
     Returns:
-        tuple[float, str]: (相似度 0.0~1.0, 可读匹配依据)。
+        tuple[float, str]: (相似度 0.0~1.0, 可读匹配依据)。0.0 表示不构成相似。
     """
     from difflib import SequenceMatcher
 
@@ -69,9 +78,20 @@ def _name_similarity(a: str, b: str) -> tuple[float, str]:
         if len(shorter) >= min_len:
             return 0.9, f"名称包含: '{shorter}' ⊂ '{longer}'"
 
-    # 等长短名差 1 字: "李明"/"李鸣" — difflib 仅 0.5,单独放宽以免漏报
-    if len(na) == len(nb) and len(na) <= 4 and _levenshtein(na, nb) == 1:
+    # 等长短名差 1 字: "李明"/"李鸣" — difflib 仅 0.5,单独放宽以免漏报。
+    # 仅对中日韩等非 ASCII 名生效: 纯 ASCII 短名(如 t_a/t_b)差 1 字
+    # 几乎必然是不同实体,走此规则会把测试标识符误报成相似实体。
+    if (
+        len(na) == len(nb)
+        and len(na) <= _SHORT_NAME_LEN
+        and _levenshtein(na, nb) == 1
+        and any(ord(c) > 127 for c in na)
+    ):
         return 0.72, f"等长短名仅 1 字之差: '{na}' vs '{nb}'"
+
+    # 双方都是短名时不再做模糊编辑相似度 —— 收紧到只认精确/包含/上面的 CJK 差 1 字
+    if len(na) < _SHORT_NAME_LEN and len(nb) < _SHORT_NAME_LEN:
+        return 0.0, ""
 
     ratio = SequenceMatcher(None, na, nb).ratio()
     return ratio, f"名称编辑相似度 {ratio:.2f}: '{na}' vs '{nb}'"
@@ -771,7 +791,14 @@ class KnowledgeGraph:
         匹配顺序(从强到弱):
         1. 别名精确匹配
         2. 名称精确匹配(忽略大小写)
-        3. 名称相似度(名称编辑相似度/包含关系/短名差 1 字)
+        3. 名称相似度(包含关系/中日韩短名差 1 字/名称编辑相似度)
+
+        相似度判定收紧(避免短名/异型误报,漏报比误报好 —— 误报会误导调用方
+        去合并两个不同的实体):
+        - 纯 ASCII 短名(归一化后长度 < 4)不做模糊编辑距离判定,只认精确/包含
+        - 等长短名差 1 字的放宽仅对非 ASCII(中日韩)短名生效(保留"李明/李鸣")
+        - 模糊候选的 entity_type 与查询不同时置信度 ×0.7,低于阈值直接不报
+          (别名/精确匹配不受影响 —— 同名异型仍值得提示)
 
         注意: 不再用 FTS5 对 name+description 全文匹配 —
         那会把"描述里提到对方名字"的无关实体误报成相似实体。
@@ -779,10 +806,12 @@ class KnowledgeGraph:
 
         Args:
             name: 待查实体名。
-            entity_type: 实体类型(仅作提示,类型不同不直接排除,避免漏报)。
+            entity_type: 实体类型。类型不同的模糊候选会下调置信度;
+                为空时不做类型比较。
 
         Returns:
-            list[dict]: 相似度 >= 0.72 的候选,按相似度降序。
+            list[dict]: 相似度 >= 0.72 的候选(类型不同按下调后分数判定),
+                按相似度降序。
         """
         candidates: list[dict] = []
         seen: set[int] = set()
@@ -822,6 +851,11 @@ class KnowledgeGraph:
                 _add(d, "exact", 1.0, f"名称精确匹配(忽略大小写): '{cand_name}'")
                 continue
             score, basis = _name_similarity(name, cand_name)
+            if score <= 0:
+                continue
+            # 类型不同时下调置信度: 不同类型的两个实体很少是同一个东西
+            if entity_type and d.get("type") and d["type"] != entity_type:
+                score *= _TYPE_MISMATCH_FACTOR
             if score >= _NAME_SIMILAR_THRESHOLD:
                 _add(d, "name", score, basis)
 

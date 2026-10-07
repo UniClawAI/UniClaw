@@ -7,11 +7,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uniclaw.tools import shell as shell_mod
 from uniclaw.tools.base import ToolRuntime
 from uniclaw.tools.shell import (
+    Bash,
     Grep,
     GrepOutputMode,
     _check_es,
+    _count_binary_files,
     _find_git_bash,
+    _is_binary_file,
+    _prepare_heredoc_script,
     _python_grep,
+    contains_heredoc,
     fix_bash_nul_redirect,
     get_all_tools,
     get_tools,
@@ -20,6 +25,16 @@ from uniclaw.tools.shell import (
 )
 from uniclaw.utils.constants import TOOL_ERROR
 from uniclaw.utils.process import RunResult
+
+
+def _make_rt(cancel_event=None):
+    """构造带 mock config 的 ToolRuntime,供 Bash/Grep 测试使用。"""
+    config = MagicMock()
+    config.root_dir = "/tmp/work"
+    agent = MagicMock()
+    agent.cancel_event = cancel_event
+    config.current_agent = agent
+    return ToolRuntime(config=config)
 
 
 class TestFixBashNul:
@@ -55,6 +70,137 @@ class TestFixBashNul:
             fix_bash_nul_redirect("cmd 2>nul 1>nul")
             == "cmd 2>/dev/null 1>/dev/null"
         )
+
+
+class TestContainsHeredoc:
+    """contains_heredoc / _prepare_heredoc_script 测试(任务 1: heredoc 误入 REPL 保护)。"""
+
+    def test_detects_heredoc(self):
+        """识别 << / <<- heredoc。"""
+        assert contains_heredoc("python - <<'EOF'\nprint(1)\nEOF")
+        assert contains_heredoc("cat <<-EOF\nhi\nEOF")
+        assert contains_heredoc('bash -c "python - <<EOF\nprint(1)\nEOF"')
+
+    def test_ignores_bit_shift(self):
+        """位移运算 $((1<<2)) / x<<3 不误判为 heredoc。"""
+        assert not contains_heredoc("echo $((1<<2))")
+        assert not contains_heredoc("python -c 'print(1<<3)'")
+        assert not contains_heredoc("echo hello")
+
+    def test_ignores_append_redirect(self):
+        """>> 重定向不算 heredoc。"""
+        assert not contains_heredoc("echo hi >> out.txt")
+
+    @pytest.mark.asyncio
+    async def test_windows_heredoc_rewrites_to_script(self, tmp_path):
+        """Windows 下 heredoc 改写为 bash 执行临时脚本,不把原命令直接丢给 cmd.exe。"""
+        from uniclaw.tools.shell import Bash
+
+        cmd = "python - <<'EOF'\nprint(123)\nEOF"
+        proc = AsyncMock()
+        proc.pid = 123
+        proc.returncode = 0
+        proc.stdin = None
+        out_stream = AsyncMock()
+        out_stream.read = AsyncMock(side_effect=[b"123\n", b""])
+        proc.stdout = out_stream
+        proc.stderr = None
+
+        with patch(
+            "uniclaw.tools.shell.sys.platform", "win32"
+        ), patch(
+            "uniclaw.tools.shell._find_bash", return_value=r"C:\Git\bin\bash.exe"
+        ), patch(
+            "uniclaw.tools.shell.asyncio.create_subprocess_shell",
+            new_callable=AsyncMock,
+            return_value=proc,
+        ) as mock_exec:
+            result = await Bash(cmd, tool_runtime=self._rt() if hasattr(self, "_rt") else _make_rt())
+
+        # 实际执行的命令应是 bash <临时脚本>,而不是含 heredoc 的原始命令
+        spawned = mock_exec.await_args.args[0]
+        assert "bash.exe" in spawned
+        assert ".sh" in spawned
+        assert "<<" not in spawned
+        assert result == "123"
+
+    @pytest.mark.asyncio
+    async def test_windows_heredoc_without_bash_rejected(self):
+        """Windows 下含 heredoc 但找不到 bash 时拒绝执行,提示改用文件脚本。"""
+        from uniclaw.tools.shell import Bash
+
+        with patch("uniclaw.tools.shell.sys.platform", "win32"), patch(
+            "uniclaw.tools.shell._find_bash", return_value=None
+        ), patch(
+            "uniclaw.tools.shell.asyncio.create_subprocess_shell", new_callable=AsyncMock
+        ) as mock_exec:
+            result = await Bash(
+                "python - <<'EOF'\nprint(1)\nEOF", tool_runtime=_make_rt()
+            )
+        assert TOOL_ERROR in result
+        assert "heredoc" in result
+        assert "REPL" in result
+        assert "文件脚本" in result or ".sh" in result
+        mock_exec.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_non_windows_heredoc_not_rewritten(self):
+        """非 Windows 平台 heredoc 原样透传( /bin/sh 天然支持)。"""
+        from uniclaw.tools.shell import Bash
+
+        proc = AsyncMock()
+        proc.pid = 123
+        proc.returncode = 0
+        proc.stdin = None
+        out_stream = AsyncMock()
+        out_stream.read = AsyncMock(side_effect=[b"ok\n", b""])
+        proc.stdout = out_stream
+        proc.stderr = None
+
+        with patch("uniclaw.tools.shell.sys.platform", "linux"), patch(
+            "uniclaw.tools.shell.asyncio.create_subprocess_shell",
+            new_callable=AsyncMock,
+            return_value=proc,
+        ) as mock_exec:
+            result = await Bash(
+                "cat <<'EOF'\nhi\nEOF", tool_runtime=_make_rt()
+            )
+        spawned = mock_exec.await_args.args[0]
+        assert "<<" in spawned
+        assert result == "ok"
+
+    def test_prepare_heredoc_script_non_windows_passthrough(self):
+        """非 Windows 直接返回原命令。"""
+        with patch("uniclaw.tools.shell.sys.platform", "linux"):
+            cmd, tmp = _prepare_heredoc_script("cat <<EOF\nhi\nEOF")
+        assert cmd == "cat <<EOF\nhi\nEOF"
+        assert tmp is None
+
+    def test_prepare_heredoc_script_no_heredoc_passthrough(self):
+        """无 heredoc 不改写。"""
+        with patch("uniclaw.tools.shell.sys.platform", "win32"):
+            cmd, tmp = _prepare_heredoc_script("echo hello")
+        assert cmd == "echo hello"
+        assert tmp is None
+
+    def test_prepare_heredoc_script_writes_script(self):
+        """Windows + heredoc 写出临时脚本,内容与原命令一致。"""
+        import os
+
+        src = "python - <<'EOF'\nprint(1)\nEOF"
+        with patch("uniclaw.tools.shell.sys.platform", "win32"), patch(
+            "uniclaw.tools.shell._find_bash", return_value="bash"
+        ):
+            cmd, tmp = _prepare_heredoc_script(src)
+        assert tmp is not None
+        assert os.path.isfile(tmp)
+        try:
+            body = open(tmp, encoding="utf-8").read()
+            assert "print(1)" in body
+            assert "EOF" in body
+            assert cmd.startswith('"bash"')
+        finally:
+            os.unlink(tmp)
 
 
 class TestSmartDecode:
@@ -390,6 +536,106 @@ class TestBash:
             with pytest.raises(OSError):
                 await Bash.execute("echo hi", tool_runtime=self._rt())
 
+    @pytest.mark.asyncio
+    async def test_output_overflow_killed(self, monkeypatch):
+        """无界输出超过阈值时终止进程树并明确标注(任务 1 回归)。
+
+        刷屏场景: 30s 超时转后台后仍持续输出,实测 140 万行才手动停。
+        必须在行数/字节数超阈值时主动终止,不能让输出把上下文冲垮。
+        """
+        from uniclaw.tools.shell import Bash
+
+        monkeypatch.setattr(shell_mod, "BASH_MAX_OUTPUT_LINES", 100)
+        monkeypatch.setattr(shell_mod, "BASH_MAX_OUTPUT_BYTES", 10**9)
+
+        call_count = {"n": 0}
+
+        async def endless_read(_n):
+            call_count["n"] += 1
+            if call_count["n"] > 20:
+                await asyncio.Event().wait()  # 阻塞住,模拟持续刷屏
+            return b"spam line\n" * 20  # 每块 20 行,很快超过 100 行阈值
+
+        out_stream = AsyncMock()
+        out_stream.read = AsyncMock(side_effect=endless_read)
+
+        async def never():
+            await asyncio.Event().wait()
+
+        proc = self._proc(returncode=None, stdout=out_stream)
+        proc.wait = never
+
+        with patch(
+            "uniclaw.tools.shell.asyncio.create_subprocess_shell",
+            new_callable=AsyncMock,
+            return_value=proc,
+        ), patch(
+            "uniclaw.tools.shell._kill_proc_tree", new_callable=AsyncMock
+        ) as mock_kill:
+            result = await Bash("spam", timeout=5, tool_runtime=self._rt())
+
+        assert "输出超出上限已终止" in result
+        assert "行" in result and "字节" in result
+        # 阈值必须出现在返回文本里,便于调用方调整
+        assert "100" in result
+        mock_kill.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_output_overflow_by_bytes(self, monkeypatch):
+        """字节数超阈值同样终止。"""
+        from uniclaw.tools.shell import Bash
+
+        monkeypatch.setattr(shell_mod, "BASH_MAX_OUTPUT_LINES", 10**9)
+        monkeypatch.setattr(shell_mod, "BASH_MAX_OUTPUT_BYTES", 1024)
+
+        call_count = {"n": 0}
+
+        async def endless_read(_n):
+            call_count["n"] += 1
+            if call_count["n"] > 20:
+                await asyncio.Event().wait()
+            return b"x" * 512
+
+        out_stream = AsyncMock()
+        out_stream.read = AsyncMock(side_effect=endless_read)
+
+        async def never():
+            await asyncio.Event().wait()
+
+        proc = self._proc(returncode=None, stdout=out_stream)
+        proc.wait = never
+
+        with patch(
+            "uniclaw.tools.shell.asyncio.create_subprocess_shell",
+            new_callable=AsyncMock,
+            return_value=proc,
+        ), patch(
+            "uniclaw.tools.shell._kill_proc_tree", new_callable=AsyncMock
+        ) as mock_kill:
+            result = await Bash("spam", timeout=5, tool_runtime=self._rt())
+
+        assert "输出超出上限已终止" in result
+        mock_kill.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_output_under_limit_not_killed(self):
+        """输出未超阈值时正常返回,不误杀。"""
+        from uniclaw.tools.shell import Bash
+
+        out_stream = AsyncMock()
+        out_stream.read = AsyncMock(side_effect=[b"hello\n", b""])
+        proc = self._proc(stdout=out_stream)
+        with patch(
+            "uniclaw.tools.shell.asyncio.create_subprocess_shell",
+            new_callable=AsyncMock,
+            return_value=proc,
+        ), patch(
+            "uniclaw.tools.shell._kill_proc_tree", new_callable=AsyncMock
+        ) as mock_kill:
+            result = await Bash("echo hello", tool_runtime=self._rt())
+        assert result == "hello"
+        mock_kill.assert_not_awaited()
+
 
 class TestGrepTool:
     """Grep 工具测试。"""
@@ -645,6 +891,116 @@ class TestEverything:
         with patch("uniclaw.tools.shell.asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=proc):
             err = await _check_es()
         assert err == "permission denied"
+
+
+class TestBinarySkipNote:
+    """Grep 二进制跳过提示测试(任务 3)。"""
+
+    def test_is_binary_file_detects_png(self, tmp_path):
+        f = tmp_path / "img.png"
+        f.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00\x01target\x00\x02" + b"\x00" * 16)
+        assert _is_binary_file(f) is True
+
+    def test_is_binary_file_allows_text(self, tmp_path):
+        f = tmp_path / "a.txt"
+        f.write_text("hello\n", encoding="utf-8")
+        assert _is_binary_file(f) is False
+
+    def test_is_binary_file_allows_utf16(self, tmp_path):
+        f = tmp_path / "u16.txt"
+        f.write_text("你好\n", encoding="utf-16")
+        assert _is_binary_file(f) is False
+
+    def test_count_binary_files(self, tmp_path):
+        (tmp_path / "a.txt").write_text("hello\n", encoding="utf-8")
+        (tmp_path / "img.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 32)
+        (tmp_path / "b.jpg").write_bytes(b"\xff\xd8\xff" + b"\x00target\x00" + b"\x00" * 8)
+        binary, total = _count_binary_files(str(tmp_path))
+        assert binary == 2
+        assert total == 3
+
+    def test_count_binary_files_missing_path(self, tmp_path):
+        assert _count_binary_files(str(tmp_path / "nope")) == (0, 0)
+
+    def test_python_grep_notes_skipped_binary(self, tmp_path):
+        """二进制被跳过时必须注明,不能与"确实无匹配"混淆。"""
+        (tmp_path / "a.txt").write_text("no match here\n", encoding="utf-8")
+        (tmp_path / "img.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00target\x00" + b"\x00" * 8)
+        out = _python_grep("target", str(tmp_path))
+        assert "No matches found" in out
+        assert "已跳过 1 个二进制文件" in out
+        assert "全部是二进制" not in out
+
+    def test_python_grep_all_binary_special_note(self, tmp_path):
+        """全部是二进制时单独说明。"""
+        (tmp_path / "img.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00target\x00" + b"\x00" * 8)
+        (tmp_path / "b.jpg").write_bytes(b"\xff\xd8\xff" + b"\x00target\x00" + b"\x00" * 8)
+        out = _python_grep("target", str(tmp_path))
+        assert "全部是二进制文件" in out
+        assert "已跳过 2 个二进制文件" in out
+
+    def test_python_grep_text_match_with_binary_note(self, tmp_path):
+        """文本命中时也追加二进制跳过说明。"""
+        (tmp_path / "a.txt").write_text("hello target\n", encoding="utf-8")
+        (tmp_path / "img.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00target\x00" + b"\x00" * 8)
+        out = _python_grep("target", str(tmp_path))
+        assert "a.txt" in out
+        assert "已跳过 1 个二进制文件" in out
+
+    def test_python_grep_no_binary_no_note(self, tmp_path):
+        """没有二进制时不加多余说明。"""
+        (tmp_path / "a.txt").write_text("hello\n", encoding="utf-8")
+        out = _python_grep("zzz", str(tmp_path))
+        assert out == "No matches found"
+
+    @pytest.mark.asyncio
+    async def test_native_grep_notes_skipped_binary(self, tmp_path):
+        """rg/grep 路径同样要注明二进制跳过。"""
+        (tmp_path / "a.txt").write_text("hello target\n", encoding="utf-8")
+        (tmp_path / "img.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00target\x00" + b"\x00" * 8)
+        with patch("uniclaw.tools.shell._has_native_grep", new_callable=AsyncMock, return_value=True), patch(
+            "uniclaw.tools.shell._has_rg", new_callable=AsyncMock, return_value=True
+        ), patch(
+            "uniclaw.tools.shell.run_command",
+            new_callable=AsyncMock,
+            return_value=RunResult(0, "a.txt:1:hello target\n"),
+        ):
+            result = await Grep("target", str(tmp_path))
+        assert "hello target" in result
+        assert "已跳过 1 个二进制文件" in result
+
+    @pytest.mark.asyncio
+    async def test_native_grep_no_match_with_binary(self, tmp_path):
+        """无文本匹配但有二进制被跳过时,不能只说 No matches found。"""
+        (tmp_path / "a.txt").write_text("no match here\n", encoding="utf-8")
+        (tmp_path / "img.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00target\x00" + b"\x00" * 8)
+        with patch("uniclaw.tools.shell._has_native_grep", new_callable=AsyncMock, return_value=True), patch(
+            "uniclaw.tools.shell._has_rg", new_callable=AsyncMock, return_value=True
+        ), patch(
+            "uniclaw.tools.shell.run_command", new_callable=AsyncMock, return_value=RunResult(1, "")
+        ):
+            result = await Grep("target", str(tmp_path))
+        assert "No matches found" in result
+        assert "已跳过 1 个二进制文件" in result
+
+    @pytest.mark.asyncio
+    async def test_native_grep_binary_hit_lines_folded(self, tmp_path):
+        """grep 的 "Binary file X matches" 归并进说明,不当作文本命中。"""
+        (tmp_path / "a.txt").write_text("hello target\n", encoding="utf-8")
+        with patch("uniclaw.tools.shell._has_native_grep", new_callable=AsyncMock, return_value=True), patch(
+            "uniclaw.tools.shell._has_rg", new_callable=AsyncMock, return_value=False
+        ), patch(
+            "uniclaw.tools.shell.run_command",
+            new_callable=AsyncMock,
+            return_value=RunResult(
+                0,
+                "a.txt:1:hello target\nBinary file ./img.png matches\n",
+            ),
+        ):
+            result = await Grep("target", str(tmp_path))
+        assert "hello target" in result
+        assert "Binary file ./img.png matches" not in result
+        assert "img.png" in result  # 归并到二进制命中说明里
 
 
 class TestGetTools:

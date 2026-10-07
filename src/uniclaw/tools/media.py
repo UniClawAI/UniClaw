@@ -1,10 +1,12 @@
 import asyncio
 import base64
 import binascii
+import json
 import logging
 import mimetypes
 import shutil
 import subprocess
+import urllib.request
 from pathlib import Path
 
 import httpx
@@ -37,6 +39,86 @@ SIZE_LIMITS = {
 }
 
 _ffmpeg_available: bool | None = None
+
+# ── 视觉模型图片预处理 ─────────────────────────────────────────
+# 视觉 API 原生支持 PNG/JPEG/GIF/WebP;BMP/TIFF/ICO 等会被部分后端
+# 解码失败或解成纯黑。调色板(P)/CMYK/16 位(I;16)等非常规像素模式
+# 同样存在解码风险,统一归一化为 8 位 RGB(A)。
+_VISION_NATIVE_FORMATS = frozenset({"PNG", "JPEG", "GIF", "WEBP"})
+_VISION_NATIVE_MODES = frozenset({"RGB", "RGBA", "L", "LA"})
+# 小图阈值: max(宽,高) <= 该值时绝不缩放(缩放/放大都会糊掉细粒度渐变)
+SMALL_IMAGE_MAX_SIDE = 512
+# 大图上限: 仅对需要重编码的超大图等比缩小;标准大图原样透传(行为不回归)
+MAX_IMAGE_SIDE = 2048
+# JPEG 重编码质量(仅在输出 JPEG 时使用);PNG 始终无损
+JPEG_QUALITY = 95
+
+
+def _prepare_image_for_vision(data: bytes) -> tuple[bytes, str]:
+    """归一化图片字节供视觉模型解码,避免小图/非常规格式被解成纯黑。
+
+    规则:
+    - BMP/TIFF/ICO 等视觉 API 不支持的格式 → 无损 PNG
+    - 调色板/CMYK/16 位等非常规像素模式 → 8 位 RGB(A)(不降色/不量化)
+    - 小图(max 边 <= SMALL_IMAGE_MAX_SIDE)保持原尺寸,绝不缩放
+    - 已是标准 PNG/JPEG/GIF/WebP 且模式正常时原样透传(大图/纯色图行为不回归)
+
+    Args:
+        data: 原始图片字节。
+
+    Returns:
+        (bytes, mime_type)。mime_type 为空字符串表示原样透传,
+        调用方按文件扩展名猜 mime。PIL 无法解析时也原样透传。
+    """
+    try:
+        from io import BytesIO
+
+        from PIL import Image
+    except ImportError:
+        return data, ""
+
+    try:
+        img = Image.open(BytesIO(data))
+        img.load()
+    except Exception:
+        # 非 bug: 字节不是 PIL 可解析的图片(测试假数据/损坏文件),原样透传
+        return data, ""
+
+    fmt = (img.format or "").upper()
+    mode = img.mode
+    w, h = img.size
+    needs_convert = fmt not in _VISION_NATIVE_FORMATS or mode not in _VISION_NATIVE_MODES
+    if not needs_convert:
+        # 标准格式+标准模式: 原样透传(大图/纯色图现有行为不回归),不缩放不重编码
+        return data, ""
+    # 小图保持原尺寸(不放大也不缩小),超大图仅在重编码时等比缩小
+    if max(w, h) <= SMALL_IMAGE_MAX_SIDE:
+        needs_resize = False
+    else:
+        needs_resize = max(w, h) > MAX_IMAGE_SIDE
+
+    work = img
+    if needs_resize:
+        scale = MAX_IMAGE_SIDE / max(w, h)
+        new_size = (max(1, round(w * scale)), max(1, round(h * scale)))
+        work = work.resize(new_size, Image.Resampling.LANCZOS)
+
+    # 归一化像素模式: 带透明用 RGBA,其余 RGB。绝不量化/降色。
+    has_alpha = mode in ("RGBA", "LA") or (
+        mode == "P" and "transparency" in img.info
+    )
+    if has_alpha:
+        work = work.convert("RGBA")
+    else:
+        work = work.convert("RGB")
+
+    out = BytesIO()
+    # 输出 JPEG 还是 PNG: 源为 JPEG 且无透明时保持 JPEG(高质量),其余无损 PNG
+    if fmt == "JPEG" and not has_alpha:
+        work.save(out, format="JPEG", quality=JPEG_QUALITY, subsampling=0)
+        return out.getvalue(), "image/jpeg"
+    work.save(out, format="PNG")
+    return out.getvalue(), "image/png"
 
 
 def is_image_file(file_path: str) -> bool:
@@ -74,9 +156,13 @@ def _read_image(p: Path, suffix: str) -> list:
         text = p.read_text(encoding="utf-8")
         blocks.append({"type": "text", "text": text})
     else:
-        mime_type = mimetypes.guess_type(str(p))[0] or "image/png"
         data = p.read_bytes()
-        b64 = base64.b64encode(data).decode("ascii")
+        # 归一化后再送视觉模型: 非常规格式/像素模式统一为 RGB PNG/JPEG,
+        # 小图保持原尺寸不缩放不降色,标准图片原样透传
+        prepared, mime_type = _prepare_image_for_vision(data)
+        if not mime_type:
+            mime_type = mimetypes.guess_type(str(p))[0] or "image/png"
+        b64 = base64.b64encode(prepared).decode("ascii")
         blocks.append(
             {
                 "type": "image_url",
@@ -106,8 +192,6 @@ def _get_media_info(p: Path) -> dict:
             timeout=30,
         )
         if result.returncode == 0:
-            import json
-
             data = json.loads(result.stdout)
             fmt = data.get("format", {})
             streams = data.get("streams", [])
@@ -377,13 +461,9 @@ async def GenerateImage(
         try:
             p.parent.mkdir(parents=True, exist_ok=True)
             if is_url:
-                import urllib.request
-
                 urllib.request.urlretrieve(result, str(p))
             else:
-                import base64 as b64mod
-
-                p.write_bytes(b64mod.b64decode(result))
+                p.write_bytes(base64.b64decode(result))
         except (OSError, binascii.Error) as e:
             # OSError: 建目录/写文件/下载失败;binascii.Error: 远端返回的 base64 非法
             return (

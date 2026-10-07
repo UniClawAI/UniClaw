@@ -443,6 +443,12 @@ def kg_search(
         limit: 最大返回数量,默认 20
         scope: 作用域,"user" 为用户级(跨项目共享),"project" 为项目级(默认)
     """
+    # 前置校验: 空关键词会被当成"列出所有",语义不明,直接拒绝
+    if not keyword or not keyword.strip():
+        return (
+            f"{TOOL_ERROR}: keyword 不能为空(收到: {keyword!r});"
+            f"请提供要搜索的关键词;如需列出全部实体请使用 {kg_list.name}"
+        )
     config = tool_runtime.config
     graph = _get_graph(config, scope)
     try:

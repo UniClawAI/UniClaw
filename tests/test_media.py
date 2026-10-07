@@ -1,17 +1,25 @@
-"""媒体工具测试 — 覆盖 ReadMedia、GenerateImage 和格式检测。"""
+"""媒体工具测试 — 覆盖 ReadMedia、GenerateImage、视觉预处理和格式检测。"""
 
 import base64
+import io
+
 import pytest
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from PIL import Image
+
 from uniclaw.tools import media as media_mod
 from uniclaw.tools.base import ToolRuntime
 from uniclaw.tools.media import (
+    JPEG_QUALITY,
+    MAX_IMAGE_SIDE,
+    SMALL_IMAGE_MAX_SIDE,
     GenerateImage,
     ReadMedia,
     _detect_media_type,
     _is_url,
+    _prepare_image_for_vision,
     _read_audio,
     _read_image,
     _read_media_impl,
@@ -83,6 +91,173 @@ class TestReadImage:
         assert blocks[0]["type"] == "text"
         assert blocks[1]["type"] == "text"
         assert "<circle" in blocks[1]["text"]
+
+    def test_small_gradient_png_kept_intact(self, tmp_path):
+        """小尺寸渐变 PNG 原样透传(不缩放/不重编码)。"""
+        raw = _gradient_png(100, 80)
+        p = tmp_path / "grad.png"
+        p.write_bytes(raw)
+        blocks = _read_image(p, ".png")
+        url = blocks[1]["image_url"]["url"]
+        assert url.startswith("data:image/png;base64,")
+        sent = base64.b64decode(url.split(",", 1)[1])
+        assert sent == raw
+
+    def test_small_gradient_bmp_converted_to_png(self, tmp_path):
+        """小尺寸渐变 BMP 转 PNG,保持原尺寸与色彩。"""
+        raw = _gradient_bytes("BMP", 100, 80)
+        p = tmp_path / "grad.bmp"
+        p.write_bytes(raw)
+        blocks = _read_image(p, ".bmp")
+        url = blocks[1]["image_url"]["url"]
+        assert url.startswith("data:image/png;base64,")
+        img = Image.open(io.BytesIO(base64.b64decode(url.split(",", 1)[1])))
+        assert img.size == (100, 80)
+        _assert_gradient_colors(img)
+
+
+def _gradient_img(w: int, h: int) -> Image.Image:
+    """RGB 渐变: R 随 x 渐变, G 随 y 渐变, B=128。"""
+    import numpy as np
+
+    xs = (np.arange(w) * 255 // max(1, w - 1)).astype(np.uint8)
+    ys = (np.arange(h) * 255 // max(1, h - 1)).astype(np.uint8)
+    arr = np.zeros((h, w, 3), dtype=np.uint8)
+    arr[:, :, 0] = xs[None, :]
+    arr[:, :, 1] = ys[:, None]
+    arr[:, :, 2] = 128
+    return Image.fromarray(arr, "RGB")
+
+
+def _gradient_png(w: int = 100, h: int = 80) -> bytes:
+    """构造 RGB 渐变 PNG 字节。"""
+    buf = io.BytesIO()
+    _gradient_img(w, h).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _gradient_bytes(fmt: str, w: int = 100, h: int = 80) -> bytes:
+    """构造指定格式的渐变图字节。"""
+    buf = io.BytesIO()
+    _gradient_img(w, h).save(buf, format=fmt)
+    return buf.getvalue()
+
+
+def _assert_gradient_colors(img: Image.Image, tol: int = 8, blue: int = 128):
+    """断言渐变采样点色彩接近原图(允许编码误差)。"""
+    w, h = img.size
+    for x, y in ((0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1), (w // 2, h // 2)):
+        expected = (
+            int(x * 255 / (w - 1)),
+            int(y * 255 / (h - 1)),
+            blue,
+        )
+        got = img.convert("RGB").getpixel((x, y))
+        assert all(abs(a - b) <= tol for a, b in zip(got, expected)), (
+            f"({x},{y}) 期望 {expected} 实际 {got}"
+        )
+
+
+class TestPrepareImageForVision:
+    """_prepare_image_for_vision 预处理参数测试。"""
+
+    def test_params(self):
+        """预处理参数: 小图阈值 512 / 大图上限 2048 / JPEG 质量 95。"""
+        assert SMALL_IMAGE_MAX_SIDE == 512
+        assert MAX_IMAGE_SIDE == 2048
+        assert JPEG_QUALITY == 95
+        assert SMALL_IMAGE_MAX_SIDE < MAX_IMAGE_SIDE
+
+    def test_small_png_unchanged(self):
+        """标准 RGB 小图 PNG 原样透传(零改动,大图/纯色图行为不回归)。"""
+        raw = _gradient_png(100, 80)
+        out, mime = _prepare_image_for_vision(raw)
+        assert out == raw
+        assert mime == ""  # 透传,调用方按扩展名猜 mime
+
+    def test_small_jpeg_unchanged(self):
+        raw = _gradient_bytes("JPEG", 100, 80)
+        out, mime = _prepare_image_for_vision(raw)
+        assert out == raw
+        assert mime == ""
+
+    def test_large_png_unchanged(self):
+        """标准大图 PNG 原样透传,不缩放不重编码。"""
+        raw = _gradient_png(MAX_IMAGE_SIDE + 500, 400)
+        out, mime = _prepare_image_for_vision(raw)
+        assert out == raw
+
+    def test_small_bmp_to_png_original_size(self):
+        """小图 BMP 转 PNG: 不缩放(保持 100x80)、不降色。"""
+        raw = _gradient_bytes("BMP", 100, 80)
+        out, mime = _prepare_image_for_vision(raw)
+        assert mime == "image/png"
+        img = Image.open(io.BytesIO(out))
+        assert img.size == (100, 80)  # 小图不缩放
+        _assert_gradient_colors(img)
+
+    def test_small_gradient_not_scaled_and_not_quantized(self):
+        """小图渐变: 尺寸不变,色彩数不降(不量化)。"""
+        raw = _gradient_bytes("BMP", 100, 80)
+        out, _ = _prepare_image_for_vision(raw)
+        img = Image.open(io.BytesIO(out)).convert("RGB")
+        assert img.size == (100, 80)
+        colors = img.getcolors(maxcolors=100000)
+        assert colors is not None and len(colors) > 500, "渐变被量化降色"
+
+    def test_palette_png_converted_to_rgb(self):
+        """调色板(P)模式归一化为 RGB: 不再降色,与调色板展开结果一致。"""
+        src = _gradient_img(100, 80)
+        pal = src.convert("P", palette=Image.ADAPTIVE, colors=256)
+        buf = io.BytesIO()
+        pal.save(buf, format="PNG")
+        out, mime = _prepare_image_for_vision(buf.getvalue())
+        assert mime == "image/png"
+        img = Image.open(io.BytesIO(out))
+        assert img.size == (100, 80)  # 小图不缩放
+        assert img.mode in ("RGB", "RGBA")
+        # 预处理只做模式展开,不额外降色 —— 与 PIL 直接展开调色板一致
+        expected = pal.convert("RGB")
+        assert img.convert("RGB").tobytes() == expected.tobytes()
+
+    def test_cmyk_jpeg_converted_to_rgb(self):
+        """CMYK JPEG 归一化为 RGB JPEG,尺寸不变。"""
+        src = Image.new("CMYK", (100, 80))
+        for x in range(100):
+            for y in range(80):
+                src.putpixel((x, y), (x * 2, y * 2, 100, 0))
+        buf = io.BytesIO()
+        src.save(buf, format="JPEG", quality=95)
+        out, mime = _prepare_image_for_vision(buf.getvalue())
+        assert mime == "image/jpeg"
+        img = Image.open(io.BytesIO(out))
+        assert img.size == (100, 80)
+        assert img.mode == "RGB"
+
+    def test_oversized_bmp_downscaled(self):
+        """超大 BMP(需重编码)等比缩小到 MAX_IMAGE_SIDE 以内。"""
+        w, h = MAX_IMAGE_SIDE * 2, 1000
+        raw = _gradient_bytes("BMP", w, h)
+        out, mime = _prepare_image_for_vision(raw)
+        assert mime == "image/png"
+        img = Image.open(io.BytesIO(out))
+        assert max(img.size) <= MAX_IMAGE_SIDE
+        # 等比: 宽缩到 MAX_IMAGE_SIDE,高按比例
+        assert img.size[0] == MAX_IMAGE_SIDE
+
+    def test_small_image_never_resized_even_when_converted(self):
+        """小图即便需要格式转换也绝不缩放(SMALL_IMAGE_MAX_SIDE 保护)。"""
+        raw = _gradient_bytes("BMP", 60, 40)
+        out, _ = _prepare_image_for_vision(raw)
+        img = Image.open(io.BytesIO(out))
+        assert img.size == (60, 40)
+
+    def test_unparseable_bytes_pass_through(self):
+        """PIL 无法解析的字节原样透传(兼容假数据/损坏文件)。"""
+        data = b"\x89PNG\x0d\x0a\x1a\x0a fake-data"
+        out, mime = _prepare_image_for_vision(data)
+        assert out == data
+        assert mime == ""
 
 
 class TestReadAudioVideo:

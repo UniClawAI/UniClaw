@@ -950,3 +950,32 @@ class TestDockerUnavailableReason:
         assert "note" in result
         assert "插件" in result
         assert "note" in registry.get_all_entries()
+
+
+class TestSearchToolsDocstring:
+    """search_tools docstring 必须写明加载机制,否则 LLM 会把"搜不到"误判为工具缺失。
+
+    断言 description(LLM 实际看到的 schema 描述,由 @tool 从 docstring 生成)
+    与 func.__doc__(原始 docstring)都含关键信息。
+    """
+
+    @staticmethod
+    def _doc() -> str:
+        return (search_tools.description or "") + "\n" + (search_tools.func.__doc__ or "")
+
+    def test_docstring_mentions_search_result_cap(self):
+        """单次搜索约 10 条上限 — 大组工具需拆多次搜索。"""
+        doc = self._doc()
+        assert "10" in doc
+
+    def test_docstring_mentions_lru_eviction(self):
+        """扩展工具池 LRU 淘汰 — 跨轮可能要重搜。"""
+        doc = self._doc()
+        assert "LRU" in doc
+        assert "淘汰" in doc
+
+    def test_docstring_mentions_not_found_is_not_missing(self):
+        """搜不到 ≠ 不存在,大组工具未加载时直接调用会报未启用/未加载。"""
+        doc = self._doc()
+        assert "搜不到" in doc
+        assert "不存在" in doc

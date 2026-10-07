@@ -114,6 +114,69 @@ def test_read_utf16_text_allowed(tmp_path):
     assert "你好" in result or "world" in result
 
 
+def test_read_offset_out_of_range(tmp_path):
+    """offset 超界必须报明确信息,不能伪装成空文件(任务 4 回归)。"""
+    f = tmp_path / "big.txt"
+    f.write_text("".join(f"line{i}\n" for i in range(1, 60001)), encoding="utf-8")
+    result = Read.func(file_path=str(f), offset=200000)
+    assert "(空文件)" not in result
+    assert "offset=200000" in result
+    assert "超出文件范围" in result
+    assert "60000" in result  # 写明真实行数
+
+
+def test_read_offset_at_exact_end(tmp_path):
+    """offset 正好等于行数也算超界。"""
+    f = tmp_path / "lines.txt"
+    f.write_text("a\nb\nc\n", encoding="utf-8")
+    result = Read.func(file_path=str(f), offset=3)
+    assert "offset=3" in result
+    assert "共 3 行" in result
+
+
+def test_read_empty_file_still_empty(tmp_path):
+    """真真空文件仍返回 (空文件),不被超界逻辑误伤。"""
+    f = tmp_path / "empty.txt"
+    f.write_text("", encoding="utf-8")
+    result = Read.func(file_path=str(f))
+    assert result == "(空文件)"
+
+
+def test_read_negative_offset_rejected(tmp_path):
+    """负 offset 拒绝(否则会从文件尾往前切,语义混乱)。"""
+    f = tmp_path / "a.txt"
+    f.write_text("a\nb\n", encoding="utf-8")
+    result = Read.func(file_path=str(f), offset=-1)
+    assert "offset 不能为负数" in result
+
+
+def test_read_limit_exceeds_remaining_notes_eof(tmp_path):
+    """limit 超过剩余行数时注明已达末尾(任务 5 回归)。"""
+    f = tmp_path / "lines.txt"
+    f.write_text("a\nb\nc\nd\ne\n", encoding="utf-8")
+    result = Read.func(file_path=str(f), offset=3, limit=100)
+    assert "d" in result and "e" in result
+    assert "已达文件末尾" in result
+    assert "仅剩 2 行" in result
+
+
+def test_read_limit_exact_remaining_no_eof_note(tmp_path):
+    """limit 恰好等于剩余行数时不加多余提示。"""
+    f = tmp_path / "lines.txt"
+    f.write_text("a\nb\nc\n", encoding="utf-8")
+    result = Read.func(file_path=str(f), offset=1, limit=2)
+    assert "已达文件末尾" not in result
+    assert "b" in result and "c" in result
+
+
+def test_read_limit_fits_no_eof_note(tmp_path):
+    """limit 小于剩余行数时不加提示。"""
+    f = tmp_path / "lines.txt"
+    f.write_text("a\nb\nc\nd\ne\n", encoding="utf-8")
+    result = Read.func(file_path=str(f), offset=0, limit=2)
+    assert "已达文件末尾" not in result
+
+
 # ── Write tool ────────────────────────────────────────────
 
 
@@ -225,6 +288,79 @@ def test_glob_sorted(tmp_path):
 def test_glob_empty_dir(tmp_path):
     result = Glob.func(pattern="*", path=str(tmp_path))
     assert "未找到" in result
+
+
+def test_glob_truncation_not_silent(tmp_path):
+    """超过 500 条必须标注截断(任务 2 回归): 不能静默只给 500 条。"""
+    from uniclaw.tools.fs import GLOB_MAX_RESULTS
+
+    for i in range(GLOB_MAX_RESULTS + 30):
+        (tmp_path / f"f{i:04d}.txt").write_text("x", encoding="utf-8")
+    result = Glob.func(pattern="*.txt", path=str(tmp_path))
+    lines = result.strip().split("\n")
+    body_lines = [l for l in lines if l.startswith(str(tmp_path))]
+    assert len(body_lines) == GLOB_MAX_RESULTS
+    assert "已截断" in result
+    assert f"共匹配 {GLOB_MAX_RESULTS + 30} 条" in result
+    assert f"仅显示前 {GLOB_MAX_RESULTS} 条" in result
+    assert "收窄 pattern" in result
+
+
+def test_glob_exactly_max_no_truncation_note(tmp_path):
+    """恰好 500 条时不加截断提示。"""
+    from uniclaw.tools.fs import GLOB_MAX_RESULTS
+
+    for i in range(GLOB_MAX_RESULTS):
+        (tmp_path / f"f{i:04d}.txt").write_text("x", encoding="utf-8")
+    result = Glob.func(pattern="*.txt", path=str(tmp_path))
+    assert "已截断" not in result
+    assert len(result.strip().split("\n")) == GLOB_MAX_RESULTS
+
+
+# ── ConvertToMarkdown 格式清单一致性(任务 6) ──
+
+
+def test_convert_docstring_lists_all_supported_formats():
+    """docstring(LM schema)必须列出全部 13 种格式,与 _DOCUMENT_FORMATS 一致。
+
+    漏列 .doc/.xls/.ppt 会让 LLM 误判"不支持"而放弃转换。
+    """
+    import re
+
+    from uniclaw.tools.fs import ConvertToMarkdown, _DOCUMENT_FORMATS
+
+    doc = ConvertToMarkdown.func.__doc__
+    assert doc
+    assert len(_DOCUMENT_FORMATS) == 13
+    for ext in _DOCUMENT_FORMATS:
+        name = ext.lstrip(".").upper()
+        # 边界匹配: DOC 不能只靠 DOCX 命中
+        assert re.search(rf"(?<![A-Z]){name}(?![A-Z])", doc), f"docstring 缺少 {name}"
+
+
+def test_convert_error_message_shares_format_list(tmp_path):
+    """报错文案与 _DOCUMENT_FORMATS 共用,不再两处各写一份。"""
+    import asyncio as aio
+
+    from uniclaw.tools.fs import ConvertToMarkdown, _DOCUMENT_FORMATS
+    from uniclaw.tools.base import ToolRuntime
+    from unittest.mock import MagicMock
+
+    config = MagicMock()
+    config.multimodal_model_name = []
+    rt = ToolRuntime(config=config)
+    bad = tmp_path / "x.unsupported"
+    bad.write_text("x", encoding="utf-8")
+
+    async def run():
+        return await ConvertToMarkdown(
+            file_path=str(bad), output_path="", tool_runtime=rt
+        )
+
+    result = aio.run(run())
+    assert "不支持的格式" in result
+    for ext in _DOCUMENT_FORMATS:
+        assert ext in result, f"报错文案缺少 {ext}"
 
 
 # ── _allocate_md_output / _cleanup_placeholder (Bug #5 回归) ──

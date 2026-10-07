@@ -10,6 +10,7 @@ import asyncio
 import base64
 import binascii
 import logging
+import re
 from fnmatch import fnmatch
 from pathlib import Path
 from typing import Optional
@@ -43,6 +44,200 @@ _SELECTOR_TIMEOUT_MS = 5000
 
 # 页面导航超时(毫秒): 要等 DOMContentLoaded, 比元素查找宽裕
 _NAVIGATE_TIMEOUT_MS = 30000
+
+# 元素操作超时的通用建议(与分类提示拼在同一条里, 不单独成段)
+_TIMEOUT_WAIT_ADVICE = (
+    "无头模式下动态渲染的元素可能需要 browser_wait 等待出现后再操作"
+)
+
+# Playwright 异常文本 → 真实原因提示(按顺序匹配, 命中即止)。
+# 这些原因靠 browser_wait 解决不了(disabled 不会自己启用、选项值不会自己
+# 冒出来), 所以命中时**不**再附等待建议 —— 一律建议等待正是此前的误导点。
+# 匹配用小写子串, 对应 Playwright call log 的真实措辞:
+#   "element is not enabled" / "option being selected is not enabled"
+#   "did not find some options" / "Element is not a <select> element"
+#   "element is not visible" / "Element is not attached to the DOM"
+_TIMEOUT_REASON_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
+    (
+        ("not enabled", "disabled"),
+        "元素处于 disabled 状态,等待无效;需先启用该元素",
+    ),
+    (
+        ("did not find some options", "no such option"),
+        "选项值不匹配,请先用 get_text/get_html 核对可选值",
+    ),
+    (
+        ("not a <select>", "not a select"),
+        "目标不是下拉框",
+    ),
+    (
+        ("not visible", "hidden"),
+        "元素不可见(可能被遮挡或隐藏)",
+    ),
+    (
+        ("not attached", "detached"),
+        "元素已从 DOM 移除",
+    ),
+)
+
+
+def _timeout_reason_hint(error_text: str) -> Optional[str]:
+    """按 Playwright 异常文本匹配真实原因;无匹配返回 None。
+
+    匹配前先剔除引号内的选择器/属性值 —— 否则 `#disabled-btn`、`class="hidden"`
+    这类名字会把「元素不存在」误判成 disabled/hidden。
+    """
+    text = (error_text or "").lower()
+    if not text:
+        return None
+    text = re.sub(r'"[^"]*"|\'[^\']*\'', " ", text)
+    for needles, hint in _TIMEOUT_REASON_RULES:
+        if any(n in text for n in needles):
+            return hint
+    return None
+
+
+async def _select_options_hint(locator) -> str:
+    """列出下拉框的全部可选值,供选项不匹配时自纠。best-effort,绝不抛。"""
+    try:
+        texts = await locator.locator("option").all_text_contents()
+    except Exception:
+        return ""
+    if not isinstance(texts, list):
+        return ""
+    cleaned = [t.strip() for t in texts if isinstance(t, str) and t.strip()]
+    if not cleaned:
+        return "可选值: (该下拉框没有 option 子项)"
+    shown = cleaned[:50]
+    listing = ", ".join(repr(t) for t in shown)
+    if len(cleaned) > len(shown):
+        listing += f", ...(共 {len(cleaned)} 项)"
+    return f"可选值({len(cleaned)} 项): {listing}"
+
+
+async def _iframe_hint(page) -> str:
+    """元素找不到时顺带探测页面 iframe, 说清「目标可能在 frame 里」。
+
+    本工具的 CSS/XPath 定位只查主文档、不跨 frame —— 目标在 iframe 里时
+    报「元素不存在」极易误导。探测 best-effort, 绝不抛(同 _timeout_hint)。
+    """
+    if page is None:
+        return ""
+    try:
+        # page.frames 含主文档自身, 减 1 即子 frame 数(含嵌套)
+        n = len(page.frames) - 1
+    except Exception:
+        return ""
+    if n <= 0:
+        return ""
+    return (
+        f"页面含 {n} 个 iframe,目标元素可能在其中;"
+        f"当前工具不自动跨 frame 查找,请用 frame_selector=\"<iframe 选择器>\" "
+        f"在 frame 内定位操作,或用 browser_evaluate 切换/在 frame 内操作。"
+    )
+
+
+def _format_iframe_note(iframes: list) -> str:
+    """把 _list_iframes 的结果渲染成边界说明(selector/src)。"""
+    lines = [
+        f"页面含 {len(iframes)} 个 iframe(元素列表只覆盖主文档,"
+        f"frame 内元素不在其中;操作 frame 内元素请用 frame_selector 或 browser_evaluate):"
+    ]
+    for item in iframes:
+        sel = item.get("selector") or "iframe"
+        src = item.get("src") or "(无 src / about:blank)"
+        lines.append(f"  - {sel}  src={src}")
+    return "\n".join(lines)
+
+
+async def _timeout_hint(locator, error_text: str = "") -> str:
+    """元素操作超时后的分类提示: 先看异常文本里的真实原因, 再做三态探测。
+
+    两级判定:
+    1. Playwright 异常文本(含 call log)命中已知原因(disabled / 选项值不匹配 /
+       不是 select / 不可见 / 已脱离 DOM)→ 直接给该原因的自纠建议, **不再**
+       建议 browser_wait —— 等待对这些原因无效。
+    2. 无命中 → 探测元素是否在 DOM 中, 区分「元素不存在」与「元素存在但未就绪
+       (被遮挡/未渲染完)」—— 两者排查方向相反: 前者是选择器写错/页面不对(还要
+       顺带看 iframe), 后者要等渲染或滚出遮挡。
+
+    Playwright 原始错误(含 call log)由调用方原样保留, 本函数只产出补充提示。
+    探测本身绝不抛: 元素已消失、页面正跳转时 count() 也可能抛,
+    这里连非预期异常一并兜住(与工具主逻辑的异常约定相反 ——
+    这是 best-effort 增强, 不能让它掩盖原始超时错误)。
+    """
+    reason = _timeout_reason_hint(error_text)
+    if reason is not None:
+        return reason
+
+    exists: Optional[bool]
+    try:
+        exists = await locator.count() > 0
+    except Exception:
+        exists = None
+
+    if exists is True:
+        return f"元素存在但未就绪(可能被遮挡/未渲染完)。{_TIMEOUT_WAIT_ADVICE}"
+    if exists is False:
+        page = getattr(locator, "page", None)
+        iframe_note = await _iframe_hint(page)
+        if iframe_note:
+            return f"元素不存在(选择器未匹配到任何节点)。{iframe_note}"
+        return f"元素不存在(选择器未匹配到任何节点)。{_TIMEOUT_WAIT_ADVICE}"
+    return f"无法确认元素是否存在(探测失败)。{_TIMEOUT_WAIT_ADVICE}"
+
+# 导航类操作的并发提示(ERR_ABORTED 等引擎错误的可自纠建议)
+_NAV_CONCURRENCY_HINT = (
+    "可能是并发导航导致,请串行调用 browser_back/forward/navigate"
+)
+
+
+def _nav_err(action: str, e) -> str:
+    """导航类操作报错: 原始引擎错误 + 并发导航提示(ERR_ABORTED 时)。
+
+    Playwright 的 net::ERR_ABORTED / frame was detached 多半是多个导航
+    互相打断,只丢引擎原文调用方无法自纠,要说明根因与规避方式。
+    """
+    msg = f"{TOOL_ERROR}: {action}: {e}"
+    err = str(e)
+    if "ERR_ABORTED" in err or "frame was detached" in err:
+        msg += f"\n提示: {_NAV_CONCURRENCY_HINT}"
+    return msg
+
+
+def _reject_empty_selector(
+    value: Optional[str],
+    name: str = "selector",
+    *,
+    omit_hint: Optional[str] = None,
+) -> Optional[str]:
+    """空串选择器是参数错误,不是"查整页/当前焦点"。合法时返回 None。
+
+    None/未传不在此拦 —— 各工具有各自的省略语义(get_text 取整页、screenshot
+    截整页、insert_text 写当前焦点等)。空串必须拒绝: 调用方以为查的是某个
+    元素,静默退化成整页/焦点会拿错数据还以为拿到了。
+
+    Args:
+        value: 收到的选择器(None 表示未传)。
+        name: 参数名(selector/frame_selector/source/target),报错用。
+        omit_hint: 该参数可省略时的省略说明;必填参数不传,给通用提示。
+    """
+    if value != "":
+        return None
+    hint = omit_hint or "请传 CSS 选择器或 XPath 表达式"
+    return f"{TOOL_ERROR}: {name} 不能为空串;{hint}"
+
+
+def _reject_bad_timeout(timeout) -> Optional[str]:
+    """timeout 必须是正整数(毫秒)。合法时返回 None。
+
+    负数/0 透传给 Playwright 会报 "Timeout -5ms exceeded",失败提示还会被
+    _timeout_hint 分类成"元素存在但未就绪"等,与真实原因(参数非法)完全不符。
+    """
+    if isinstance(timeout, bool) or not isinstance(timeout, int) or timeout <= 0:
+        return f"{TOOL_ERROR}: timeout 必须为正整数(毫秒),收到: {timeout}"
+    return None
+
 
 # 延迟导入 playwright,避免启动时加载 greenlet DLL
 _async_playwright = None
@@ -119,6 +314,12 @@ class WebBrowser:
         self._next_id = 1
         self._connected_cdp = False  # 是否通过 CDP 连接外部浏览器
         self._cdp_url: Optional[str] = None
+        # 导航状态锁: 会改动导航/历史游标的操作(back/forward/navigate/reload/
+        # switch_page)必须串行 —— 并发 go_back 会相互打断(Playwright 报
+        # ERR_ABORTED), 且 "导航 + 读 URL + 更新 _hist_*" 交错后游标与真实位置
+        # 脱节。整实例一把即可: 导航操作频率低, 而 switch_page 改的
+        # _active_page_id 影响所有操作的 pid 解析, 每页锁盖不住这块共享状态。
+        self._nav_lock = asyncio.Lock()
 
     @property
     def is_running(self) -> bool:
@@ -379,14 +580,15 @@ class WebBrowser:
         Returns:
             操作结果消息。
         """
-        self._ensure_running()
-        if page_id not in self._pages:
-            return f"{TOOL_ERROR}: 页面 {page_id} 不存在"
+        async with self._nav_lock:
+            self._ensure_running()
+            if page_id not in self._pages:
+                return f"{TOOL_ERROR}: 页面 {page_id} 不存在"
 
-        self._active_page_id = page_id
-        page = self._pages[page_id]
-        title = await page.title()
-        return f"已切换到页面 {page_id},标题: {title}"
+            self._active_page_id = page_id
+            page = self._pages[page_id]
+            title = await page.title()
+            return f"已切换到页面 {page_id},标题: {title}"
 
     async def list_pages(self) -> str:
         """列出所有页面。
@@ -413,34 +615,46 @@ class WebBrowser:
 
     async def navigate(self, url: str, page_id: Optional[int] = None) -> str:
         """导航到指定 URL。"""
-        page = self._get_page(page_id)
-        try:
-            response = await page.goto(
-                url, wait_until="domcontentloaded", timeout=_NAVIGATE_TIMEOUT_MS
-            )
-            title = await page.title()
-            status = response.status if response else "未知"
-            pid = page_id or self._active_page_id
-            # 记落地 URL 而非请求 URL —— 重定向/规范化后两者不一致
-            self._hist_push(pid, page.url or url)
-            return f"已导航到: {url}\n页面标题: {title}\n状态码: {status}"
-        except (PlaywrightError, PlaywrightTimeoutError) as e:
-            return f"{TOOL_ERROR}: 导航到 {url} 失败 (timeout=30000ms): {e}"
+        async with self._nav_lock:
+            page = self._get_page(page_id)
+            pid = page_id if page_id is not None else self._active_page_id
+            try:
+                response = await page.goto(
+                    url, wait_until="domcontentloaded", timeout=_NAVIGATE_TIMEOUT_MS
+                )
+                title = await page.title()
+                status = response.status if response else "未知"
+                # 记落地 URL 而非请求 URL —— 重定向/规范化后两者不一致
+                self._hist_push(pid, page.url or url)
+                return f"已导航到: {url}\n页面标题: {title}\n状态码: {status}"
+            except (PlaywrightError, PlaywrightTimeoutError) as e:
+                return _nav_err(f"导航到 {url} 失败 (timeout=30000ms)", e)
 
     async def click(
         self,
         selector: str,
         timeout: int = _SELECTOR_TIMEOUT_MS,
         page_id: Optional[int] = None,
+        frame_selector: Optional[str] = None,
     ) -> str:
         """点击页面元素。"""
+        if bad := _reject_empty_selector(selector):
+            return bad
+        if bad := _reject_empty_selector(
+            frame_selector, "frame_selector", omit_hint="不跨 frame 时请省略该参数"
+        ):
+            return bad
+        if bad := _reject_bad_timeout(timeout):
+            return bad
         page = self._get_page(page_id)
         try:
-            locator = self._get_locator(page, selector)
+            locator = self._get_locator(page, selector, frame_selector)
             await locator.click(timeout=timeout)
             return f"已点击元素: {selector}"
         except (PlaywrightError, PlaywrightTimeoutError) as e:
-            return self._sel_err("点击元素", selector, e, timeout=timeout)
+            return await self._sel_err(
+                "点击元素", selector, e, locator=locator, timeout=timeout
+            )
 
     async def type_text(
         self,
@@ -449,17 +663,33 @@ class WebBrowser:
         clear: bool = True,
         timeout: int = _SELECTOR_TIMEOUT_MS,
         page_id: Optional[int] = None,
+        frame_selector: Optional[str] = None,
     ) -> str:
         """在指定元素中输入文本。"""
+        if bad := _reject_empty_selector(selector):
+            return bad
+        if bad := _reject_empty_selector(
+            frame_selector, "frame_selector", omit_hint="不跨 frame 时请省略该参数"
+        ):
+            return bad
+        if bad := _reject_bad_timeout(timeout):
+            return bad
         page = self._get_page(page_id)
         try:
-            locator = self._get_locator(page, selector)
+            locator = self._get_locator(page, selector, frame_selector)
             if clear:
                 await locator.fill("", timeout=timeout)
             await locator.fill(text, timeout=timeout)
             return f"已在元素 {selector} 中输入文本"
         except (PlaywrightError, PlaywrightTimeoutError) as e:
-            return self._sel_err("在元素中输入文本", selector, e, timeout=timeout, clear=clear)
+            return await self._sel_err(
+                "在元素中输入文本",
+                selector,
+                e,
+                locator=locator,
+                timeout=timeout,
+                clear=clear,
+            )
 
     async def screenshot(
         self,
@@ -469,6 +699,10 @@ class WebBrowser:
         page_id: Optional[int] = None,
     ) -> list | str:
         """截取页面或指定元素的截图。"""
+        if bad := _reject_empty_selector(
+            selector, omit_hint="要截取整页请省略该参数"
+        ):
+            return bad
         page = self._get_page(page_id)
         try:
             if selector:
@@ -542,13 +776,24 @@ class WebBrowser:
         ]
 
     async def get_text(
-        self, selector: Optional[str] = None, page_id: Optional[int] = None
+        self,
+        selector: Optional[str] = None,
+        page_id: Optional[int] = None,
+        frame_selector: Optional[str] = None,
     ) -> str:
         """获取页面或指定元素的文本内容。"""
+        if bad := _reject_empty_selector(
+            selector, omit_hint="要取整页文本请省略该参数"
+        ):
+            return bad
+        if bad := _reject_empty_selector(
+            frame_selector, "frame_selector", omit_hint="不跨 frame 时请省略该参数"
+        ):
+            return bad
         page = self._get_page(page_id)
         try:
             if selector:
-                locator = self._get_locator(page, selector)
+                locator = self._get_locator(page, selector, frame_selector)
                 text = await locator.inner_text(timeout=_SELECTOR_TIMEOUT_MS)
             else:
                 text = await page.inner_text("body")
@@ -556,16 +801,30 @@ class WebBrowser:
                 return text[:5000] + f"\n\n...已省略 {len(text) - 5000} 个字符"
             return text
         except (PlaywrightError, PlaywrightTimeoutError) as e:
-            return self._sel_err("获取文本", selector, e, timeout=_SELECTOR_TIMEOUT_MS)
+            loc = self._get_locator(page, selector, frame_selector) if selector else None
+            return await self._sel_err(
+                "获取文本", selector, e, locator=loc, timeout=_SELECTOR_TIMEOUT_MS
+            )
 
     async def get_html(
-        self, selector: Optional[str] = None, page_id: Optional[int] = None
+        self,
+        selector: Optional[str] = None,
+        page_id: Optional[int] = None,
+        frame_selector: Optional[str] = None,
     ) -> str:
         """获取页面或指定元素的 HTML 内容。"""
+        if bad := _reject_empty_selector(
+            selector, omit_hint="要取整页 HTML 请省略该参数"
+        ):
+            return bad
+        if bad := _reject_empty_selector(
+            frame_selector, "frame_selector", omit_hint="不跨 frame 时请省略该参数"
+        ):
+            return bad
         page = self._get_page(page_id)
         try:
             if selector:
-                locator = self._get_locator(page, selector)
+                locator = self._get_locator(page, selector, frame_selector)
                 html = await locator.inner_html(timeout=_SELECTOR_TIMEOUT_MS)
             else:
                 html = await page.content()
@@ -573,21 +832,34 @@ class WebBrowser:
                 return html[:5000] + f"\n\n...已省略 {len(html) - 5000} 个字符"
             return html
         except (PlaywrightError, PlaywrightTimeoutError) as e:
-            return self._sel_err("获取 HTML", selector, e, timeout=_SELECTOR_TIMEOUT_MS)
+            loc = self._get_locator(page, selector, frame_selector) if selector else None
+            return await self._sel_err(
+                "获取 HTML", selector, e, locator=loc, timeout=_SELECTOR_TIMEOUT_MS
+            )
 
     async def get_attribute(
-        self, selector: str, attribute: str, page_id: Optional[int] = None
+        self,
+        selector: str,
+        attribute: str,
+        page_id: Optional[int] = None,
+        frame_selector: Optional[str] = None,
     ) -> str:
         """获取指定元素的属性值。"""
+        if bad := _reject_empty_selector(selector):
+            return bad
+        if bad := _reject_empty_selector(
+            frame_selector, "frame_selector", omit_hint="不跨 frame 时请省略该参数"
+        ):
+            return bad
         page = self._get_page(page_id)
         try:
-            locator = self._get_locator(page, selector)
+            locator = self._get_locator(page, selector, frame_selector)
             value = await locator.get_attribute(attribute, timeout=_SELECTOR_TIMEOUT_MS)
             return value if value else f"元素 {selector} 没有属性 {attribute}"
         except (PlaywrightError, PlaywrightTimeoutError) as e:
-            return self._sel_err(
+            return await self._sel_err(
                 "获取元素属性", selector, e,
-                timeout=_SELECTOR_TIMEOUT_MS, attribute=attribute,
+                locator=locator, timeout=_SELECTOR_TIMEOUT_MS, attribute=attribute,
             )
 
     async def get_interactive_elements(
@@ -610,6 +882,10 @@ class WebBrowser:
             depth: 限制 DOM 遍历深度。
             scope: 限定 CSS 选择器范围(如 "#main", ".sidebar")。
         """
+        if bad := _reject_empty_selector(
+            scope, "scope", omit_hint="要查整页请省略该参数"
+        ):
+            return bad
         page = self._get_page(page_id)
         # 构建选择器列表
         base_selectors = [
@@ -630,6 +906,11 @@ class WebBrowser:
 
         # 范围元素的 CSS 选择器(用于 JS 中 querySelector)
         scope_selector = scope if scope else None
+
+        # 先探测 iframe 边界(要在主 evaluate 之前 —— 共用 page.evaluate,
+        # 顺序反过来会把测试里 inspect call_args 的断言指到 iframe 探测脚本上)。
+        # 检测失败就安静跳过, 不影响主功能。
+        iframes = await self._list_iframes(page)
 
         try:
             elements = await page.evaluate(
@@ -665,19 +946,70 @@ class WebBrowser:
                         return depth;
                     }
 
+                    function matchCount(sel) {
+                        // 统计 sel 在整份文档里命中几个节点; 非法选择器返回 -1。
+                        // 用 querySelectorAll 而非 Playwright locator.count():
+                        // 同一次 evaluate 内完成, 省一轮往返, 且本函数只产出 CSS。
+                        try {
+                            return document.querySelectorAll(sel).length;
+                        } catch (e) {
+                            return -1;
+                        }
+                    }
+
                     function makeSelector(el) {
+                        // 按可靠性顺序试候选, 只接受「唯一」的选择器。
+                        // 找不到唯一 CSS 时宁可标注"匹配 N 个"+ nth 也不瞎编
+                        // 脆弱的 nth-child 长路径 —— 标注清楚比给个错的选择器好。
                         const tag = el.tagName.toLowerCase();
                         const id = el.id;
-                        const name = el.getAttribute('name');
                         const cls = el.className;
-                        if (id) return '#' + CSS.escape(id);
-                        if (name) return tag + '[name="' + name + '"]';
+                        const candidates = [];
+                        if (id) candidates.push('#' + CSS.escape(id));
+
+                        // 稳定的标识属性: 有值就试, 但同样要过唯一性校验
+                        for (const attr of ['data-testid', 'data-test', 'data-cy',
+                                            'aria-label', 'placeholder', 'title', 'name']) {
+                            const v = el.getAttribute(attr);
+                            if (v) {
+                                const escaped = String(v)
+                                    .replace(/\\\\/g, '\\\\\\\\')
+                                    .replace(/"/g, '\\\\"');
+                                candidates.push(tag + '[' + attr + '="' + escaped + '"]');
+                            }
+                        }
                         if (cls && typeof cls === 'string') {
                             const classes = cls.split(/\\s+/).filter(c => c).slice(0, 2);
                             if (classes.length)
-                                return tag + '.' + classes.map(c => CSS.escape(c)).join('.');
+                                candidates.push(tag + '.' + classes.map(c => CSS.escape(c)).join('.'));
                         }
-                        return tag;
+                        candidates.push(tag);
+
+                        for (const sel of candidates) {
+                            if (matchCount(sel) === 1) {
+                                return { selector: sel, unique: true, matchCount: 1, nth: -1 };
+                            }
+                        }
+
+                        // 无唯一选择器: 取第一个能匹配 el 的候选作推荐(最具体的优先),
+                        // 并记录它在全档匹配集中的下标, 供调用方 nth() 二次定位
+                        let base = tag;
+                        for (const sel of candidates) {
+                            try {
+                                if (el.matches(sel)) {
+                                    base = sel;
+                                    break;
+                                }
+                            } catch (e) {}
+                        }
+                        let nth = -1;
+                        const n = matchCount(base);
+                        try {
+                            if (n > 0) {
+                                nth = Array.from(document.querySelectorAll(base)).indexOf(el);
+                            }
+                        } catch (e) {}
+                        return { selector: base, unique: false, matchCount: n, nth: nth };
                     }
 
                     for (const el of allElements) {
@@ -698,6 +1030,7 @@ class WebBrowser:
                         const text = el.textContent?.trim().substring(0, 100) || '';
                         const role = el.getAttribute('role') || '';
                         const ariaLabel = el.getAttribute('aria-label') || '';
+                        const selInfo = makeSelector(el);
 
                         result.push({
                             index: index++,
@@ -706,7 +1039,10 @@ class WebBrowser:
                             placeholder,
                             href: href.substring(0, 100),
                             role, ariaLabel,
-                            selector: makeSelector(el),
+                            selector: selInfo.selector,
+                            selectorUnique: selInfo.unique,
+                            selectorMatchCount: selInfo.matchCount,
+                            selectorNth: selInfo.nth,
                             rect: {
                                 x: Math.round(rect.x),
                                 y: Math.round(rect.y),
@@ -730,8 +1066,14 @@ class WebBrowser:
                 f"include_cursor_interactive={include_cursor_interactive}, compact={compact}): {e}"
             )
 
+        # 同一趟再列 iframe 边界: 元素列表只含主文档, 不说清这点调用方会以为
+        # "页面上没有这个按钮"。
+
         if not elements:
-            return "页面上没有找到可交互元素"
+            msg = "页面上没有找到可交互元素"
+            if iframes:
+                msg += "。" + _format_iframe_note(iframes)
+            return msg
 
         # compact 模式: 仅保留有文本/id/role 的元素
         if compact:
@@ -741,7 +1083,10 @@ class WebBrowser:
                 if el.get("text") or el.get("id") or el.get("role")
             ]
             if not elements:
-                return "compact 模式下没有找到有文本内容的可交互元素"
+                msg = "compact 模式下没有找到有文本内容的可交互元素"
+                if iframes:
+                    msg += "。" + _format_iframe_note(iframes)
+                return msg
 
         # 格式化输出 — 不在此捕获:el['index'] 等 KeyError 属 JS 返回结构异常,是 bug,应外抛
         lines = [f"找到 {len(elements)} 个可交互元素:\n"]
@@ -763,16 +1108,61 @@ class WebBrowser:
                 parts.append(f"role={el['role']}")
             if el["ariaLabel"]:
                 parts.append(f"aria=\"{el['ariaLabel']}\"")
-            parts.append(f"selector={el['selector']}")
+            sel = el["selector"]
+            if el["selectorUnique"]:
+                parts.append(f"selector={sel}")
+            else:
+                n = el["selectorMatchCount"]
+                nth = el["selectorNth"]
+                if n > 1:
+                    nth_part = f", nth={nth}" if nth >= 0 else ""
+                    parts.append(
+                        f"selector={sel}"
+                        f"(该选择器匹配 {n} 个元素{nth_part}, 请配合 nth()/文本二次定位)"
+                    )
+                else:
+                    parts.append(f"selector={sel}")
             parts.append(
                 f"pos=({el['rect']['x']},{el['rect']['y']}) {el['rect']['width']}x{el['rect']['height']}"
             )
             lines.append(" | ".join(parts))
 
         result = "\n".join(lines)
+        if iframes:
+            result += "\n\n" + _format_iframe_note(iframes)
         if len(result) > 50000:
             return result[:50000] + f"\n\n...已省略 {len(result) - 50000} 个字符"
         return result
+
+    async def _list_iframes(self, page) -> list:
+        """列出页面主文档里的 iframe(selector/src),供标注查找边界。
+
+        只看主文档一层 DOM(含嵌套 iframe 元素本身),不做递归进 frame。
+        best-effort: 探测失败返回空列表,不影响主功能。
+        """
+        try:
+            raw = await page.evaluate(
+                """
+                () => Array.from(document.querySelectorAll('iframe')).map((f, i) => {
+                    const id = f.id || '';
+                    const name = f.getAttribute('name') || '';
+                    const src = f.getAttribute('src') || '';
+                    let selector = 'iframe';
+                    if (id) selector = '#' + CSS.escape(id);
+                    else if (name) selector = 'iframe[name="' + name + '"]';
+                    else selector = 'iframe:nth-of-type(' + (i + 1) + ')';
+                    return { selector, src, id, name };
+                })
+                """
+            )
+        except (PlaywrightError, PlaywrightTimeoutError) as e:
+            logger.debug("列出 iframe 失败: %s", e)
+            return []
+        if not isinstance(raw, list):
+            return []
+        # 只认探测脚本产出的形状(必含 src 键) —— 测试 mock 的 page.evaluate
+        # 会返回元素列表, 不能误当成 iframe 清单
+        return [x for x in raw if isinstance(x, dict) and "src" in x]
 
     async def wait_for(
         self,
@@ -802,6 +1192,12 @@ class WebBrowser:
             js_condition: 等待 JavaScript 表达式返回 truthy 值。
             poll_interval: 文本/URL/JS 轮询间隔(秒),默认 0.5。
         """
+        if bad := _reject_empty_selector(
+            selector, omit_hint="不查元素时请省略该参数"
+        ):
+            return bad
+        if bad := _reject_bad_timeout(timeout):
+            return bad
         page = self._get_page(page_id)
 
         try:
@@ -913,76 +1309,92 @@ class WebBrowser:
 
     async def back(self, page_id: Optional[int] = None) -> str:
         """浏览器后退。"""
-        page = self._get_page(page_id)
-        try:
-            before = page.url
-            await page.go_back()
-            # 无历史可退时 go_back 是静默 no-op —— 必须比对 URL,
-            # 否则会返回"已后退,当前页面: <原标题>",误导调用方
-            if page.url == before:
-                return (
-                    f"{TOOL_ERROR}: 无法后退 —— 已是历史起点,当前无更早记录"
-                    f"(页面 {before})"
+        async with self._nav_lock:
+            page = self._get_page(page_id)
+            pid = page_id if page_id is not None else self._active_page_id
+            try:
+                before = page.url
+                hist_len = await page.evaluate("() => window.history.length")
+                await page.go_back()
+                # 无历史可退时 go_back 是静默 no-op —— 必须比对 URL,
+                # 否则会返回"已后退,当前页面: <原标题>",误导调用方
+                if page.url == before:
+                    return (
+                        f"{TOOL_ERROR}: 无法后退 —— 已是历史起点,当前无更早记录"
+                        f"(页面 {before})"
+                    )
+                title = await page.title()
+                self._hist_realign(
+                    pid,
+                    before_url=before,
+                    after_url=page.url,
+                    hist_len=hist_len,
+                    direction=-1,
                 )
-            title = await page.title()
-            pid = page_id or self._active_page_id
-            self._hist_move(pid, -1)
-            # 带上 URL: 退回 about:blank 等无标题页面时, 仅标题会让人误以为没退成功
-            msg = f"已后退,当前页面: {title}(URL: {page.url})"
-            if _is_initial_page(page.url):
-                msg += "。已退回起始页 about:blank(browser_start 先建空白页再导航)"
-            at_start = self._hist_at_start(pid)
-            if at_start is None:
-                # 无跟踪信息(CDP 导入的外部标签页等)→ 启发式兜底
-                at_start = _is_initial_page(page.url)
-            if at_start:
-                msg += "。已是历史起点,无法再后退"
-            else:
-                msg += "。仍可继续后退"
-            return msg
-        except (PlaywrightError, PlaywrightTimeoutError) as e:
-            return f"{TOOL_ERROR}: 浏览器后退失败: {e}"
+                # 带上 URL: 退回 about:blank 等无标题页面时, 仅标题会让人误以为没退成功
+                msg = f"已后退,当前页面: {title}(URL: {page.url})"
+                if _is_initial_page(page.url):
+                    msg += "。已退回起始页 about:blank(browser_start 先建空白页再导航)"
+                at_start = self._hist_at_start(pid)
+                if at_start is None:
+                    # 无跟踪信息且对齐失败 → 启发式兜底
+                    at_start = _is_initial_page(page.url)
+                if at_start:
+                    msg += "。已是历史起点,无法再后退"
+                else:
+                    msg += "。仍可继续后退"
+                return msg
+            except (PlaywrightError, PlaywrightTimeoutError) as e:
+                return _nav_err("浏览器后退失败", e)
 
     async def forward(self, page_id: Optional[int] = None) -> str:
         """浏览器前进。"""
-        page = self._get_page(page_id)
-        try:
-            before = page.url
-            hist_len = await page.evaluate("() => window.history.length")
-            await page.go_forward()
-            # 同 back: 无历史可进时是静默 no-op
-            if page.url == before:
-                return (
-                    f"{TOOL_ERROR}: 无法前进 —— 已是历史末尾,当前无后续记录"
-                    f"(页面 {before})"
+        async with self._nav_lock:
+            page = self._get_page(page_id)
+            pid = page_id if page_id is not None else self._active_page_id
+            try:
+                before = page.url
+                hist_len = await page.evaluate("() => window.history.length")
+                await page.go_forward()
+                # 同 back: 无历史可进时是静默 no-op
+                if page.url == before:
+                    return (
+                        f"{TOOL_ERROR}: 无法前进 —— 已是历史末尾,当前无后续记录"
+                        f"(页面 {before})"
+                    )
+                title = await page.title()
+                self._hist_realign(
+                    pid,
+                    before_url=before,
+                    after_url=page.url,
+                    hist_len=hist_len,
+                    direction=+1,
                 )
-            title = await page.title()
-            pid = page_id or self._active_page_id
-            self._hist_move(pid, +1)
-            # 同 back: 带上 URL, 无标题页面(about:blank)也能看出确实导航了
-            msg = f"已前进,当前页面: {title}(URL: {page.url})"
-            at_end = self._hist_at_end(pid)
-            if at_end is None:
-                # 无跟踪信息(CDP 导入的外部标签页等)→ 启发式兜底:
-                # 从 about:blank 前进且 history.length<=2 → 唯一后续页即终点
-                at_end = _is_initial_page(before) and hist_len <= 2
-            if at_end:
-                msg += "。已是历史终点,无法再前进"
-            else:
-                msg += "。仍可继续前进"
-            return msg
-        except (PlaywrightError, PlaywrightTimeoutError) as e:
-            return f"{TOOL_ERROR}: 浏览器前进失败: {e}"
+                # 同 back: 带上 URL, 无标题页面(about:blank)也能看出确实导航了
+                msg = f"已前进,当前页面: {title}(URL: {page.url})"
+                at_end = self._hist_at_end(pid)
+                if at_end is None:
+                    # 无跟踪且对齐失败 → 启发式兜底:
+                    # 从 about:blank 前进且 history.length<=2 → 唯一后续页即终点
+                    at_end = _is_initial_page(before) and hist_len <= 2
+                if at_end:
+                    msg += "。已是历史终点,无法再前进"
+                else:
+                    msg += "。仍可继续前进"
+                return msg
+            except (PlaywrightError, PlaywrightTimeoutError) as e:
+                return _nav_err("浏览器前进失败", e)
 
     async def reload(self, page_id: Optional[int] = None) -> str:
         """刷新当前页面。"""
-        page = self._get_page(page_id)
-        try:
-            await page.reload()
-            title = await page.title()
-            return f"已刷新页面: {title}"
-        except (PlaywrightError, PlaywrightTimeoutError) as e:
-            return f"{TOOL_ERROR}: 刷新页面失败: {e}"
+        async with self._nav_lock:
+            page = self._get_page(page_id)
+            try:
+                await page.reload()
+                title = await page.title()
+                return f"已刷新页面: {title}"
+            except (PlaywrightError, PlaywrightTimeoutError) as e:
+                return _nav_err("刷新页面失败", e)
 
     async def get_url(self, page_id: Optional[int] = None) -> str:
         """获取当前页面 URL。"""
@@ -1075,26 +1487,98 @@ class WebBrowser:
             return f"{TOOL_ERROR}: 按下按键 {key} 失败: {e}"
 
     async def select_option(
-        self, selector: str, value: str, page_id: Optional[int] = None
+        self,
+        selector: str,
+        value: str | list[str],
+        page_id: Optional[int] = None,
+        frame_selector: Optional[str] = None,
     ) -> str:
-        """选择下拉框选项。"""
+        """选择下拉框选项。
+
+        value 可传单个选项值(单选)或字符串列表(仅限 HTML multiple 多选框,
+        一次选中多项)。选项不存在时报错并列出全部可选值,便于调用方自纠。
+        """
+        if bad := _reject_empty_selector(selector):
+            return bad
+        if bad := _reject_empty_selector(
+            frame_selector, "frame_selector", omit_hint="不跨 frame 时请省略该参数"
+        ):
+            return bad
+        # ── 参数归一化/校验: 传错形状是调用方错误,不能放到底层被 str 化后超时 ──
+        if isinstance(value, str):
+            values = [value]
+            multi_call = False
+        elif isinstance(value, list):
+            values = value
+            multi_call = True
+        else:
+            return (
+                f"{TOOL_ERROR}: value 类型错误: 应为 str 或 list[str],"
+                f"收到 {type(value).__name__} ({value!r})"
+            )
+        if not values:
+            return f"{TOOL_ERROR}: value 不能为空"
+        if not all(isinstance(v, str) for v in values):
+            return (
+                f"{TOOL_ERROR}: value 列表元素必须都是字符串,"
+                f"收到 {value!r}"
+            )
+
         page = self._get_page(page_id)
+        locator = self._get_locator(page, selector, frame_selector)
         try:
-            locator = self._get_locator(page, selector)
-            await locator.select_option(value, timeout=_SELECTOR_TIMEOUT_MS)
-            return f"已选择选项: {value}"
+            # 多选入参必须对应 multiple select —— 单选框传列表是参数错误,
+            # 不是等待问题(底层 Playwright 只会到最后一次匹配,行为静默且难查)
+            if multi_call:
+                is_multiple = await locator.evaluate("el => el.multiple === true")
+                if not is_multiple:
+                    return (
+                        f"{TOOL_ERROR}: 参数错误: value 传了列表 {value!r},"
+                        f"但 {selector!r} 不是 multiple 多选框,"
+                        f"单选 select 请只传一个选项值字符串"
+                    )
+                await locator.select_option(values, timeout=_SELECTOR_TIMEOUT_MS)
+                return f"已选择选项: {values}"
+            await locator.select_option(values[0], timeout=_SELECTOR_TIMEOUT_MS)
+            return f"已选择选项: {values[0]}"
         except (PlaywrightError, PlaywrightTimeoutError) as e:
-            return self._sel_err(
-                "选择选项", selector, e, timeout=_SELECTOR_TIMEOUT_MS, value=value
+            # 选项值不匹配时把可选值一并列出,调用方一次就能改对。
+            # 该失败在 Playwright 里是重试到超时(call log 含 "did not find some
+            # options"),也可能以非超时 Error 直接抛("Element is not a <select>")。
+            text = str(e).lower()
+            option_mismatch = (
+                "did not find some options" in text or "no such option" in text
+            )
+            hint = None
+            base = _timeout_reason_hint(str(e))
+            if base is None and isinstance(e, PlaywrightTimeoutError):
+                base = await _timeout_hint(locator, error_text=str(e))
+            if base is not None or option_mismatch:
+                opts = await _select_options_hint(locator) if option_mismatch else ""
+                hint = f"{base}。{opts}" if base and opts else (base or opts or None)
+            return await self._sel_err(
+                "选择选项", selector, e,
+                locator=locator, timeout=_SELECTOR_TIMEOUT_MS, value=value,
+                hint=hint,
             )
 
     async def check(
-        self, selector: str, checked: bool = True, page_id: Optional[int] = None
+        self,
+        selector: str,
+        checked: bool = True,
+        page_id: Optional[int] = None,
+        frame_selector: Optional[str] = None,
     ) -> str:
         """勾选或取消勾选复选框。"""
+        if bad := _reject_empty_selector(selector):
+            return bad
+        if bad := _reject_empty_selector(
+            frame_selector, "frame_selector", omit_hint="不跨 frame 时请省略该参数"
+        ):
+            return bad
         page = self._get_page(page_id)
         try:
-            locator = self._get_locator(page, selector)
+            locator = self._get_locator(page, selector, frame_selector)
             if checked:
                 await locator.check(timeout=_SELECTOR_TIMEOUT_MS)
             else:
@@ -1102,24 +1586,43 @@ class WebBrowser:
             action = "勾选" if checked else "取消勾选"
             return f"已{action}元素: {selector}"
         except (PlaywrightError, PlaywrightTimeoutError) as e:
-            return self._sel_err(
-                "勾选操作", selector, e, timeout=_SELECTOR_TIMEOUT_MS, checked=checked
+            return await self._sel_err(
+                "勾选操作", selector, e,
+                locator=locator, timeout=_SELECTOR_TIMEOUT_MS, checked=checked,
             )
 
-    async def hover(self, selector: str, page_id: Optional[int] = None) -> str:
+    async def hover(
+        self,
+        selector: str,
+        page_id: Optional[int] = None,
+        frame_selector: Optional[str] = None,
+    ) -> str:
         """鼠标悬停在元素上。"""
+        if bad := _reject_empty_selector(selector):
+            return bad
+        if bad := _reject_empty_selector(
+            frame_selector, "frame_selector", omit_hint="不跨 frame 时请省略该参数"
+        ):
+            return bad
         page = self._get_page(page_id)
         try:
-            locator = self._get_locator(page, selector)
+            locator = self._get_locator(page, selector, frame_selector)
             await locator.hover(timeout=_SELECTOR_TIMEOUT_MS)
             return f"已悬停在元素: {selector}"
         except (PlaywrightError, PlaywrightTimeoutError) as e:
-            return self._sel_err("鼠标悬停元素", selector, e, timeout=_SELECTOR_TIMEOUT_MS)
+            return await self._sel_err(
+                "鼠标悬停元素", selector, e,
+                locator=locator, timeout=_SELECTOR_TIMEOUT_MS,
+            )
 
     async def drag(
         self, source: str, target: str, page_id: Optional[int] = None
     ) -> str:
         """拖拽元素到目标位置。"""
+        if bad := _reject_empty_selector(source, "source"):
+            return bad
+        if bad := _reject_empty_selector(target, "target"):
+            return bad
         page = self._get_page(page_id)
         try:
             source_locator = self._get_locator(page, source)
@@ -1140,8 +1643,16 @@ class WebBrowser:
             await source_locator.drag_to(target_locator, timeout=_SELECTOR_TIMEOUT_MS)
             return f"已将 {source} 拖拽到 {target}"
         except (PlaywrightError, PlaywrightTimeoutError) as e:
-            return self._sel_err(
-                "拖拽", source, e, timeout=_SELECTOR_TIMEOUT_MS, target=target
+            # 超时可能出在源或目标 —— 两边都探测, 免得只报一侧误导排查
+            hint = None
+            if isinstance(e, PlaywrightTimeoutError):
+                src_state = await _timeout_hint(source_locator, error_text=str(e))
+                tgt_state = await _timeout_hint(target_locator, error_text=str(e))
+                hint = f"源元素: {src_state}; 目标元素: {tgt_state}"
+            return await self._sel_err(
+                "拖拽", source, e,
+                locator=source_locator, timeout=_SELECTOR_TIMEOUT_MS,
+                target=target, hint=hint,
             )
 
     async def dblclick(
@@ -1149,21 +1660,43 @@ class WebBrowser:
         selector: str,
         timeout: int = _SELECTOR_TIMEOUT_MS,
         page_id: Optional[int] = None,
+        frame_selector: Optional[str] = None,
     ) -> str:
         """双击页面元素。"""
+        if bad := _reject_empty_selector(selector):
+            return bad
+        if bad := _reject_empty_selector(
+            frame_selector, "frame_selector", omit_hint="不跨 frame 时请省略该参数"
+        ):
+            return bad
+        if bad := _reject_bad_timeout(timeout):
+            return bad
         page = self._get_page(page_id)
         try:
-            locator = self._to_locator(page, selector)
+            locator = self._to_locator(page, selector, frame_selector)
             await locator.dblclick(timeout=timeout)
             return f"已双击元素: {selector}"
         except (PlaywrightError, PlaywrightTimeoutError) as e:
-            return self._sel_err("双击元素", selector, e, timeout=timeout)
+            return await self._sel_err(
+                "双击元素", selector, e, locator=locator, timeout=timeout
+            )
 
-    async def focus(self, selector: str, page_id: Optional[int] = None) -> str:
+    async def focus(
+        self,
+        selector: str,
+        page_id: Optional[int] = None,
+        frame_selector: Optional[str] = None,
+    ) -> str:
         """聚焦到指定元素。"""
+        if bad := _reject_empty_selector(selector):
+            return bad
+        if bad := _reject_empty_selector(
+            frame_selector, "frame_selector", omit_hint="不跨 frame 时请省略该参数"
+        ):
+            return bad
         page = self._get_page(page_id)
         try:
-            locator = self._to_locator(page, selector)
+            locator = self._to_locator(page, selector, frame_selector)
             # disabled 元素 focus() 是 no-op,若不校验就会报成功但焦点没转移
             if await locator.is_disabled():
                 return f"{TOOL_ERROR}: 元素 {selector} 处于 disabled 状态,无法聚焦"
@@ -1176,20 +1709,33 @@ class WebBrowser:
                 )
             return f"已聚焦到元素: {selector}"
         except (PlaywrightError, PlaywrightTimeoutError) as e:
-            return self._sel_err("聚焦元素", selector, e, timeout=_SELECTOR_TIMEOUT_MS)
+            return await self._sel_err(
+                "聚焦元素", selector, e,
+                locator=locator, timeout=_SELECTOR_TIMEOUT_MS,
+            )
 
     async def scroll_into_view(
-        self, selector: str, page_id: Optional[int] = None
+        self,
+        selector: str,
+        page_id: Optional[int] = None,
+        frame_selector: Optional[str] = None,
     ) -> str:
         """将指定元素滚动到可见区域。"""
+        if bad := _reject_empty_selector(selector):
+            return bad
+        if bad := _reject_empty_selector(
+            frame_selector, "frame_selector", omit_hint="不跨 frame 时请省略该参数"
+        ):
+            return bad
         page = self._get_page(page_id)
         try:
-            locator = self._to_locator(page, selector)
+            locator = self._to_locator(page, selector, frame_selector)
             await locator.scroll_into_view_if_needed(timeout=_SELECTOR_TIMEOUT_MS)
             return f"已将元素 {selector} 滚动到可见区域"
         except (PlaywrightError, PlaywrightTimeoutError) as e:
-            return self._sel_err(
-                "滚动元素到可见区域", selector, e, timeout=_SELECTOR_TIMEOUT_MS
+            return await self._sel_err(
+                "滚动元素到可见区域", selector, e,
+                locator=locator, timeout=_SELECTOR_TIMEOUT_MS,
             )
 
     async def key_down(self, key: str, page_id: Optional[int] = None) -> str:
@@ -1240,16 +1786,25 @@ class WebBrowser:
         text: str,
         selector: Optional[str] = None,
         page_id: Optional[int] = None,
+        frame_selector: Optional[str] = None,
     ) -> str:
         """插入文本(不触发按键事件)。适用于 input/textarea 的快速填充。
 
         不提供 selector 时向当前聚焦元素插入文本;提供时先聚焦到指定元素再插入。
         目标必须是可编辑元素(input/textarea/contenteditable)。
         """
+        if bad := _reject_empty_selector(
+            selector, omit_hint="向当前焦点元素插入请省略该参数"
+        ):
+            return bad
+        if bad := _reject_empty_selector(
+            frame_selector, "frame_selector", omit_hint="不跨 frame 时请省略该参数"
+        ):
+            return bad
         page = self._get_page(page_id)
         try:
             if selector:
-                locator = self._to_locator(page, selector)
+                locator = self._to_locator(page, selector, frame_selector)
                 # focus() 对不可聚焦元素是 no-op —— 此时 keyboard.insert_text
                 # 会写进"当前拥有焦点"的元素,造成数据错位。必须先确认可编辑。
                 if not await locator.is_editable():
@@ -1268,37 +1823,71 @@ class WebBrowser:
             return f"{TOOL_ERROR}: 插入文本失败 (selector={selector!r}, text={text!r}): {e}"
 
     async def get_value(
-        self, selector: Optional[str] = None, page_id: Optional[int] = None
+        self,
+        selector: Optional[str] = None,
+        page_id: Optional[int] = None,
+        frame_selector: Optional[str] = None,
     ) -> str:
         """获取表单元素的当前值。"""
+        if bad := _reject_empty_selector(
+            selector, omit_hint="取当前聚焦元素的值请省略该参数"
+        ):
+            return bad
+        if bad := _reject_empty_selector(
+            frame_selector, "frame_selector", omit_hint="不跨 frame 时请省略该参数"
+        ):
+            return bad
         page = self._get_page(page_id)
         try:
             if selector:
-                locator = self._to_locator(page, selector)
+                locator = self._to_locator(page, selector, frame_selector)
                 value = await locator.input_value(timeout=_SELECTOR_TIMEOUT_MS)
             else:
                 value = await page.evaluate("document.activeElement?.value || ''")
             return f"元素值: {value}" if value else "元素值为空"
         except (PlaywrightError, PlaywrightTimeoutError) as e:
-            return self._sel_err("获取元素值", selector, e, timeout=_SELECTOR_TIMEOUT_MS)
+            loc = self._to_locator(page, selector, frame_selector) if selector else None
+            return await self._sel_err(
+                "获取元素值", selector, e, locator=loc, timeout=_SELECTOR_TIMEOUT_MS
+            )
 
-    async def get_count(self, selector: str, page_id: Optional[int] = None) -> str:
+    async def get_count(
+        self,
+        selector: str,
+        page_id: Optional[int] = None,
+        frame_selector: Optional[str] = None,
+    ) -> str:
         """统计匹配选择器的元素数量。"""
+        if bad := _reject_empty_selector(selector):
+            return bad
+        if bad := _reject_empty_selector(
+            frame_selector, "frame_selector", omit_hint="不跨 frame 时请省略该参数"
+        ):
+            return bad
         page = self._get_page(page_id)
         try:
-            locator = self._to_locator(page, selector)
+            locator = self._to_locator(page, selector, frame_selector)
             count = await locator.count()
             return f'匹配 "{selector}" 的元素数量: {count}'
         except (PlaywrightError, PlaywrightTimeoutError) as e:
             return f"{TOOL_ERROR}: 统计元素数量失败 (selector={selector!r}): {e}"
 
     async def get_bounding_box(
-        self, selector: str, page_id: Optional[int] = None
+        self,
+        selector: str,
+        page_id: Optional[int] = None,
+        frame_selector: Optional[str] = None,
     ) -> str:
         """获取元素的边界框(位置和尺寸)。"""
+        if bad := _reject_empty_selector(selector):
+            return bad
+        if bad := _reject_empty_selector(
+            frame_selector, "frame_selector", omit_hint="不跨 frame 时请省略该参数"
+        ):
+            return bad
         page = self._get_page(page_id)
         try:
-            locator = self._to_locator(page, selector)
+            locator = self._to_locator(page, selector, frame_selector)
             box = await locator.bounding_box(timeout=_SELECTOR_TIMEOUT_MS)
             if box is None:
                 return f"{TOOL_ERROR}: 元素 {selector} 不可见或不存在"
@@ -1307,10 +1896,15 @@ class WebBrowser:
                 f"width={box['width']:.0f}, height={box['height']:.0f}"
             )
         except (PlaywrightError, PlaywrightTimeoutError) as e:
-            return self._sel_err("获取元素边界框", selector, e, timeout=_SELECTOR_TIMEOUT_MS)
+            return await self._sel_err(
+                "获取元素边界框", selector, e,
+                locator=locator, timeout=_SELECTOR_TIMEOUT_MS,
+            )
 
     async def get_styles(self, selector: str, page_id: Optional[int] = None) -> str:
         """获取元素的计算样式。"""
+        if bad := _reject_empty_selector(selector):
+            return bad
         page = self._get_page(page_id)
         try:
             styles = await page.evaluate(
@@ -1319,11 +1913,18 @@ class WebBrowser:
                     const el = document.querySelector(selector);
                     if (!el) return null;
                     const cs = window.getComputedStyle(el);
+                    // getPropertyValue 只认 CSS 属性名(kebab-case),
+                    // 传 backgroundColor/fontSize/zIndex 这类 camelCase 会拿到空串。
+                    // 简写(background/font/margin/padding/border)拆成长胡子属性,
+                    // 部分浏览器对简写同样返回空。
                     const props = [
-                        'display','position','width','height',
-                        'margin','padding','border',
-                        'backgroundColor','color','fontSize','fontWeight',
-                        'opacity','overflow','zIndex'
+                        'display', 'position', 'width', 'height',
+                        'margin-top', 'margin-right', 'margin-bottom', 'margin-left',
+                        'padding-top', 'padding-right', 'padding-bottom', 'padding-left',
+                        'border-width', 'border-style', 'border-color',
+                        'background-color', 'background-image',
+                        'color', 'font-size', 'font-weight', 'font-family', 'line-height',
+                        'opacity', 'overflow', 'z-index'
                     ];
                     const result = {};
                     for (const p of props) {
@@ -1375,6 +1976,64 @@ class WebBrowser:
         self._hist_idx[pid] = new
         return True
 
+    def _hist_realign(
+        self,
+        pid: Optional[int],
+        *,
+        before_url: str,
+        after_url: str,
+        hist_len: int,
+        direction: int,
+    ) -> None:
+        """浏览器完成 back/forward 后,把历史跟踪对齐到真实位置。
+
+        两条路径:
+        1. ``_hist_move`` 成功 —— 跟踪基本可信,只需把比真实历史短的缺项
+           补到刚到达的那一端(否则到端点会差一格误报边界)。
+        2. ``_hist_move`` 被拒(或无跟踪)—— 跟踪缺项盖不住真实移动,用
+           (before, after) + window.history.length 重建最小窗口: 后退时假设
+           before 在可达末端、缺项在 after 之前;前进时假设 before 在起点、
+           缺项在 after 之后。这是浏览器 back/forward 未暴露当前下标时
+           能做到的最好对齐。
+
+        对齐后游标落在 after_url 上,``_hist_at_start`` / ``_hist_at_end``
+        判的就是**移动后**位置,边界提示不会滞后或提前一格。
+
+        Args:
+            pid: 页面 ID。
+            before_url: 导航前 URL。
+            after_url: 导航后 URL(浏览器真实落地)。
+            hist_len: window.history.length(历史总条数)。
+            direction: -1 后退 / +1 前进。
+        """
+        if pid is None:
+            return
+        urls = self._hist_urls.get(pid)
+        if urls:
+            moved = self._hist_move(pid, direction)
+            if moved:
+                # 跟踪比真实历史短时补到刚到达的那一端,否则端点判断差一格
+                missing = hist_len - len(urls)
+                if missing > 0:
+                    if direction < 0 and self._hist_idx.get(pid, 0) <= 0:
+                        urls[:0] = [""] * missing
+                        self._hist_idx[pid] = missing
+                    elif (
+                        direction > 0
+                        and self._hist_idx.get(pid, 0) >= len(urls) - 1
+                    ):
+                        urls.extend([""] * missing)
+                return
+            # 移动被拒: 跟踪边界之外浏览器却动了 —— 重建
+        # 无跟踪 / 移动被拒: 用 (before, after) + hist_len 重建最小窗口
+        pad = max(0, hist_len - 2)
+        if direction < 0:
+            self._hist_urls[pid] = [""] * pad + [after_url, before_url]
+            self._hist_idx[pid] = pad
+        else:
+            self._hist_urls[pid] = [before_url, after_url] + [""] * pad
+            self._hist_idx[pid] = 1
+
     def _hist_at_start(self, pid: Optional[int]) -> Optional[bool]:
         """是否已在历史起点;无跟踪信息时返回 None,由调用方用启发式兜底。"""
         urls = self._hist_urls.get(pid)
@@ -1419,32 +2078,67 @@ class WebBrowser:
         if self._browser is None:
             raise ToolUserError("浏览器未启动,请先调用 browser_start")
 
-    @staticmethod
-    def _sel_err(
-        action: str, selector: str, e, *, timeout: int | None = None, **ctx
+    async def _sel_err(
+        self,
+        action: str,
+        selector: str,
+        e,
+        *,
+        locator=None,
+        timeout: int | None = None,
+        hint: str | None = None,
+        **ctx,
     ) -> str:
-        """统一的元素操作报错格式: 操作名 + 定位上下文 + 原始错误。
+        """统一的元素操作报错格式: 操作名 + 定位上下文 + 原始错误 [+ 超时分类提示]。
 
         格式固定成 `ACTION 失败(selector=..., [其它上下文], [timeout=...ms]): 原因`,
         模型能稳定解析出 selector/timeout,不用为每个工具各记一套措辞。
+
+        Playwright 原始错误(含 call log)保留在末尾 —— 诊断性强。
+        超时错误会追加一行「提示:」: 先按异常文本识别真实原因(disabled / 选项值
+        不匹配 / 不是 select / 不可见 / 已脱离 DOM), 无命中再按元素是否存在
+        做三态分类, 给出可自纠建议。传入 hint 可覆盖自动生成的分类提示(如 drag
+        要同时看源/目标)。
         """
         parts = [f"selector={selector!r}"]
         parts += [f"{k}={v!r}" for k, v in ctx.items()]
         if timeout is not None:
             parts.append(f"timeout={timeout}ms")
-        return f"{TOOL_ERROR}: {action}失败({', '.join(parts)}): {e}"
+        msg = f"{TOOL_ERROR}: {action}失败({', '.join(parts)}): {e}"
+        if isinstance(e, PlaywrightTimeoutError):
+            if hint is None:
+                hint = (
+                    await _timeout_hint(locator, error_text=str(e))
+                    if locator is not None
+                    else _timeout_reason_hint(str(e)) or _TIMEOUT_WAIT_ADVICE
+                )
+            msg += f"\n提示: {hint}"
+        elif hint is not None:
+            # 非超时错误默认不贴分类提示(原始错误已够清楚), 但调用方显式传了
+            # 补充信息(如 select_option 附的可选值列表)时照常展示
+            msg += f"\n提示: {hint}"
+        return msg
 
-    def _get_locator(self, page, selector: str):
-        """根据选择器类型获取 locator。"""
+    def _get_locator(self, page, selector: str, frame_selector: Optional[str] = None):
+        """根据选择器类型获取 locator。
+
+        frame_selector 提供时先用 page.frame_locator() 进入该 iframe 再定位,
+        从而操作 frame 内元素;不提供则只查主文档(不跨 frame)。
+        """
+        root = page.frame_locator(frame_selector) if frame_selector else page
         if selector.startswith("//"):
-            return page.locator(f"xpath={selector}")
-        return page.locator(selector)
+            return root.locator(f"xpath={selector}")
+        return root.locator(selector)
 
-    def _to_locator(self, page, selector: str):
-        """将选择器转换为 Playwright Locator,支持 CSS 和 XPath(// 或 ( 开头)。"""
+    def _to_locator(self, page, selector: str, frame_selector: Optional[str] = None):
+        """将选择器转换为 Playwright Locator,支持 CSS 和 XPath(// 或 ( 开头)。
+
+        frame_selector 语义同 _get_locator —— 指定时在 iframe 内定位。
+        """
+        root = page.frame_locator(frame_selector) if frame_selector else page
         if selector.startswith("//") or selector.startswith("("):
-            return page.locator(f"xpath={selector}")
-        return page.locator(selector)
+            return root.locator(f"xpath={selector}")
+        return root.locator(selector)
 
     async def _wait_for_text(
         self, page, text: str, timeout: int, poll_interval: float

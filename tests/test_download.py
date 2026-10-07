@@ -758,3 +758,85 @@ class TestGetStatusUnknownId:
 
         mgr = HttpDownloadManager()
         assert mgr.get_status("") == "当前没有下载任务。"
+
+
+# ==================== 网络错误分类测试 ====================
+
+
+class TestNetworkErrorExplain:
+    """网络层错误分类: 保留原始错误,追加人类可读解释。"""
+
+    def test_dns_failure_explained(self):
+        """DNS 解析失败 → 追加"域名无法解析"。"""
+        from uniclaw.utils.http_download import format_network_error
+
+        text = format_network_error(OSError("[Errno 11001] getaddrinfo failed"))
+        assert "getaddrinfo failed" in text  # 原始错误保留
+        assert "域名无法解析" in text
+
+    def test_connection_refused_explained(self):
+        """连接被拒 → 追加"连接被拒绝"。"""
+        from uniclaw.utils.http_download import format_network_error
+
+        text = format_network_error(
+            ConnectionRefusedError("[WinError 10061] 由于目标计算机积极拒绝,无法连接")
+        )
+        assert "WinError 10061" in text
+        assert "连接被拒绝" in text
+
+    def test_timeout_explained(self):
+        """超时 → 追加"连接超时"。"""
+        from uniclaw.utils.http_download import format_network_error
+
+        text = format_network_error(TimeoutError("timed out"))
+        assert "timed out" in text
+        assert "连接超时" in text
+
+    def test_original_error_not_replaced(self):
+        """解释是追加,不替换原始错误(技术人员要看原文)。"""
+        from uniclaw.utils.http_download import format_network_error
+
+        original = "[Errno 11001] getaddrinfo failed: 'no-such-host.invalid'"
+        text = format_network_error(OSError(original))
+        assert original in text
+        assert text.index(original) < text.index("域名无法解析")
+
+    def test_non_network_error_has_no_hint(self):
+        """非网络错误不追加网络解释。"""
+        from uniclaw.utils.http_download import format_network_error
+
+        text = format_network_error(ValueError("校验失败: 期望 x, 实际 y"))
+        assert "校验失败" in text
+        assert "域名无法解析" not in text
+        assert "连接被拒绝" not in text
+        assert "连接超时" not in text
+
+    def test_cause_chain_preserved(self):
+        """包装异常(IOError from 根因)也要保留根因原文。"""
+        from uniclaw.utils.http_download import format_network_error
+
+        try:
+            try:
+                raise OSError("[Errno 11001] getaddrinfo failed")
+            except OSError as root:
+                raise IOError("下载失败: getaddrinfo failed") from root
+        except IOError as wrapped:
+            text = format_network_error(wrapped)
+        assert "getaddrinfo failed" in text
+        assert "域名无法解析" in text
+
+    @pytest.mark.asyncio
+    async def test_start_dns_failure_gets_explanation(self, tmp_path):
+        """start() 失败时 progress.error 带人类可读解释,不只是原始错误。"""
+        dl = HttpDownloader(url="https://no-such-host.invalid", save_path=tmp_path / "f")
+        with patch.object(
+            dl,
+            "_get_file_info",
+            side_effect=OSError("[Errno 11001] getaddrinfo failed"),
+        ):
+            result = await dl.start()
+        assert result.status == DownloadStatus.FAILED
+        assert "getaddrinfo failed" in result.error
+        assert "域名无法解析" in result.error
+        assert "下载失败" in result.format_status()
+        assert "域名无法解析" in result.format_status()

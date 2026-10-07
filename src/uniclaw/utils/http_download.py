@@ -73,6 +73,95 @@ class _RangeNotSupported(IOError):
     """服务器忽略 Range 请求(返回 200 而非 206),需降级为全量下载。"""
 
 
+# 网络层错误分类关键词(小写匹配,含异常类名与常见报错文本)。
+# 顺序有意义: DNS 优先于超时(解析失败也可能带 timeout 字样)。
+_NETWORK_ERROR_HINTS: tuple[tuple[tuple[str, ...], str], ...] = (
+    (
+        (
+            "getaddrinfo failed",
+            "nameresolutionerror",
+            "gaierror",
+            "name or service not known",
+            "nodename nor servname",
+            "temporary failure in name resolution",
+            "failed to resolve",
+        ),
+        "域名无法解析,请检查 URL 拼写或网络",
+    ),
+    (
+        (
+            "connectionrefusederror",
+            "connection refused",
+            "actively refused",
+        ),
+        "连接被拒绝,确认服务是否在运行",
+    ),
+    (
+        (
+            "timeouterror",
+            "timeoutexception",
+            "connecttimeout",
+            "readtimeout",
+            "timed out",
+            "timeout",
+        ),
+        "连接超时,可重试或换用其他源",
+    ),
+)
+
+
+def _exception_chain(exc: BaseException) -> list[BaseException]:
+    """展开异常链(含 __cause__ / 未抑制的 __context__),保留原始错误。"""
+    chain: list[BaseException] = []
+    seen: set[int] = set()
+    e: BaseException | None = exc
+    while e is not None and id(e) not in seen:
+        seen.add(id(e))
+        chain.append(e)
+        e = e.__cause__ or (None if e.__suppress_context__ else e.__context__)
+    return chain
+
+
+def explain_network_error(exc: BaseException) -> str | None:
+    """网络层错误分类,返回人类可读解释;无法分类时返回 None。
+
+    Args:
+        exc: 待分类的异常(会沿异常链识别根因)。
+
+    Returns:
+        str | None: 人类可读解释(如"域名无法解析,请检查 URL 拼写或网络"),
+            非网络类错误返回 None。
+    """
+    blob = " ".join(f"{e.__class__.__name__} {e}" for e in _exception_chain(exc)).lower()
+    for keywords, hint in _NETWORK_ERROR_HINTS:
+        if any(k in blob for k in keywords):
+            return hint
+    return None
+
+
+def format_network_error(exc: BaseException) -> str:
+    """保留原始错误(含异常链),追加人类可读的网络解释(若可分类)。
+
+    技术人员要看原始错误,非技术用户看解释 —— 追加而非替换。
+
+    Args:
+        exc: 捕获到的异常。
+
+    Returns:
+        str: 原始错误链文本;可分类时末尾附上解释。
+    """
+    parts: list[str] = []
+    for e in _exception_chain(exc):
+        text = (str(e) or e.__class__.__name__).strip()
+        # 去重: 相同文本,或已包含在已有段落里(包装消息已内嵌根因时不重复)
+        if any(text == p or text in p or p in text for p in parts):
+            continue
+        parts.append(text)
+    original = " <- ".join(parts) if parts else exc.__class__.__name__
+    hint = explain_network_error(exc)
+    return f"{original}\n{hint}" if hint else original
+
+
 def _stable_id(url: str, save_path: Path) -> str:
     """根据 URL 和保存路径生成临时文件标识,格式为 {文件名}_{hash}。"""
     key = f"{url}|{save_path}".encode()
@@ -475,7 +564,8 @@ class HttpDownloader(BaseDownloader):
                     )
                     await asyncio.sleep(wait_time)
                 else:
-                    raise IOError(f"范围 {start}-{end} 下载失败") from e
+                    # 保留原始错误(网络类根因),外层再由 format_network_error 追加解释
+                    raise IOError(f"范围 {start}-{end} 下载失败: {e}") from e
 
     async def _download_full(
         self,
@@ -573,7 +663,8 @@ class HttpDownloader(BaseDownloader):
                     )
                     await asyncio.sleep(wait_time)
                 else:
-                    raise IOError("下载失败") from e
+                    # 保留原始错误(网络类根因),外层再由 format_network_error 追加解释
+                    raise IOError(f"下载失败: {e}") from e
 
     async def start(
         self,
@@ -676,7 +767,9 @@ class HttpDownloader(BaseDownloader):
 
         except Exception as e:
             if not self._cancelled:
-                self.progress.finish(DownloadStatus.FAILED, str(e))
+                # 保留原始错误链 + 追加人类可读的网络解释(DNS/拒连/超时),
+                # 避免只报 "[Errno 11001] getaddrinfo failed" 让非技术用户看不懂
+                self.progress.finish(DownloadStatus.FAILED, format_network_error(e))
                 logger.error("下载失败: %s", e)
             return self.progress
 

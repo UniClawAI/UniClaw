@@ -53,3 +53,43 @@ def test_memory_save_force_replaces_existing_memory(monkeypatch, tmp_path):
     assert "Use /v1/old." in replaced
     assert loaded.description == "new endpoint"
     assert loaded.content == "Use /v2/new."
+
+
+def test_memory_save_rejects_confidence_out_of_range(monkeypatch, tmp_path):
+    """confidence 越界(如 1.5)必须拒绝保存,报 TOOL_ERROR 而非静默成功。"""
+    monkeypatch.setattr(
+        "uniclaw.tools.memory.memory.get_app_dir",
+        lambda scope: tmp_path / scope,
+    )
+    mock_config = SimpleNamespace(
+        current_agent=SimpleNamespace(),
+        root_dir=tmp_path,
+    )
+    rt = ToolRuntime(config=mock_config)
+
+    for bad in (1.5, -0.1, 2, 100):
+        result = memory_save.func(
+            name=f"conf-{bad}",
+            description="d",
+            content="c",
+            type="feedback",
+            scope="project",
+            confidence=bad,
+            tool_runtime=rt,
+        )
+        assert result.startswith("[TOOL_ERROR]"), f"confidence={bad} 应被拒绝: {result}"
+        assert "0~1" in result
+        assert str(bad) in result
+
+    # 边界值 0 与 1 合法
+    ok = memory_save.func(
+        name="conf-edge",
+        description="d",
+        content="c",
+        type="feedback",
+        scope="project",
+        confidence=0.5,
+        tool_runtime=rt,
+    )
+    assert "[TOOL_ERROR]" not in ok
+    assert "保存成功" in ok or "已保存" in ok

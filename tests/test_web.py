@@ -150,6 +150,78 @@ async def test_web_fetch_network_error_returns_tool_error():
     assert result.startswith("[TOOL_ERROR]")
     assert "https://example.com" in result
     assert "http://127.0.0.1:7890" in result
+    assert "boom" in result  # 保留原始错误
+
+
+@pytest.mark.asyncio
+async def test_web_fetch_proxy_unreachable_hints_direct_retry():
+    """proxy 非空且连接类失败时,追加「代理不可达,可去掉 proxy 直连」提示。"""
+    import httpx
+
+    with patch("uniclaw.tools.web.httpx.AsyncClient") as mock_cls:
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(
+            side_effect=httpx.ConnectError("All connection attempts failed")
+        )
+        mock_cls.return_value.__aenter__.return_value = mock_client
+        result = await webFetch("https://example.com", proxy="http://127.0.0.1:7890")
+
+    assert result.startswith("[TOOL_ERROR]")
+    assert "All connection attempts failed" in result  # 保留原始错误
+    assert "代理不可达" in result
+    assert "直连" in result
+
+
+@pytest.mark.asyncio
+async def test_web_fetch_connect_error_without_proxy_no_proxy_hint():
+    """未走代理时不提示「代理不可达」(那是代理场景的建议)。"""
+    import httpx
+
+    with patch("uniclaw.tools.web.httpx.AsyncClient") as mock_cls:
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(
+            side_effect=httpx.ConnectError("All connection attempts failed")
+        )
+        mock_cls.return_value.__aenter__.return_value = mock_client
+        result = await webFetch("https://example.com")
+
+    assert result.startswith("[TOOL_ERROR]")
+    assert "All connection attempts failed" in result
+    assert "代理不可达" not in result
+
+
+@pytest.mark.asyncio
+async def test_web_fetch_read_timeout_with_proxy_no_proxy_hint():
+    """读超时(已连上)不算代理不可达,只保留原始错误。"""
+    import httpx
+
+    with patch("uniclaw.tools.web.httpx.AsyncClient") as mock_cls:
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(side_effect=httpx.ReadTimeout("read timed out"))
+        mock_cls.return_value.__aenter__.return_value = mock_client
+        result = await webFetch("https://example.com", proxy="http://127.0.0.1:7890")
+
+    assert result.startswith("[TOOL_ERROR]")
+    assert "read timed out" in result
+    assert "代理不可达" not in result
+    # 复用 http_download 的超时解释
+    assert "连接超时" in result or "超时" in result
+
+
+@pytest.mark.asyncio
+async def test_web_fetch_network_error_reuses_dns_hint():
+    """DNS 失败复用 http_download 的解释措辞,不另写一份。"""
+    import httpx
+
+    with patch("uniclaw.tools.web.httpx.AsyncClient") as mock_cls:
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(side_effect=httpx.ConnectError("getaddrinfo failed"))
+        mock_cls.return_value.__aenter__.return_value = mock_client
+        result = await webFetch("https://example.com")
+
+    assert result.startswith("[TOOL_ERROR]")
+    assert "getaddrinfo failed" in result  # 保留原始错误
+    assert "域名无法解析" in result
 
 
 @pytest.mark.asyncio

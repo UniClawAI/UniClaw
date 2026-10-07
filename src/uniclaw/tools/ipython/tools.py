@@ -152,10 +152,19 @@ async def ipython_history(
     except RuntimeError as e:
         return f"{TOOL_ERROR}: {e}"
 
+    dead = not mgr.is_alive(kernel_id)
     if not history:
+        if dead:
+            return (
+                f"{TOOL_ERROR}: IPython 内核已终止(kernel_id={kernel_id!r}),"
+                f"请用 ipython_start 重新启动"
+            )
         return f"内核 '{kernel_id}' 暂无执行历史。"
 
-    lines = [f"内核 '{kernel_id}' 最近 {len(history)} 条执行记录:"]
+    lines = []
+    if dead:
+        lines.append(f"注意: 内核 '{kernel_id}' 已终止,以下是终止前的历史。")
+    lines.append(f"内核 '{kernel_id}' 最近 {len(history)} 条执行记录:")
     for i, code in enumerate(history, 1):
         preview = code if len(code) <= 200 else code[:200] + "..."
         lines.append(f"  [{i}] {preview}")

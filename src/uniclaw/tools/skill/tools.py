@@ -77,6 +77,11 @@ async def skill_suggest(
         格式化的字符串,包含匹配到的技能名称和简介；若无直接匹配,则返回若干技能的简介作为备选。
     """
     config = tool_runtime.config
+    if not task_description or not task_description.strip():
+        return (
+            f"{TOOL_ERROR}: task_description 不能为空(收到: {task_description!r});"
+            f"请提供要推荐技能的任务描述"
+        )
     root_dir = config.root_dir
     all_skills_list = load_skills(root_dir)
     if not all_skills_list:
@@ -248,7 +253,25 @@ def skill_read(skill_name: str, tool_runtime: ToolRuntime = None) -> str:
     skill = find_skill(root_dir, skill_name)
 
     if skill is None:
-        return f"{TOOL_ERROR}: 未找到技能 '{skill_name}'。"
+        # 尝试忽略大小写匹配
+        all_skills = load_skills(root_dir)
+        lower_name = skill_name.strip().lower()
+        ci_matches = [s for s in all_skills if s.name.lower() == lower_name]
+        if len(ci_matches) == 1:
+            skill = ci_matches[0]
+            summary = skill_summary(skill)
+            return (
+                f"已按不区分大小写匹配到 '{skill.name}'(请求: '{skill_name}')。\n\n"
+                f"{summary}\n\n{skill.prompt}"
+            )
+        # 未命中: 提示大小写敏感并列出相近名(忽略大小写匹配到的)
+        similar = ", ".join(s.name for s in ci_matches) if ci_matches else ""
+        available = ", ".join(s.name for s in all_skills[:20]) or "(无)"
+        parts = [f"{TOOL_ERROR}: 未找到技能 '{skill_name}'。技能名区分大小写。"]
+        if similar:
+            parts.append(f"相近名(忽略大小写): {similar}")
+        parts.append(f"当前可用: {available}")
+        return "\n".join(parts)
     summary = skill_summary(skill)
     return f"{summary}\n\n{skill.prompt}"
 

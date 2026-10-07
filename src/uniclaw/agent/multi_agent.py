@@ -299,6 +299,18 @@ async def _check_permission(tc: dict, config: AppConfig) -> tuple[bool, str]:
     return (False, explanation)
 
 
+def _tool_in_full_catalog(name: str) -> bool:
+    """工具是否在全量清单(get_all_tools 对应的注册表)里。
+
+    在全量清单里但当前 name2tool 找不到,说明是"存在但当前环境未启用/被裁剪"
+    (如 monitor_screen 需要 Windows+pywinpty),措辞应是"未启用"而非"不存在"。
+    注册表尚未初始化时 entries 为空,自然返回 False(回退到"工具不存在")。
+    """
+    from uniclaw.tools.registry import ToolRegistry
+
+    return name in ToolRegistry.get_instance().get_all_entries()
+
+
 def _permission_desc(tc: dict) -> str:
     """生成权限请求的美观描述信息
 
@@ -1040,6 +1052,13 @@ class MultiAgent:
                 tool_resp_content = (
                     f"{TOOL_ERROR}: '{tc_name}' 是扩展工具,当前未加载。"
                     f'请先使用 {search_tools.name} 搜索 "{tc_name}" 来加载该工具,然后重试。'
+                )
+            elif _tool_in_full_catalog(tc_name):
+                # 在全量清单(get_all_tools)里但当前环境未启用/被裁剪:
+                # 措辞必须是"未启用",不能报"工具不存在"(会误导调用方去改工具名)
+                tool_resp_content = (
+                    f"{TOOL_ERROR}: 工具 {tc_name} 未启用: 当前环境未启用或未配置该工具"
+                    f"(可调用 {search_tools.name} 查询具体原因)"
                 )
             else:
                 tool_resp_content = f"{TOOL_ERROR}: 工具不存在: {tc_name}"

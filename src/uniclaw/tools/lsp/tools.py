@@ -266,15 +266,36 @@ def _format_hover(hover_result: object) -> str:
     return f"悬停信息:\n{text}" if text else f"无悬停信息。{_EMPTY_RESULT_HINT}"
 
 
+def _symbol_sort_key(s: dict) -> tuple:
+    """符号排序键:行号 → 名称 → 列号。
+
+    语言服务器返回的子节点顺序不稳定(如属性插在方法后面),构树时按源码
+    位置稳定排序;同行号时按名称/列号定序,保证输出可复现。
+    """
+    if "selectionRange" in s:
+        rng = s.get("selectionRange") or s.get("range") or {}
+    elif "location" in s:
+        rng = (s.get("location") or {}).get("range", {})
+    else:
+        rng = {}
+    start = (rng or {}).get("start", {})
+    return (start.get("line", 0), s.get("name") or "", start.get("character", 0))
+
+
 def _format_symbols(symbols, indent: int = 0) -> list[str]:
-    """递归渲染 documentSymbol 树(DocumentSymbol[] 或 SymbolInformation[])。"""
+    """递归渲染 documentSymbol 树(DocumentSymbol[] 或 SymbolInformation[])。
+
+    每层子节点按行号稳定排序(同行号按名称/列号),避免服务器乱序导致
+    展示错乱(如 L11 排在 L13 后)。
+    """
     out = []
     if not symbols:
         return out
     pad = "  " * indent
-    for s in symbols:
-        if not isinstance(s, dict):
-            continue
+    ordered = sorted(
+        (s for s in symbols if isinstance(s, dict)), key=_symbol_sort_key
+    )
+    for s in ordered:
         name = s.get("name", "")
         kind = _SYMBOL_KINDS.get(s.get("kind"), "符号")
         # DocumentSymbol 用 selectionRange/range;SymbolInformation 用 location.range
@@ -405,8 +426,15 @@ _QUERY_ERRORS = (LspBizError, LspRpcError, RuntimeError)
 
 
 def _query_error(method: str, path: Path, e: BaseException) -> str:
-    """语义查询失败的统一 TOOL_ERROR(带 method 与文件路径,便于定位)。"""
-    return f"{TOOL_ERROR}: LSP {method} 查询失败(file={path}): {type(e).__name__}: {e}"
+    """语义查询失败的统一 TOOL_ERROR(带 method 与文件路径,便于定位)。
+
+    不外泄内部异常类名(LspBizError/LspRpcError 等):LspBizError 是业务
+    错误,只回显其消息(与 lsp_diagnostics / lsp_start 一致,如"文件不存在: xxx");
+    其余异常保留原始错误文本,同样不带类名。
+    """
+    if isinstance(e, LspBizError):
+        return f"{TOOL_ERROR}: {e}"
+    return f"{TOOL_ERROR}: LSP {method} 查询失败(file={path}): {e}"
 
 @tool
 async def lsp_diagnostics(file: str, tool_runtime: ToolRuntime = None) -> str:
@@ -641,7 +669,7 @@ async def lsp_symbols(file: str, tool_runtime: ToolRuntime = None) -> str:
         lines = _format_symbols(symbols)
         if not lines:
             return f"{path} — 未提取到符号。"
-        pre = f"{path} — 符号大纲(L{_symbol_count(symbols)} 个):"
+        pre = f"{path} — 符号大纲({_symbol_count(symbols)} 个):"
         return pre + "\n" + "\n".join(lines)
     except _QUERY_ERRORS as e:
         return _query_error(DOCUMENT_SYMBOL, path, e)

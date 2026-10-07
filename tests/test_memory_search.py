@@ -191,3 +191,26 @@ def test_bm25_ai_fallback(monkeypatch, tmp_path):
         )
 
     mock_ai.assert_called_once()
+
+
+# ── 空 query 前置校验 ─────────────────────────────────────
+
+
+def test_memory_search_empty_query(tmp_path):
+    """query 为空时应报 TOOL_ERROR 而非返回不相关记忆。"""
+    mock_config = _make_config(tmp_path)
+    result = asyncio.run(
+        memory_search.func(query="", max_results=5, tool_runtime=ToolRuntime(config=mock_config))
+    )
+    assert "TOOL_ERROR" in result
+    assert "不能为空" in result
+
+
+def test_memory_search_whitespace_query(tmp_path):
+    """query 全空白时应报 TOOL_ERROR。"""
+    mock_config = _make_config(tmp_path)
+    result = asyncio.run(
+        memory_search.func(query="   ", max_results=5, tool_runtime=ToolRuntime(config=mock_config))
+    )
+    assert "TOOL_ERROR" in result
+    assert "不能为空" in result

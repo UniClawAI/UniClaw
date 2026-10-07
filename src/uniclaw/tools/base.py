@@ -196,15 +196,27 @@ def _python_type_to_schema(tp: Any, multi_type: bool = False) -> dict:
 
     # 处理 Optional[X] / X | None / Union[X, Y]
     if origin is typing.Union:
-        schemas = [_python_type_to_schema(a, multi_type) for a in tp.__args__]
+        schemas = [_python_type_to_schema(a, multi_type) for a in get_args(tp)]
         if multi_type:
-            types = [s["type"] for s in schemas]
-            base = copy.copy(schemas[0])
-            base["type"] = types
-            return base
-        # 单类型模式:跳过 null,取第一个有效类型
+            # 各成员都是裸 {"type": ...} 时合并成 type 数组(如 ["string", "null"]);
+            # 含 array/object 等带结构的成员(如 str | list[str])时 type 数组表达不了
+            # items/properties,退回 anyOf —— 只取第一个会把 list 能力弄丢
+            if all(set(s.keys()) <= {"type"} for s in schemas):
+                types = [s["type"] for s in schemas]
+                base = copy.copy(schemas[0])
+                base["type"] = types
+                return base
+            return {"anyOf": schemas}
+        # 单类型模式:跳过 null
         non_null = [s for s in schemas if s.get("type") != "null"]
-        return non_null[0] if non_null else schemas[0]
+        if not non_null:
+            return schemas[0]
+        if len(non_null) == 1:
+            # Optional[X] → X,保持既有 schema 形态不变
+            return non_null[0]
+        # 两个以上实际类型(如 str | list[str]): anyOf 完整表达,
+        # 只取第一个会让 LLM 以为只接受 str 而丢掉列表入参
+        return {"anyOf": non_null}
 
     # Enum → string
     if hasattr(tp, "__members__"):

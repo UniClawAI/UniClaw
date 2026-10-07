@@ -3,7 +3,9 @@ import fnmatch
 import logging
 import os
 import re
+import shutil
 import sys
+import tempfile
 import time
 from enum import StrEnum
 from pathlib import Path
@@ -36,6 +38,16 @@ _RE_BASH_NUL = re.compile(r"(\d?>+|<)\s*nul\b", re.IGNORECASE)
 def fix_bash_nul_redirect(cmd: str) -> str:
     """将 bash 命令中误用的 >nul / 2>nul 替换为 >/dev/null。"""
     return _RE_BASH_NUL.sub(r"\1/dev/null", cmd)
+
+
+# 匹配 bash heredoc 起始定界符: <<WORD / <<-WORD / <<'WORD' / <<"WORD"
+# << 后必须跟可选的 -、引号和标识符 —— 这样能排除位移运算(如 $((1<<2))、x<<3)
+_RE_HEREDOC = re.compile(r"<<-?\s*['\"]?([A-Za-z_][A-Za-z0-9_]*)")
+
+
+def contains_heredoc(cmd: str) -> bool:
+    """检测命令是否含 bash heredoc 语法(<< 或 <<-)。"""
+    return bool(_RE_HEREDOC.search(cmd))
 
 
 
@@ -113,6 +125,70 @@ async def _kill_proc_tree(pid: int) -> None:
 # 避免 agent 主循环被单个命令长时间阻塞。
 BASH_MAX_TIMEOUT = 300
 
+# Bash 无界输出保护: 累计输出超过任一阈值即终止进程树,防止刷屏把上下文冲垮。
+# 阈值会在返回文本里明确写出,便于调用方调整命令输出。
+BASH_MAX_OUTPUT_LINES = 50_000
+BASH_MAX_OUTPUT_BYTES = 10 * 1024 * 1024  # 10MB
+
+
+def _find_bash() -> str | None:
+    """查找可用的 bash 可执行文件(Git Bash 优先,其次 PATH)。"""
+    if GIT_BASH_PATH and os.path.isfile(GIT_BASH_PATH):
+        return GIT_BASH_PATH
+    found = shutil.which("bash")
+    return found
+
+
+def _prepare_heredoc_script(command: str) -> tuple[str, str | None]:
+    """Windows 下将含 heredoc 的命令改写为「bash 执行临时脚本」。
+
+    Windows 的 create_subprocess_shell 走 cmd.exe,拆坏引号/换行后 bash 拿不到
+    完整的 heredoc 体,`python - <<'EOF'` 会把命令拖进交互式 REPL 无限刷屏。
+    处理方式: 把原始命令文本原样写入临时 .sh,由 bash 解析 heredoc。
+
+    Args:
+        command: 原始命令字符串。
+
+    Returns:
+        tuple[str, str | None]: (待执行命令, 临时脚本路径)。
+            无需改写时返回 (原命令, None)。
+            无法安全执行时返回 (以 TOOL_ERROR 开头的提示文本, None),
+            调用方应直接 return 该文本。
+    """
+    if sys.platform != "win32":
+        return command, None
+    if not contains_heredoc(command):
+        return command, None
+
+    bash = _find_bash()
+    if not bash:
+        return (
+            f"{TOOL_ERROR}: 命令含 heredoc 语法(<<),Windows 的 cmd.exe 不支持,"
+            f"直接执行会拖入交互式 REPL 无限刷屏;当前又找不到 bash,无法安全执行。"
+            f"请改用文件脚本: 先用 Write 工具写入 .sh 文件,再执行 bash <该文件>。"
+        ), None
+
+    # 原样写入命令文本(bash 自己解析 heredoc),换行统一为 LF 供 bash 读取
+    script_text = command.replace("\r\n", "\n")
+    if not script_text.endswith("\n"):
+        script_text += "\n"
+    fd, tmp_path = tempfile.mkstemp(suffix=".sh", prefix="uniclaw_heredoc_")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
+            f.write(script_text)
+    except OSError as e:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        return (
+            f"{TOOL_ERROR}: 写入 heredoc 临时脚本失败({tmp_path}): "
+            f"{type(e).__name__}: {e}"
+        ), None
+
+    # bash 路径/脚本路径都可能含空格,加引号交给 cmd.exe 透传
+    return f'"{bash}" "{tmp_path}"', tmp_path
+
 
 @tool
 async def Bash(
@@ -133,6 +209,14 @@ async def Bash(
     - 如果命令执行超时,进程会自动转入后台监控系统,返回监控 ID。
     - 使用 monitor_output 查看后续输出,monitor_stop 停止进程,monitor_list 查看所有进程。
 
+    输出上限:
+    - 累计输出超过 50000 行或 10MB 时自动终止进程树,返回文本会写明
+      「输出超出上限已终止(N 行/M 字节)」及实际阈值,避免刷屏冲垮上下文。
+
+    Windows heredoc:
+    - 命令含 heredoc(<< / <<-)时会自动改写为 bash 执行临时脚本,
+      避免 cmd.exe 拆坏引号后把命令拖进交互式 REPL;找不到 bash 则拒绝执行。
+
     注意:
     - 下载 HTTP/HTTPS 文件请使用 http_download 工具(支持断点续传、并发下载、进度显示)。
     - 长期运行的后台服务请使用 monitor_start 工具。
@@ -145,6 +229,7 @@ async def Bash(
     Returns:
         str: 命令的标准输出内容。如果存在标准错误输出,会追加在标准输出之后。
              如果超时,进程转入后台监控并返回监控 ID 和已有输出。
+             输出超过上限时终止进程并明确标注截断原因。
              如果发生异常,返回[stderr]开头的标准错误。
              如果没有输出内容,返回 "(没有输出)"。
     """
@@ -167,164 +252,324 @@ async def Bash(
     if command.strip().lower().startswith("bash "):
         command = fix_bash_nul_redirect(command)
 
-    # 根据平台准备命令参数
-    # Windows 上 asyncio.subprocess.DEVNULL 可能无法正确打开 nul 设备,stdin 用 PIPE
-    if sys.platform != "win32":
-        proc = await asyncio.create_subprocess_shell(
-            command.strip(),
-            stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=root_dir,
-            start_new_session=True,
-        )
-    else:
-        proc = await asyncio.create_subprocess_shell(
-            command.strip(),
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=root_dir,
-        )
+    # Windows heredoc 保护: 改写为 bash 执行临时脚本,避免拖入 REPL
+    tmp_script: str | None = None
+    command, tmp_script = _prepare_heredoc_script(command)
+    if tmp_script is None and command.startswith(TOOL_ERROR):
+        return command
 
-    # 关闭 stdin pipe 以允许子进程正常退出
-    if sys.platform == "win32" and proc.stdin:
-        proc.stdin.close()
+    def _cleanup_tmp_script() -> None:
+        if tmp_script:
+            try:
+                os.unlink(tmp_script)
+            except OSError:
+                pass
 
-    start_time = time.monotonic()
+    try:
+        # 根据平台准备命令参数
+        # Windows 上 asyncio.subprocess.DEVNULL 可能无法正确打开 nul 设备,stdin 用 PIPE
+        if sys.platform != "win32":
+            proc = await asyncio.create_subprocess_shell(
+                command.strip(),
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=root_dir,
+                start_new_session=True,
+            )
+        else:
+            proc = await asyncio.create_subprocess_shell(
+                command.strip(),
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=root_dir,
+            )
 
-    # 用于流式输出和最终结果收集
-    _collected = {"stdout": [], "stderr": []}
+        # 关闭 stdin pipe 以允许子进程正常退出
+        if sys.platform == "win32" and proc.stdin:
+            proc.stdin.close()
 
-    async def _read_stream(stream, key):
-        """批量读取流,读多少发多少,直接收集原始数据。
+        start_time = time.monotonic()
 
-        流式输出和最终结果都直接存原始解码数据,
-        sanitize_progress_line 在最终拼接时统一处理 \r 进度条。
-        """
-        try:
-            while True:
-                chunk = await stream.read(4096)
-                if not chunk:
-                    break
-                text = smart_decode(chunk)
-                _collected[key].append(text)
-                await tool_runtime.stream(text)
-        except (asyncio.CancelledError, Exception):
-            pass
+        # 用于流式输出和最终结果收集
+        _collected = {"stdout": [], "stderr": []}
+        # 无界输出保护的累计量与溢出标记
+        _stats = {"lines": 0, "bytes": 0}
+        overflow = asyncio.Event()
 
-    # 提前创建 read tasks,超时时可从外部取消
-    read_tasks = []
-    if proc.stdout:
-        read_tasks.append(asyncio.create_task(_read_stream(proc.stdout, "stdout")))
-    if proc.stderr:
-        read_tasks.append(asyncio.create_task(_read_stream(proc.stderr, "stderr")))
+        async def _read_stream(stream, key):
+            """批量读取流,读多少发多少,直接收集原始数据。
 
-    async def _wait_with_cancel():
-        """等待进程完成,同时逐行推送输出。"""
-        try:
-            while proc.returncode is None:
-                if cancel_event is not None and cancel_event.is_set():
-                    await _kill_proc_tree(proc.pid)
-                    for t in read_tasks:
-                        t.cancel()
-                    await asyncio.gather(*read_tasks, return_exceptions=True)
-                    return "cancelled"
-                try:
-                    await asyncio.wait_for(proc.wait(), timeout=0.1)
-                except asyncio.TimeoutError:
-                    pass
+            流式输出和最终结果都直接存原始解码数据,
+            sanitize_progress_line 在最终拼接时统一处理 \r 进度条。
 
-            # 进程已结束,等待流读取完成(可能还有缓冲中的数据)
+            累计输出超过行数/字节数上限时置位 overflow,由等待循环终止进程树。
+            """
+            try:
+                while True:
+                    if overflow.is_set():
+                        break
+                    chunk = await stream.read(4096)
+                    if not chunk:
+                        break
+                    text = smart_decode(chunk)
+                    # 只收集到阈值为止:单个读块可能远大于剩余配额,
+                    # 整块塞进去会让"上限 200 行"实际收回 800+ 行
+                    line_room = BASH_MAX_OUTPUT_LINES - _stats["lines"]
+                    byte_room = BASH_MAX_OUTPUT_BYTES - _stats["bytes"]
+                    if line_room <= 0 or byte_room <= 0:
+                        overflow.set()
+                        break
+                    trimmed = text
+                    if len(trimmed) > byte_room:
+                        trimmed = trimmed[:byte_room]
+                    if trimmed.count("\n") > line_room:
+                        # 按行数截断到配额边界
+                        cut = 0
+                        seen = 0
+                        for i, ch in enumerate(trimmed):
+                            if ch == "\n":
+                                seen += 1
+                                if seen >= line_room:
+                                    cut = i + 1
+                                    break
+                        trimmed = trimmed[:cut] if cut else trimmed
+                    if trimmed:
+                        _collected[key].append(trimmed)
+                        _stats["bytes"] += len(trimmed.encode("utf-8", errors="replace"))
+                        _stats["lines"] += trimmed.count("\n")
+                        await tool_runtime.stream(trimmed)
+                    if (
+                        _stats["lines"] >= BASH_MAX_OUTPUT_LINES
+                        or _stats["bytes"] >= BASH_MAX_OUTPUT_BYTES
+                    ):
+                        # 超限即置位并停止收集 —— 继续收只会把上下文冲垮,
+                        # 进程由等待循环负责终止
+                        overflow.set()
+                        break
+            except (asyncio.CancelledError, Exception):
+                pass
+
+        # 提前创建 read tasks,超时时可从外部取消
+        read_tasks = []
+        if proc.stdout:
+            read_tasks.append(asyncio.create_task(_read_stream(proc.stdout, "stdout")))
+        if proc.stderr:
+            read_tasks.append(asyncio.create_task(_read_stream(proc.stderr, "stderr")))
+
+        async def _drain_read_tasks() -> None:
+            """等待读任务自然读完(进程已结束,流会 EOF)。"""
             await asyncio.gather(*read_tasks, return_exceptions=True)
-            return "done"
-        except (asyncio.CancelledError, Exception):
+
+        async def _cancel_read_tasks() -> None:
+            """取消读任务(进程被杀 / 中断 / 溢出收尾路径用)。"""
             for t in read_tasks:
                 t.cancel()
             await asyncio.gather(*read_tasks, return_exceptions=True)
+
+        async def _wait_with_cancel():
+            """等待进程完成,同时逐行推送输出。"""
+            try:
+                while proc.returncode is None:
+                    if cancel_event is not None and cancel_event.is_set():
+                        await _kill_proc_tree(proc.pid)
+                        await _cancel_read_tasks()
+                        return "cancelled"
+                    if overflow.is_set():
+                        await _kill_proc_tree(proc.pid)
+                        await _cancel_read_tasks()
+                        return "overflow"
+                    try:
+                        await asyncio.wait_for(proc.wait(), timeout=0.1)
+                    except asyncio.TimeoutError:
+                        pass
+
+                # 进程已结束,等待流读取完成(可能还有缓冲中的数据)
+                await _drain_read_tasks()
+                return "overflow" if overflow.is_set() else "done"
+            except (asyncio.CancelledError, Exception):
+                await _cancel_read_tasks()
+                raise
+
+        async def _kill_quietly() -> None:
+            """进程仍在运行时强杀进程树,失败不抛出(收尾路径用)。"""
+            if proc.returncode is not None:
+                return
+            try:
+                await _kill_proc_tree(proc.pid)
+            except asyncio.CancelledError:
+                # 清理期间可能被再次取消,吞掉二次取消保证收尾完成
+                pass
+            except Exception:
+                pass
+
+        def _join_output() -> str:
+            stdout = sanitize_progress_line("".join(_collected["stdout"]))
+            stderr = sanitize_progress_line("".join(_collected["stderr"]))
+            out = stdout
+            if stderr:
+                out += ("\n" if out else "") + f"{STDERR_MARKER}" + stderr
+            return out
+
+        def _overflow_msg() -> str:
+            return (
+                f"{TOOL_ERROR}: 输出超出上限已终止"
+                f"({_stats['lines']} 行/{_stats['bytes']} 字节;上限 "
+                f"{BASH_MAX_OUTPUT_LINES} 行/{BASH_MAX_OUTPUT_BYTES} 字节)。"
+                f"输出已截断,请收窄命令输出(如加 head/管道过滤)后重试"
+            )
+
+        try:
+            status = await asyncio.wait_for(_wait_with_cancel(), timeout=timeout)
+
+            out = _join_output()
+
+            if status == "cancelled":
+                elapsed_time = time.monotonic() - start_time
+                cancel_msg = (
+                    f"{TOOL_ERROR}: 用户中断(进程已终止,用时 {elapsed_time:.1f} 秒)"
+                )
+                return (out.strip() + "\n" + cancel_msg).strip()
+
+            if status == "overflow":
+                return (out.strip() + "\n" + _overflow_msg()).strip()
+
+            return out.strip() or "(没有输出)"
+
+        except asyncio.TimeoutError:
+            # 确保旧的 read tasks 已停止,避免与 monitor 的 reader 竞争
+            await _cancel_read_tasks()
+
+            # 输出已超上限时不再转监控 —— 转过去只会继续刷屏
+            if overflow.is_set():
+                await _kill_quietly()
+                return (_join_output().strip() + "\n" + _overflow_msg()).strip()
+
+            # 将仍在运行的进程转移到 monitor 系统
+            from uniclaw.tools.monitor.manager import MonitorManager
+
+            manager = MonitorManager.get_instance()
+            try:
+                monitor_id, _ = await manager.register_existing_process(
+                    process=proc,
+                    command=command,
+                    description=command[:80],
+                    cwd=root_dir,
+                    config=config,
+                )
+            except RuntimeError as e:
+                # 并发数已满,回退到杀死进程
+                await _kill_quietly()
+                return f"{TOOL_ERROR}: 超时且无法转入监控 - {e}"
+
+            out = _join_output()
+            header = (
+                f"进程在 {timeout} 秒后超时,已转入后台监控\n"
+                f"  监控 ID: {monitor_id}\n"
+                f"  使用 monitor_output 查看输出,monitor_stop 停止进程"
+            )
+            return (header + "\n" + out.strip()).strip()
+
+        except asyncio.CancelledError:
+            # 外部取消(ESC / Tool 层 task.cancel)会以 CancelledError 打进来,
+            # 内层轮询的 kill 路径几乎必输(事件 set 立即唤醒 cancel_wait),
+            # 必须在这里杀进程树,否则子进程成为孤儿继续运行
+            await _kill_quietly()
             raise
 
-    async def _kill_quietly() -> None:
-        """进程仍在运行时强杀进程树,失败不抛出(收尾路径用)。"""
-        if proc.returncode is not None:
-            return
-        try:
-            await _kill_proc_tree(proc.pid)
-        except asyncio.CancelledError:
-            # 清理期间可能被再次取消,吞掉二次取消保证收尾完成
-            pass
         except Exception:
-            pass
-
-    try:
-        status = await asyncio.wait_for(_wait_with_cancel(), timeout=timeout)
-
-        stdout = sanitize_progress_line("".join(_collected["stdout"]))
-        stderr = sanitize_progress_line("".join(_collected["stderr"]))
-        out = stdout
-        if stderr:
-            out += ("\n" if out else "") + f"{STDERR_MARKER}" + stderr
-
-        if status == "cancelled":
-            elapsed_time = time.monotonic() - start_time
-            cancel_msg = (
-                f"{TOOL_ERROR}: 用户中断(进程已终止,用时 {elapsed_time:.1f} 秒)"
-            )
-            return (out.strip() + "\n" + cancel_msg).strip()
-
-        return out.strip() or "(没有输出)"
-
-    except asyncio.TimeoutError:
-        # 确保旧的 read tasks 已停止,避免与 monitor 的 reader 竞争
-        for t in read_tasks:
-            t.cancel()
-        await asyncio.gather(*read_tasks, return_exceptions=True)
-
-        # 将仍在运行的进程转移到 monitor 系统
-        from uniclaw.tools.monitor.manager import MonitorManager
-
-        manager = MonitorManager.get_instance()
-        try:
-            monitor_id, _ = await manager.register_existing_process(
-                process=proc,
-                command=command,
-                description=command[:80],
-                cwd=root_dir,
-                config=config,
-            )
-        except RuntimeError as e:
-            # 并发数已满,回退到杀死进程
+            # 意外异常也收尾,避免残留进程;
+            # 收尾后原样上抛(bug 级异常交给 Tool.__call__ 兜底),不转成返回值
             await _kill_quietly()
-            return f"{TOOL_ERROR}: 超时且无法转入监控 - {e}"
-
-        stdout = sanitize_progress_line("".join(_collected["stdout"]))
-        stderr = sanitize_progress_line("".join(_collected["stderr"]))
-        out = stdout
-        if stderr:
-            out += ("\n" if out else "") + f"{STDERR_MARKER}" + stderr
-
-        header = (
-            f"进程在 {timeout} 秒后超时,已转入后台监控\n"
-            f"  监控 ID: {monitor_id}\n"
-            f"  使用 monitor_output 查看输出,monitor_stop 停止进程"
-        )
-        return (header + "\n" + out.strip()).strip()
-
-    except asyncio.CancelledError:
-        # 外部取消(ESC / Tool 层 task.cancel)会以 CancelledError 打进来,
-        # 内层轮询的 kill 路径几乎必输(事件 set 立即唤醒 cancel_wait),
-        # 必须在这里杀进程树,否则子进程成为孤儿继续运行
-        await _kill_quietly()
-        raise
-
-    except Exception:
-        # 意外异常也收尾,避免残留进程;
-        # 收尾后原样上抛(bug 级异常交给 Tool.__call__ 兜底),不转成返回值
-        await _kill_quietly()
-        raise
+            raise
+    finally:
+        _cleanup_tmp_script()
 
 
 # ── Grep ──────────────────────────────────────────────────────────────────
+
+
+def _is_binary_file(path: Path) -> bool:
+    """判断文件是否为二进制(含 NUL 且非 UTF-16/32 BOM 文本)。
+
+    与 read_text_file 的二进制判定保持一致,用于统计"被跳过的二进制文件"。
+    """
+    try:
+        with path.open("rb") as f:
+            head = f.read(8192)
+    except OSError:
+        return False
+    if not head:
+        return False
+    # UTF-16/32 BOM 文本天然含 NUL,豁免
+    if head.startswith(
+        (b"\xff\xfe\x00\x00", b"\x00\x00\xfe\xff", b"\xff\xfe", b"\xfe\xff")
+    ):
+        return False
+    return b"\x00" in head
+
+
+def _collect_search_files(path: str, glob: str | None = None) -> list[Path] | str:
+    """枚举搜索范围内的候选文件列表。
+
+    与 _python_grep 的文件发现逻辑一致: 目录递归 + .gitignore 过滤
+    (显式给出的搜索根强制可搜)。单文件直接返回。
+
+    Args:
+        path: 搜索的文件或目录路径。
+        glob: 可选的文件名通配符过滤(如 "*.py")。
+
+    Returns:
+        list[Path]: 候选文件列表(可能为空)。
+        str: 路径不存在时返回以 TOOL_ERROR 开头的报错文本。
+    """
+    target = Path(path)
+    if target.is_file():
+        return [target]
+    if not target.is_dir():
+        return f"{TOOL_ERROR}: 路径不存在: {path}"
+
+    files = sorted(target.rglob(glob or "*"))
+    files = [f for f in files if f.is_file()]
+    # 按 .gitignore 规则过滤(含隐藏文件),但显式给出的搜索根必须可搜
+    from uniclaw.utils.gitignore import (
+        get_not_ignored_files,
+        is_ignored_by_gitignore,
+    )
+
+    if not is_ignored_by_gitignore([target]):
+        files = get_not_ignored_files(files)
+    return files
+
+
+def _count_binary_files(path: str, glob: str | None = None) -> tuple[int, int]:
+    """统计搜索范围内的二进制文件数与总文件数。
+
+    Returns:
+        tuple[int, int]: (二进制文件数, 总文件数)。路径不存在或无文件时为 (0, 0)。
+    """
+    files = _collect_search_files(path, glob)
+    if isinstance(files, str) or not files:
+        return (0, 0)
+    binary = sum(1 for f in files if _is_binary_file(f))
+    return (binary, len(files))
+
+
+def _binary_skip_note(binary: int, total: int) -> str:
+    """生成"已跳过二进制文件"说明;无跳过时返回空串。
+
+    全部候选都是二进制时单独说明 —— 否则 "No matches found" 与
+    "确实无匹配" 无法区分,会误导调用方认为符号不存在。
+    """
+    if binary <= 0:
+        return ""
+    if total > 0 and binary >= total:
+        return (
+            f"(搜索目标全部是二进制文件,已跳过 {binary} 个二进制文件;"
+            f"文本搜索无法匹配二进制内容,请用 ReadMedia 或专用工具)"
+        )
+    return f"(已跳过 {binary} 个二进制文件)"
 
 
 async def _has_rg() -> bool:
@@ -383,35 +628,21 @@ def _python_grep(
     except re.error as e:
         return f"{TOOL_ERROR}: 无效的正则表达式: {e}"
 
-    target = Path(path)
-    if target.is_file():
-        files = [target]
-    elif target.is_dir():
-        files = sorted(target.rglob(glob or "*"))
-        files = [f for f in files if f.is_file()]
-        # 按 .gitignore 规则过滤(含隐藏文件)
-        from uniclaw.utils.gitignore import (
-            get_not_ignored_files,
-            is_ignored_by_gitignore,
-        )
-
-        # 显式给出的搜索根必须可搜 —— 与 rg 一致(显式路径强制搜索,忽略规则
-        # 只作用于其内部新发现的项)。否则搜 .UniClaw/temp 这类隐藏目录时,
-        # 其下所有文件都会因"祖先目录是点目录"被兜底规则 `.*` 清空,
-        # 静默返回 No matches found,误导 LLM 判断"符号不存在"。
-        # 根本身不被忽略时,照常过滤内部的 .git / node_modules 等。
-        if not is_ignored_by_gitignore([target]):
-            files = get_not_ignored_files(files)
-    else:
-        return f"{TOOL_ERROR}: 路径不存在: {path}"
+    files = _collect_search_files(path, glob)
+    if isinstance(files, str):
+        return files
 
     results = []
     matched_files = 0
+    skipped_binary = 0
 
     for filepath in files:
         try:
             text = read_text_file(filepath)
             if text is None:
+                # read_text_file 对二进制返回 None,单独统计以免与"无匹配"混淆
+                if _is_binary_file(filepath):
+                    skipped_binary += 1
                 continue
         except (PermissionError, OSError):
             continue
@@ -461,9 +692,10 @@ def _python_grep(
         else:
             return f"{TOOL_ERROR}: 未知的 output_mode: {output_mode}"
 
+    note = _binary_skip_note(skipped_binary, len(files))
     if not results:
-        return "No matches found"
-    return "\n".join(results)
+        return f"No matches found\n{note}" if note else "No matches found"
+    return "\n".join(results) + (f"\n{note}" if note else "")
 
 
 @tool
@@ -492,7 +724,8 @@ async def Grep(
     Returns:
         str: 搜索结果字符串。如果找到匹配项,返回结果;
              如果没有匹配项,返回 "No matches found";
-             如果发生错误,返回 "Error: {错误信息}"
+             二进制文件被跳过时追加「已跳过 N 个二进制文件」说明;
+             如果发生错误,返回以 TOOL_ERROR 开头的报错文本
     """
 
     if not await _has_native_grep():
@@ -555,8 +788,29 @@ async def Grep(
             f"{TOOL_ERROR}: 搜索失败({cmd[0]} 退出码 {r.code}, "
             f"pattern={pattern!r}, path={path}): {r.stderr.strip() or '无错误输出'}"
         )
+
     out = r.stdout.strip()
-    return out if out else "No matches found"
+
+    # rg 静默跳过二进制,grep 只在二进制"有匹配"时报 "Binary file X matches"。
+    # 无论哪种,被跳过的二进制都必须显式声明,否则 "No matches found" 与
+    # "确实无匹配"无法区分。统计在独立线程里做,避免阻塞事件循环。
+    binary, total = await asyncio.to_thread(_count_binary_files, path, glob)
+    note = _binary_skip_note(binary, total)
+
+    # grep 的 "Binary file X matches" 属于二进制命中而非文本命中,归并到说明里
+    binary_hit_lines = [
+        l for l in out.splitlines() if l.startswith("Binary file ") and l.endswith(" matches")
+    ]
+    if binary_hit_lines:
+        hit_note = f"(其中 {len(binary_hit_lines)} 个二进制文件含匹配: " + ", ".join(
+            l[len("Binary file ") : -len(" matches")] for l in binary_hit_lines
+        ) + ")"
+        note = f"{note} {hit_note}" if note else hit_note
+        out = "\n".join(l for l in out.splitlines() if l not in binary_hit_lines)
+
+    if not out:
+        return f"No matches found\n{note}" if note else "No matches found"
+    return out + (f"\n{note}" if note else "")
 
 
 async def _check_es() -> str | None:

@@ -79,6 +79,8 @@ def Read(
 
     Returns:
         str: 带行号的文件内容字符串,格式为"行号\t内容"。
+             offset 超出文件范围时报错说明总行数(不伪装成空文件);
+             limit 超过剩余行数时注明已达文件末尾。
              如果文件不存在或出错,返回错误信息字符串
     """
     p = Path(file_path)
@@ -108,11 +110,26 @@ def Read(
                 )
 
         lines = _read_preserving_newlines(p, encoding).splitlines(keepends=True)
-        start = offset or 0
-        chunk = lines[start : start + limit] if limit else lines[start:]
-        if not chunk:
+        total = len(lines)
+        # 真空文件才返回 "(空文件)";offset 超界必须明确报错,
+        # 否则 60k 行的文件传 offset=200000 会伪装成空文件,误导调用方
+        if total == 0:
             return "(空文件)"
-        return "".join(f"{start + i + 1:6}\t{l}" for i, l in enumerate(chunk))
+        start = offset or 0
+        if start < 0:
+            return f"{TOOL_ERROR}: offset 不能为负数: {offset}"
+        if start >= total:
+            return (
+                f"{TOOL_ERROR}: offset={start} 超出文件范围(共 {total} 行),"
+                f"有效范围 0..{total - 1}"
+            )
+        chunk = lines[start : start + limit] if limit else lines[start:]
+        result = "".join(f"{start + i + 1:6}\t{l}" for i, l in enumerate(chunk))
+        # limit 超过剩余行数时明确说明已到末尾,避免"只返回了 N 行"被误读为文件就这么多
+        remaining = total - start
+        if limit and remaining < limit:
+            result += f"\n(已达文件末尾,仅剩 {remaining} 行)"
+        return result
     except (OSError, LookupError) as e:
         return (
             f"{TOOL_ERROR}: 读取失败 {file_path} (encoding={encoding}): "
@@ -252,6 +269,11 @@ def Edit(
 
 
 # ── Glob ──────────────────────────────────────────────────────────────────
+
+# Glob 单次返回上限: 超出时截断并在末尾标注总匹配数,禁止静默截断
+GLOB_MAX_RESULTS = 500
+
+
 @tool
 def Glob(pattern: str, path: str) -> str:
     """
@@ -262,7 +284,9 @@ def Glob(pattern: str, path: str) -> str:
         path (str): 搜索的起始目录路径。
 
     Returns:
-        str: 匹配的文件路径列表(最多500个),每行一个路径:如果没有匹配则返回 "未找到匹配的文件"；发生错误时返回错误信息
+        str: 匹配的文件路径列表,每行一个路径。超过 500 条时只返回前 500 条,
+             并在末尾标注「已截断,共匹配 N 条」。如果没有匹配则返回 "未找到匹配的文件";
+             发生错误时返回错误信息
     """
     # 确定搜索的基础目录路径
 
@@ -273,8 +297,14 @@ def Glob(pattern: str, path: str) -> str:
         matches = sorted(base.glob(pattern))
         if not matches:
             return "未找到匹配的文件"
-        # 返回最多500个匹配结果
-        return "\n".join(str(m) for m in matches[:500])
+        if len(matches) > GLOB_MAX_RESULTS:
+            head = "\n".join(str(m) for m in matches[:GLOB_MAX_RESULTS])
+            return (
+                f"{head}\n\n"
+                f"已截断,共匹配 {len(matches)} 条,仅显示前 {GLOB_MAX_RESULTS} 条;"
+                f"请收窄 pattern 或分批查询"
+            )
+        return "\n".join(str(m) for m in matches)
     except OSError as e:
         return (
             f"{TOOL_ERROR}: 搜索失败 (pattern={pattern!r}, path={path}): "
@@ -325,7 +355,10 @@ def _cleanup_placeholder(out: Path) -> None:
         pass
 
 
-_DOCUMENT_EXTENSIONS = {
+# 支持的文档格式清单 — docstring 与报错文案共用,避免两处不一致
+# (docstring 是 LLM 的 schema,漏列格式会让 LLM 误判"不支持";
+#  改动格式时先改这里,docstring 由测试校验与本清单一致)
+_DOCUMENT_FORMATS: tuple[str, ...] = (
     ".pdf",
     ".docx",
     ".doc",
@@ -339,7 +372,8 @@ _DOCUMENT_EXTENSIONS = {
     ".json",
     ".xml",
     ".epub",
-}
+)
+_DOCUMENT_EXTENSIONS = frozenset(_DOCUMENT_FORMATS)
 
 
 def _build_llm_client(config):
@@ -366,7 +400,8 @@ def _build_llm_client(config):
 @tool
 async def ConvertToMarkdown(file_path: str, output_path: str = "", tool_runtime: ToolRuntime = None) -> str:
     """
-    将文档转换为 Markdown 格式并保存为 .md 文件。支持 PDF、DOCX、PPTX、XLSX、HTML、CSV、JSON、XML、EPUB。
+    将文档转换为 Markdown 格式并保存为 .md 文件。
+    支持 13 种格式: PDF、DOCX、DOC、PPTX、PPT、XLSX、XLS、HTML、HTM、CSV、JSON、XML、EPUB。
 
     函数立即返回,转换在后台异步执行,完成后自动唤醒 AI 并返回结果。
     转换过程保留文档结构(标题、列表、表格等),输出对 LLM 友好的 Markdown 文本。
@@ -400,7 +435,7 @@ async def ConvertToMarkdown(file_path: str, output_path: str = "", tool_runtime:
     if suffix not in _DOCUMENT_EXTENSIONS:
         return (
             f"{TOOL_ERROR}: 不支持的格式 '{suffix}',"
-            f"支持的格式: {', '.join(sorted(_DOCUMENT_EXTENSIONS))}"
+            f"支持的格式: {', '.join(_DOCUMENT_FORMATS)}"
         )
 
     # 确定输出路径(提前计算,避免异步竞争)

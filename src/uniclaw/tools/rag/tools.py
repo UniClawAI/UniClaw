@@ -467,7 +467,8 @@ def rag_list_collections(
                 f"{TOOL_ERROR}: 集合加载失败,无法判断是否存在集合"
                 f"(请勿据此重建集合): {'; '.join(load_errors)}"
             )
-        return f"{TOOL_ERROR}: 当前没有任何集合"
+        # 空状态不是错误 —— 不带 TOOL_ERROR 前缀,避免调用方误判为操作失败
+        return f"当前没有任何集合(可调用 {rag_ingest.name} 创建)"
 
     if load_errors:
         lines.append(f"⚠️ 部分层级加载失败: {'; '.join(load_errors)}")
@@ -677,6 +678,22 @@ async def rag_evaluate(
     err = validate_collection_name(collection)
     if err:
         return f"{TOOL_ERROR}: {err}"
+
+    # 先校验集合存在,避免评估报告静默输出 0.0 让调用方误判为"检索无结果"
+    collection_exists = False
+    for s in [Scope.PROJECT, Scope.USER]:
+        try:
+            manager = _get_manager(config, s)
+            if manager.get_collection_info(collection):
+                collection_exists = True
+                break
+        except _external_errors():
+            continue
+    if not collection_exists:
+        return (
+            f"{TOOL_ERROR}: 集合 '{collection}' 不存在"
+            f"(可用 {rag_list_collections.name} 查看)"
+        )
 
     # 为每个问题执行多层级检索,按内容去重
     all_retrieved: dict[str, list[dict]] = {}
