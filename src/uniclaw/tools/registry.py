@@ -54,7 +54,25 @@ def _build_core_tools() -> list:
 
 
 CORE_TOOLS = _build_core_tools()
-CORE_TOOL_NAMES = {t.name for t in CORE_TOOLS}
+
+
+def _tool_name(t) -> str:
+    """取工具规范名;对未用 @tool 装饰的裸函数给出点名报错。
+
+    装饰器丢失时这里以前是 AttributeError "'function' object has no
+    attribute 'name'",定位不到是谁 —— 明确点名可直接修。
+    """
+    name = getattr(t, "name", None)
+    if not name:
+        raise TypeError(
+            f"工具 {getattr(t, '__name__', t)!r} 未用 @tool 装饰"
+            f"(收到 {type(t).__module__}.{type(t).__name__}),"
+            f"请检查其定义处的装饰器"
+        )
+    return name
+
+
+CORE_TOOL_NAMES = {_tool_name(t) for t in CORE_TOOLS}
 
 # cu_* 家族共享检索词。查询 "computer_use" 分词为 computer/use,而工具名是
 # cu_* 前缀、类别是中文"计算机操作",与查询无共同词元会导致 BM25 全 0,

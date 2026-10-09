@@ -399,3 +399,29 @@ class TestTTSSegmentedSynthesis:
             result = await tts(text="。。。", config=_fake_config())
         assert TOOL_ERROR in result
         assert mock_achat.await_count == 0
+
+# ── TTS style 透明提示(第 29 轮 #8) ───────────────────────
+
+
+class TestStyleWarning:
+    """style 是自然语言描述,未命中已知风格词时给提示而非静默。"""
+
+    def test_unknown_style_warns(self):
+        from uniclaw.tools.tts.tts import _style_warning
+
+        warn = _style_warning("不存在的声音风格xxyyzz")
+        assert "未命中任何已知风格词" in warn
+
+    def test_known_style_silent(self):
+        from uniclaw.tools.tts.tts import _style_warning
+
+        assert _style_warning("开心") == ""
+        assert _style_warning("压抑的愤怒") == ""
+        assert _style_warning("带着哽咽的笑意") == ""
+
+    def test_empty_style_silent(self):
+        from uniclaw.tools.tts.tts import _style_warning
+
+        assert _style_warning("") == ""
+        assert _style_warning("   ") == ""
+

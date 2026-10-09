@@ -33,8 +33,10 @@ class A2AManager:
                     cls._instance = cls()
         return cls._instance
 
-    async def load_config(self) -> dict:
-        if self._config is not None:
+    async def load_config(self, force: bool = False) -> dict:
+        """加载配置。force=True 强制重读磁盘 —— 手工编辑 a2a.json 后
+        list/get 要即时可见,不能一直吃首次加载的内存缓存。"""
+        if self._config is not None and not force:
             return self._config
         try:
             if self._config_path.exists():
@@ -56,11 +58,11 @@ class A2AManager:
         )
 
     async def list_agents(self) -> list[dict]:
-        await self.load_config()
+        await self.load_config(force=True)
         return [{"name": name, **data} for name, data in self._config["agents"].items()]
 
     async def get_agent(self, name: str) -> dict | None:
-        await self.load_config()
+        await self.load_config(force=True)
         data = self._config["agents"].get(name)
         return {"name": name, **data} if data else None
 

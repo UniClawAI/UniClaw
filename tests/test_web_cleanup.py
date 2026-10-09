@@ -19,6 +19,7 @@ class _FakeResponse:
 
     def __init__(self, text: str, content_type: str = "text/html", status_code: int = 200):
         self.text = text
+        self.content = text.encode("utf-8")
         self.status_code = status_code
         self.headers = {"content-type": content_type}
 
@@ -33,6 +34,7 @@ def _mock_client(response: _FakeResponse) -> AsyncMock:
     mock_response.status_code = response.status_code
     mock_response.headers = response.headers
     mock_response.text = response.text
+    mock_response.content = response.content
     mock_client.get = AsyncMock(return_value=mock_response)
     return mock_client
 

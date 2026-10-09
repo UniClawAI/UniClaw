@@ -1794,7 +1794,11 @@ class Session:
         jev_config = JevCompactConfig()
         try:
             jev_result = await jev_compact(
-                self, jev_config, keep_ratio=keep_ratio, focus=focus
+                self,
+                jev_config,
+                keep_ratio=keep_ratio,
+                focus=focus,
+                proxy_url=config.proxy_url,
             )
         except Exception as e:
             # 任何 Jev 失败(不可用/网络/配额)都回退 LLM,不影响压缩链路

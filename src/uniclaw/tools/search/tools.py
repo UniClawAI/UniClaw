@@ -280,6 +280,12 @@ async def webSearch(
             google_news after:, openalex publication_date 等);
             bilibili/polymarket/bing/duckduckgo 不支持, 结果中会附提示
     """
+    if limit < 1:
+        return (
+            f"{TOOL_ERROR}: limit 必须 >= 1(收到: {limit});"
+            f"limit=0 不会返回任何结果,请传正整数或省略该参数(默认 10)"
+        )
+
     selected_platforms = _resolve_platforms(platforms)
     total = len(selected_platforms)
 

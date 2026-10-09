@@ -38,6 +38,7 @@ async def mcp_add_server(
     headers: dict[str, str] | None = None,
     cwd: str | None = None,
     timeout: float | None = None,
+    read_timeout: float | None = None,
     persistent: bool = False,
     tool_runtime: ToolRuntime = None,
 ) -> str:
@@ -56,7 +57,9 @@ async def mcp_add_server(
         env: [仅stdio] 环境变量字典(dict[str, str])
         headers: [仅sse/streamable_http] HTTP 请求头字典(dict[str, str])
         cwd: [仅stdio] 工作目录路径(str)
-        timeout: [仅sse/streamable_http] 超时时间(float,秒)
+        timeout: [仅sse/streamable_http] 连接/握手超时(float,秒)
+        read_timeout: [仅sse/streamable_http] 工具调用读超时(float,秒)。
+            长任务(如 exa_agent_run)建议 300-600;不传则用默认值(300s)。
         persistent: 是否启用持久会话(bool)。默认 false,每次工具调用独立建连。
             设为 true 时连接跨调用复用,适合有状态 server(需先登录再查询等)或
             stdio 型 server 以避免反复冷启动。副作用工具失败时不会自动重试。
@@ -85,7 +88,7 @@ async def mcp_add_server(
 
     # 检查服务器是否已存在
     if await manager.get_server(name, config):
-        return f"{TOOL_ERROR}: 服务器 '{name}' 已存在,请使用 mcp_remove_server 先删除"
+        return f"{TOOL_ERROR}: 服务器 '{name}' 已存在,请使用 {mcp_remove_server.name} 先删除"
 
     # 构建连接配置
     connection = {"transport": transport}
@@ -111,6 +114,8 @@ async def mcp_add_server(
             connection["headers"] = headers
         if timeout is not None:
             connection["timeout"] = timeout
+        if read_timeout is not None:
+            connection["read_timeout"] = read_timeout
 
     else:
         return f"{TOOL_ERROR}: 不支持的传输类型 '{transport}',可选值: stdio、sse、streamable_http"
@@ -195,6 +200,24 @@ async def mcp_toggle_server(name: str, enabled: bool = True, tool_runtime: ToolR
         )
 
 
+def _mask_secrets(text: str) -> str:
+    """掩码命令/URL 里的疑似密钥,避免列表输出泄露 API Key/Token。"""
+    import re
+
+    text = re.sub(
+        r"(?i)(--?(?:api[-_]?key|token|secret|password|passwd|auth)\s+)(\S+)",
+        r"***",
+        text,
+    )
+    text = re.sub(
+        r"(?i)((?:api[_-]?key|token|secret|password|authorization)\s*[:=]\s*)(\S+)",
+        r"***",
+        text,
+    )
+    text = re.sub(r"(?i)(bearer\s+)([\w.\-]+)", r"***", text)
+    return text
+
+
 @tool
 async def mcp_list_servers(tool_runtime: ToolRuntime = None) -> str:
     """
@@ -229,7 +252,7 @@ async def mcp_list_servers(tool_runtime: ToolRuntime = None) -> str:
         flag = ",持久会话" if persistent else ""
         lines.append(f"  [{status}] {name} ({transport}{flag})")
         if detail:
-            lines.append(f"    {detail}")
+            lines.append(f"    {_mask_secrets(detail)}")
 
         # 获取该服务器的工具信息
         tools_info = manager.get_tools_info(name)

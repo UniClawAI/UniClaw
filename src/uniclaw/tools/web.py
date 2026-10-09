@@ -7,6 +7,7 @@ from uniclaw.tools.base import tool
 from uniclaw.tools.search.base import DEFAULT_UA
 from uniclaw.utils.constants import TOOL_ERROR
 from uniclaw.utils.http_download import format_network_error
+from uniclaw.tools.fs import _decode_markup
 
 
 def _is_connect_error(exc: BaseException) -> bool:
@@ -31,6 +32,37 @@ def _is_connect_error(exc: BaseException) -> bool:
             return True
         cur = cur.__cause__ or (None if cur.__suppress_context__ else cur.__context__)
     return False
+
+
+_TEXT_MIME_HINTS = (
+    "text/",
+    "html",
+    "xml",
+    "json",
+    "javascript",
+    "x-www-form-urlencoded",
+    "svg",
+    "csv",
+    "yaml",
+    "x-ndjson",
+)
+_TEXT_MAX_CHARS = 200_000  # 内联文本上限,防大页面/大 JSON 灌爆上下文
+
+
+def _is_text_content(mime: str, body: bytes) -> bool:
+    """判断响应是否为可文本化内容(mime 提示优先,内容嗅探兜底)。"""
+    m = (mime or "").lower()
+    if any(h in m for h in _TEXT_MIME_HINTS):
+        return True
+    if m and not m.startswith("application/"):
+        # 未知的非 application/*: 看内容
+        pass
+    elif m.startswith("application/"):
+        # application/octet-stream 等明确二进制;application/* 其他按嗅探
+        if "octet-stream" in m or "zip" in m or "image/" in m or "audio/" in m or "video/" in m:
+            return False
+    # 内容嗅探: 含 NUL 视为二进制(与 read_text_file 同口径)
+    return b"\x00" not in body[:8192]
 
 
 def _html_to_text(text: str) -> str:
@@ -116,8 +148,26 @@ async def webFetch(url: str, proxy: str | None = None, raw: bool = False) -> str
         return f"{TOOL_ERROR}: 请求失败 {url} (proxy={proxy}, timeout=30s): {detail}{tip}"
 
     ct = r.headers.get("content-type", "")
-    text = r.text
     mime = ct.split(";")[0].strip()
+    body_bytes = r.content
+
+    # 二进制/非文本内容不内联倾倒 —— 乱码字节只会污染上下文
+    if not _is_text_content(mime, body_bytes):
+        size_kb = len(body_bytes) / 1024
+        from uniclaw.tools.download.http_tools import http_download
+        return (
+            f"{TOOL_ERROR}: {url} 返回的是二进制内容"
+            f"(content-type: {mime or 'unknown'}, {size_kb:.0f} KB),无法作为文本展示。"
+            f"请用 {http_download.name}(url='{url}') 下载后处理"
+        )
+
+    # 解码: 响应头 charset/HTML meta/嗅探链 —— 直接 r.text 对 GBK 等
+    # 非 UTF-8 页面会整页乱码
+    text = _decode_markup(body_bytes)
+    if len(text) > _TEXT_MAX_CHARS:
+        text = text[:_TEXT_MAX_CHARS] + (
+            f"\n\n...(内容过长,已截断,全文 {len(text)} 字符)"
+        )
 
     # 构建统一的元数据头部(状态码 + 类型 + 标题),所有模式均返回
     meta = f"HTTP {r.status_code} | {mime or 'unknown'}"

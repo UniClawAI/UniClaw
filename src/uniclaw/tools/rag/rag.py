@@ -999,6 +999,7 @@ class RAGManager:
             state=state,
             instruction="这个文档是否与查询相关。关注文档内容是否包含查询所需的信息。",
             options=options,
+            proxy_url=self.config.proxy_url,
         )
         # noul 直接作为相关性分数 [0, 1]
         scores = [0.0] * len(candidates)

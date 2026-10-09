@@ -1023,3 +1023,16 @@ class TestStringResultUnescape:
             assert r.output == raw
         finally:
             mgr.kernels.pop("lsmagic-test", None)
+
+# ── ipython_vars 截断标注(第 38 轮 #5) ────────────────────
+
+
+class TestIpythonVarsTruncationLabel:
+    def test_kernel_code_marks_truncation(self):
+        """ipython_vars 的 repr 截断带长度标注,与 inspect 口径一致。"""
+        from pathlib import Path
+
+        from uniclaw.tools.ipython import kernel
+
+        src = Path(kernel.__file__).read_text(encoding="utf-8")
+        assert "截断, 共 " in src

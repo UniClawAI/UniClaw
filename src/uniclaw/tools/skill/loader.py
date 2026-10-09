@@ -22,16 +22,16 @@ class SkillDef:
 
 
 def _get_skill_paths(root_dir: Path | None) -> dict[str, list[Path]]:
-    skill_paths = {
-        "user": [
-            *Path.home().glob(".*/skills"),
-        ],
-    }
+    """按优先级从高到低返回技能目录 —— 项目级先加载,同名以项目为准。"""
+    skill_paths: dict[str, list[Path]] = {}
     if root_dir:
         skill_paths["project"] = [
             root_dir / "skills",
             *root_dir.glob(".*/skills"),
         ]
+    skill_paths["user"] = [
+        *Path.home().glob(".*/skills"),
+    ]
     return skill_paths
 
 
@@ -131,19 +131,25 @@ def load_skills(root_dir: Path | None) -> list[SkillDef]:
     skill_keys = set()
     # 加载内置技能
     skills.extend(get_builtin_skills())
+    for b in skills:
+        skill_keys.add(b.name)
 
-    # 加载用户和项目技能
+    # 加载项目和用户技能(项目优先: 同名遮蔽用户级)
     paths = _get_skill_paths(root_dir)
     for source, dirs in paths.items():
         for skill_dir in dirs:
             for file_path in _iter_skill_files(skill_dir):
-                skill_name = file_path.parent.name
-                if skill_name in skill_keys:
-                    continue
                 skill = _parse_skill_file(file_path, source=source)
-                if skill:
-                    skills.append(skill)
-                    skill_keys.add(skill.name)
+                if not skill:
+                    continue
+                # 判重键必须是 frontmatter 的 name —— 早年用目录名判重,
+                # 目录名与 name 不一致时同名技能双双入库/漏判
+                if skill.name in skill_keys:
+                    # 同名 skill 多处安装是常态(同一 skill 装在不同 agent),
+                    # 按"项目/内置优先"静默取先加载者即可,不打扰
+                    continue
+                skills.append(skill)
+                skill_keys.add(skill.name)
 
     return skills
 

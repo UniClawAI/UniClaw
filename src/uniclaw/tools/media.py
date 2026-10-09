@@ -317,6 +317,10 @@ def _read_media_impl(file_path: str, fps: int = 2) -> list | str:
 
     size_limit = SIZE_LIMITS[media_type]
     size_bytes = p.stat().st_size
+    if size_bytes == 0:
+        # 空文件无内容可送模型;base64 为空串会被远端报
+        # "the provided base64 data is not valid",远不如本地直接说清楚
+        return f"{TOOL_ERROR}: 文件为空(0 字节): {file_path}"
     if size_bytes > size_limit:
         size_mb = size_bytes / (1024 * 1024)
         limit_mb = size_limit / (1024 * 1024)
@@ -410,6 +414,27 @@ async def ReadMedia(
         return (
             f"{TOOL_ERROR}: 转换文字描述失败 (file_path={file_path}, model={models}): "
             f"{type(e).__name__}: {e}"
+        )
+    except Exception as e:
+        # 计费/账户类失败(402、余额不足)与文件损坏无关,归因不能错位
+        from uniclaw.provider.error_classifier import is_billing_error
+
+        if is_billing_error(e):
+            return (
+                f"{TOOL_ERROR}: 后端服务账户余额不足或配额耗尽(402 类错误),"
+                f"与文件无关: {e}"
+            )
+        # 远端 API 拒绝(4xx: 参数/内容不合法)是外部原因不是 bug ——
+        # 裸 400 "the provided base64 data is not valid" 对调用方没有信息量,
+        # 转成"媒体内容无效/损坏"的友好提示;其余异常照常外抛交由兜底记堆栈
+        name = type(e).__name__
+        if not any(
+            k in name for k in ("BadRequest", "InvalidRequest", "APIStatusError")
+        ):
+            raise
+        return (
+            f"{TOOL_ERROR}: 多模态模型拒绝了该媒体内容 (file_path={file_path}): "
+            f"{e}\n媒体文件可能为空、损坏或内容不受支持,请检查文件有效性"
         )
 
 

@@ -61,7 +61,8 @@ def _stable_id(url: str, save_path: Path) -> str:
     """根据 URL 和保存路径生成临时目录标识,格式为 {文件名}_{hash}。"""
     key = f"{url}|{save_path}".encode()
     h = hashlib.sha256(key).hexdigest()[:8]
-    return f"{save_path.stem}_{h}"
+    # stem 截断: 超长文件名场景下旁路暂存文件名不能把全路径顶过 MAX_PATH
+    return f"{save_path.stem[:24]}_{h}"
 
 
 class M3u8Status(StrEnum):
@@ -80,13 +81,24 @@ class M3u8Status(StrEnum):
 
 @dataclass
 class M3u8Segment:
-    """单个 TS 分片信息。"""
+    """单个 TS/fMP4 分片信息。"""
 
     index: int  # 分片序号(从 0 开始)
     duration: float  # 分片时长(秒)
     uri: str  # 原始 URI(可能相对)
     url: str  # 解析后的完整 URL
     key: "M3u8Key | None" = None  # 该分片使用的加密密钥
+    byte_range: tuple[int, int] | None = None  # #EXT-X-BYTERANGE (offset, length),仅取 URI 的该区间
+
+
+@dataclass
+class M3u8Map:
+    """`#EXT-X-MAP` 初始化段信息(fMP4/CMAF 流必有,输出文件开头只放一份)。"""
+
+    uri: str
+    url: str
+    byte_range: tuple[int, int] | None = None  # (offset, length),无则取整个 URI
+    key: "M3u8Key | None" = None
 
 
 @dataclass
@@ -97,6 +109,20 @@ class M3u8Key:
     uri: str = ""  # 密钥文件 URI(可能相对)
     iv: str = ""  # IV,十六进制(不含 0x 前缀),为空则用分片序号
     key_bytes: bytes | None = field(default=None, repr=False)  # 已下载的密钥(16 字节)
+
+
+@dataclass
+class M3u8Media:
+    """主播放列表 `#EXT-X-MEDIA` 条目(替代音轨/字幕/CLOSED-CAPTIONS)。"""
+
+    type: str  # AUDIO / SUBTITLES / CLOSED-CAPTIONS / VIDEO
+    group_id: str
+    name: str
+    language: str = ""
+    is_default: bool = False
+    autoselect: bool = False
+    uri: str = ""  # 原始 URI(独立媒体播放列表)
+    url: str = ""  # 解析后的完整 URL,可单独用 m3u8_download 下载
 
 
 @dataclass
@@ -128,10 +154,14 @@ class M3u8Progress:
     error: str | None = None
     speed: float = 0.0
     variants: list[M3u8Variant] = field(default_factory=list)
+    media_tracks: list["M3u8Media"] = field(default_factory=list)  # 音轨/字幕清单
+    discontinuity_count: int = 0  # #EXT-X-DISCONTINUITY 处数(切广告/拼接点)
     selected_variant: str = ""  # 用户选择的分辨率描述
     resolution: str = ""  # 当前下载的分辨率
     encryption_method: str = ""  # 加密方式,如 "AES-128",空表示未加密
     merged_file: str = ""  # 合并后的最终文件路径
+    has_byterange: bool = False  # 分片带 #EXT-X-BYTERANGE(展示口径用"区间")
+    init_iv_note: str = ""  # init 解密 IV 歧义提示(无则为空)
 
     @property
     def progress_percent(self) -> float:
@@ -169,6 +199,14 @@ class M3u8Progress:
             lines.append(
                 f"大小: {file_format(self.total_size)}, 耗时: {time_format(self.elapsed)}"
             )
+            if self.init_iv_note:
+                lines.append(self.init_iv_note)
+            if self.discontinuity_count:
+                lines.append(
+                    f"⚠ 流含 {self.discontinuity_count} 处 discontinuity"
+                    "(切广告/拼接点),已按序拼接;若切点处音视频参数有变化,"
+                    "产物可能音画不同步,请试播检查"
+                )
             return "\n".join(lines)
         if self.status == M3u8Status.CANCELLED:
             return f"M3U8 下载已取消: {self.error}"
@@ -180,17 +218,19 @@ class M3u8Progress:
             return "等待开始..."
         if self.status == M3u8Status.PARSING:
             return "正在解析 M3U8 播放列表..."
+        unit = "区间" if self.has_byterange else "分片"
         if self.status == M3u8Status.MERGING:
-            return f"正在合并 {self.total_segments} 个分片..."
+            return f"正在合并 {self.total_segments} 个{unit}..."
         if self.status == M3u8Status.PAUSED:
             return (
-                f"M3U8 下载已暂停: 已完成 {self.downloaded_segments}/{self.total_segments} 分片 "
+                f"M3U8 下载已暂停: 已完成 {self.downloaded_segments}/{self.total_segments} {unit} "
                 f"({self.progress_percent:.1f}%)"
             )
         # downloading
+        unit = "区间" if self.has_byterange else "分片"
         lines = [
             f"文件: {self.save_path}",
-            f"进度: {self.downloaded_segments}/{self.total_segments} 分片 "
+            f"进度: {self.downloaded_segments}/{self.total_segments} {unit} "
             f"({self.progress_percent:.1f}%)",
         ]
         if self.resolution:
@@ -205,13 +245,31 @@ class M3u8Progress:
         return "\n".join(lines)
 
     def _format_variants(self) -> str:
-        """格式化可选分辨率列表。"""
+        """格式化可选变体列表(按码率降序,含音轨/字幕清单)。"""
         if not self.variants:
-            return "未发现可用分辨率选项。"
-        lines = ["发现多个分辨率选项,请选择:", ""]
+            return "未发现可用变体选项。"
+        lines = ["发现多个变体选项(按码率从高到低),请选择:", ""]
         for v in self.variants:
-            desc = f"{v.resolution}" if v.resolution else "未知分辨率"
+            # 无 RESOLUTION 的变体是纯音频轨(gear),标注出来别当"未知"
+            desc = v.resolution if v.resolution else "音频"
             lines.append(f"  [{v.index}] {desc} ({int(v.bandwidth) // 1000}kbps)")
+        if self.media_tracks:
+            for ttype, label, tag in (("AUDIO", "音轨", "a"), ("SUBTITLES", "字幕", "s")):
+                tracks = [t for t in self.media_tracks if t.type == ttype]
+                if not tracks:
+                    continue
+                lines.append("")
+                lines.append(f"{label}({len(tracks)}):")
+                for i, t in enumerate(tracks):
+                    lang = t.language or t.name or t.group_id
+                    default_note = "(默认)" if t.is_default else ""
+                    uri_hint = f", URI={t.uri}" if t.uri else "(无独立地址)"
+                    lines.append(f"  [{tag}{i}] {lang}{default_note}{uri_hint}")
+            lines.append("")
+            lines.append(
+                "提示: 默认下载变体自带(muxed)音轨;需要独立音轨/字幕时,"
+                "把上面的 URI 作为 url 交给 m3u8_download 单独下载为独立文件。"
+            )
         lines.append("")
         lines.append("使用 m3u8_download 重新调用并传入 variant=序号 即可选择。")
         return "\n".join(lines)
@@ -290,6 +348,52 @@ def _safe_int(value: str, default: int = 0) -> int:
         return default
 
 
+def _parse_byterange_spec(spec: str, default_offset: int = 0) -> tuple[int, int]:
+    """解析 `<length>[@<offset>]` 字节区间描述(`#EXT-X-BYTERANGE`/MAP 的 BYTERANGE)。
+
+    非法区间(length<=0/负 offset/非数字)直接抛错 —— 沉默回退成"整文件下载"
+    会把单文件 fMP4 流重复拉全量再拼 init,产出体积膨胀且带重复 ftyp 的损坏文件。
+
+    Args:
+        spec: 区间描述,如 "100@0";省略 `@offset` 时用 default_offset。
+        default_offset: 无 `@offset` 时的偏移(`#EXT-X-BYTERANGE` 为上一分片
+            末尾续接;MAP 视为 0)。
+
+    Returns:
+        tuple[int, int]: (offset, length)。
+
+    Raises:
+        ValueError: 区间描述非法(非数字、length<=0 或 offset<0)。
+    """
+    spec = spec.strip()
+    length_s, at, offset_s = spec.partition("@")
+    try:
+        length = int(length_s.strip())
+    except ValueError:
+        raise ValueError(
+            f"非法 #EXT-X-BYTERANGE 区间 {spec!r}: length 必须是整数"
+        ) from None
+    if length <= 0:
+        raise ValueError(
+            f"非法 #EXT-X-BYTERANGE 区间 {spec!r}: length 必须为正整数"
+            "(0/负值会被误当整文件下载,产生膨胀损坏的合并产物)"
+        )
+    if at:
+        try:
+            offset = int(offset_s.strip())
+        except ValueError:
+            raise ValueError(
+                f"非法 #EXT-X-BYTERANGE 区间 {spec!r}: offset 必须是整数"
+            ) from None
+    else:
+        offset = default_offset
+    if offset < 0:
+        raise ValueError(
+            f"非法 #EXT-X-BYTERANGE 区间 {spec!r}: offset 不能为负"
+        )
+    return (offset, length)
+
+
 def _looks_like_html(data: bytes) -> bool:
     """检查数据是否是 HTML 页面(而非二进制媒体内容)。
 
@@ -300,16 +404,148 @@ def _looks_like_html(data: bytes) -> bool:
     return head.startswith(b"<!doctype") or head.startswith(b"<html")
 
 
+def _playlist_error(content: str) -> str | None:
+    """检查文本是否是 M3U8 播放列表,不是则返回报错说明。
+
+    播放列表必以 `#EXTM3U` 开头(部分服务端省略该行但仍有 `#EXTINF`/
+    `#EXT-X-` 标签,两者都接受)。HTML 网页/纯文本/防盗链错误页都没有这些
+    标签 —— 若不拦下,内容的每一行都会被当成分片 URI 拼 URL 发起下载,
+    最终报"分片 0 下载失败",完全掩盖"URL 根本不是播放列表"的真实原因。
+
+    Args:
+        content: URL 返回的文本内容。
+
+    Returns:
+        str | None: 报错说明(含内容开头预览);是合法播放列表返回 None。
+    """
+    text = content.lstrip("\ufeff \t\r\n")
+    if text.startswith("#EXTM3U") or "#EXTINF:" in content or "#EXT-X-" in content:
+        return None
+    preview = " ".join(content.strip().split())[:80]
+    return (
+        f"URL 返回的内容不是有效的 M3U8 播放列表(开头为: {preview!r})。"
+        "可能是 HTML 网页/纯文本/防盗链错误页;"
+        "请确认 URL 指向 .m3u8 播放列表,或带上 Referer/Cookie 等请求头重试"
+    )
+
+
 def _decrypt_aes128(data: bytes, key: bytes, iv: bytes) -> bytes:
     """AES-128-CBC 解密,去除 PKCS7 填充。"""
     cipher = Cipher(algorithms.AES(key), modes.CBC(iv))
     decryptor = cipher.decryptor()
     padded = decryptor.update(data) + decryptor.finalize()
-    # 去除 PKCS7 填充
+    if not padded:
+        return padded
+    # 严格 PKCS7: 填充不合法则原样返回 —— 不加 PKCS7 的打包器(块对齐
+    # 直接 CBC)存在,宽松按尾字节截会把无填充流的尾部误切
     pad_len = padded[-1]
-    if 1 <= pad_len <= 16:
+    if 1 <= pad_len <= 16 and padded[-pad_len:] == bytes([pad_len]) * pad_len:
         return padded[:-pad_len]
     return padded
+
+
+def _looks_like_init_section(data: bytes) -> bool:
+    """判断解密结果是否像 fMP4 初始化段(box 序列走到尾部)。
+
+    按 MP4 box(size[4]+type[4] 前进)遍历;尾部不足一个 box 头时
+    须是零填充/空(容错截断构造)。只看 ftyp 魔数不够 —— 两个候选
+    IV 的差异可能恰好落在 box 无关字节,魔数完好会误判。
+    """
+    if len(data) < 8:
+        return False
+    if data[4:8] not in (b"ftyp", b"moov", b"styp", b"sidx"):
+        return False
+    pos = 0
+    n = len(data)
+    while pos + 8 <= n:
+        size = int.from_bytes(data[pos : pos + 4], "big")
+        box_type = data[pos + 4 : pos + 8]
+        if not box_type.strip(b"\x00"):
+            # 全零区 = 尾部对齐填充,合法结尾(容错截断构造/无 padding 流)
+            return not data[pos:].strip(b"\x00")
+        if size == 0:
+            return True
+        if size == 1:
+            if pos + 16 > n:
+                return False
+            size = int.from_bytes(data[pos + 8 : pos + 16], "big")
+        if size < 8:
+            return False
+        pos += size
+    # 尾部不足一个 box 头: 零填充/空即合法(容错)
+    return not data[pos:].strip(b"\x00")
+
+
+def _decrypt_map_section(
+    data: bytes, map_info: "M3u8Map", iv_mode: str = "auto"
+) -> tuple[bytes, str]:
+    """解密 `#EXT-X-MAP` 初始化段,兼容两种 IV 约定。
+
+    RFC 8216 规定加密 MAP 用生效 KEY 的显式 IV;打包器实践亦常见
+    用隐式 IV(全 0)。auto: 逐候选解密并按 box 结构校验,唯一通过
+    即采纳;两个都通过(IV 差异恰落在 box 无关字节,分不出)时取
+    全 0 并给出歧义提示;都不通过按规范取显式 IV。
+    iv_mode=key/zero 可强制指定(歧义场景自纠)。
+
+    Args:
+        data: 加密的初始化段字节。
+        map_info: MAP 信息(含生效的 key)。
+        iv_mode: auto/key/zero。
+
+    Returns:
+        tuple[bytes, str]: (解密结果, 歧义提示;无歧义时为空串)。
+    """
+    key = map_info.key
+    zero_iv = b"\x00" * 16
+    candidates: list[tuple[str, bytes]] = []
+    if key and key.iv:
+        try:
+            candidates.append(("key", bytes.fromhex(key.iv)))
+        except ValueError:
+            raise ValueError(
+                f"初始化段 IV 非法({key.iv!r}): 不是合法的十六进制"
+            ) from None
+    candidates.append(("zero", zero_iv))
+
+    if iv_mode == "key":
+        return _decrypt_aes128(data, key.key_bytes, candidates[0][1]), ""
+    if iv_mode == "zero":
+        return _decrypt_aes128(data, key.key_bytes, zero_iv), ""
+
+    passed: list[tuple[str, bytes]] = []
+    for mode, iv in candidates:
+        plain = _decrypt_aes128(data, key.key_bytes, iv)
+        if _looks_like_init_section(plain):
+            passed.append((mode, plain))
+    if len(passed) == 1:
+        return passed[0][1], ""
+    if len(passed) >= 2:
+        # 两候选都合法(box 校验分不出): 自动双解对比 —— IV 差异只污染
+        # 第一块,差异字节上"更接近零填充/minor_version=0"的一方是真解
+        # (真解的差异字节通常是补零/版本字段;错解被 IV 差异污染成非零)
+        p_key = passed[0][1]
+        p_zero = passed[-1][1]
+        n = min(len(p_key), len(p_zero))
+        key_only_zero = zero_only_zero = True
+        for i in range(n):
+            if p_key[i] != p_zero[i]:
+                if p_key[i] != 0:
+                    key_only_zero = False
+                if p_zero[i] != 0:
+                    zero_only_zero = False
+        if zero_only_zero and not key_only_zero:
+            return p_zero, ""
+        if key_only_zero and not zero_only_zero:
+            return p_key, ""
+        # 差异字节双方都非零: 分不出,按 RFC 8216 默认显式 IV + 提示
+        for mode, plain in passed:
+            if mode == "key":
+                return plain, (
+                    "⚠ init 解密存在 IV 歧义且无法自动比对,已按规范取 KEY 显式 IV;"
+                    "若产物异常请用 init_iv=zero 重试"
+                )
+    return passed[0][1] if passed else _decrypt_aes128(data, key.key_bytes, candidates[0][1]), ""
+    return _decrypt_aes128(data, key.key_bytes, candidates[0][1]), ""
 
 
 class M3u8Downloader(BaseDownloader):
@@ -326,6 +562,7 @@ class M3u8Downloader(BaseDownloader):
         headers: dict[str, str] | None = None,
         block_timeout: float = DEFAULT_BLOCK_TIMEOUT,
         variant: str = "",
+        init_iv: str = "auto",
         consecutive_failure_limit: int = 50,
     ):
         self.url = url
@@ -337,6 +574,8 @@ class M3u8Downloader(BaseDownloader):
         self.headers = headers or {}
         self.block_timeout = block_timeout
         self.variant = variant
+        self._init_iv_mode = init_iv or "auto"  # init 段 IV: auto/key/zero
+        self._init_iv_note = ""
         self.consecutive_failure_limit = consecutive_failure_limit
 
         # 内部状态
@@ -355,13 +594,16 @@ class M3u8Downloader(BaseDownloader):
         self._base_url: str = ""  # 主播放列表的基 URL
         self._segments: list[M3u8Segment] = []
         self._variants: list[M3u8Variant] = []
+        self._media_tracks: list[M3u8Media] = []
         self._media_sequence: int = 0
         self._selected_index: int = 0
+        self._map_info: M3u8Map | None = None  # #EXT-X-MAP 初始化段(fMP4)
 
         # 临时目录:与目标文件同目录,确保 rename 原子性
         stable = _stable_id(url, self.save_path)
         self._tmp_dir = self.save_path.parent / f".{stable}.m3u8"
         self._record = M3u8Record(self._tmp_dir / "progress.json")
+        self._init_file = self._tmp_dir / "init.bin"
 
     def _build_client_kwargs(self) -> dict:
         kwargs = {"timeout": DEFAULT_TIMEOUT, "follow_redirects": True}
@@ -425,10 +667,24 @@ class M3u8Downloader(BaseDownloader):
             content = await self._fetch(own_client, self.url)
             self._base_url = self.url[: self.url.rfind("/") + 1]
 
+            # 先确认返回的真是播放列表: HTML/纯文本/防盗链错误页会被逐行当成分片
+            # URI 发起下载,最终报"分片 0 下载失败",完全误导排障方向
+            err = _playlist_error(content)
+            if err:
+                self.progress.finish(M3u8Status.FAILED, f"{err}(url={self.url})")
+                return
+
             if "#EXT-X-STREAM-INF" in content:
                 # 主播放列表:解析可选分辨率
                 self._parse_master(content)
                 self.progress.variants = self._variants
+                self.progress.media_tracks = self._media_tracks
+                if not self._variants:
+                    self.progress.finish(
+                        M3u8Status.FAILED,
+                        f"主播放列表中未解析出任何 #EXT-X-STREAM-INF 分辨率选项(url={self.url})",
+                    )
+                    return
                 if self.variant:
                     if not self._apply_variant_choice(self.variant):
                         self.progress.finish(
@@ -456,7 +712,9 @@ class M3u8Downloader(BaseDownloader):
             else:
                 # 媒体播放列表
                 await self._parse_media(own_client, self.url)
-            self.progress.status = M3u8Status.PENDING
+            # _parse_media 校验失败时状态已是 FAILED,不能覆盖回 PENDING
+            if self.progress.status != M3u8Status.FAILED:
+                self.progress.status = M3u8Status.PENDING
 
         if client is not None:
             await _do_parse(client)
@@ -466,12 +724,34 @@ class M3u8Downloader(BaseDownloader):
         return self.progress
 
     def _parse_master(self, content: str) -> None:
-        """解析主播放列表的 `#EXT-X-STREAM-INF` 变体。"""
+        """解析主播放列表的 `#EXT-X-STREAM-INF` 变体与 `#EXT-X-MEDIA` 音轨/字幕。
+
+        变体按码率降序编号([0]=最高清) —— Apple 类列表常按升序排,
+        原样编号会让 [0] 是最差画质,与直觉相反。
+        """
         self._variants = []
+        self._media_tracks = []
         lines = content.strip().splitlines()
         i = 0
         while i < len(lines):
             line = lines[i].strip()
+            if line.startswith("#EXT-X-MEDIA:"):
+                attrs = _parse_attributes(line[len("#EXT-X-MEDIA:") :])
+                media_type = attrs.get("TYPE", "")
+                if media_type in ("AUDIO", "SUBTITLES"):
+                    uri = attrs.get("URI", "")
+                    self._media_tracks.append(
+                        M3u8Media(
+                            type=media_type,
+                            group_id=attrs.get("GROUP-ID", ""),
+                            name=attrs.get("NAME", ""),
+                            language=attrs.get("LANGUAGE", ""),
+                            is_default=attrs.get("DEFAULT", "").upper() == "YES",
+                            autoselect=attrs.get("AUTOSELECT", "").upper() == "YES",
+                            uri=uri,
+                            url=_resolve_url(self._base_url, uri) if uri else "",
+                        )
+                    )
             if line.startswith("#EXT-X-STREAM-INF:"):
                 attrs = _parse_attributes(line[len("#EXT-X-STREAM-INF:") :])
                 # 下一行为子播放列表 URI
@@ -491,15 +771,39 @@ class M3u8Downloader(BaseDownloader):
                         i += 1
             i += 1
 
+        # 码率降序编号: [0]=最高清;同码率时带分辨率的视频变体在前
+        self._variants.sort(key=lambda v: (v.bandwidth, bool(v.resolution)), reverse=True)
+        for idx, v in enumerate(self._variants):
+            v.index = idx
+        self._media_tracks.sort(
+            key=lambda t: (t.type, not t.is_default, t.language, t.name)
+        )
+
     async def _parse_media(self, client: httpx.AsyncClient, playlist_url: str) -> None:
-        """解析媒体播放列表,提取分片列表和密钥信息。"""
+        """解析媒体播放列表,提取分片列表和密钥信息。
+
+        内容不是播放列表或未包含任何分片时,把 progress 置为 FAILED 并返回,
+        不产出误导性的空分片列表。
+        """
         content = await self._fetch(client, playlist_url)
         playlist_base = playlist_url[: playlist_url.rfind("/") + 1]
 
+        err = _playlist_error(content)
+        if err:
+            self.progress.finish(
+                M3u8Status.FAILED, f"{err}(playlist={playlist_url})"
+            )
+            return
+
         self._segments = []
         self._media_sequence = 0
+        self._map_info = None
+        self.progress.discontinuity_count = 0
         current_key: M3u8Key | None = None
         current_duration = 0.0
+        pending_range: tuple[int, int] | None = None
+        last_uri = ""
+        last_range_end = 0
 
         for line in content.strip().splitlines():
             line = line.strip()
@@ -529,6 +833,51 @@ class M3u8Downloader(BaseDownloader):
                         key.key_bytes = await self._fetch_bytes(client, key_url)
                         self.progress.encryption_method = method
                     current_key = key
+            elif line.startswith("#EXT-X-MAP:"):
+                # fMP4/CMAF 初始化段(ftyp+moov): 输出文件开头只放一份。
+                # 不解析它会把每个分片背后的整个媒体文件当独立分片下载/拼接,
+                # 产物体积膨胀百倍且不可播放
+                attrs = _parse_attributes(line[len("#EXT-X-MAP:") :])
+                map_uri = attrs.get("URI", "")
+                if map_uri:
+                    raw_range = attrs.get("BYTERANGE", "")
+                    try:
+                        # MAP 省略 offset 视为 0(不是续接语义)
+                        map_range = (
+                            _parse_byterange_spec(raw_range, default_offset=0)
+                            if raw_range.strip()
+                            else None
+                        )
+                    except ValueError as e:
+                        self.progress.finish(
+                            M3u8Status.FAILED,
+                            f"{e}(#EXT-X-MAP URI={map_uri!r}, playlist={playlist_url})",
+                        )
+                        return
+                    self._map_info = M3u8Map(
+                        uri=map_uri,
+                        url=_resolve_url(playlist_base, map_uri),
+                        byte_range=map_range,
+                        key=current_key,
+                    )
+            elif line.startswith("#EXT-X-DISCONTINUITY"):
+                # 切广告/拼接点: 此处音视频轨参数可能突变,裸拼接有风险,
+                # 至少要在完成信息里提示试播检查
+                self.progress.discontinuity_count += 1
+            elif line.startswith("#EXT-X-BYTERANGE:"):
+                # 格式: #EXT-X-BYTERANGE:<length>[@<offset>];省略 offset 时
+                # 接在同 URI 上一分片的末尾(单文件多分片的 fMP4 流)
+                spec = line[len("#EXT-X-BYTERANGE:") :].strip()
+                try:
+                    pending_range = _parse_byterange_spec(
+                        spec, default_offset=last_range_end
+                    )
+                except ValueError as e:
+                    # 与分片越界同口径: 拒绝静默整文件回退,明确报错
+                    self.progress.finish(
+                        M3u8Status.FAILED, f"{e}(playlist={playlist_url})"
+                    )
+                    return
             elif line.startswith("#EXTINF:"):
                 # 格式: #EXTINF:10.000,
                 try:
@@ -549,11 +898,26 @@ class M3u8Downloader(BaseDownloader):
                         uri=line,
                         url=seg_url,
                         key=current_key,
+                        byte_range=pending_range,
                     )
                 )
+                if pending_range is not None:
+                    last_range_end = pending_range[0] + pending_range[1]
+                if line != last_uri:
+                    # 换了资源,无 @offset 的续接位置不能跨 URI 延续
+                    if pending_range is None:
+                        last_range_end = 0
+                    last_uri = line
+                pending_range = None
                 current_duration = 0.0
 
         self.progress.total_segments = len(self._segments)
+        self.progress.has_byterange = any(s.byte_range for s in self._segments)
+        if not self._segments:
+            self.progress.finish(
+                M3u8Status.FAILED,
+                f"媒体播放列表未包含任何分片(playlist={playlist_url})",
+            )
 
     def _apply_variant_choice(self, choice: str) -> bool:
         """根据序号或分辨率字符串选择变体。"""
@@ -628,6 +992,124 @@ class M3u8Downloader(BaseDownloader):
                 data.extend(chunk)
         return bytes(data)
 
+    async def _read_byte_range(
+        self, client: httpx.AsyncClient, url: str, offset: int, length: int
+    ) -> bytes | None:
+        """按 `#EXT-X-BYTERANGE` 只取资源的 [offset, offset+length) 区间。
+
+        发 Range 请求;服务器无视 Range 返回 200 时,流式跳过前 offset 字节
+        再取 length 字节(正确性优先,但省不下带宽)。逐块检查取消/暂停。
+
+        Returns:
+            bytes | None: 区间字节;取消或连续失败终止时返回 None。
+        """
+        data = bytearray()
+        headers = {
+            **self.headers,
+            "Accept-Encoding": "identity",
+            "Range": f"bytes={offset}-{offset + length - 1}",
+        }
+        async with client.stream("GET", url, headers=headers) as resp:
+            resp.raise_for_status()
+            ignore_range = resp.status_code == 200
+            skip = offset if ignore_range else 0
+            take = length
+            aiter = resp.aiter_bytes(8192).__aiter__()
+            while take > 0:
+                if self._cancelled or self._abort_reason:
+                    return None
+                await self._pause_event.wait()
+                try:
+                    chunk = await asyncio.wait_for(
+                        aiter.__anext__(), timeout=self.block_timeout
+                    )
+                except StopAsyncIteration:
+                    break
+                if skip >= len(chunk):
+                    skip -= len(chunk)
+                    continue
+                if skip:
+                    chunk = chunk[skip:]
+                    skip = 0
+                piece = chunk[:take]
+                data.extend(piece)
+                take -= len(piece)
+        return bytes(data)
+
+    async def _ensure_map(self) -> bool:
+        """下载/复用 `#EXT-X-MAP` 初始化段,写入 `init.bin`。
+
+        已存在即跳过(断点续传);失败重试 max_retries 次后返回 False。
+
+        Returns:
+            bool: init.bin 就绪返回 True;取消或重试耗尽返回 False。
+        """
+        if self._map_info is None:
+            return True
+        if self._init_file.exists():
+            # 加密流的 init 缓存要像合法 MP4 box —— 旧版本按错 IV 解出的
+            # 坏 init 若直接复用,产物永远修不好;不像就重下重解(自愈)
+            if self._map_info.key is None or _looks_like_init_section(
+                self._init_file.read_bytes()
+            ):
+                return True
+            self._init_file.unlink(missing_ok=True)
+        map_info = self._map_info
+        for attempt in range(self.max_retries + 1):
+            if self._cancelled:
+                return False
+            await self._pause_event.wait()
+            try:
+                async with httpx.AsyncClient(
+                    **self._build_client_kwargs()
+                ) as client:
+                    if map_info.byte_range is not None:
+                        offset, length = map_info.byte_range
+                        data = await self._read_byte_range(
+                            client, map_info.url, offset, length
+                        )
+                        # 服务器截断/误返整文件当 init 会拼出损坏产物 ——
+                        # 与分片区间同口径校验,不够就是没拿到目标区间
+                        if data is not None and len(data) != length:
+                            raise IOError(
+                                f"初始化段区间下载不完整: 期望 {length} 字节, "
+                                f"实际 {len(data)} 字节({map_info.url})"
+                            )
+                    else:
+                        data = await self._fetch_bytes(client, map_info.url)
+                if data is None:
+                    return False
+                # AES-128 时初始化段同样加密,按声明位置的 key 解密
+                if (
+                    map_info.key
+                    and map_info.key.method == "AES-128"
+                    and map_info.key.key_bytes
+                ):
+                    data, iv_note = _decrypt_map_section(
+                        data, map_info, self._init_iv_mode
+                    )
+                    self._init_iv_note = iv_note
+                    self.progress.init_iv_note = iv_note
+                self._init_file.parent.mkdir(parents=True, exist_ok=True)
+                tmp = self._init_file.with_suffix(".part")
+                tmp.write_bytes(data)
+                tmp.rename(self._init_file)
+                # downloaded_size 由 start() 的恢复段统一计入 ——
+                # 这里再 += 会与恢复段重复(init 双计数,进度虚高一倍)
+                return True
+            except (
+                httpx.HTTPStatusError,
+                httpx.RequestError,
+                OSError,
+                asyncio.TimeoutError,
+            ) as e:
+                if attempt < self.max_retries:
+                    await asyncio.sleep(min(2**attempt * 1.0, 30.0))
+                else:
+                    logger.error("初始化段下载失败: %s", e)
+                    return False
+        return False
+
     def _estimate_total_size(self) -> int:
         """按已下载分片平均大小估算总大小。
 
@@ -668,10 +1150,23 @@ class M3u8Downloader(BaseDownloader):
             await self._pause_event.wait()
 
             try:
-                data = await self._read_segment(client, seg)
+                if seg.byte_range is not None:
+                    offset, length = seg.byte_range
+                    data = await self._read_byte_range(client, seg.url, offset, length)
+                else:
+                    data = await self._read_segment(client, seg)
                 if data is None:
                     # 分片读取被取消或连续失败终止
                     return 0
+
+                # BYTERANGE 分片: 只该拿到区间长度的字节,少了就是没下全
+                if seg.byte_range is not None:
+                    expected = seg.byte_range[1]
+                    if len(data) != expected:
+                        raise IOError(
+                            f"分片 {seg.index} 字节区间下载不完整: "
+                            f"期望 {expected} 字节, 实际 {len(data)} 字节"
+                        )
 
                 # 防误判:CDN/防盗链经常对失效分片返回 200 + HTML 错误页,
                 # 直接写入会把垃圾内容合并进最终文件。TS 分片不应是文本。
@@ -784,6 +1279,20 @@ class M3u8Downloader(BaseDownloader):
                 if self.progress.status in (M3u8Status.FAILED, M3u8Status.SELECTING):
                     return self.progress
 
+            # fMP4 初始化段(#EXT-X-MAP): 先落地一份,合并时放文件开头;
+            # 缺了它所有分片拼起来只是裸 mdat,不可播放
+            if self._map_info is not None:
+                ok = await self._ensure_map()
+                if not ok:
+                    if self._cancelled:
+                        self.progress.finish(M3u8Status.CANCELLED, "用户取消")
+                        return self.progress
+                    self.progress.finish(
+                        M3u8Status.FAILED,
+                        f"初始化段(#EXT-X-MAP)下载失败: {self._map_info.url}",
+                    )
+                    return self.progress
+
             # 恢复已下载分片与大小(在 pending 计算之前,确保记录准确)
             existing_files = 0
             for s in self._segments:
@@ -793,6 +1302,8 @@ class M3u8Downloader(BaseDownloader):
                     self._record.mark_downloaded(s.index)
                     existing_files += 1
             self.progress.downloaded_segments = existing_files
+            if self._map_info is not None and self._init_file.exists():
+                self.progress.downloaded_size += self._init_file.stat().st_size
 
             # 需要下载的分片:未标记下载或文件缺失
             pending = [
@@ -859,10 +1370,9 @@ class M3u8Downloader(BaseDownloader):
                         if isinstance(result, Exception):
                             raise result
 
-            # 取消时清理中间分片工作目录(不删最终交付物 save_path)
+            # 取消:保留中间分片工作目录供断点续传(不删最终交付物 save_path)
             if self._cancelled:
                 self.progress.finish(M3u8Status.CANCELLED, "用户取消")
-                self._cleanup_quiet()
                 return self.progress
 
             # 校验所有分片
@@ -888,19 +1398,29 @@ class M3u8Downloader(BaseDownloader):
 
         except Exception as e:
             if self._cancelled:
-                # 取消导致的异常(如分片下载中止): 清理中间工作目录
-                self._cleanup_quiet()
+                # 取消导致的异常(如分片下载中止): 保留中间分片供续传,
+                # 取消状态已由 cancel() 置好
+                pass
             else:
                 self.progress.finish(M3u8Status.FAILED, str(e))
                 logger.error("M3U8 下载失败: %s", e)
             return self.progress
 
     async def _merge_segments(self) -> None:
-        """按序合并所有分片为最终文件。"""
+        """按序合并所有分片为最终文件。
+
+        fMP4 流(`#EXT-X-MAP`)在文件开头写入一份初始化段(ftyp+moov),
+        再按序拼接各分片(含 BYTERANGE 分片)—— 每分片重复 init 会导致
+        产物体积膨胀百倍且不可播放。
+        """
         self.save_path.parent.mkdir(parents=True, exist_ok=True)
         # 合并到临时文件,完成后再原子替换,避免中断产生半截文件
         tmp_out = self.save_path.with_suffix(self.save_path.suffix + ".part")
         with open(tmp_out, "wb") as out:
+            if self._map_info is not None and self._init_file.exists():
+                with open(self._init_file, "rb") as f:
+                    while chunk := f.read(1024 * 1024):
+                        out.write(chunk)
             for seg in self._segments:
                 seg_file = self._segment_file(seg)
                 if seg_file.exists():
@@ -921,25 +1441,19 @@ class M3u8Downloader(BaseDownloader):
         self.progress.status = M3u8Status.DOWNLOADING
 
     def cancel(self) -> None:
-        """取消下载,并清理中间分片工作目录。
+        """取消下载,保留已下载分片供断点续传。
 
-        合并阶段(MERGING)的取消不清理临时目录 —— 合并是本地快速操作,
-        不应中断,见 start() 中"合并期间取消仍完成合并"的约定。
-        清理为尽力而为,失败不影响取消本身。
+        与 HttpDownloader 的取消语义一致:中间分片目录(含 progress.json)
+        保留在磁盘上,重新调用 m3u8_download(同 URL 同 save_path)自动续传,
+        不重复下载已完成分片。已完成/已失败的任务取消无效 —— 产物已就绪或
+        已定性,不能标成"已取消"。合并阶段(MERGING)的取消不打断合并,
+        见 start() 中"合并期间取消仍完成合并"的约定。
         """
-        merging = self.progress.status == M3u8Status.MERGING
+        if self.progress.status in (M3u8Status.COMPLETED, M3u8Status.FAILED):
+            return
         self._cancelled = True
         self._pause_event.set()
         self.progress.finish(M3u8Status.CANCELLED, "用户取消")
-        if not merging:
-            self._cleanup_quiet()
-
-    def _cleanup_quiet(self) -> None:
-        """尽力而为清理临时目录,失败不影响调用方。"""
-        try:
-            self.cleanup()
-        except Exception:
-            pass
 
     def cleanup(self) -> None:
         """清理临时目录(分片文件与进度记录)。"""

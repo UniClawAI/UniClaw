@@ -474,3 +474,127 @@ class TestGetMediaTools:
         tools = get_all_tools()
         names = {t.name for t in tools}
         assert names == {"ReadMedia", "GenerateImage"}
+
+
+# ── 空文件/远端 400 的本地拦截与友好提示 ─────────────────────
+
+
+class TestEmptyAndInvalidMedia:
+    """空媒体不得把空 base64 送远端;远端参数拒绝转友好提示。"""
+
+    def test_empty_image_rejected_locally(self, tmp_path):
+        """空 PNG 本地拦截,报"文件为空",不再发空 base64 挨远端 400。"""
+        p = tmp_path / "empty.png"
+        p.write_bytes(b"")
+        result = _read_media_impl(str(p))
+        assert isinstance(result, str)
+        assert "文件为空" in result
+        assert "0 字节" in result
+
+    def test_empty_audio_rejected_locally(self, tmp_path):
+        p = tmp_path / "empty.wav"
+        p.write_bytes(b"")
+        result = _read_media_impl(str(p))
+        assert "文件为空" in result
+
+    def test_empty_video_rejected_locally(self, tmp_path):
+        p = tmp_path / "empty.mp4"
+        p.write_bytes(b"")
+        result = _read_media_impl(str(p))
+        assert "文件为空" in result
+
+    @pytest.mark.asyncio
+    async def test_as_text_api_badrequest_friendly(self, tmp_path):
+        """远端 400 参数拒绝(如 base64 无效)转友好提示,不裸抛原始错误。"""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from uniclaw.tools.base import ToolRuntime
+        from uniclaw.tools.media import ReadMedia
+
+        class BadRequestError(Exception):
+            pass
+
+        p = tmp_path / "img.png"
+        p.write_bytes(b"\x89PNG data")
+        config = MagicMock()
+        config.multimodal_model_name = ["vision-model"]
+        rt = ToolRuntime(config=config)
+
+        with patch(
+            "uniclaw.provider.fallback.achat",
+            new=AsyncMock(
+                side_effect=BadRequestError(
+                    "Error code: 400 - the provided base64 data is not valid"
+                )
+            ),
+        ):
+            result = await ReadMedia(
+                file_path=str(p), as_text=True, tool_runtime=rt
+            )
+
+        assert "TOOL_ERROR" in result
+        assert "拒绝了该媒体内容" in result
+        assert "损坏" in result or "无效" in result
+
+    @pytest.mark.asyncio
+    async def test_as_text_unexpected_error_not_swallowed(self, tmp_path):
+        """非 API 拒绝类异常(bug 级)不套友好提示,由 Tool.__call__ 兜底透出。"""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from uniclaw.tools.base import ToolRuntime
+        from uniclaw.tools.media import ReadMedia
+
+        p = tmp_path / "img.png"
+        p.write_bytes(b"\x89PNG data")
+        config = MagicMock()
+        config.multimodal_model_name = ["vision-model"]
+        rt = ToolRuntime(config=config)
+
+        with patch(
+            "uniclaw.provider.fallback.achat",
+            new=AsyncMock(side_effect=KeyError("boom")),
+        ), patch(
+            "uniclaw.console.ui.err", new=AsyncMock()
+        ):
+            result = await ReadMedia(file_path=str(p), as_text=True, tool_runtime=rt)
+
+        # 不套"拒绝了该媒体内容"的外衣 —— bug 级原样透出给兜底
+        assert "拒绝了该媒体内容" not in result
+        assert "boom" in result
+
+class TestBillingErrorAttribution:
+    def test_is_billing_error(self):
+        from uniclaw.provider.error_classifier import is_billing_error
+
+        class Err(Exception):
+            pass
+
+        assert is_billing_error(Err("Error code: 402 - Payment Required"))
+        assert is_billing_error(Err("insufficient_quota: 余额不足"))
+        assert is_billing_error(Err("account balance is too low"))
+        assert not is_billing_error(Err("invalid image base64 content"))
+
+    @pytest.mark.asyncio
+    async def test_readmedia_billing_message(self, tmp_path):
+        """402 归因到账户余额,不说"文件损坏/模型拒绝"。"""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from uniclaw.tools.base import ToolRuntime
+        from uniclaw.tools.media import ReadMedia
+
+        class PayErr(Exception):
+            pass
+
+        p = tmp_path / "img.png"
+        p.write_bytes(b"\x89PNG data")
+        config = MagicMock()
+        config.multimodal_model_name = ["mm"]
+        rt = ToolRuntime(config=config)
+        with patch(
+            "uniclaw.provider.fallback.achat",
+            AsyncMock(side_effect=PayErr("Error code: 402 - Payment Required")),
+        ):
+            result = await ReadMedia(file_path=str(p), as_text=True, tool_runtime=rt)
+
+        assert "余额" in result or "配额" in result
+        assert "损坏" not in result

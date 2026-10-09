@@ -43,13 +43,18 @@ async def describe_media(
     _session = Session()
     _session.add_user_message(content=[{"type": "text", "text": prompt}, content_block])
 
-    ai_message = await achat(
-        "你是一个媒体描述助手。",
-        _session,
-        model_name=model_name,
-        config=config,
-    )
-    description = ai_message.content or f"[{media_type} 描述生成失败]"
+    try:
+        ai_message = await achat(
+            "你是一个媒体描述助手。",
+            _session,
+            model_name=model_name,
+            config=config,
+        )
+        description = ai_message.content or f"[{media_type} 描述生成失败]"
+    except Exception as e:
+        # 描述失败(坏图/远端拒绝)不能把外层降级链炸掉 —— 用占位文本
+        # 替代媒体块,让对话以"该媒体无法描述"继续
+        description = f"[{media_type}描述失败: {type(e).__name__}: {e}]"
 
     save_description(content_hash, description, model_name, media_type)
     return description

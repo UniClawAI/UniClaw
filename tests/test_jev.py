@@ -92,6 +92,7 @@ def _make_config(
         root_dir=root_dir,
         mini_model_name=mini_model_name,
         embedding_model=embedding_model,
+        proxy_url="",
         workspace=[],
         spinner=SimpleNamespace(start=lambda *a, **k: None, stop=lambda **k: None),
         providers={
@@ -1336,3 +1337,62 @@ class TestSecurityJevPreCheck:
 
         assert is_safe is True
         mock_achat.assert_called_once()
+
+
+# ── 代理解析与透传 ──────────────────────────────────────
+
+
+class TestProxyUrl:
+    """proxy_url 解析口径与向客户端透传"""
+
+    def test_resolve_skips_proxy_for_local_base_url(self):
+        """本地 base_url 不走代理(代理出口无法回连本机服务)"""
+        from uniclaw.utils.jev import _resolve_proxy_url
+
+        assert _resolve_proxy_url("http://127.0.0.1:9999", "http://1.2.3.4:8080") is None
+        assert _resolve_proxy_url("http://localhost:8000", "http://1.2.3.4:8080") is None
+
+    def test_resolve_prefers_explicit_param(self):
+        from uniclaw.utils.jev import _resolve_proxy_url
+
+        assert (
+            _resolve_proxy_url(None, "http://127.0.0.1:7890") == "http://127.0.0.1:7890"
+        )
+
+    def test_resolve_none_when_unset(self):
+        """未指定时返回 None,交给 httpx 默认的环境变量发现"""
+        from uniclaw.utils.jev import _resolve_proxy_url
+
+        assert _resolve_proxy_url(None) is None
+        assert _resolve_proxy_url(None, "") is None
+
+    @pytest.mark.asyncio
+    @patch("uniclaw.utils.jev._create_client")
+    async def test_batch_forwards_proxy_to_client(self, mock_create):
+        """batch 的 proxy_url 须透传到 _create_client"""
+        fake = _FakeSystemOneClient()
+        mock_create.return_value = fake
+
+        await batch(
+            state="s",
+            questions={"q1": _make_noul_qdef()},
+            proxy_url="http://127.0.0.1:7890",
+        )
+
+        assert mock_create.call_args[0][4] == "http://127.0.0.1:7890"
+
+    def test_create_client_wraps_http_client_with_proxy(
+        self, monkeypatch
+    ):
+        """有代理时注入带代理的 http_client;无代理时不注入(env 发现)"""
+        monkeypatch.setenv("TYPESAFE_API_KEY", "k")
+        with patch("uniclaw.utils.jev.AsyncTypeSafeClient") as mock_sdk:
+            from uniclaw.utils.jev import _create_client
+
+            _create_client()
+            assert "http_client" not in mock_sdk.call_args[1]
+
+            _create_client(proxy_url="http://127.0.0.1:7890")
+            kwargs = mock_sdk.call_args[1]
+            http_client = kwargs["http_client"]
+            assert http_client is not None

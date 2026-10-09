@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from uniclaw.tools.base import tool, ToolRuntime, ToolUserError
@@ -24,7 +25,7 @@ from .protocol import (
     path_to_uri,
     uri_to_path,
 )
-from .servers import BUILTIN_SERVERS, detect_language
+from .servers import BUILTIN_SERVERS, detect_language, server_availability_line
 
 DEFAULT_LANGUAGE = "python"
 
@@ -162,6 +163,43 @@ def _read_line(path: Path, zero_based_line: int) -> str:
 
 def _p1(line0: int, col0: int) -> tuple[int, int]:
     return line0 + 1, col0 + 1
+
+
+def _position_self_check(path: Path, line0: int, col0: int) -> str:
+    """查询无结果时的坐标自检: 显示行内容/列指针/该行标识符,便于调用方自纠。
+
+    LSP 的定位语义是"列必须落在标识符范围内" —— 指到空格/操作符/def
+    关键字上不会有任何结果,报"未找到"极易被误读成"符号没有定义"。
+    """
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return ""
+    if not (0 <= line0 < len(lines)):
+        return f"定位自检: L{line0 + 1} 超出文件范围(共 {len(lines)} 行)"
+    text = lines[line0]
+    line1, col1 = line0 + 1, col0 + 1
+    shown = text if len(text) <= 120 else text[:117] + "..."
+    out = [f"定位自检: {path}:{line1}:{col1}", f"  行内容: {shown}"]
+    ch = text[col0] if 0 <= col0 < len(text) else ""
+    if ch and (ch.isalnum() or ch == "_"):
+        out.append(f"  列 {col1} 落在标识符字符 {ch!r} 上")
+    else:
+        out.append(
+            f"  列 {col1} 不在标识符上(字符 {ch!r})"
+            if ch
+            else f"  列 {col1} 超出该行长度(行长 {len(text)})"
+        )
+    tokens = [
+        (m.start() + 1, m.end(), m.group())
+        for m in re.finditer(r"[A-Za-z_][A-Za-z0-9_]*", text)
+    ]
+    if tokens:
+        rendered = ", ".join(f"{name}(列 {c0}-{c1})" for c0, c1, name in tokens[:8])
+        more = "" if len(tokens) <= 8 else f" 等 {len(tokens)} 个"
+        out.append(f"  该行标识符: {rendered}{more}")
+    out.append("  提示: 定位列号须落在标识符上;可先 lsp_symbols 查看符号的准确位置")
+    return "\n".join(out)
 
 
 # ── 结果格式化 ──────────────────────────────────────────
@@ -323,7 +361,10 @@ def _format_symbols(symbols, indent: int = 0) -> list[str]:
 
 @tool
 async def lsp_status(language: str = "") -> str:
-    """查看语言服务器状态:已注册语言、各语言服务器是否已启动、已同步文档数。
+    """查看语言服务器状态:已注册语言、当前环境是否可启动(二进制是否在 PATH)、已启动实例。
+
+    已注册 ≠ 可用: 注册表里有 javascript 不代表本机装了 typescript-language-server。
+    二进制缺失时给出具体安装命令,安装后可直接 lsp_start 或重新查询,无需重启。
 
     Args:
         language: 只查看指定语言(如 python)。为空列出全部。
@@ -334,7 +375,19 @@ async def lsp_status(language: str = "") -> str:
     mgr = LSPManager.get_instance()
     lines = []
     registered = sorted(BUILTIN_SERVERS.keys())
+    if language:
+        registered = [lang for lang in registered if lang == language]
+        if not registered:
+            lines.append(
+                f"语言 '{language}' 未注册。"
+                f"当前注册: {', '.join(sorted(BUILTIN_SERVERS.keys())) or '无'}"
+            )
+            return "\n".join(lines)
     lines.append(f"已注册语言: {', '.join(registered) if registered else '无'}")
+    # 逐语言探测二进制是否可用 —— 区分「已注册」与「当前环境可用」
+    lines.append("环境可用性:")
+    for lang in registered:
+        lines.append(f"  {server_availability_line(lang)}")
     sessions = mgr.list_sessions()
     if language:
         sessions = [s for s in sessions if s[0] == language]
@@ -363,10 +416,11 @@ async def lsp_start(language: str = DEFAULT_LANGUAGE, tool_runtime: ToolRuntime 
     """启动指定语言的 LSP 服务器(懒启动,通常无需手动调用)。
 
     Args:
-        language: 语言 id(如 python)。若服务器未安装,返回安装指引。
+        language: 语言 id(如 python)。若服务器未安装,返回具体安装命令;
+            安装后可直接重试 lsp_start 或重新查询,无需重启 UniClaw。
 
     Returns:
-        str: 启动结果。
+        str: 启动结果;未安装/启动失败时返回带 TOOL_ERROR 前缀的安装指引。
     """
     try:
         config = tool_runtime.config
@@ -515,7 +569,10 @@ async def lsp_definition(
             },
         )
         items = result if isinstance(result, list) else [result]
-        return _format_locations([i for i in items if isinstance(i, dict)])
+        formatted = _format_locations([i for i in items if isinstance(i, dict)])
+        if formatted.startswith("未找到匹配位置"):
+            formatted += "\n" + _position_self_check(path, line0, col0)
+        return formatted
     except _QUERY_ERRORS as e:
         return _query_error(DEFINITION, path, e)
 
@@ -625,7 +682,9 @@ async def lsp_references(
             )
         )
         n = min(rendered, 100)
-        return f"共找到 {n} 处引用:\n{locs}" if n else f"未找到引用。{_EMPTY_RESULT_HINT}"
+        if n:
+            return f"共找到 {n} 处引用:\n{locs}"
+        return f"未找到引用。{_EMPTY_RESULT_HINT}\n" + _position_self_check(path, line0, col0)
     except _QUERY_ERRORS as e:
         return _query_error(REFERENCES, path, e)
 

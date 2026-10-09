@@ -22,7 +22,7 @@ _ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
 
 # inspect_variable 的 repr/str 预览上限(字符)。截断在内核侧完成,
 # 避免 20 万元素 list 的全量 repr 穿过 IPC 把上下文/内存打爆。
-INSPECT_TEXT_LIMIT = 2000
+INSPECT_TEXT_LIMIT = 1200
 
 
 def _kernel_alive(info: "KernelInfo") -> bool:
@@ -172,7 +172,7 @@ class VariableInfo:
         if self.dtype:
             parts.append(f"数据类型: {self.dtype}")
         if self.doc:
-            doc_preview = self.doc[:1000]
+            doc_preview = self.doc[:600]
             if len(self.doc) > 1000:
                 doc_preview += "..."
             parts.append(f"文档: {doc_preview}")
@@ -684,7 +684,7 @@ for _k, _v in list(_ns.items()):
     try:
         _r = repr(_v)
         if len(_r) > 200:
-            _r = _r[:200] + '...'
+            _r = _r[:200] + '…(截断, 共 ' + str(len(_r)) + ' 字符)'
     except:
         _r = '<无法显示>'
     _vars.append({

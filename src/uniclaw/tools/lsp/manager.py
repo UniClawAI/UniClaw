@@ -18,7 +18,14 @@ from typing import TYPE_CHECKING, Optional
 from uniclaw.console.ui import warn
 
 from .client import LspClient, LspRpcError, resolve_launch
-from .protocol import DIAGNOSTIC, DID_OPEN, LspBizError, normalize_uri, path_to_uri
+from .protocol import (
+    DIAGNOSTIC,
+    DID_CHANGE,
+    DID_OPEN,
+    LspBizError,
+    normalize_uri,
+    path_to_uri,
+)
 from .servers import (
     BUILTIN_SERVERS,
     detect_tsserver_path,
@@ -164,7 +171,8 @@ class LspSession:
                 if tsserver_missing:
                     msg += (
                         "。检测不到 typescript 编译器(tsserver),"
-                        "请安装: npm i -g typescript@5"
+                        "请安装: npm i -g typescript@5。"
+                        "安装后可直接重试,无需重启 UniClaw"
                     )
                 raise LspBizError(msg) from e
 
@@ -210,6 +218,12 @@ class LspSession:
                 pass  # 其他 IO 错误(权限等)暂不处理,保留跟踪
 
     async def _do_open(self, resolved_path: str, force: bool = False) -> None:
+        """同步文档内容: 首次 didOpen,之后 didChange(全量 text)。
+
+        LSP 规范规定每文档只 didOpen 一次,更新走 didChange —— 重复
+        didOpen 会让服务器端文档状态漂移(曾疑似引发含 import 文件
+        行号 +1 的不稳定偏移)。version 按文档单调递增。
+        """
         text = Path(resolved_path).read_text(encoding="utf-8", errors="replace")
         h = hashlib.md5(text.encode("utf-8")).hexdigest()
         prev = self._docs.get(resolved_path)
@@ -218,19 +232,29 @@ class LspSession:
         client = self.client
         if client is None:
             return
-        version = prev.version + 1 if prev else 1
         uri = path_to_uri(resolved_path)
-        await client.notify(
-            DID_OPEN,
-            {
-                "textDocument": {
-                    "uri": uri,
-                    "languageId": language_id_for(resolved_path),
-                    "version": version,
-                    "text": text,
-                }
-            },
-        )
+        if prev is None:
+            version = 1
+            await client.notify(
+                DID_OPEN,
+                {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": language_id_for(resolved_path),
+                        "version": version,
+                        "text": text,
+                    }
+                },
+            )
+        else:
+            version = prev.version + 1
+            await client.notify(
+                DID_CHANGE,
+                {
+                    "textDocument": {"uri": uri, "version": version},
+                    "contentChanges": [{"text": text}],
+                },
+            )
         # 已推送新版本,旧诊断作废;等服务器推送新诊断
         client.invalidate_diagnostics(uri)
         self._docs[resolved_path] = DocState(version, h)
@@ -340,6 +364,8 @@ class LSPManager:
 
         查询入口顺带惰性回收空闲会话(30 分钟未使用自动释放服务器子进程)。
         """
+        from uniclaw.tools.lsp.tools import lsp_start  # 循环导入例外: 取工具规范名
+
         try:
             await self.close_idle()  # 锁外调用,避免与下方 _lock 嵌套
         except Exception:
@@ -363,6 +389,8 @@ class LSPManager:
                         f"未找到语言服务器 {server_def['name']} "
                         f"(探测命令: {server_def['command'][0]})。"
                         f"请先安装: {hint}。"
+                        f"安装后可直接重试({lsp_start.name}({language}) 或重新查询),"
+                        f"无需重启 UniClaw。"
                     )
                 session = LspSession(language, root)
                 self._sessions[key] = session

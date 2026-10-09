@@ -9,5 +9,7 @@ BUILTIN_MCP_SERVERS: dict[str, dict] = {
         "transport": "streamable_http",
         "url": "https://mcp.exa.ai/mcp",
         "enabled": True,
+        # exa_agent_run 是长任务:默认读超时已放宽到 DEFAULT_CALL_TIMEOUT(300s),
+        # 这里不强制覆盖;若仍不够可在工具调用时传 timeout 或在此加 read_timeout。
     },
 }

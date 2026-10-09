@@ -40,6 +40,22 @@ from uniclaw.tools.base import (
 
 # 死循环检测:连续相同工具调用次数阈值
 LOOP_DETECTION_THRESHOLD = 5
+
+
+def _is_loop_shutdown_noise(e: BaseException) -> bool:
+    """进程/事件循环关闭期的噪音错误(非缺陷)。
+
+    关闭/重启时收尾工作(检查点、未完的 LLM 请求)会撞上已关闭的
+    default executor 与被取消的 IOCP 定时器,刷 ERROR 堆栈风暴只增噪。
+    属生命周期现象,降级为一行提示。
+    """
+    text = f"{type(e).__name__} {e}".lower()
+    return (
+        "executor shutdown" in text
+        or "invalid state" in text
+        or "winerror 995" in text
+        or "由于线程退出或应用程序请求" in str(e)
+    )
 from uniclaw.tools.multi_agent.sub_agent import AgentDefinition
 from uniclaw.tools.multi_agent.tools import (
     subagent_check_result,
@@ -627,6 +643,19 @@ class MultiAgent:
 
         def _notify_message(reason: str) -> str:
             """构造发给父 agent 的 [child_agent] 通知消息。"""
+            # 已关闭的任务会从列表移除: 再引导 check_result 只会换来
+            # "任务不存在" —— 通知必须与真实状态一致
+            if task.closed:
+                return (
+                    f"{SYSTEM_PREFIX}[child_agent]\n"
+                    f"名称: {task.name}\n"
+                    f"任务ID: {task.id}\n"
+                    f"状态: {task.status}\n"
+                    f"消息: {reason}\n"
+                    f"- 该任务已被关闭并从任务列表移除,结果无法再读取,"
+                    f"不要再调用 {subagent_check_result.name}\n"
+                    f"- 需要继续这项工作时,重新发起子代理创建即可"
+                )
             return (
                 f"{SYSTEM_PREFIX}[child_agent]\n"
                 f"名称: {task.name}\n"
@@ -634,7 +663,8 @@ class MultiAgent:
                 f"状态: {task.status}\n"
                 f"消息: {reason}\n"
                 f'- 请调用 {subagent_check_result.name}(task_id="{task.id}") 来读取结果'
-                f"(读取终态结果后自动回收)\n"
+                f"(结果保留、可重复读取,不再需要时用"
+                f' {subagent_close.name}(task_id="{task.id}") 回收)\n'
                 f'- 使用 {subagent_send_to_child.name}(task_id="{task.id}", message="...") 发送消息\n'
                 f'- 任务仍在运行需提前停止时,使用 {subagent_close.name}(task_id="{task.id}") 关闭'
             )
@@ -866,7 +896,11 @@ class MultiAgent:
         except Exception as e:
             # 网络错误/模型厂商 API 错误属预期内外部故障(fallback 层会 warn/err 提示),不写日志
             if not is_network_or_provider_error(e):
-                await err(f"LLM 流式响应失败: {e}", config, e)
+                if _is_loop_shutdown_noise(e):
+                    # 进程/事件循环关闭中的收尾请求,不是缺陷: 不刷堆栈
+                    await warn(f"LLM 流式响应中断(进程正在关闭,跳过): {e}", config)
+                else:
+                    await err(f"LLM 流式响应失败: {e}", config, e)
             raise  # 向上抛出异常,由调用方处理 fallback
 
     async def _process_response(self, resp, task, config: AppConfig):
@@ -949,18 +983,25 @@ class MultiAgent:
     async def _check_infinite_loop(
         self,
         tool_calls: list[dict],
-        recent_tool_calls: list[tuple[str, str]],
+        recent_tool_calls: list[tuple],
         task: AgentTask,
         config: AppConfig,
     ) -> bool:
-        """死循环检测:检查是否连续 N 次以完全相同的参数调用相同的工具。
+        """死循环检测:连续 N 次同参数同工具、且结果也毫无变化才判定死循环。
 
-        将本轮调用签名追加到 recent_tool_calls(滑动窗口,原地修改)。
+        将本轮调用签名追加到 recent_tool_calls(滑动窗口,原地修改),
+        元素为 (签名, 结果指纹);指纹在工具执行后由 _execute_tool_calls 回填。
+
+        只看签名会误伤"每次都推进状态"的调用 —— 如连续 browser_back:
+        每次都真的后退,最后一次撞到"无历史"边界提示,同样签名连发,
+        但每步都在推进,不是死循环。因此判定还要求最近的结果指纹相同
+        (原地打转、毫无进展)才拦截。
+
         检测到死循环时通知 UI 并以 tool 消息注入打破提示,调用方应跳过本次工具执行。
 
         Args:
             tool_calls: 本轮 LLM 发出的工具调用列表。
-            recent_tool_calls: 最近调用签名记录 [(签名, ...)],原地更新。
+            recent_tool_calls: 最近记录 [(签名, 结果指纹)],原地更新。
             task: 当前 agent 任务。
             config: 应用配置。
 
@@ -973,16 +1014,21 @@ class MultiAgent:
                 for tc in tool_calls
             )
         )
-        recent_tool_calls.append(current_calls)
+        recent_tool_calls.append((current_calls, ""))  # fp 待执行后回填
         # 只保留最近 N 条记录
         del recent_tool_calls[:-LOOP_DETECTION_THRESHOLD]
         if (
             len(recent_tool_calls) < LOOP_DETECTION_THRESHOLD
-            or len(set(recent_tool_calls)) != 1
+            or len({sig for sig, _ in recent_tool_calls}) != 1
         ):
             return False
 
-        # 连续 N 次完全相同的工具调用,判定为死循环
+        # 同签名连发,但结果指纹在变化(每步都有进展)→ 不是死循环
+        fps = {fp for _, fp in recent_tool_calls if fp}
+        if len(fps) > 1:
+            return False
+
+        # 连续 N 次完全相同的工具调用且结果无进展,判定为死循环
         tool_names = [name for name, _ in current_calls]
         tool_name_str = ", ".join(tool_names)
         await self.send_event_to_user(
@@ -1206,8 +1252,13 @@ class MultiAgent:
         config: AppConfig,
         tools: list = None,
         tool_explains: dict[str, str] | None = None,
+        loop_records: list[tuple] | None = None,
     ) -> bool:
-        """并行执行工具调用列表。返回 True 表示被 cancel。"""
+        """并行执行工具调用列表。返回 True 表示被 cancel。
+
+        loop_records 非空时,把本轮结果指纹回填进最后一条记录,
+        供死循环检测区分"原地打转"与"每步都有进展"。
+        """
         task = config.current_agent
         if tool_explains is None:
             tool_explains = {}
@@ -1221,6 +1272,19 @@ class MultiAgent:
                 for tc in tool_calls
             ]
         )
+
+        if loop_records:
+            # 指纹取各工具结果文本前缀拼接: 有进展(结果变化)就不算死循环
+            fp = "|".join(
+                (
+                    content
+                    if isinstance(content, str)
+                    else extract_text(content)
+                )[:120]
+                for _, content in results
+            )
+            sig, _ = loop_records[-1]
+            loop_records[-1] = (sig, fp)
 
         # 按顺序处理结果: add_message + cancel 检查
         for tool_call, tool_resp_content in results:
@@ -1397,7 +1461,10 @@ class MultiAgent:
                 task.session.root_dir, message=extract_text(user_message)
             )
         except Exception as e:
-            await err(f"创建检查点失败(已跳过): {e}", config=config, e=e)
+            if _is_loop_shutdown_noise(e):
+                await warn(f"创建检查点已跳过(进程正在关闭): {e}", config=config)
+            else:
+                await err(f"创建检查点失败(已跳过): {e}", config=config, e=e)
         await self.send_event_to_user(CheckpointEndEvent(), config)
         if system_message is None:
             system_message = await build_system_prompt(config)
@@ -1499,7 +1566,12 @@ class MultiAgent:
                     await self.send_event_to_user(InterruptedEvent(), config)
                     break
                 if await self._execute_tool_calls(
-                    tool_calls, name2tool, config, tools, tool_explains
+                    tool_calls,
+                    name2tool,
+                    config,
+                    tools,
+                    tool_explains,
+                    loop_records=recent_tool_calls,
                 ):
                     break
                 content = await task.drain_user_queue(self, config)

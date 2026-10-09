@@ -108,7 +108,7 @@ async def skill_suggest(
     lines = [f"共 {total} 个可用技能,以下 {len(skills)} 个与当前任务相关:\n"]
     for skill in skills:
         lines.append(skill_summary(skill))
-    return "\n".join(lines)
+    return ("\n".join(lines))
 
 
 async def _suggest_skills(
@@ -120,7 +120,16 @@ async def _suggest_skills(
     """根据任务描述选择匹配的 skill。Jev 可用时优先使用,否则回退 LLM。"""
     if is_available():
         try:
-            return await _suggest_via_jev(task_description, all_skills, max_results)
+            picked = await _suggest_via_jev(
+                task_description,
+                all_skills,
+                max_results,
+                proxy_url=config.proxy_url,
+            )
+            if picked:
+                return picked
+            # Jev 无命中(阈值过滤/空结果)不能直接定论"无匹配",
+            # 回退 LLM 做语义推荐
         except (JevAPIError, JevConfigError) as e:
             from uniclaw.console.ui import err
             await err(f"Jev skill 推荐失败,回退 LLM: {e}", e=e)
@@ -131,6 +140,7 @@ async def _suggest_via_jev(
     task_description: str,
     all_skills: list[SkillDef],
     max_results: int,
+    proxy_url: str | None = None,
 ) -> list[SkillDef]:
     """通过 Jev select_many 选择匹配的 skill。"""
     by_name = {skill.name: skill for skill in all_skills}
@@ -139,6 +149,7 @@ async def _suggest_via_jev(
         state=task_description,
         instruction="这个技能是否能帮助完成该任务。关注技能的描述、触发词和使用时机。",
         options=options,
+        proxy_url=proxy_url,
     )
     # noul > 0.5 视为选中,按 noul 降序取 top max_results
     matched = [
@@ -166,11 +177,10 @@ async def _suggest_via_llm(
 
 请根据用户的任务描述,
 从中推荐最多 {max_results} 个最适合的技能。
-只返回符合要求的技能名称列表,
-并使用 JSON 数组格式,例如:
-["skill_name1", "skill_name2"]
-不要输出任何额外说明或文本。
-如果没有匹配的技能,直接返回 []。
+以 JSON 对象返回(不要输出任何额外说明或文本),格式:
+{{"skills": ["skill_name1", "skill_name2"]}}
+skills 中必须是上方列出的确切技能名。
+如果没有匹配的技能,返回 {{"skills": []}}。
 """
     from uniclaw.tools.session.session import Session
 
@@ -190,49 +200,32 @@ async def _suggest_via_llm(
         content = resp.content
     finally:
         config.spinner.stop(wait_id=wait_id)
-    skill_names = parse_json_from_llm(content)
+    parsed = parse_json_from_llm(content)
+    # 兼容 {"skills": [...]} / {"recommended": [...]} / 直接数组 / dict 内首个列表
+    if isinstance(parsed, dict):
+        skill_names = (
+            parsed.get("skills")
+            or parsed.get("recommended")
+            or parsed.get("result")
+            or next((v for v in parsed.values() if isinstance(v, list)), [])
+        )
+    elif isinstance(parsed, list):
+        skill_names = parsed
+    else:
+        skill_names = []
     if not isinstance(skill_names, list):
         return []
     by_name = {skill.name: skill for skill in all_skills}
-    return [by_name[name] for name in skill_names if name in by_name]
-
-
-# @tool
-def skill_list(
-    skill_name: str | None = None, tool_runtime: ToolRuntime = None
-) -> str:
-    """获取可用技能的列表信息。
-
-    该函数加载所有已定义的技能,并根据提供的技能名称进行过滤,
-    最后返回格式化的技能列表信息,包括技能名称、触发词、参数提示、
-    描述和使用时机等详细信息。
-
-    Args:
-        skill_name: 可选的技能名称。如果提供,则只返回匹配的技能；
-                   如果不提供,则返回所有可用技能
-
-    Returns:
-        str: 格式化的技能列表字符串。可能的返回值包括:
-             - 包含技能详细信息的格式化列表(技能名称、触发词、参数、描述、使用时机)
-             - 如果没有可用技能或没有匹配的技能,返回"没有可用的技能。"
-    """
-    config = tool_runtime.config
-    root_dir = config.root_dir
-    skills = load_skills(root_dir)
-
-    # 根据提供的技能名称过滤技能列表
-    if skill_name:
-        skills = [s for s in skills if s.name == skill_name]
-
-    if not skills:
-        return "没有可用的技能。"
-
-    # 构建格式化的技能列表输出
-    lines = ["可用技能:\n"]
-    for skill in skills:
-        lines.append(skill_summary(skill))
-
-    return "\n".join(lines)
+    by_lower = {name.lower(): skill for name, skill in by_name.items()}
+    picked: list[SkillDef] = []
+    seen: set[str] = set()
+    for item in skill_names:
+        name = str(item).strip().strip("\"'") if not isinstance(item, str) else item.strip()
+        skill = by_name.get(name) or by_lower.get(name.lower())
+        if skill and skill.name not in seen:
+            seen.add(skill.name)
+            picked.append(skill)
+    return picked
 
 
 @tool

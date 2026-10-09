@@ -1,6 +1,7 @@
 from __future__ import annotations
 import asyncio
 import json
+import re
 import httpx
 import threading
 import time
@@ -17,6 +18,13 @@ if TYPE_CHECKING:
     from uniclaw.config import AppConfig
     from uniclaw.tools.base import ToolRuntime
 
+# 连接/握手/工具发现的默认超时(秒)。mcp.exa.ai 首次握手需数秒,10s 太紧。
+DEFAULT_CONNECT_TIMEOUT = 15.0
+# 工具调用读超时默认(秒)。exa_agent_run 这类长任务即使 effort=minimal 也常
+# 超过 10s;旧默认 10s 导致持续 ReadTimeout 且拿不到 runId,无法续跑。
+# 对齐 MCP SDK 推荐的 read 超时(300s)。
+DEFAULT_CALL_TIMEOUT = 300.0
+
 
 def _flat_error(e: BaseException) -> str:
     """把异常压平成一行可读文本。
@@ -28,6 +36,152 @@ def _flat_error(e: BaseException) -> str:
     if isinstance(e, BaseExceptionGroup) and e.exceptions:
         return "; ".join(_flat_error(sub) for sub in e.exceptions)
     return str(e) or type(e).__name__
+
+
+def _is_timeout_error(e: BaseException) -> bool:
+    """判断异常是否为超时(含 ExceptionGroup 里的超时叶子)。
+
+    覆盖 asyncio/anyio 的 TimeoutError 与 httpx 的 ReadTimeout/ConnectTimeout
+    等(按类名匹配,不强制 import httpx 异常层次,避免版本差异)。
+    """
+    if isinstance(e, TimeoutError):  # asyncio.TimeoutError 是其别名(Python 3.11+)
+        return True
+    if isinstance(e, BaseExceptionGroup) and e.exceptions:
+        return any(_is_timeout_error(sub) for sub in e.exceptions)
+    name = type(e).__name__
+    if "Timeout" in name or "timeout" in name:
+        return True
+    msg = str(e).lower()
+    return "timeout" in msg or "timed out" in msg or "deadline" in msg
+
+
+def _resolve_call_timeout(connection: dict, override: float | None) -> float:
+    """解析工具调用读超时(秒):调用参数 > read_timeout > 默认。
+
+    connection["timeout"] 保持旧语义(连接/发现超时),不直接当作调用读超时;
+    只有显式配置了 read_timeout 时才覆盖默认值。
+    """
+    if override is not None:
+        try:
+            return float(override)
+        except (TypeError, ValueError):
+            pass
+    if "read_timeout" in connection:
+        try:
+            return float(connection["read_timeout"])
+        except (TypeError, ValueError):
+            pass
+    return DEFAULT_CALL_TIMEOUT
+
+
+def _build_httpx_timeout(connection: dict) -> httpx.Timeout:
+    """构造 httpx 超时:连接/写短超时,读长超时(工具调用可能很久)。
+
+    connection["timeout"] 兼容旧配置(连接超时);read 超时用 read_timeout
+    或 DEFAULT_CALL_TIMEOUT,避免长任务被 10s 读超时掐断且拿不到 runId。
+    """
+    try:
+        connect_t = float(connection.get("timeout", DEFAULT_CONNECT_TIMEOUT))
+    except (TypeError, ValueError):
+        connect_t = DEFAULT_CONNECT_TIMEOUT
+    read_t = _resolve_call_timeout(connection, None)
+    # 连接阶段不应拖太久;读阶段给足长任务时间
+    connect_t = max(1.0, min(connect_t, 60.0))
+    return httpx.Timeout(connect_t, read=read_t, write=connect_t, pool=connect_t)
+
+
+# runId 提取:优先 runId/run_id 字段;id 仅在 status=running 附近出现时才认
+_RUN_ID_RE = re.compile(r'"(?:runId|run_id)"\s*:\s*"([^"]+)"')
+_RUNNING_ID_RE = re.compile(
+    r'"status"\s*:\s*"running"[^}]*?"(?:id|runId|run_id)"\s*:\s*"([^"]+)"'
+    r'|"(?:id|runId|run_id)"\s*:\s*"([^"]+)"[^}]*?"status"\s*:\s*"running"',
+    re.DOTALL,
+)
+
+
+def _extract_run_ids(text: str) -> list[str]:
+    """从工具结果文本中提取 runId(长任务续跑句柄)。"""
+    if not text:
+        return []
+    ids: list[str] = []
+    for m in _RUN_ID_RE.finditer(text):
+        rid = m.group(1)
+        if rid not in ids:
+            ids.append(rid)
+    if not ids:
+        for m in _RUNNING_ID_RE.finditer(text):
+            rid = m.group(1) or m.group(2)
+            if rid and rid not in ids:
+                ids.append(rid)
+    return ids
+
+
+def _annotate_run_id(content, server_name: str, tool_name: str):
+    """结果里带 runId 时追加续跑提示,避免调用方整单重来。
+
+    上游(Exa agent_run)文档:超时/未完成时返回 status=running + id,
+    再次调用同一工具并只传 runId 即可续跑。上游没有独立的 agent_get 工具,
+    续跑入口就是同一个 agent_run(以 runId 为句柄),不要硬造其它工具名。
+    """
+    if not isinstance(content, str):
+        return content
+    run_ids = _extract_run_ids(content)
+    if not run_ids:
+        return content
+    rid = run_ids[0]
+    resume_tool = f"{server_name}_{tool_name}"
+    return (
+        f"{content}\n\n"
+        f"[续跑提示] 检测到 runId={rid}。"
+        f"请再次调用 {resume_tool} 并只传 runId=\"{rid}\" 轮询进度/取结果"
+        f"(不要重复传 query 重新发起)。"
+    )
+
+
+def _format_call_error(
+    server_name: str,
+    tool_name: str,
+    e: BaseException,
+    phase: str,
+    call_timeout: float,
+) -> str:
+    """按阶段分类包装工具调用失败,超时时区分「未发起」与「可能已创建」。
+
+    - connect/initialize 阶段超时: 请求未发出,任务未创建,需重新发起
+    - call 阶段超时: 请求已发出,服务端可能已创建 run 但未返回 runId,
+      无法续跑;给出加大 timeout 的建议
+    非超时异常只压平原因,不编造 runId。
+    """
+    reason = _flat_error(e)
+    if not _is_timeout_error(e):
+        return f"{TOOL_ERROR}: {reason}"
+
+    resume_tool = f"{server_name}_{tool_name}"
+    is_agent_run = "agent_run" in tool_name or tool_name.endswith("_run")
+    timeout_hint = (
+        f"当前读超时约 {call_timeout:.0f}s,"
+        f"可传 timeout 参数加大(如 timeout={max(int(call_timeout), 120) * 2})后重试"
+    )
+
+    if phase in ("connect", "initialize"):
+        return (
+            f"{TOOL_ERROR}: 连接/握手超时(未发起任务,需重新发起): {reason}\n"
+            f"{timeout_hint};请确认网络可访问该 MCP 服务器后重新调用。"
+        )
+
+    if is_agent_run:
+        return (
+            f"{TOOL_ERROR}: 工具调用超时"
+            f"(run 可能已在服务端创建,但本次未返回 runId,无法续跑): {reason}\n"
+            f"本次请求已发出。若之前某次调用曾返回过 runId,"
+            f"可再次调用 {resume_tool} 并只传 runId=... 续跑;"
+            f"真没拿到过 runId 则本次 run 无法续跑,需重新发起。\n"
+            f"{timeout_hint}。"
+        )
+    return (
+        f"{TOOL_ERROR}: 工具调用超时(请求已发出,响应未在超时前返回): {reason}\n"
+        f"{timeout_hint}。"
+    )
 
 
 @asynccontextmanager
@@ -55,21 +209,26 @@ async def _connect_mcp(connection: dict):
     elif transport == "sse":
         from mcp.client.sse import sse_client
 
+        # SSE 的 timeout 是连接建立超时;长读由 httpx 侧 read 超时兜底
+        try:
+            sse_timeout = float(connection.get("timeout", DEFAULT_CONNECT_TIMEOUT))
+        except (TypeError, ValueError):
+            sse_timeout = DEFAULT_CONNECT_TIMEOUT
         async with sse_client(
             url=connection["url"],
             headers=connection.get("headers"),
-            timeout=connection.get("timeout", 5),
+            timeout=sse_timeout,
         ) as (read, write):
             yield read, write
 
     elif transport == "streamable_http":
         from mcp.client.streamable_http import streamable_http_client
 
-        timeout = connection.get("timeout", 10)
         headers = connection.get("headers")
         proxy = connection.get("proxy")
 
-        client_kwargs = {"timeout": timeout}
+        # 读超时单独放宽:exa_agent_run 等长任务需要收到 status=running + runId
+        client_kwargs = {"timeout": _build_httpx_timeout(connection)}
         if headers:
             client_kwargs["headers"] = headers
         if proxy:
@@ -191,13 +350,22 @@ class _PersistentSession:
             self._session = None
             ready.set()  # 确保等待者不被挂起
 
-    async def call_tool(self, tool_name: str, arguments: dict):
+    async def call_tool(
+        self,
+        tool_name: str,
+        arguments: dict,
+        read_timeout_seconds: float | None = None,
+    ):
         self._in_flight += 1
         self._last_used = time.monotonic()
         try:
             session = await self.get_session()
             try:
-                return await session.call_tool(tool_name, arguments=arguments)
+                return await session.call_tool(
+                    tool_name,
+                    arguments=arguments,
+                    read_timeout_seconds=read_timeout_seconds,
+                )
             except Exception:
                 # 连接可能已失效,废弃会话让下次重建;不自动重试,避免副作用工具重复执行
                 await self.close()
@@ -330,32 +498,82 @@ def _get_session_key(tool_runtime: ToolRuntime | None) -> str:
     return f"_cfg_{id(cfg)}"
 
 
-def _make_mcp_caller(server_name: str, tool_name: str, connection: dict):
+def _inject_timeout_param(schema: dict) -> tuple[dict, bool]:
+    """在 MCP 工具 schema 注入调用侧 timeout 参数(不传给上游)。
+
+    上游自身已声明 timeout 时不动(避免遮蔽),返回 (schema, 是否注入)。
+    长任务(exa_agent_run 等)需要调用方能加大读超时才能拿到 runId。
+    """
+    schema = dict(schema or {"type": "object", "properties": {}})
+    properties = dict(schema.get("properties") or {})
+    if "timeout" in properties:
+        return schema, False
+    properties["timeout"] = {
+        "type": "number",
+        "description": (
+            "本次调用的读超时(秒)。长任务(如 exa_agent_run)建议 120-600。"
+            "不传则用服务器默认值。该参数不会传给上游工具。"
+        ),
+    }
+    schema["properties"] = properties
+    return schema, True
+
+
+def _make_mcp_caller(
+    server_name: str,
+    tool_name: str,
+    connection: dict,
+    owns_timeout_param: bool = False,
+):
     """创建 MCP 工具的异步调用闭包。
 
     默认每次调用时建立连接、执行、断开。
     当 connection 配置了 "persistent": true 时,复用持久会话(按会话隔离)。
+
+    Args:
+        owns_timeout_param: schema 是否由我们注入了 timeout 参数。
+            为 True 时调用方传入的 timeout 被用作读超时,不会转发给上游。
     """
     is_persistent = connection.get("persistent", False)
 
     async def _call(tool_runtime: ToolRuntime | None = None, **kwargs) -> str | list:
         from mcp import ClientSession
 
+        call_timeout_override = None
+        if owns_timeout_param:
+            call_timeout_override = kwargs.pop("timeout", None)
+        call_timeout = _resolve_call_timeout(connection, call_timeout_override)
+        phase = "connect"
         try:
             if is_persistent:
+                phase = "initialize"
                 session_key = _get_session_key(tool_runtime)
                 ps = MCPManager.get_instance().get_persistent_session(
                     session_key, server_name, connection
                 )
-                result = await ps.call_tool(tool_name, arguments=kwargs)
+                phase = "call"
+                result = await ps.call_tool(
+                    tool_name,
+                    arguments=kwargs,
+                    read_timeout_seconds=call_timeout,
+                )
             else:
                 async with _connect_mcp(connection) as (read, write):
+                    phase = "initialize"
                     async with ClientSession(read, write) as session:
                         await session.initialize()
-                        result = await session.call_tool(tool_name, arguments=kwargs)
-            return _mcp_blocks_to_content(result.content)
+                        phase = "call"
+                        result = await session.call_tool(
+                            tool_name,
+                            arguments=kwargs,
+                            read_timeout_seconds=call_timeout,
+                        )
+            content = _mcp_blocks_to_content(result.content)
+            return _annotate_run_id(content, server_name, tool_name)
         except Exception as e:
-            return f"{TOOL_ERROR}: {_flat_error(e)}"
+            return _format_call_error(
+                server_name, tool_name, e, phase, call_timeout
+            )
 
     _call.__name__ = f"{server_name}_{tool_name}"
     _call.__qualname__ = _call.__name__
@@ -392,7 +610,10 @@ async def _discover_tools_async(server_name: str, connection: dict) -> list[Tool
                     "type": "object",
                     "properties": {},
                 }
-                caller = _make_mcp_caller(server_name, mcp_tool.name, connection)
+                schema, owns_timeout = _inject_timeout_param(schema)
+                caller = _make_mcp_caller(
+                    server_name, mcp_tool.name, connection, owns_timeout_param=owns_timeout
+                )
                 tools.append(
                     Tool(
                         name=full_name,
@@ -558,9 +779,13 @@ class MCPManager:
 
         async def _try_discover(server_name: str, conn: dict):
             try:
+                # 发现阶段只做握手+list_tools,不该按长任务读超时等
+                discover_timeout = min(
+                    float(conn.get("timeout", DEFAULT_CONNECT_TIMEOUT)), 60.0
+                )
                 tools = await asyncio.wait_for(
                     _discover_tools_async(server_name, conn),
-                    timeout=conn.get("timeout", 15),
+                    timeout=discover_timeout,
                 )
                 self.server2tools[server_name] = tools
                 await ok(
@@ -658,7 +883,9 @@ class MCPManager:
                 原因要带回给调用方 —— 只报"连接验证失败"会让模型无从判断是
                 超时、域名解析失败还是协议不匹配,无法据此调整参数重试。
         """
-        timeout = connection.get("timeout", 15)
+        timeout = min(
+            float(connection.get("timeout", DEFAULT_CONNECT_TIMEOUT)), 60.0
+        )
         target = (
             f"transport={connection.get('transport', '?')}, "
             f"url={connection.get('url') or connection.get('command') or '?'}"

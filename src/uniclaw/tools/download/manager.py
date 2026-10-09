@@ -30,7 +30,22 @@ class DownloadManager:
         self._tasks: dict[str, BaseDownloader] = {}
 
     def submit(self, downloader: BaseDownloader, config: AppConfig) -> str:
-        """提交异步下载任务,返回 task_id。"""
+        """提交异步下载任务,返回 task_id。
+
+        Raises:
+            ValueError: 同一保存路径已有进行中的任务 —— 两个下载器共享同一
+                暂存文件/进度记录/最终产物,并发执行会互相覆盖甚至丢产物。
+        """
+        target = str(downloader.save_path)
+        for tid, dl in self._tasks.items():
+            if (
+                str(dl.save_path) == target
+                and dl.progress.status.value in self._active_statuses
+            ):
+                raise ValueError(
+                    f"同一保存路径已有进行中的任务: {tid}({target});"
+                    f"请等待其完成、取消,或改用不同的 save_path"
+                )
         task_id = downloader.task_id
         self._tasks[task_id] = downloader
         downloader.task = asyncio.create_task(
@@ -74,21 +89,34 @@ class DownloadManager:
         return f"任务 {task_id} 已恢复。"
 
     def cancel(self, task_id: str) -> str:
-        """取消下载任务。"""
+        """取消下载任务。已完成的任务取消无效,不改其状态。"""
         dl = self._tasks.get(task_id)
         if not dl:
             return f"未找到任务: {task_id}"
+        if dl.progress.status.value not in self._active_statuses:
+            return (
+                f"任务 {task_id} 已结束(状态: {dl.progress.status.value}),"
+                f"取消请求已忽略。"
+            )
         dl.cancel()
         return f"任务 {task_id} 已取消。"
 
     def remove_task(self, task_id: str) -> str:
-        """手动删除已完成/失败/取消的任务,释放内存。"""
+        """手动删除已完成/失败/取消的任务,释放内存与断点残留。"""
         dl = self._tasks.get(task_id)
         if not dl:
             return f"未找到任务: {task_id}"
         if dl.progress.status.value in self._active_statuses:
             return f"任务 {task_id} 正在下载中,请先取消后再删除。"
         del self._tasks[task_id]
+        # 任务被明确丢弃: 清掉 .tmp/分片/进度记录等续传残留,
+        # 否则取消后 remove 会留下永久孤儿文件
+        cleanup = getattr(dl, "cleanup", None)
+        if callable(cleanup):
+            try:
+                cleanup()
+            except OSError:
+                pass  # 清理尽力而为,不影响删除本身
         return f"任务 {task_id} 已删除。"
 
     async def _run_task(

@@ -544,6 +544,19 @@ class PtySession:
         """返回控制台当前可见画面的纯文本快照(monitor_screen 工具使用)"""
         return self._screen.text()
 
+    def exit_code(self) -> int | None:
+        """读取子进程退出码(仅退出后有意义); 未知返回 None。
+
+        通过 ``PtyProcess.exitstatus``(底层 ``get_exitstatus()``)获取。
+        只在进程结束后调用一次 —— 与 ``isalive()`` 的 ConPTY teardown
+        死锁风险不同, 退出后再取状态是安全的; 仍做异常兜底。
+        """
+        try:
+            code = self.proc.exitstatus
+        except Exception:
+            return None
+        return code if isinstance(code, int) else None
+
     def resize_screen(self, rows: int, cols: int):
         """viewer 窗口尺寸变化后同步屏幕网格(manager 在 setwinsize 时调用)"""
         self._screen.resize(rows, cols)
@@ -643,6 +656,11 @@ class PtySession:
         tail = self._parser.snapshot()
         if tail and tail != self._last_idle_snapshot:
             self._emit(tail)
+        # 捕获退出码: 读线程 EOF 后 ConPTY 已关闭, 此刻取 exitstatus 安全
+        if monitor.exit_code is None:
+            code = self.exit_code()
+            if code is not None:
+                monitor.exit_code = code
         # 宣告退出: 无论正常 EOF 还是异常, 都让 manager 停止等待
         self.exited.set()
         # 包含 MATCHED: 匹配后若进程随即结束, 不得卡在 matched(与 manager 一致)

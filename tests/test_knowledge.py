@@ -334,3 +334,101 @@ class TestCheckDuplicate:
         assert "相似度" in str(dups[0].get("match_basis")) or "包含" in str(
             dups[0].get("match_basis")
         )
+
+
+# ── 召回/自环/别名冲突(第 27 轮 #8/#12/#13) ─────────────────
+
+
+class TestSearchRecall:
+    """搜索召回: FTS 前缀命中不得挤掉子串命中。"""
+
+    def test_substring_hit_not_shadowed_by_prefix_hit(self, kg):
+        """搜"大": "大学"是前缀命中,但"清华大学"(子串含"大")同样必须返回。"""
+        kg.add_entity("大学", "concept")
+        kg.add_entity("清华大学", "concept")
+        names = [r["name"] for r in kg.search_entities("大")]
+        assert "大学" in names
+        assert "清华大学" in names
+
+    def test_alias_substring_still_found(self, kg):
+        """别名子串命中(FTS 不索引别名)保持召回。"""
+        kg.add_entity("北京", "place")
+        kg.add_alias("北京", "place", "首都")
+        names = [r["name"] for r in kg.search_entities("首")]
+        assert "北京" in names
+
+    def test_results_deduped(self, kg):
+        """FTS 与 LIKE 都命中同一实体时只返回一条。"""
+        kg.add_entity("Python", "technology")
+        results = kg.search_entities("Python")
+        ids = [r["id"] for r in results]
+        assert len(ids) == len(set(ids))
+
+
+class TestPathSelfCycle:
+    """起终点相同时的环路语义(第 27 轮 #12)。"""
+
+    def test_path_self_via_cycle(self, kg):
+        """图中有 甲→乙→丙→甲 闭环时,find_path(甲,甲) 应给出环路,
+        而不是报"不连通"与图中事实矛盾。"""
+        kg.add_entity("甲", "concept")
+        kg.add_entity("乙", "concept")
+        kg.add_entity("丙", "concept")
+        kg.add_relation("甲", "乙", "到")
+        kg.add_relation("乙", "丙", "到")
+        kg.add_relation("丙", "甲", "到")
+
+        paths = kg.find_path("甲", "甲")
+
+        assert paths, "存在闭环却返回空"
+        for path in paths:
+            assert path[0]["name"] == "甲"
+            assert path[-1]["name"] == "甲"
+            assert len(path) >= 3, "环路至少要经过一个中间节点"
+
+    def test_path_self_loop_edge(self, kg):
+        """自环 甲→甲 直接给出二节点路径。"""
+        kg.add_entity("甲", "concept")
+        kg.add_relation("甲", "甲", "自指")
+
+        paths = kg.find_path("甲", "甲")
+
+        assert paths
+        assert any(len(p) == 2 for p in paths)
+
+    def test_path_self_without_cycle_still_empty(self, kg):
+        """无环无自环时,起终点相同仍返回空(不能凭空造路径)。"""
+        kg.add_entity("甲", "concept")
+        kg.add_entity("乙", "concept")
+        kg.add_relation("甲", "乙", "到")
+
+        assert kg.find_path("甲", "甲") == []
+
+
+class TestAliasConflict:
+    """别名与既有实体同名要拒绝(第 27 轮 #13)。"""
+
+    def test_alias_same_as_entity_name_rejected(self, kg):
+        """"上海"已是实体时,不能静默加成"北京"的别名。"""
+        kg.add_entity("上海", "place")
+        kg.add_entity("北京", "place")
+
+        result = kg.add_alias("北京", "place", "上海")
+
+        assert "error" in result
+        assert "同名" in result["error"]
+        # 未污染: 搜索"上海"仍只命中实体本体
+        hits = kg.search_entities("上海")
+        assert [h["name"] for h in hits].count("上海") == 1
+
+    def test_alias_same_as_own_name_rejected(self, kg):
+        """把实体自己的名字加成自己的别名同样无意义,拒绝。"""
+        kg.add_entity("上海", "place")
+        result = kg.add_alias("上海", "place", "上海")
+        assert "error" in result
+
+    def test_non_conflicting_alias_ok(self, kg):
+        """不冲突的别名照常允许。"""
+        kg.add_entity("北京", "place")
+        result = kg.add_alias("北京", "place", "帝都")
+        assert result.get("ok") is True

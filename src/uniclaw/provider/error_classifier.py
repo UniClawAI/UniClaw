@@ -65,6 +65,22 @@ def _message(e: Exception) -> str:
     return str(e).lower()
 
 
+def is_billing_error(e: BaseException) -> bool:
+    """是否为后端账户/计费类错误(402、余额不足、配额耗尽)。
+
+    这类失败与"文件损坏/模型拒绝"无关 —— 归因错误会误导用户去修文件。
+    """
+    text = f"{type(e).__name__} {e}".lower()
+    return (
+        "402" in text
+        or "payment required" in text
+        or "insufficient" in text
+        or "balance" in text
+        or "quota" in text
+        or "credit" in text
+    )
+
+
 def classify_error(e: Exception) -> ErrorCategory:
     """将异常分类到 ErrorCategory。
 

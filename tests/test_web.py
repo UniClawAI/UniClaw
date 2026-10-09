@@ -12,6 +12,7 @@ class _FakeResponse:
 
     def __init__(self, text: str, content_type: str, status_code: int = 200):
         self.text = text
+        self.content = text.encode("utf-8")
         self.status_code = status_code
         self.headers = {"content-type": content_type}
 
@@ -27,6 +28,7 @@ def _mock_client(response: _FakeResponse) -> AsyncMock:
     mock_response.status_code = response.status_code
     mock_response.headers = response.headers
     mock_response.text = response.text
+    mock_response.content = response.content
     mock_client.get = AsyncMock(return_value=mock_response)
     return mock_client
 
@@ -265,3 +267,42 @@ async def test_web_fetch_explicit_proxy_passed_through():
 
     assert "HTTP 200" in result
     assert mock_cls.call_args.kwargs.get("proxy") == "http://127.0.0.1:7890"
+
+class TestWebFetchEncoding:
+    def _fetch_bytes(self, body: bytes, content_type: str):
+        import asyncio
+
+        from uniclaw.tools.web import webFetch
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_response.status_code = 200
+        mock_response.headers = {"content-type": content_type}
+        mock_response.content = body
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        async def run():
+            with patch("uniclaw.tools.web.httpx.AsyncClient", return_value=mock_client):
+                return await webFetch("https://example.com")
+
+        return asyncio.run(run())
+
+    def test_gbk_page_decoded(self):
+        html = (
+            "<html><head><meta charset='gbk'></head><body><p>测试中文</p></body></html>"
+        ).encode("gbk")
+        result = self._fetch_bytes(html, "text/html")
+        assert "测试中文" in result
+        assert "��" not in result
+
+    def test_binary_content_rejected(self):
+        result = self._fetch_bytes(b"\x89PNG\x00\x00\x00", "image/png")
+        assert "二进制内容" in result
+        assert "http_download" in result
+
+    def test_octet_stream_rejected(self):
+        result = self._fetch_bytes(b"MZ\x00\x00binary", "application/octet-stream")
+        assert "二进制内容" in result

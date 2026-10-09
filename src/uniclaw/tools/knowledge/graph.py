@@ -239,11 +239,17 @@ class KnowledgeGraph:
                     score = d.get("match_score", 0.0)
                     basis = d.get("match_basis") or d.get("match_type", "名称相似")
                     # 降低置信度表述 + 附判断依据,便于人工区分"同一实体"与"只是有点像"
-                    label = "疑似同一实体" if score >= _NAME_SIMILAR_STRONG else "名称相似"
+                    label = (
+                        "疑似同一实体" if score >= _NAME_SIMILAR_STRONG else "名称相似"
+                    )
                     parts.append(f"{d['name']}({label}, 相似度 {score:.2f}, {basis})")
+                from uniclaw.tools.knowledge.tools import (
+                    kg_add_alias,
+                )  # 循环导入例外: 取工具规范名
+
                 warning = (
                     f"发现相似实体: {'; '.join(parts)}。"
-                    f"如确为同一实体请使用 kg_add_alias 添加别名,否则请忽略此提示。"
+                    f"如确为同一实体请使用 {kg_add_alias.name} 添加别名,否则请忽略此提示。"
                 )
             return {"id": entity_id, "duplicate_warning": warning}
         except sqlite3.IntegrityError:
@@ -269,16 +275,20 @@ class KnowledgeGraph:
         confidence: float = 1.0,
     ) -> dict:
         """添加关系。自动通过名称/别名查找实体。"""
+        from uniclaw.tools.knowledge.tools import (
+            kg_add_entity,
+        )  # 循环导入例外: 取工具规范名
+
         src = self._resolve_entity(source_name, source_type)
         tgt = self._resolve_entity(target_name, target_type)
 
         if not src:
             return {
-                "error": f"源实体 '{source_name}' 不存在。请先使用 kg_add_entity 创建。"
+                "error": f"源实体 '{source_name}' 不存在。请先使用 {kg_add_entity.name} 创建。"
             }
         if not tgt:
             return {
-                "error": f"目标实体 '{target_name}' 不存在。请先使用 kg_add_entity 创建。"
+                "error": f"目标实体 '{target_name}' 不存在。请先使用 {kg_add_entity.name} 创建。"
             }
 
         now = _now()
@@ -312,6 +322,10 @@ class KnowledgeGraph:
 
     def add_alias(self, name: str, entity_type: str, alias: str) -> dict:
         """为实体添加别名。"""
+        from uniclaw.tools.knowledge.tools import (
+            kg_search,
+        )  # 循环导入例外: 取工具规范名
+
         entity = self._resolve_entity(name, entity_type)
         if not entity:
             return {"error": f"实体 '{name}' 不存在。"}
@@ -323,6 +337,23 @@ class KnowledgeGraph:
         ).fetchone()
         if existing:
             return {"error": f"别名 '{alias}' 已指向实体 '{existing['name']}'。"}
+
+        # 别名与既有实体同名: 搜索该名字会同时命中实体与别名归属,消歧成本
+        # 被静默转嫁给调用方 —— 直接拒绝,提示先处理同名实体
+        conflict = self.conn.execute(
+            "SELECT id, name, type FROM entities WHERE name=?", (alias,)
+        ).fetchone()
+        if conflict:
+            if conflict["id"] == entity["id"]:
+                return {"error": (f"别名 '{alias}' 与实体自身同名,没有意义,无需添加。")}
+            return {
+                "error": (
+                    f"别名 '{alias}' 与既有实体 '{conflict['name']}'"
+                    f"(type={conflict['type']}, id={conflict['id']}) 同名,"
+                    f"添加后 {kg_search.name}('{alias}') 将返回多条无法消歧。"
+                    f"请先合并/删除同名实体,或换一个不冲突的别名。"
+                )
+            }
 
         try:
             self.conn.execute(
@@ -573,14 +604,20 @@ class KnowledgeGraph:
     def search_entities(
         self, keyword: str, entity_type: str = "", limit: int = 20
     ) -> list[dict]:
-        """FTS5 模糊搜索实体,FTS5 无结果时回退到 LIKE 子串匹配。"""
-        # 1. 先尝试 FTS5 MATCH(前缀匹配,处理子串在开头/完整词命中)
+        """搜索实体: FTS5 前缀命中 ∪ LIKE 子串/别名命中,按 id 去重。
+
+        两条路都要走 —— 只取 FTS 会让召回取决于"其他实体名恰好以关键词开头":
+        搜"大"命中"大学"就返回,却漏掉以"清"开头的"清华大学"(子串同样含"大")。
+        """
         fts_keyword = self._fts_escape(keyword)
-        rows = []
+        seen_ids: set[int] = set()
+        rows: list = []
+
+        # 1) FTS5 前缀/分词命中
         if fts_keyword is not None:
             try:
                 if entity_type:
-                    rows = self.conn.execute(
+                    fts_rows = self.conn.execute(
                         """SELECT e.* FROM entities_fts f
                            JOIN entities e ON f.rowid = e.id
                            WHERE entities_fts MATCH ? AND e.type = ?
@@ -588,7 +625,7 @@ class KnowledgeGraph:
                         (fts_keyword, entity_type, limit),
                     ).fetchall()
                 else:
-                    rows = self.conn.execute(
+                    fts_rows = self.conn.execute(
                         """SELECT e.* FROM entities_fts f
                            JOIN entities e ON f.rowid = e.id
                            WHERE entities_fts MATCH ?
@@ -596,42 +633,34 @@ class KnowledgeGraph:
                         (fts_keyword, limit),
                     ).fetchall()
             except sqlite3.OperationalError:
-                rows = []
+                fts_rows = []
+            for row in fts_rows:
+                seen_ids.add(row["id"])
+                rows.append(row)
 
-        if rows:
-            results = []
-            for row in rows:
-                d = dict(row)
-                if d.get("properties"):
-                    d["properties"] = json.loads(d["properties"])
-                d["aliases"] = [
-                    r["alias"]
-                    for r in self.conn.execute(
-                        "SELECT alias FROM entity_aliases WHERE entity_id=?", (d["id"],)
-                    ).fetchall()
-                ]
-                results.append(d)
-            return results
-
-        # 2. FTS5 无结果 → LIKE 子串匹配(解决中文部分匹配问题)
+        # 2) LIKE 子串/别名命中(FTS5 不做任意子串,别名也未入索引)
         like_pattern = f"%{keyword}%"
         if entity_type:
-            rows = self.conn.execute(
+            like_rows = self.conn.execute(
                 "SELECT * FROM entities WHERE name LIKE ? AND type=? ORDER BY updated_at DESC LIMIT ?",
                 (like_pattern, entity_type, limit),
             ).fetchall()
         else:
-            # 也匹配别名(FTS5 不索引别名)
-            rows = self.conn.execute(
+            like_rows = self.conn.execute(
                 """SELECT DISTINCT e.* FROM entities e
                    LEFT JOIN entity_aliases a ON a.entity_id = e.id
                    WHERE e.name LIKE ? OR e.description LIKE ? OR a.alias LIKE ?
                    ORDER BY e.updated_at DESC LIMIT ?""",
                 (like_pattern, like_pattern, like_pattern, limit),
             ).fetchall()
+        for row in like_rows:
+            if row["id"] in seen_ids:
+                continue
+            seen_ids.add(row["id"])
+            rows.append(row)
 
         results = []
-        for row in rows:
+        for row in rows[:limit]:
             d = dict(row)
             if d.get("properties"):
                 d["properties"] = json.loads(d["properties"])
@@ -757,17 +786,22 @@ class KnowledgeGraph:
                     if d.get("properties"):
                         d["properties"] = json.loads(d["properties"])
                     if i > 0:
-                        # 添加关系信息
+                        # 添加关系信息 + 真实边方向: 反向走边时展示不能
+                        # 顺遍历方向画成 "B-->A"(语义读反,真实是 A-->B)
                         rel = self.conn.execute(
                             "SELECT relation FROM relations WHERE source_id=? AND target_id=?",
                             (path[i - 1], eid),
                         ).fetchone()
-                        if not rel:
+                        if rel:
+                            d["via_relation"] = rel["relation"]
+                            d["via_direction"] = "forward"
+                        else:
                             rel = self.conn.execute(
                                 "SELECT relation FROM relations WHERE source_id=? AND target_id=?",
                                 (eid, path[i - 1]),
                             ).fetchone()
-                        d["via_relation"] = rel["relation"] if rel else "?"
+                            d["via_relation"] = rel["relation"] if rel else "?"
+                            d["via_direction"] = "backward" if rel else ""
                     entity_path.append(d)
                 paths.append(entity_path)
                 if len(paths) >= 10:  # 最多返回 10 条路径
@@ -780,8 +814,17 @@ class KnowledgeGraph:
                 (current, current),
             ).fetchall():
                 neighbor = row["target_id"] if "target_id" in row.keys() else row[0]
-                if neighbor not in path:
-                    queue.append(path + [neighbor])
+                # 回到起点(target==source 时)要允许闭合环路: 甲→乙→丙→甲 是
+                # 一条合法路径,此前被 "not in path" 挡掉后报"不连通",与图中
+                # 存在闭环的事实矛盾。闭合要求至少经过一个中间节点(len>2),
+                # 否则任意单边折返 甲→乙→甲 都会被当成环;自环(甲→甲)除外。
+                if neighbor in path:
+                    closing_loop = neighbor == tgt["id"] and (
+                        len(path) > 2 or neighbor == current
+                    )
+                    if not closing_loop:
+                        continue
+                queue.append(path + [neighbor])
 
         return paths
 
@@ -813,6 +856,7 @@ class KnowledgeGraph:
             list[dict]: 相似度 >= 0.72 的候选(类型不同按下调后分数判定),
                 按相似度降序。
         """
+
         candidates: list[dict] = []
         seen: set[int] = set()
 
@@ -977,7 +1021,6 @@ class KnowledgeGraph:
     ) -> Path:
         """生成交互式 HTML 知识图谱可视化(ECharts 力导向图)。"""
         import hashlib
-        from collections import defaultdict
 
         # 预定义颜色和图标
         type_colors = {
@@ -1033,12 +1076,14 @@ class KnowledgeGraph:
         entities = self.list_entities(limit=5000)
 
         # 统计每个实体的关系数量(用于节点大小)
-        rel_count: dict[str, int] = defaultdict(int)
+        # 全部用普通 dict —— 严格消费方(序列化/校验)对 defaultdict 会报
+        # "Expected dict, got collections.defaultdict" 类型不匹配
+        rel_count: dict[str, int] = {}
         for row in self.conn.execute(
             "SELECT s.name as src, t.name as tgt FROM relations r JOIN entities s ON r.source_id=s.id JOIN entities t ON r.target_id=t.id"
         ).fetchall():
-            rel_count[row["src"]] += 1
-            rel_count[row["tgt"]] += 1
+            rel_count[row["src"]] = rel_count.get(row["src"], 0) + 1
+            rel_count[row["tgt"]] = rel_count.get(row["tgt"], 0) + 1
         max_rel = max(rel_count.values()) if rel_count else 1
 
         # 构建节点(大小按关系数量缩放,颜色由 category 控制)
@@ -1051,9 +1096,9 @@ class KnowledgeGraph:
         # 检测同名实体,为重复名称生成带类型后缀的唯一 ID
         from collections import Counter
 
-        name_counts = Counter(e["name"] for e in entities)
+        name_counts = dict(Counter(e["name"] for e in entities))
         # name → {type → id} 映射,用于关系引用时查找
-        name_type_id: dict[str, dict[str, str]] = defaultdict(dict)
+        name_type_id: dict[str, dict[str, str]] = {}
 
         for e in entities:
             icon = type_icons.get(e["type"], "●")
@@ -1075,7 +1120,7 @@ class KnowledgeGraph:
                 if name_counts[e["name"]] > 1
                 else e["name"]
             )
-            name_type_id[e["name"]][e["type"]] = node_id
+            name_type_id.setdefault(e["name"], {})[e["type"]] = node_id
 
             node = {
                 "id": node_id,
@@ -1098,7 +1143,7 @@ class KnowledgeGraph:
         # 构建边(同一对节点的多条关系用不同曲率,数量越多间距越大)
         # 查询时同时获取类型,用于正确引用去重后的节点 ID
         # 分组时用排序节点对,确保 A→B 和 B→A 被归为同一组以正确计算曲率
-        edge_groups: dict[tuple, list] = defaultdict(list)
+        edge_groups: dict[tuple, list] = {}
         for row in self.conn.execute(
             "SELECT s.name as src, s.type as src_type, t.name as tgt, t.type as tgt_type, r.relation "
             "FROM relations r JOIN entities s ON r.source_id=s.id JOIN entities t ON r.target_id=t.id"
@@ -1108,7 +1153,7 @@ class KnowledgeGraph:
             pair = tuple(sorted([src_id, tgt_id]))
             # 记录边方向是否与排序对一致(用于曲率符号修正)
             reversed_dir = (src_id, tgt_id) != pair
-            edge_groups[pair].append(
+            edge_groups.setdefault(pair, []).append(
                 {
                     "source": src_id,
                     "target": tgt_id,

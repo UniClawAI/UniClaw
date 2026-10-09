@@ -7,13 +7,14 @@ from uniclaw.utils.constants import TOOL_ERROR
 def _screen_supported() -> bool:
     """monitor_screen 是否有真实屏幕可看。
 
-    真实屏幕快照依赖 ConPTY,前置条件是 Windows + pywinpty。其余平台/环境
-    只能退化成"返回输出历史",与 monitor_output 重复 —— 不注册,免得误导调用方。
+    真实屏幕快照依赖 ConPTY,前置条件是 Windows + pywinpty(导入名 winpty)。
+    其余平台/环境只能退化成"返回输出历史",与 monitor_output 重复 ——
+    不注册,免得误导调用方。
     """
     if sys.platform != "win32":
         return False
     try:
-        import pywinpty  # noqa: F401
+        import winpty  # noqa: F401
     except ImportError:
         return False
     return True
@@ -36,7 +37,10 @@ async def monitor_start(
     运行结束后及时使用 monitor_stop 关闭进程,避免资源泄漏。
 
     Args:
-        command: 要执行的命令(如 "npm run dev"、"cargo build")
+        command: 要执行的命令(如 "npm run dev"、"cargo build")。
+            Windows 注意: `cmd /k "带空格路径"` 会把引号内路径当命令名
+            (报"不是内部或外部命令"),需写成 `cmd /k ""带 空格路径" 参数"`
+            (外层再包一对引号)或直接用 `bash -c '...'`。
         name: 进程描述名称,可选
         watch_pattern: 匹配模式(正则表达式),匹配时通知,留空则不监控。
             技巧: 如果不确定命令输出什么关键字,可以在命令末尾追加 echo 标记,

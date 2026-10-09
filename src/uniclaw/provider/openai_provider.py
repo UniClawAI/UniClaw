@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 from typing import TYPE_CHECKING
 
 from openai import AsyncOpenAI, OpenAI
@@ -107,6 +108,15 @@ def _usage_from_prompt_details(usage, extra_discount=0.0) -> Usage:
 
 _MULTIMODAL_TYPES = {"image_url", "input_audio", "video_url"}
 
+# 降级过程重入保护: _describe_multimodal 内部经 describe_media 调 achat
+# 时消息仍含媒体块,若再触发降级会形成
+# _describe_multimodal → describe_media → achat → _describe_multimodal
+# 无限递归直至栈溢出(实测 "Stack overflow" + invalid base64 400 场景)。
+# ContextVar 随 asyncio 任务上下文隔离,并发请求互不影响。
+_MM_FALLBACK_ACTIVE: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "_mm_fallback_active", default=False
+)
+
 
 def _extract_media_url(block: dict) -> tuple[str, str]:
     """从多模态 content block 中提取 URL 和媒体类型。"""
@@ -121,7 +131,20 @@ def _extract_media_url(block: dict) -> tuple[str, str]:
 
 
 async def _describe_multimodal(messages, mm_model: str | None = None, config: AppConfig | None = None):
-    """将消息中的多模态内容块替换为描述文本。"""
+    """将消息中的多模态内容块替换为描述文本。
+
+    本函数内部经 describe_media → achat 再入 LLM 层;降级期间禁止再次
+    降级(见 _MM_FALLBACK_ACTIVE),否则无限递归栈溢出。
+    """
+    token = _MM_FALLBACK_ACTIVE.set(True)
+    try:
+        return await _describe_multimodal_inner(messages, mm_model, config)
+    finally:
+        _MM_FALLBACK_ACTIVE.reset(token)
+
+
+async def _describe_multimodal_inner(messages, mm_model: str | None, config: AppConfig | None):
+    """将消息中的多模态内容块替换为描述文本(实际工作体)。"""
     cleaned = []
     for m in messages:
         content = (
@@ -427,7 +450,11 @@ async def astream(
         async for chunk in _astream_inner(client, kwargs):
             yield chunk
     except Exception as e:
-        if is_multimodal_error(e) and p["multimodal_model_name"]:
+        if (
+            is_multimodal_error(e)
+            and p["multimodal_model_name"]
+            and not _MM_FALLBACK_ACTIVE.get()
+        ):
             kwargs["messages"] = await _describe_multimodal(
                 messages, p["multimodal_model_name"], config=config
             )
@@ -696,7 +723,11 @@ async def achat(
     try:
         response = await client.chat.completions.create(**kwargs)
     except Exception as e:
-        if is_multimodal_error(e) and p["multimodal_model_name"]:
+        if (
+            is_multimodal_error(e)
+            and p["multimodal_model_name"]
+            and not _MM_FALLBACK_ACTIVE.get()
+        ):
             kwargs["messages"] = await _describe_multimodal(
                 messages, p["multimodal_model_name"], config=config
             )

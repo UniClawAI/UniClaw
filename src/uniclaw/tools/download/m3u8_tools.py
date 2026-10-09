@@ -5,7 +5,6 @@
 - 异步模式: 立即返回任务 ID,后台执行,完成/失败时唤醒模型提醒
 """
 
-from enum import StrEnum
 from pathlib import Path
 
 from uniclaw.tools.base import tool, ToolRuntime
@@ -21,6 +20,7 @@ from uniclaw.utils.http_download import (
     DEFAULT_MAX_RETRIES,
     DownloadChunkInfo,
     file_format,
+    parse_headers,
     time_format,
 )
 
@@ -34,6 +34,8 @@ async def m3u8_download(
     max_retries: int = DEFAULT_MAX_RETRIES,
     proxy: str = "",
     cookies: str = "",
+    headers: str = "",
+    init_iv: str = "auto",
     block_timeout: float = DEFAULT_BLOCK_TIMEOUT,
     async_mode: bool = False,
     tool_runtime: ToolRuntime = None,
@@ -44,6 +46,8 @@ async def m3u8_download(
     需通过 variant 参数指定要下载的清晰度(如 "0" 或 "1920x1080")后再调用一次。
     播放列表为"媒体播放列表"(直接包含 TS 分片)时,无需 variant 直接下载。
 
+    中断/取消后用相同 url + save_path 重新调用即自动断点续传,已下分片不重复下载。
+
     Args:
         url: M3U8 播放列表地址(主播放列表或媒体播放列表均可)。
         save_path: 保存路径(必填,必须为绝对路径,如 "D:/videos/movie.ts")。
@@ -52,6 +56,12 @@ async def m3u8_download(
         max_retries: 单个分片失败重试次数,默认 3。
         proxy: 代理地址(如 "http://proxy:8080"),为空则直连。
         cookies: Cookie 字符串(如 "key1=val1; key2=val2"),用于需要登录的下载。
+        headers: 自由请求头,防盗链场景必填(密钥/分片请求都带)。支持
+            JSON 对象字符串(如 '{"Referer": "https://a.com/", "User-Agent": "Mozilla/5.0"}')
+            或每行一条 "Name: Value"。
+        init_iv: 加密流 #EXT-X-MAP 初始化段的 IV 约定,auto(默认)/key/zero。
+            auto 自动判别;判别存在歧义时按全 0 解出并在结果中提示,
+            播放异常可用 key 或 zero 强制重试。
         block_timeout: 分片请求超时(秒),默认 10 秒。
         async_mode: 异步模式,True 则后台下载并立即返回任务 ID,False 则同步下载并流式显示进度。
 
@@ -68,6 +78,14 @@ async def m3u8_download(
         )
     resolved_path = resolved_path.resolve()
 
+    if concurrency < 1:
+        return f"{TOOL_ERROR}: concurrency 必须 >= 1(收到: {concurrency})"
+
+    try:
+        headers_dict = parse_headers(headers)
+    except ValueError as e:
+        return f"{TOOL_ERROR}: headers 参数解析失败: {e}"
+
     downloader = M3u8Downloader(
         url=url,
         save_path=resolved_path,
@@ -75,8 +93,10 @@ async def m3u8_download(
         max_retries=max_retries,
         proxy=proxy,
         cookies=cookies,
+        headers=headers_dict,
         block_timeout=block_timeout,
         variant=variant,
+        init_iv=init_iv,
     )
 
     # 先解析播放列表,判断是否需要选择分辨率
@@ -99,7 +119,10 @@ async def m3u8_download(
 
     if async_mode:
         manager = get_m3u8_download_manager()
-        task_id = manager.submit(downloader, config)
+        try:
+            task_id = manager.submit(downloader, config)
+        except ValueError as e:
+            return f"{TOOL_ERROR}: {e}"
         return (
             f"M3U8 下载任务已提交。\n"
             f"任务 ID: {task_id}\n"
@@ -136,11 +159,12 @@ async def m3u8_download(
         # 分片进度(准确) + 大小进度(估算),两者都显示
         seg_total = downloader.progress.total_segments
         seg_done = downloader.progress.downloaded_segments
+        seg_unit = "区间" if downloader.progress.has_byterange else "分片"
         if seg_total > 0:
             seg_percent = seg_done / seg_total * 100
-            seg_info = f"分片 {seg_done}/{seg_total} ({seg_percent:.1f}%)"
+            seg_info = f"{seg_unit} {seg_done}/{seg_total} ({seg_percent:.1f}%)"
         else:
-            seg_info = "分片 --/--"
+            seg_info = f"{seg_unit} --/--"
         percent = info.downloaded / info.total * 100 if info.total > 0 else 0.0
         msg = (
             f"\rM3U8 下载进度: {seg_info} | "
@@ -161,11 +185,16 @@ async def m3u8_download(
             max_retries=max_retries,
             proxy=proxy,
             cookies=cookies,
+            headers=headers_dict,
             block_timeout=block_timeout,
             variant=variant,
+            init_iv=init_iv,
         )
         manager = get_m3u8_download_manager()
-        task_id = manager.submit(new_downloader, config)
+        try:
+            task_id = manager.submit(new_downloader, config)
+        except ValueError as e:
+            return f"{TOOL_ERROR}: {e}"
         return (
             f"M3U8 下载已转为后台任务。\n"
             f"任务 ID: {task_id}\n"

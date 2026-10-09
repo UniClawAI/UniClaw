@@ -6,10 +6,34 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from uniclaw.tools.base import tool, ToolRuntime
 from uniclaw.utils.constants import TOOL_ERROR
 from uniclaw.tools.session.session_manager import SessionManager
 from uniclaw.console.ui import ok, err, warn
+
+
+def _fmt_time(value: str) -> str:
+    """统一时间显示为 `YYYY-MM-DD HH:MM:SS`。
+
+    入参可能是 ISO 带微秒/时区(start_time)或 `YYYY-MM-DD HH:MM:SS`
+    (end_time),格式不一致会让"开始/结束"看起来像两种时钟;解析失败
+    原样返回,不吞掉陌生格式。
+
+    Args:
+        value: 原始时间字符串。
+
+    Returns:
+        str: 统一格式的时间;空值/无法解析时原样返回。
+    """
+    v = (value or "").strip()
+    if not v:
+        return ""
+    try:
+        return datetime.fromisoformat(v).strftime("%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return v
 
 
 @tool
@@ -60,9 +84,9 @@ def session_list(
         lines.append(f"    会话ID: {session_id}")
         lines.append(f"    消息数: {message_count}")
         if start_time:
-            lines.append(f"    开始时间: {start_time}")
+            lines.append(f"    开始时间: {_fmt_time(start_time)}")
         if end_time:
-            lines.append(f"    结束时间: {end_time}")
+            lines.append(f"    结束时间: {_fmt_time(end_time)}")
 
     lines.append("\n" + "=" * 60)
     lines.append("💡 使用 session_detail 查看详情,使用 session_delete 删除会话")
@@ -103,7 +127,7 @@ def session_detail(
     lines.append(f"会话ID: {session_id}")
     lines.append(f"消息数量: {len(messages)}")
     if session.start_time:
-        lines.append(f"开始时间: {session.start_time}")
+        lines.append(f"开始时间: {_fmt_time(str(session.start_time))}")
 
     # Token统计
     tokens = session.estimate_tokens()

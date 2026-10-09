@@ -1420,3 +1420,90 @@ class TestAsyncLifecycleUntilClose:
 
         assert "生成智能体时出错" in result
         mock_mgr.detach_sub_config.assert_called_once()
+
+# ── subagent_discuss 边界(第 35 轮 #4) ────────────────────
+
+
+class TestSubagentDiscussBoundaries:
+    @pytest.mark.asyncio
+    async def test_empty_participants_rejected(self):
+        from uniclaw.tools.multi_agent.tools import subagent_discuss
+
+        result = await subagent_discuss(topic="t", participants=[])
+        assert "TOOL_ERROR" in result
+        assert "不能为空" in result
+
+    @pytest.mark.asyncio
+    async def test_single_participant_rejected(self):
+        from uniclaw.tools.multi_agent.tools import subagent_discuss
+
+        result = await subagent_discuss(topic="t", participants=["id-1"])
+        assert "TOOL_ERROR" in result
+        assert "至少需要 2 个" in result
+
+    @pytest.mark.asyncio
+    async def test_rounds_out_of_range_rejected(self):
+        from uniclaw.tools.multi_agent.tools import subagent_discuss
+
+        result = await subagent_discuss(
+            topic="t", participants=["a", "b"], rounds=0
+        )
+        assert "TOOL_ERROR" in result
+        assert "rounds" in result
+
+    @pytest.mark.asyncio
+    async def test_unknown_id_hints_task_id(self):
+        """名称替代 ID 时报错须指明用任务 ID。"""
+        from uniclaw.tools.multi_agent.tools import subagent_discuss
+
+        result = await subagent_discuss(
+            topic="t", participants=["not-exist-1", "not-exist-2"]
+        )
+        assert "TOOL_ERROR" in result
+        assert "任务 ID" in result
+
+    @pytest.mark.asyncio
+    async def test_completed_keepalive_participant_accepted(self):
+        """COMPLETED(驻留)子代理可参与讨论,与 send_to_child 口径一致。"""
+        from uniclaw.agent import AgentStatus, MultiAgent
+        from uniclaw.tools.multi_agent.tools import subagent_discuss
+
+        mgr = MultiAgent.get_instance()
+        t1 = MagicMock()
+        t1.status = AgentStatus.COMPLETED
+        t1.id = "c1"
+        t1.name = "n1"
+        t1.session = []
+        t1.result = ""
+        t2 = MagicMock()
+        t2.status = AgentStatus.COMPLETED
+        t2.id = "c2"
+        t2.name = "n2"
+        t2.session = []
+        t2.result = ""
+        mgr.id2AgentTask = {"c1": t1, "c2": t2}
+        mgr.send_message = MagicMock(return_value=False)  # 不真正发消息
+
+        result = await subagent_discuss(topic="t", participants=["c1", "c2"], rounds=1)
+
+        assert "was not available" not in result, "COMPLETED 驻留代理应允许参与"
+        assert "讨论" in result or "n1" in result
+
+class TestLoopShutdownNoise:
+    """进程关闭期噪音识别(第 37 轮现场: Executor shutdown 日志风暴)。"""
+
+    def test_shutdown_noises_detected(self):
+        from uniclaw.agent.multi_agent import _is_loop_shutdown_noise
+
+        assert _is_loop_shutdown_noise(RuntimeError("Executor shutdown has been called"))
+        assert _is_loop_shutdown_noise(
+            ConnectionResetError("[WinError 995] 由于线程退出或应用程序请求,已中止 I/O 操作。")
+        )
+        assert _is_loop_shutdown_noise(Exception("invalid state"))
+
+    def test_real_errors_not_swallowed(self):
+        from uniclaw.agent.multi_agent import _is_loop_shutdown_noise
+
+        assert not _is_loop_shutdown_noise(KeyError("boom"))
+        assert not _is_loop_shutdown_noise(RuntimeError("模型调用失败"))
+

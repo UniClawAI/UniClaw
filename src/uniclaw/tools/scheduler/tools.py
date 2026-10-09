@@ -1,4 +1,5 @@
 import json
+import sys
 
 from uniclaw.tools.base import tool, ToolRuntime
 from uniclaw.utils.constants import TOOL_ERROR
@@ -37,6 +38,40 @@ def _validate_action(action: str) -> str | None:
     return None
 
 
+def _win32_bash_syntax_warning(action_json: str) -> str:
+    """Windows 下 shell/monitor 命令含 bash 扩展语法时给出透明提示。
+
+    Windows 的 shell 任务经 cmd.exe 执行,`$(date +%H%M%S)`/反引号不会被展开,
+    字面量原样进输出 —— 不提示用户会以为定时器坏了。
+
+    Args:
+        action_json: action 的 JSON 字符串。
+
+    Returns:
+        str: 警告文本;无需警告时返回空串。
+    """
+    if sys.platform != "win32":
+        return ""
+    try:
+        data = json.loads(action_json)
+    except json.JSONDecodeError:
+        return ""
+    if not isinstance(data, dict) or data.get("type") not in ("shell", "monitor"):
+        return ""
+    cmd = data.get("command", "")
+    if not isinstance(cmd, str):
+        return ""
+    if "bash" in cmd.split(" ", 1)[0] or "bash -c" in cmd:
+        return ""  # 显式走 bash 的命令会展开
+    if "$(" in cmd or "`" in cmd or "${" in cmd:
+        return (
+            "\n⚠ 注意: 命令含 bash 扩展语法($()/反引号/`${}`),Windows 下定时任务"
+            "经 cmd.exe 执行不会展开,输出中将出现字面量(如字面的 `$(date +%H%M%S)`)。"
+            "如需展开,请用 bash 包裹执行,例如: bash -c 'echo $(date +%H%M%S)'"
+        )
+    return ""
+
+
 @tool
 def schedule_create(
     name: str,
@@ -71,6 +106,10 @@ def schedule_create(
                 - 每次都需要 AI 处理 → agent
                 - 先用命令检查,有问题才需要 AI 处理 → monitor
 
+                执行环境: shell/monitor 命令在 Windows 上经 cmd.exe 执行
+                (POSIX 上为 sh),不展开 bash 的 `$()`/反引号;需要 bash 语法
+                时用 `bash -c '...'` 包裹。
+
     Returns:
         str: 创建结果消息,包含任务 ID
     """
@@ -83,17 +122,46 @@ def schedule_create(
         return err
 
     scheduler = Scheduler.get_instance()
+
+    # 重复创建检查: name+schedule+action 三项全同视为同一任务 ——
+    # 不拒绝的话每次调用都多一个 task_id,定时器会把同一件事执行 N 遍
+    def _norm_action(text: str) -> str:
+        try:
+            return json.dumps(json.loads(text), sort_keys=True, ensure_ascii=False)
+        except json.JSONDecodeError:
+            return text
+
+    for t in scheduler.list_tasks():
+        if not t.get("enabled", True):
+            continue
+        if (
+            t.get("name", "") == name
+            and t.get("schedule", "").strip() == schedule.strip()
+            and _norm_action(t.get("action", "")) == _norm_action(action)
+        ):
+            return (
+                f"{TOOL_ERROR}: 完全相同的定时任务已存在"
+                f"(task_id={t['id']}, {name}, {schedule})"
+                f"——name/schedule/action 三项全同,再创建会重复执行。"
+                f"如需修改请用 {schedule_update.name}(task_id='{t['id']}');"
+                f"确要并存第二个同配置任务,请调整 name 或 action 以示区分"
+            )
+
     try:
         task = scheduler.add_task(name, schedule, action, config=config)
     except ValueError as e:
-        return f"{TOOL_ERROR}: 无效的 cron 表达式 '{schedule}': {e}"
+        # _parse_cron 已给出字段数/格式/永不触发等原因,原样透出即可
+        return f"{TOOL_ERROR}: {e}"
     except OSError as e:
         return (
             f"{TOOL_ERROR}: 保存定时任务配置失败(任务: {name}, cron: {schedule}): "
             f"{type(e).__name__}: {e}"
         )
 
-    return f"已创建定时任务: {task.id} ({name}, {schedule})"
+    return (
+        f"已创建定时任务: {task.id} ({name}, {schedule})"
+        f"{_win32_bash_syntax_warning(action)}"
+    )
 
 
 
@@ -119,13 +187,18 @@ def schedule_list() -> str:
         schedule = t.get("schedule", "")
         action = t.get("action", "")
         enabled = t.get("enabled", True)
-        last_run = t.get("last_run", "从未执行")
+        last_run = t.get("last_run") or "从未执行"
 
         status = "启用" if enabled else "禁用"
         lines.append(f"  [{status}] {tid}")
         lines.append(f"    名称: {name}")
         lines.append(f"    调度: {schedule}")
         lines.append(f"    动作: {action}")
+        # last_run 是历史执行事实;配置更新时间更晚时注明"更新后未执行",
+        # 而不是把真实执行记录清成"从未执行"
+        updated = t.get("updated") or ""
+        if t.get("last_run") and updated and t["last_run"] < updated:
+            last_run = f"{t['last_run']}(配置更新于 {updated},更新后未执行)"
         lines.append(f"    上次执行: {last_run}")
     return "\n".join(lines)
 
@@ -199,7 +272,7 @@ def schedule_update(
             if not scheduler.update_schedule(task_id, schedule.strip()):
                 return f"{TOOL_ERROR}: 任务 '{task_id}' 不存在"
     except ValueError as e:
-        return f"{TOOL_ERROR}: 无效的 cron 表达式 '{schedule}': {e}"
+        return f"{TOOL_ERROR}: {e}"
     except OSError as e:
         return (
             f"{TOOL_ERROR}: 保存定时任务配置失败(任务: {task_id}, cron: '{schedule}'): "

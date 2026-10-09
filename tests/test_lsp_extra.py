@@ -7,6 +7,7 @@
 
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -341,3 +342,112 @@ def test_parse_position_missing_line_raises(text):
 
     with pytest.raises(ToolUserError, match="line"):
         _parse_position(text)
+
+
+# ── 注册 vs 可用 / 安装指引 ──────────────────────────────────────────
+
+
+class TestServerAvailability:
+    """lsp_status 要区分「已注册」与「当前环境可用」。"""
+
+    def test_availability_line_missing_binary_has_install_cmd(self, monkeypatch):
+        from uniclaw.tools.lsp import servers as servers_mod
+
+        monkeypatch.setattr(servers_mod, "probe_command", lambda defn: None)
+        line = servers_mod.server_availability_line("javascript")
+        assert "已注册" in line
+        assert "不可用" in line or "需安装" in line
+        assert "npm i -g typescript-language-server" in line
+
+    def test_availability_line_available_shows_path(self, monkeypatch):
+        from uniclaw.tools.lsp import servers as servers_mod
+
+        monkeypatch.setattr(
+            servers_mod, "probe_command", lambda defn: "/usr/bin/fake-lsp"
+        )
+        line = servers_mod.server_availability_line("python")
+        assert "可用" in line
+        assert "/usr/bin/fake-lsp" in line
+        assert "需安装" not in line
+
+    def test_availability_line_unregistered(self):
+        from uniclaw.tools.lsp.servers import server_availability_line
+
+        assert "未注册" in server_availability_line("cobol")
+
+    async def test_lsp_status_shows_env_availability(self, monkeypatch):
+        from uniclaw.tools.lsp import servers as servers_mod
+        from uniclaw.tools.lsp.tools import lsp_status
+
+        monkeypatch.setattr(servers_mod, "probe_command", lambda defn: None)
+        out = await lsp_status.func()
+        assert "环境可用性" in out
+        assert "需安装" in out
+        assert "typescript-language-server" in out
+
+    async def test_lsp_status_unknown_language(self):
+        from uniclaw.tools.lsp.tools import lsp_status
+
+        out = await lsp_status.func(language="cobol")
+        assert "未注册" in out
+
+
+class TestInstallRetryHint:
+    """lsp_start / get_session 报错要给具体安装命令 + 安装后可直接重试。"""
+
+    async def test_get_session_missing_binary_error(self, monkeypatch, tmp_path):
+        from uniclaw.tools.lsp import manager as manager_mod
+        from uniclaw.tools.lsp.protocol import LspBizError
+
+        monkeypatch.setattr(manager_mod, "probe_command", lambda defn: None)
+
+        cfg = SimpleNamespace(root_dir=tmp_path)
+        mgr = manager_mod.LSPManager()
+        with pytest.raises(LspBizError) as ei:
+            await mgr.get_session("javascript", cfg)
+        msg = str(ei.value)
+        assert "typescript-language-server" in msg
+        assert "npm i -g typescript-language-server" in msg
+        assert "无需重启" in msg
+
+    async def test_lsp_start_missing_binary_returns_tool_error(self, monkeypatch, tmp_path):
+        from uniclaw.tools.lsp import manager as manager_mod
+        from uniclaw.tools.lsp.tools import lsp_start
+        from uniclaw.utils.constants import TOOL_ERROR
+
+        monkeypatch.setattr(manager_mod, "probe_command", lambda defn: None)
+
+        cfg = SimpleNamespace(root_dir=tmp_path)
+        rt = SimpleNamespace(config=cfg)
+        out = await lsp_start.func(language="javascript", tool_runtime=rt)
+        assert out.startswith(TOOL_ERROR)
+        assert "npm i -g typescript-language-server" in out
+        assert "无需重启" in out
+
+class TestLspDocSyncSpec:
+    @pytest.mark.asyncio
+    async def test_second_sync_uses_didchange(self):
+        """已打开文档更新走 didChange(重复 didOpen 违反 LSP 规范)。"""
+        from uniclaw.tools.lsp.manager import LspSession
+
+        session = LspSession("python", None)
+        client = MagicMock()
+        client.notify = AsyncMock()
+        client.invalidate_diagnostics = MagicMock()
+        session.client = client
+
+        # 用真实临时文件驱动 _do_open
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as td:
+            f = Path(td) / "doc.py"
+            f.write_text("import os\n", encoding="utf-8")
+            await session._do_open(str(f.resolve()))
+            f.write_text("import os\nx = 1\n", encoding="utf-8")
+            await session._do_open(str(f.resolve()))
+
+        methods = [c.args[0] for c in client.notify.await_args_list]
+        assert methods[0] == "textDocument/didOpen"
+        assert methods[1] == "textDocument/didChange", "更新必须走 didChange"
+        change = client.notify.await_args_list[1].args[1]
+        assert change["textDocument"]["version"] == 2

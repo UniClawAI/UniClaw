@@ -16,6 +16,7 @@ from urllib.parse import urlparse, unquote
 from uniclaw.context import Scope, get_app_dir
 from uniclaw.tools.base import tool, ToolRuntime
 from uniclaw.tools.download.manager import get_http_download_manager
+from uniclaw.utils.constants import TOOL_ERROR
 from uniclaw.utils.http_download import (
     DEFAULT_BLOCK_TIMEOUT,
     DEFAULT_CHUNK_SIZE,
@@ -25,6 +26,7 @@ from uniclaw.utils.http_download import (
     HttpDownloader,
     DownloadStatus,
     file_format,
+    parse_headers,
     time_format,
 )
 
@@ -92,6 +94,7 @@ async def http_download(
     max_retries: int = DEFAULT_MAX_RETRIES,
     proxy: str = "",
     cookies: str = "",
+    headers: str = "",
     checksum_algorithm: str = "",
     checksum_value: str = "",
     async_mode: bool = False,
@@ -102,6 +105,8 @@ async def http_download(
 
     仅支持 HTTP 和 HTTPS 协议。如需下载 FTP 或其他协议的文件,请使用其他工具。
 
+    中断/取消后用相同 url + save_path 重新调用即自动断点续传,已下字节不重复下载。
+
     Args:
         url: HTTP/HTTPS 下载地址。
         save_path: 保存路径(完整文件路径),为空则自动保存到 ~/.UniClaw/downloads/ 并从 URL 识别文件名。
@@ -110,6 +115,9 @@ async def http_download(
         max_retries: 失败重试次数,默认 3。
         proxy: 代理地址(如 "http://proxy:8080"),为空则直连。
         cookies: Cookie 字符串(如 "key1=val1; key2=val2"),用于需要登录的下载。
+        headers: 自定义请求头,防盗链场景必填(如 Referer/User-Agent)。支持
+            JSON 对象字符串(如 '{"Referer": "https://a.com/", "User-Agent": "Mozilla/5.0"}')
+            或每行一条 "Name: Value"。
         checksum_algorithm: 校验算法(md5/sha256),为空则不校验。
         checksum_value: 预期校验值,需配合 checksum_algorithm 使用。
         async_mode: 异步模式,True 则后台下载并立即返回任务 ID,False 则同步下载并流式显示进度。
@@ -122,6 +130,16 @@ async def http_download(
     root_dir = config.root_dir if config else None
     resolved_path = _resolve_save_path(save_path, url, root_dir)
 
+    if concurrency < 1:
+        return f"{TOOL_ERROR}: concurrency 必须 >= 1(收到: {concurrency})"
+    if chunk_size < 1:
+        return f"{TOOL_ERROR}: chunk_size 必须 >= 1 字节(收到: {chunk_size})"
+
+    try:
+        headers_dict = parse_headers(headers)
+    except ValueError as e:
+        return f"{TOOL_ERROR}: headers 参数解析失败: {e}"
+
     downloader = HttpDownloader(
         url=url,
         save_path=resolved_path,
@@ -130,6 +148,7 @@ async def http_download(
         max_retries=max_retries,
         proxy=proxy,
         cookies=cookies,
+        headers=headers_dict,
         checksum_algorithm=checksum_algorithm,
         checksum_value=checksum_value,
         block_timeout=block_timeout,
@@ -137,12 +156,15 @@ async def http_download(
 
     if async_mode:
         manager = get_http_download_manager()
-        task_id = manager.submit(downloader, config)
+        try:
+            task_id = manager.submit(downloader, config)
+        except ValueError as e:
+            return f"{TOOL_ERROR}: {e}"
         return (
             f"下载任务已提交。\n"
             f"任务 ID: {task_id}\n"
             f"保存路径: {resolved_path}\n"
-            f"使用 http_download_status(task_id='{task_id}') 查看进度。"
+            f"使用 {http_download_status.name}(task_id='{task_id}') 查看进度。"
         )
 
     # 同步模式: 带进度回调,支持取消转后台
@@ -193,18 +215,22 @@ async def http_download(
             max_retries=max_retries,
             proxy=proxy,
             cookies=cookies,
+            headers=headers_dict,
             checksum_algorithm=checksum_algorithm,
             checksum_value=checksum_value,
             block_timeout=block_timeout,
         )
 
         manager = get_http_download_manager()
-        task_id = manager.submit(new_downloader, config)
+        try:
+            task_id = manager.submit(new_downloader, config)
+        except ValueError as e:
+            return f"{TOOL_ERROR}: {e}"
         return (
             f"下载已转为后台任务。\n"
             f"任务 ID: {task_id}\n"
             f"保存路径: {resolved_path}\n"
-            f"使用 http_download_status(task_id='{task_id}') 查看进度。"
+            f"使用 {http_download_status.name}(task_id='{task_id}') 查看进度。"
         )
 
     return progress.format_status()

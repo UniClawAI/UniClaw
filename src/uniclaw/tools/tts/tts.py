@@ -14,6 +14,41 @@ if TYPE_CHECKING:
     from uniclaw.config import AppConfig
 
 
+# 文档列举的常见风格词 —— style 本质是给 TTS 引擎的自然语言描述(开放),
+# 这里只用于"完全没命中"时的透明提示,不拒绝自由描述
+_KNOWN_STYLE_WORDS: tuple[str, ...] = (
+    "开心", "悲伤", "愤怒", "怅然", "欣慰", "无奈", "温柔", "高冷", "活泼",
+    "磁性", "醇厚", "清亮", "夹子", "御姐", "东北话", "四川话", "粤语",
+    "激动", "平静", "低语", "播报", "嘶吼", "严肃", "欢快", "低沉", "哽咽",
+    "笑意", "撒娇", "庄重", "俏皮", "冷淡", "热情", "自然", "委屈", "疲惫",
+    "紧张", "神秘", "庄严", "诙谐", "朗诵", "耳语",
+)
+
+
+def _style_warning(style: str) -> str:
+    """style 未命中任何已知风格词时给透明提示(不阻断合成)。
+
+    style 是自然语言描述,无法硬校验"合法值";但纯占位垃圾(如
+    "不存在的声音风格xxyyzz")静默接受会让用户以为风格已生效。
+
+    Args:
+        style: 用户传入的风格描述。
+
+    Returns:
+        str: 提示文本;命中已知风格词或为空时返回空串。
+    """
+    s = style.strip()
+    if not s:
+        return ""
+    if any(w in s for w in _KNOWN_STYLE_WORDS):
+        return ""
+    return (
+        f"⚠ style {s[:40]!r} 未命中任何已知风格词"
+        f"(开心/悲伤/温柔/激动/低语…), TTS 引擎可能忽略该描述;"
+        f"复杂控制建议改用文本内风格标签,如 (温柔)你好"
+    )
+
+
 def _build_message(text: str, style: str) -> list[dict]:
     """构建 TTS 消息。"""
     message = []
@@ -452,6 +487,13 @@ async def tts(
                     config=config,
                 )
             except Exception as e:
+                from uniclaw.provider.error_classifier import is_billing_error
+
+                if is_billing_error(e):
+                    return (
+                        f"{TOOL_ERROR}: 后端服务账户余额不足或配额耗尽(402 类错误),"
+                        f"与文本/风格无关: {e}"
+                    )
                 return (
                     f"{TOOL_ERROR}: TTS 调用失败 (段 {i + 1}/{total},"
                     f"{len(seg)} 字): {e}"
@@ -485,5 +527,9 @@ async def tts(
         result_parts.append(f"分 {total} 段合成")
     if not result_parts:
         result_parts.append("已生成语音")
+
+    style_warn = _style_warning(style)
+    if style_warn:
+        result_parts.append(style_warn)
 
     return ",".join(result_parts)

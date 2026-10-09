@@ -85,7 +85,7 @@ async def _schedule_list(scheduler, config: AppConfig) -> bool:
         schedule = t.get("schedule", "")
         action = t.get("action", "")
         enabled = t.get("enabled", True)
-        last_run = t.get("last_run", "从未执行")
+        last_run = t.get("last_run") or "从未执行"
         root_dir = t.get("root_dir", "")
         permission_mode = t.get("permission_mode", "auto")
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Optional
 
 from uniclaw.tools.base import tool
+from uniclaw.utils.constants import TOOL_ERROR
 from .browser import WebBrowser
 
 # 全局浏览器实例
@@ -30,6 +31,10 @@ async def browser_start(url: str, headless: bool = True) -> str:
         操作结果消息。
     """
     result = await _browser.start(headless=headless)
+    if result.startswith(TOOL_ERROR):
+        # 会话互斥等拒绝场景: 后续 navigate 会往旧会话发导航,
+        # 产出"已导航到 …"残留文案,把拒绝信息淹掉
+        return result
     nav_result = await _browser.navigate(url)
     return f"{result}\n{nav_result}"
 
@@ -268,6 +273,8 @@ async def browser_get_elements(
     compact: bool = False,
     depth: Optional[int] = None,
     scope: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
 ) -> str:
     """获取页面上所有可交互元素的信息,可穿透付费墙等遮挡层(优先使用此工具而非截图)。
 
@@ -280,6 +287,9 @@ async def browser_get_elements(
     - 推荐的 CSS 选择器(可直接用于 click/type 等操作)
     - 元素位置和尺寸
 
+    元素过多时按 limit/offset 分页返回,总数与当前页范围会写在输出开头。
+    找特定元素优先用 scope 缩小范围,或加 compact 精简,避免整页翻页。
+
     ⚠️ 只查主文档: 页面含 iframe 时会另外列出每个 iframe 的 selector/src,
     frame 内元素不在列表中 —— 操作它们需给 click/type 等传 frame_selector。
 
@@ -289,12 +299,14 @@ async def browser_get_elements(
         compact: 精简输出,仅保留有文本/id/role 的元素,默认 False。
         depth: 可选,限制 DOM 遍历深度。
         scope: 可选,限定 CSS 选择器范围(如 "#main", ".sidebar")。
+        limit: 本次最多返回的元素数,默认 50(上限 200)。超大页面不要传大 limit 灌爆上下文。
+        offset: 分页偏移,跳过前 N 个元素(配合 limit 翻页),默认 0。
 
     Returns:
         可交互元素列表,包含每个元素的选择器和属性信息。
     """
     return await _browser.get_interactive_elements(
-        page_id, include_cursor_interactive, compact, depth, scope
+        page_id, include_cursor_interactive, compact, depth, scope, limit, offset
     )
 
 
@@ -488,8 +500,8 @@ async def browser_select_option(
 
     Args:
         selector: CSS 选择器或 XPath 表达式。
-        value: 要选择的选项值。单选 select 传字符串;multiple 多选 select 可传
-            字符串列表一次选中多项。选项不存在时会列出全部可选值。
+        value: 要选择的选项值(参数名是 value,不是 option)。单选 select 传字符串;
+            multiple 多选 select 可传字符串列表一次选中多项。选项不存在时会列出全部可选值。
         page_id: 可选,指定操作的页面 ID。不提供则使用当前活动页面。
         frame_selector: 可选,iframe 元素的 CSS 选择器。提供时在该 iframe 内查找 selector。
 

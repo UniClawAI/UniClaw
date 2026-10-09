@@ -423,6 +423,7 @@ async def Bash(
         try:
             status = await asyncio.wait_for(_wait_with_cancel(), timeout=timeout)
 
+            from uniclaw.tools.monitor.tools import monitor_output, monitor_stop  # 循环导入例外: 取工具规范名
             out = _join_output()
 
             if status == "cancelled":
@@ -463,11 +464,12 @@ async def Bash(
                 await _kill_quietly()
                 return f"{TOOL_ERROR}: 超时且无法转入监控 - {e}"
 
+            from uniclaw.tools.monitor.tools import monitor_output, monitor_stop  # 循环导入例外: 取工具规范名
             out = _join_output()
             header = (
                 f"进程在 {timeout} 秒后超时,已转入后台监控\n"
                 f"  监控 ID: {monitor_id}\n"
-                f"  使用 monitor_output 查看输出,monitor_stop 停止进程"
+                f"  使用 {monitor_output.name} 查看输出,{monitor_stop.name} 停止进程"
             )
             return (header + "\n" + out.strip()).strip()
 
@@ -564,10 +566,11 @@ def _binary_skip_note(binary: int, total: int) -> str:
     """
     if binary <= 0:
         return ""
+    from uniclaw.tools.media import ReadMedia  # 循环导入例外: 取工具规范名
     if total > 0 and binary >= total:
         return (
             f"(搜索目标全部是二进制文件,已跳过 {binary} 个二进制文件;"
-            f"文本搜索无法匹配二进制内容,请用 ReadMedia 或专用工具)"
+            f"文本搜索无法匹配二进制内容,请用 {ReadMedia.name} 或专用工具)"
         )
     return f"(已跳过 {binary} 个二进制文件)"
 

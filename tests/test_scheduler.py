@@ -2,9 +2,10 @@
 定时任务调度器的单元测试
 """
 
+import asyncio
 import json
 import pytest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from pathlib import Path
 from datetime import datetime, timedelta
 
@@ -50,9 +51,43 @@ class TestParseCron:
         result = _parse_cron("0 9 * * 1-5")
         assert result is not None
 
-    def test_with_seconds(self):
-        result = _parse_cron("0 */5 * * * *")
-        assert result is not None
+    def test_six_fields_rejected(self):
+        """6 字段(秒级)不支持,拒绝并说明需要 5 字段。"""
+        with pytest.raises(ValueError, match="需要 5 字段"):
+            _parse_cron("0 */5 * * * *")
+
+    def test_six_fields_rejected_with_count(self):
+        """6 字段拒绝时指出收到 6 个。"""
+        with pytest.raises(ValueError, match="收到 6 个"):
+            _parse_cron("1 2 3 4 5 6")
+
+    def test_four_fields_rejected_with_count(self):
+        """4 字段拒绝并说明字段数,而不是笼统报错。"""
+        with pytest.raises(ValueError, match="需要 5 字段"):
+            _parse_cron("5 4 * *")
+        with pytest.raises(ValueError, match="收到 4 个"):
+            _parse_cron("5 4 * *")
+
+    def test_rejection_includes_format_example(self):
+        """拒绝时给出有效格式示例(分 时 日 月 周)。"""
+        with pytest.raises(ValueError, match="分 时 日 月 周"):
+            _parse_cron("5 4 * *")
+
+    def test_never_fires_feb_31_rejected(self):
+        """2 月 31 日永不触发,拒绝并点明原因。"""
+        with pytest.raises(ValueError, match="永不会触发"):
+            _parse_cron("0 0 31 2 2")
+        with pytest.raises(ValueError, match="2 月没有 31 日"):
+            _parse_cron("0 0 31 2 2")
+
+    def test_never_fires_apr_31_rejected(self):
+        """4 月 31 日永不触发。"""
+        with pytest.raises(ValueError, match="4 月没有 31 日"):
+            _parse_cron("0 0 31 4 *")
+
+    def test_leap_day_allowed(self):
+        """2 月 29 日合法(闰年存在),不能误判为永不触发。"""
+        assert _parse_cron("0 0 29 2 *") is not None
 
     def test_invalid_cron(self):
         with pytest.raises(ValueError):
@@ -166,23 +201,26 @@ class TestSchedulerCRUD:
 class TestSchedulerExecution:
     """调度器执行逻辑测试"""
 
+    ACTION_OK = '{"type": "py", "code": "result=1"}'
+    ACTION_BAD_JSON = "shell: echo hello"
+
     @pytest.mark.asyncio
     async def test_task_runs_when_due(self, scheduler):
-        task = scheduler.add_task("", "*/5 * * * *", "shell: echo hello")
+        task = scheduler.add_task("", "*/5 * * * *", self.ACTION_OK)
         # 设置 last_run 为 10 分钟前
-        scheduler._tasks[task.id].last_run = (
-            datetime.now() - timedelta(minutes=10)
-        ).isoformat(timespec="seconds")
+        old = (datetime.now() - timedelta(minutes=10)).isoformat(timespec="seconds")
+        scheduler._tasks[task.id].last_run = old
         scheduler.save_config()
 
         await scheduler._check_and_run_tasks()
 
         tasks = scheduler.list_tasks()
         assert tasks[0]["last_run"] is not None
+        assert tasks[0]["last_run"] != old
 
     @pytest.mark.asyncio
     async def test_task_not_runs_when_not_due(self, scheduler):
-        task = scheduler.add_task("", "*/5 * * * *", "shell: echo hello")
+        task = scheduler.add_task("", "*/5 * * * *", self.ACTION_OK)
         now_str = datetime.now().isoformat(timespec="seconds")
         scheduler._tasks[task.id].last_run = now_str
         scheduler.save_config()
@@ -195,7 +233,7 @@ class TestSchedulerExecution:
 
     @pytest.mark.asyncio
     async def test_first_run_immediately(self, scheduler):
-        task = scheduler.add_task("", "* * * * *", "shell: echo hello")
+        task = scheduler.add_task("", "* * * * *", self.ACTION_OK)
 
         await scheduler._check_and_run_tasks()
 
@@ -204,13 +242,97 @@ class TestSchedulerExecution:
 
     @pytest.mark.asyncio
     async def test_disabled_task_skipped(self, scheduler):
-        task = scheduler.add_task("", "* * * * *", "shell: echo hello")
+        task = scheduler.add_task("", "* * * * *", self.ACTION_OK)
         scheduler.toggle_task(task.id, False)
 
         await scheduler._check_and_run_tasks()
 
         tasks = scheduler.list_tasks()
+        # 禁用时 toggle 不改 last_run;若从未执行则保持 None
         assert tasks[0]["last_run"] is None
+
+    @pytest.mark.asyncio
+    async def test_last_run_not_written_when_action_never_ran(self, scheduler):
+        """动作根本没跑起来(JSON 非法)时,不得写入 last_run 冒充已执行。"""
+        task = scheduler.add_task("", "* * * * *", self.ACTION_BAD_JSON)
+
+        await scheduler._check_and_run_tasks()
+
+        tasks = scheduler.list_tasks()
+        assert tasks[0]["last_run"] is None
+
+    @pytest.mark.asyncio
+    async def test_last_run_uses_real_execution_time(self, scheduler):
+        """last_run 是实际执行时刻,不是注册时刻。"""
+        task = scheduler.add_task("", "* * * * *", self.ACTION_OK)
+        created = task.created
+        assert task.last_run is None
+
+        await asyncio.sleep(1)
+        await scheduler._check_and_run_tasks()
+
+        last_run = scheduler.list_tasks()[0]["last_run"]
+        assert last_run is not None
+        assert last_run != created
+
+
+class TestLastRunSemantics:
+    """last_run 是真实执行事实: 注册不伪造,更新/启用不清零历史。
+    (第 29 轮 #6: update 把真实执行记录清成"从未执行"是误导,
+    "配置更新后是否执行过"由 updated 时间对比体现。)"""
+
+    def test_add_task_last_run_is_none(self, scheduler):
+        """新建任务不得把注册时刻写成 last_run。"""
+        task = scheduler.add_task("每日报告", "0 4 * * *", '{"type": "py", "code": "1"}')
+        assert task.last_run is None
+        assert scheduler.list_tasks()[0]["last_run"] is None
+
+    def test_add_task_unique_by_name_last_run_is_none(self, scheduler):
+        """unique_by_name 新建同样不得伪造 last_run。"""
+        task = scheduler.add_task(
+            "巡检", "0 4 * * *", '{"type": "py", "code": "1"}', unique_by_name=True
+        )
+        assert task.last_run is None
+
+    def test_unique_by_name_update_keeps_last_run(self, scheduler):
+        """同名更新保留真实执行记录,不伪造"从未执行"。"""
+        t1 = scheduler.add_task(
+            "巡检", "0 4 * * *", '{"type": "py", "code": "1"}', unique_by_name=True
+        )
+        scheduler._tasks[t1.id].last_run = datetime.now().isoformat(timespec="seconds")
+        scheduler.save_config()
+
+        t2 = scheduler.add_task(
+            "巡检", "0 5 * * *", '{"type": "py", "code": "2"}', unique_by_name=True
+        )
+        assert t2.id == t1.id
+        assert t2.last_run is not None
+
+    def test_update_action_keeps_last_run(self, scheduler):
+        task = scheduler.add_task("t", "0 4 * * *", '{"type": "py", "code": "1"}')
+        scheduler._tasks[task.id].last_run = datetime.now().isoformat(timespec="seconds")
+        scheduler.save_config()
+
+        scheduler.update_action(task.id, '{"type": "py", "code": "2"}')
+        assert scheduler.get_task(task.id).last_run is not None
+
+    def test_update_schedule_keeps_last_run(self, scheduler):
+        task = scheduler.add_task("t", "0 4 * * *", '{"type": "py", "code": "1"}')
+        scheduler._tasks[task.id].last_run = datetime.now().isoformat(timespec="seconds")
+        scheduler.save_config()
+
+        scheduler.update_schedule(task.id, "0 5 * * *")
+        assert scheduler.get_task(task.id).last_run is not None
+
+    def test_reenable_keeps_last_run(self, scheduler):
+        """重新启用保留真实执行记录;启用后是否执行过看 updated 对比。"""
+        task = scheduler.add_task("t", "0 4 * * *", '{"type": "py", "code": "1"}')
+        scheduler._tasks[task.id].last_run = datetime.now().isoformat(timespec="seconds")
+        scheduler.save_config()
+
+        scheduler.toggle_task(task.id, False)
+        scheduler.toggle_task(task.id, True)
+        assert scheduler.get_task(task.id).last_run is not None
 
 
 class TestSchedulerSingleton:
@@ -224,3 +346,127 @@ class TestSchedulerSingleton:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+class TestSchedulerNoReentry:
+    @pytest.mark.asyncio
+    async def test_running_task_not_requeued(self):
+        """执行中的任务不再派发(防慢任务跨 tick 重复执行)。"""
+        from uniclaw.tools.scheduler.scheduler import Scheduler, Task
+
+        sched = Scheduler()
+        sched._running = {"t1"}  # 模拟 t1 正在执行
+        task = Task(
+            id="t1",
+            name="n",
+            schedule="* * * * *",
+            action='{"type": "py", "code": "1"}',
+            enabled=True,
+            last_run=None,
+        )
+        sched._tasks = {"t1": task}
+
+        calls = []
+
+        async def fake_execute(task_id, t, config):
+            calls.append(task_id)
+            return True
+
+        sched._execute_task = fake_execute
+        sched.save_config = MagicMock()
+        sched.load_config = MagicMock()  # 不从磁盘重载,保持注入的任务
+
+        await sched._check_and_run_tasks(None)
+        assert calls == [], "执行中的任务被重复派发"
+
+        sched._running.clear()
+        await sched._check_and_run_tasks(None)
+        assert calls == ["t1"], "执行完成后应正常派发"
+
+class TestLastRunSurvivesReload:
+    """update 中途 load_config 重建任务对象时,last_run 更新不得丢(验证 #3)。"""
+
+    @pytest.mark.asyncio
+    async def test_last_run_written_to_live_object(self):
+        from uniclaw.tools.scheduler.scheduler import Scheduler, Task
+
+        sched = Scheduler()
+        snapshot = Task(
+            id="t1",
+            name="n",
+            schedule="* * * * *",
+            action='{"type": "py", "code": "1"}',
+            enabled=True,
+            last_run=None,
+        )
+        sched._tasks = {"t1": snapshot}
+
+        async def execute_and_replace(task_id, t, config):
+            # 模拟执行期间用户 update → load_config 重建任务对象
+            live = Task(
+                id="t1",
+                name="n",
+                schedule="* * * * *",
+                action='{"type": "py", "code": "2"}',
+                enabled=True,
+                last_run=None,
+            )
+            sched._tasks = {"t1": live}
+            return True
+
+        sched._execute_task = execute_and_replace
+        sched.load_config = MagicMock()
+        sched.save_config = MagicMock()
+
+        await sched._check_and_run_tasks(None)
+
+        assert sched._tasks["t1"].last_run is not None, (
+            "last_run 必须回写到当前 self._tasks 对象,否则下个 tick 重触发循环"
+        )
+        assert snapshot.last_run is not None
+
+class TestShellTimeoutKillsTree:
+    """60s 超时必须终止整个进程树(含孙进程),并报"超时已中止"(验证 #3-3)。"""
+
+    @pytest.mark.asyncio
+    async def test_timeout_kills_process_tree(self):
+        from uniclaw.tools.scheduler.scheduler import Scheduler
+
+        sched = Scheduler()
+        task = MagicMock()
+        task.root_dir = None
+        task.name = "t"
+        task.id = "t1"
+
+        proc = AsyncMock()
+        proc.communicate = AsyncMock(side_effect=asyncio.TimeoutError())
+        proc.wait = AsyncMock(return_value=0)
+        proc.pid = 4242
+
+        killed = []
+
+        def fake_tree(p):
+            killed.append(p.pid)
+
+        with patch(
+            "asyncio.create_subprocess_shell", AsyncMock(return_value=proc)
+        ), patch.object(
+            Scheduler, "_terminate_process_tree", side_effect=fake_tree
+        ):
+            with pytest.raises(TimeoutError) as ei:
+                await sched._exec_shell("sleep 70", task, None)
+
+        assert killed == [4242], "超时必须终止进程树"
+        assert "60s" in str(ei.value) or "超时" in str(ei.value)
+
+    def test_terminate_tree_calls_taskkill_on_windows(self):
+        from uniclaw.tools.scheduler.scheduler import Scheduler
+
+        proc = MagicMock()
+        proc.returncode = None
+        proc.pid = 123
+        with patch("subprocess.run") as run, patch("sys.platform", "win32"):
+            Scheduler._terminate_process_tree(proc)
+        args = run.call_args[0][0]
+        assert args[:2] == ["taskkill", "/PID"]
+        assert "/T" in args and "/F" in args
+

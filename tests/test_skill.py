@@ -1,4 +1,6 @@
 from types import SimpleNamespace
+
+import pytest
 from uniclaw.tools.base import ToolRuntime
 from uniclaw.tools.skill.loader import find_skill, load_skills
 from uniclaw.tools.skill.tools import skill_read, skill_suggest
@@ -113,3 +115,115 @@ def test_skill_read_exact_match_unchanged(tmp_path):
     assert "my-skill" in result
     assert "不区分大小写" not in result
     assert "TOOL_ERROR" not in result
+
+class TestSkillShadowing:
+    def test_project_wins_over_user(self, tmp_path):
+        """项目级同名技能优先(先加载),用户级被遮蔽。"""
+        import textwrap
+
+        from uniclaw.tools.skill.loader import load_skills
+
+        proj_dir = tmp_path / "skills" / "demo"
+        proj_dir.mkdir(parents=True)
+        (proj_dir / "SKILL.md").write_text(
+            textwrap.dedent(
+                """\
+                ---
+                name: demo
+                description: 项目版
+                ---
+                项目版内容
+                """
+            ),
+            encoding="utf-8",
+        )
+
+        skills = load_skills(tmp_path)
+        demo = next(s for s in skills if s.name == "demo")
+        assert demo.source == "project", "项目级同名技能必须胜出"
+
+
+class TestSkillSuggestContract:
+    @pytest.mark.asyncio
+    async def test_llm_object_response_parsed(self, tmp_path):
+        """LLM 按 json_object 返回 {"skills": [...]} 须能解析出推荐。"""
+        import textwrap
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from uniclaw.tools.base import ToolRuntime
+        from uniclaw.tools.skill.tools import skill_suggest
+
+        d = tmp_path / "skills" / "review"
+        d.mkdir(parents=True)
+        (d / "SKILL.md").write_text(
+            textwrap.dedent(
+                """\
+                ---
+                name: code-review
+                description: review code changes
+                ---
+                body
+                """
+            ),
+            encoding="utf-8",
+        )
+        config = MagicMock()
+        config.root_dir = tmp_path
+        config.mini_model_name = ["mini"]
+        config.spinner = MagicMock()
+        config.spinner.start = MagicMock(return_value="x")
+        config.spinner.stop = MagicMock()
+
+        class FakeMsg:
+            content = '{"skills": ["code-review"]}'
+
+        with patch(
+            "uniclaw.tools.skill.tools.is_available", return_value=False
+        ), patch(
+            "uniclaw.tools.skill.tools.achat", AsyncMock(return_value=FakeMsg())
+        ):
+            out = await skill_suggest(
+                task_description="review 代码", tool_runtime=ToolRuntime(config=config)
+            )
+
+        assert "code-review" in out
+        assert "无匹配" not in out
+
+    @pytest.mark.asyncio
+    async def test_jev_empty_falls_back_to_llm(self, tmp_path):
+        """Jev 无命中不能直接定论"无匹配",须回退 LLM 语义推荐。"""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from uniclaw.tools.base import ToolRuntime
+        from uniclaw.tools.skill.tools import _suggest_skills
+
+        class FakeSkill:
+            name = "s1"
+            description = "d"
+            triggers = []
+            argument_hint = ""
+            when_to_use = ""
+            tools = []
+            prompt = ""
+            file_path = "x"
+
+        config = MagicMock()
+        config.mini_model_name = ["mini"]
+        config.spinner = MagicMock()
+        config.spinner.start = MagicMock(return_value="x")
+        config.spinner.stop = MagicMock()
+
+        class FakeMsg:
+            content = '{"skills": ["s1"]}'
+
+        with patch(
+            "uniclaw.tools.skill.tools.is_available", return_value=True
+        ), patch(
+            "uniclaw.tools.skill.tools._suggest_via_jev", AsyncMock(return_value=[])
+        ) as jev, patch(
+            "uniclaw.tools.skill.tools.achat", AsyncMock(return_value=FakeMsg())
+        ):
+            picked = await _suggest_skills("任务", [FakeSkill()], 5, config)
+
+        assert jev.await_count == 1
+        assert [s.name for s in picked] == ["s1"], "Jev 空结果须回退 LLM"

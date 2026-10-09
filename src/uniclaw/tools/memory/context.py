@@ -77,7 +77,9 @@ async def ai_select_memories(
     """AI 语义搜索记忆。Jev 可用时优先使用,否则回退 LLM。"""
     if is_available():
         try:
-            return await _select_memories_via_jev(query, memories, max_results)
+            return await _select_memories_via_jev(
+                query, memories, max_results, proxy_url=config.proxy_url
+            )
         except (JevAPIError, JevConfigError) as e:
             from uniclaw.console.ui import err
             await err(f"Jev 记忆搜索失败,回退 LLM: {e}")
@@ -93,7 +95,7 @@ def _memory_summary(memory) -> str:
 
 
 async def _select_memories_via_jev(
-    query: str, memories: list, max_results: int
+    query: str, memories: list, max_results: int, proxy_url: str | None = None
 ) -> list[dict]:
     """通过 Jev select_many 选择相关记忆。"""
     by_name = {memory.name: memory for memory in memories}
@@ -102,6 +104,7 @@ async def _select_memories_via_jev(
         state=query,
         instruction="这条记忆是否与查询相关。关注记忆的名称和描述。",
         options=options,
+        proxy_url=proxy_url,
     )
     # noul > 0.5 视为相关,按 noul 降序取 top max_results
     matched = [

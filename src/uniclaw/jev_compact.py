@@ -557,6 +557,7 @@ async def jev_compact(
     compact_config: JevCompactConfig | None = None,
     keep_ratio: float = 0.3,
     focus: str = "",
+    proxy_url: str | None = None,
 ) -> JevCompactResult:
     """Jev 智能压缩主入口。
 
@@ -571,6 +572,7 @@ async def jev_compact(
         compact_config: JevCompactConfig 配置,为 None 时使用默认值。
         keep_ratio: 保留最近消息的比例(用于 _find_split_point)。
         focus: 聚焦主题(可选),提示 Jev 优先保留与该主题相关的内容。
+        proxy_url: 代理地址(为空时用环境变量)。
 
     Returns:
         JevCompactResult 压缩结果。
@@ -623,7 +625,7 @@ async def jev_compact(
         raise JevCompactSkip("没有可提问的配对(state 预算不足)")
 
     # 4. 调用 Jev batch
-    result = await batch(state=state, questions=questions)
+    result = await batch(state=state, questions=questions, proxy_url=proxy_url)
 
     # 5. 映射评分结果 — 缺答/未提问的配对 fail-safe 保留,绝不静默删除
     for pair in pairs:

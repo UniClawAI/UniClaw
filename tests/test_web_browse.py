@@ -961,7 +961,7 @@ class TestCdpConnect:
 
     @pytest.mark.asyncio
     async def test_connect_when_already_running(self, web_browser, mock_playwright):
-        """测试已启动时再连接会先关闭旧浏览器"""
+        """已有会话时 connect 不得静默覆盖,明确拒绝并提示先 close。"""
         old_browser = AsyncMock()
         web_browser._browser = old_browser
         web_browser._playwright = mock_playwright
@@ -977,8 +977,10 @@ class TestCdpConnect:
         ):
             result = await web_browser.connect_over_cdp("http://localhost:9222")
 
-        assert "已通过 CDP 连接" in result
-        old_browser.close.assert_called_once()
+        assert "已有" in result
+        assert "browser_close" in result
+        old_browser.close.assert_not_called(), "旧会话不得被销毁"
+        assert web_browser._browser is old_browser
 
     @pytest.mark.asyncio
     async def test_close_cdp_only_disconnects(self, web_browser):
@@ -1460,10 +1462,10 @@ class TestConnectKeepsExistingSession:
     @pytest.mark.asyncio
     async def test_connect_failure_keeps_session(self, web_browser, mock_page):
         """连不上时现有会话要保持可用。"""
-        old_browser = AsyncMock()
-        web_browser._browser = old_browser
-        web_browser._pages = {1: mock_page}
-        web_browser._active_page_id = 1
+        # 无会话场景: 连接失败不能留下半坏状态
+        web_browser._browser = None
+        web_browser._pages = {}
+        web_browser._active_page_id = None
 
         fake_pw = AsyncMock()
         fake_pw.start = AsyncMock(return_value=fake_pw)  # .start() 要返回自身
@@ -1476,12 +1478,8 @@ class TestConnectKeepsExistingSession:
             result = await web_browser.connect_over_cdp("http://localhost:9999")
 
         assert "无法连接" in result
-        assert "未受影响" in result
-        # 关键: 现有会话不能被销毁
-        old_browser.close.assert_not_called()
-        assert web_browser._browser is old_browser
-        assert web_browser._active_page_id == 1
-        assert 1 in web_browser._pages
+        assert web_browser._browser is None, "连接失败不得留下半坏会话"
+        assert web_browser._pages == {}
 
 
 class TestScreenshotNoSilentOverwrite:
@@ -2767,3 +2765,313 @@ class TestSelectOptionMultiSelect:
 
         assert "已选择选项" in result
         assert "incorrect type" not in str(result)
+
+
+# ── get_elements 分页上限(第 26 轮 #6) ─────────────────────
+
+
+class TestGetElementsPagination:
+    """超大页面的元素输出必须有上限/分页,不能全量灌入上下文。"""
+
+    def _running(self, web_browser, mock_page):
+        web_browser._browser = MagicMock()
+        web_browser._pages = {1: mock_page}
+        web_browser._active_page_id = 1
+        return mock_page
+
+    @staticmethod
+    def _el(index=0, tag="a", selector=None, **over):
+        base = {
+            "index": index,
+            "tag": tag,
+            "type": "",
+            "id": "",
+            "name": "",
+            "text": f"item-{index}",
+            "placeholder": "",
+            "href": "",
+            "role": "",
+            "ariaLabel": "",
+            "selector": selector or f"{tag}.n{index}",
+            "selectorUnique": True,
+            "selectorMatchCount": 1,
+            "selectorNth": -1,
+            "rect": {"x": 0, "y": 0, "width": 10, "height": 10},
+        }
+        base.update(over)
+        return base
+
+    @pytest.mark.asyncio
+    async def test_default_limit_truncates_huge_page(self, web_browser, mock_page):
+        """默认 limit=50: 60 个元素只展示前 50 个,并声明总数与页范围。"""
+        page = self._running(web_browser, mock_page)
+        page.evaluate = AsyncMock(return_value=[self._el(index=i) for i in range(60)])
+
+        result = await web_browser.get_interactive_elements()
+
+        assert "找到 60 个可交互元素" in result
+        assert "第 1-50 个" in result
+        assert "item-49" in result
+        assert "item-50" not in result, "超出 limit 的元素不应展示"
+        assert "offset" in result
+
+    @pytest.mark.asyncio
+    async def test_offset_pages_through(self, web_browser, mock_page):
+        """offset/limit 翻页: 第 21-30 个元素,索引保持全局编号。"""
+        page = self._running(web_browser, mock_page)
+        page.evaluate = AsyncMock(return_value=[self._el(index=i) for i in range(60)])
+
+        result = await web_browser.get_interactive_elements(limit=10, offset=20)
+
+        assert "第 21-30 个" in result
+        assert "[20] <a>" in result
+        assert "[29] <a>" in result
+        assert "[30] <a>" not in result
+
+    @pytest.mark.asyncio
+    async def test_limit_clamped_to_200(self, web_browser, mock_page):
+        """limit 有硬上限(200),防呆式超大参数不会把整页序列化回来。"""
+        page = self._running(web_browser, mock_page)
+        page.evaluate = AsyncMock(return_value=[self._el(index=i) for i in range(300)])
+
+        result = await web_browser.get_interactive_elements(limit=9999)
+
+        assert "第 1-200 个" in result
+        assert "[200] <a>" not in result
+
+    @pytest.mark.asyncio
+    async def test_offset_out_of_range_reports(self, web_browser, mock_page):
+        """offset 越界时给出明确提示,而不是空列表让人误判"没有元素"。"""
+        page = self._running(web_browser, mock_page)
+        page.evaluate = AsyncMock(return_value=[self._el(index=i) for i in range(5)])
+
+        result = await web_browser.get_interactive_elements(offset=100)
+
+        assert "offset=100 超出范围" in result
+        assert "找到 5 个" in result
+
+
+# ── 导航触发下载的识别(第 26 轮 #7) ────────────────────────
+
+
+class TestNavigateDownloadDetection:
+    """导航到附件 URL 时要识别为下载,不能报成"导航超时失败"。"""
+
+    def _running(self, web_browser, mock_page):
+        web_browser._browser = MagicMock()
+        web_browser._pages = {1: mock_page}
+        web_browser._active_page_id = 1
+        return mock_page
+
+    @pytest.mark.asyncio
+    async def test_download_error_not_reported_as_nav_failure(
+        self, web_browser, mock_page
+    ):
+        """Playwright "Download is starting" 应转成 http_download 指引。"""
+        from uniclaw.tools.web_browse.browser import PlaywrightError
+
+        page = self._running(web_browser, mock_page)
+        page.goto = AsyncMock(
+            side_effect=PlaywrightError("Page.goto: Download is starting.")
+        )
+
+        result = await web_browser.navigate("https://example.com/file.zip")
+
+        assert "文件下载" in result
+        assert "http_download" in result
+        assert "Download is starting" not in result, "不应甩原始报错让用户自己猜"
+
+    @pytest.mark.asyncio
+    async def test_content_disposition_attachment_detected(self, web_browser, mock_page):
+        """Content-Disposition: attachment 的响应同样按下载处理(含文件名)。"""
+        page = self._running(web_browser, mock_page)
+        resp = MagicMock()
+        resp.status = 200
+        resp.headers = {
+            "content-disposition": 'attachment; filename="report.pdf"',
+        }
+        page.goto = AsyncMock(return_value=resp)
+
+        result = await web_browser.navigate("https://example.com/report")
+
+        assert "文件下载" in result
+        assert "report.pdf" in result
+        assert "http_download" in result
+        assert "已导航到" not in result
+
+    @pytest.mark.asyncio
+    async def test_normal_nav_unaffected(self, web_browser, mock_page):
+        """普通页面导航报文不变。"""
+        page = self._running(web_browser, mock_page)
+        resp = MagicMock()
+        resp.status = 200
+        resp.headers = {}
+        page.goto = AsyncMock(return_value=resp)
+
+        result = await web_browser.navigate("https://example.com/")
+
+        assert "已导航到" in result
+        assert "http_download" not in result
+
+
+# ── type 并发串扰 / frame_selector 单独用(第 28 轮 #1/#5) ──
+
+
+class TestInteractionSerialised:
+    """交互动作串行化: 并发 type/click 不得互相踩焦点与取值。"""
+
+    def _running(self, web_browser, mock_page):
+        web_browser._browser = MagicMock()
+        web_browser._pages = {1: mock_page}
+        web_browser._active_page_id = 1
+        return mock_page
+
+    @pytest.mark.asyncio
+    async def test_concurrent_type_calls_do_not_interleave(self, web_browser, mock_page):
+        """并行两个 browser_type: 各自的 fill 序列必须整体完成,不得交错。"""
+        page = self._running(web_browser, mock_page)
+        events: list[str] = []
+
+        def make_fill(tag):
+            async def fill(value, timeout=None):
+                events.append(f"{tag}:enter:{value!r}")
+                await asyncio.sleep(0.01)  # 放大交错窗口
+                events.append(f"{tag}:exit:{value!r}")
+            return fill
+
+        loc_a = MagicMock()
+        loc_a.fill = AsyncMock(side_effect=make_fill("A"))
+        loc_b = MagicMock()
+        loc_b.fill = AsyncMock(side_effect=make_fill("B"))
+        page.locator = MagicMock(side_effect=lambda sel: loc_a if sel == "#ta" else loc_b)
+
+        await asyncio.gather(
+            web_browser.type_text("#ta", "AAA"),
+            web_browser.type_text("#txt", "BBB"),
+        )
+
+        # 串行语义: 某个元素的全部 fill 完成前,另一个元素不得开始
+        tags = [e.split(":")[0] for e in events]
+        runs = [tags[0]]
+        for t in tags[1:]:
+            if t != runs[-1]:
+                runs.append(t)
+        assert len(runs) == len(set(runs)), f"两个元素的 fill 发生交错: {events}"
+
+    @pytest.mark.asyncio
+    async def test_interactive_methods_hold_act_lock(self, web_browser):
+        """type_text/click/select 等交互方法都必须走 _act_lock(装饰器挂上)。"""
+        for name in (
+            "type_text", "click", "select_option", "check", "insert_text",
+            "press_key", "dblclick", "hover", "focus", "keyboard_type",
+        ):
+            fn = getattr(web_browser, name)
+            assert getattr(fn, "__wrapped__", None) is not None, (
+                f"{name} 未串行化(缺少 _serialise_interaction)"
+            )
+
+
+class TestFrameSelectorOnly:
+    """只给 frame_selector 时应取 iframe 内容,而非主文档(第 28 轮 #5)。"""
+
+    def _running(self, web_browser, mock_page):
+        web_browser._browser = MagicMock()
+        web_browser._pages = {1: mock_page}
+        web_browser._active_page_id = 1
+        return mock_page
+
+    @pytest.mark.asyncio
+    async def test_get_text_frame_only(self, web_browser, mock_page):
+        page = self._running(web_browser, mock_page)
+        frame_root = MagicMock()
+        frame_body = MagicMock()
+        frame_body.inner_text = AsyncMock(return_value="帧内文本")
+        frame_root.locator = MagicMock(return_value=frame_body)
+        page.frame_locator = MagicMock(return_value=frame_root)
+        page.inner_text = AsyncMock(return_value="主文档文本")
+
+        result = await web_browser.get_text(frame_selector="#inner")
+
+        assert result == "帧内文本"
+        page.frame_locator.assert_called_once_with("#inner")
+        page.inner_text.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_get_html_frame_only(self, web_browser, mock_page):
+        page = self._running(web_browser, mock_page)
+        frame_root = MagicMock()
+        frame_body = MagicMock()
+        frame_body.inner_html = AsyncMock(return_value="<p>帧内</p>")
+        frame_root.locator = MagicMock(return_value=frame_body)
+        page.frame_locator = MagicMock(return_value=frame_root)
+        page.content = AsyncMock(return_value="<html>主文档</html>")
+
+        result = await web_browser.get_html(frame_selector="#inner")
+
+        assert "<p>帧内</p>" in result
+        page.content.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_get_text_without_frame_still_main_doc(self, web_browser, mock_page):
+        page = self._running(web_browser, mock_page)
+        page.inner_text = AsyncMock(return_value="主文档文本")
+
+        result = await web_browser.get_text()
+
+        assert result == "主文档文本"
+        page.frame_locator.assert_not_called()
+
+class TestBrowserSessionMutex:
+    @pytest.mark.asyncio
+    async def test_start_refuses_when_cdp_connected(self, web_browser):
+        web_browser._browser = MagicMock()
+        web_browser._connected_cdp = True
+        web_browser._active_page_id = 1
+
+        result = await web_browser.start()
+
+        assert "TOOL_ERROR" in result
+        assert "browser_close" in result
+
+    @pytest.mark.asyncio
+    async def test_connect_refuses_when_internal_running(self, web_browser):
+        web_browser._browser = MagicMock()
+        web_browser._connected_cdp = False
+        web_browser._active_page_id = 1
+
+        result = await web_browser.connect_over_cdp("http://localhost:9222")
+
+        assert "TOOL_ERROR" in result
+        assert "browser_close" in result
+        assert web_browser._browser is not None, "现有会话不得被销毁"
+
+class TestStartRejectsAnySession:
+    """已有会话(含内部启动)时 browser_start 不得替换/重导航(验证 #5)。"""
+
+    @pytest.mark.asyncio
+    async def test_start_rejects_internal_session(self, web_browser):
+        web_browser._browser = MagicMock()
+        web_browser._connected_cdp = False
+        web_browser._active_page_id = 1
+
+        result = await web_browser.start()
+
+        assert "TOOL_ERROR" in result
+        assert "browser_close" in result
+        assert web_browser._browser is not None, "原会话不得被销毁"
+
+    @pytest.mark.asyncio
+    async def test_start_tool_no_nav_on_reject(self):
+        from uniclaw.tools.web_browse import tools as wb_tools
+
+        from uniclaw.utils.constants import TOOL_ERROR
+
+        fake = MagicMock()
+        fake.start = AsyncMock(return_value=f"{TOOL_ERROR}: 已有会话")
+        fake.navigate = AsyncMock(return_value="已导航到 x")
+        with patch.object(wb_tools, "_browser", fake):
+            result = await wb_tools.browser_start("https://example.com")
+
+        assert "TOOL_ERROR" in result
+        fake.navigate.assert_not_called(), "拒绝后不得再拼接导航残留文案"
+

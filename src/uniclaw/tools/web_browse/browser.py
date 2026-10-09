@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import functools
 import logging
 import re
 from fnmatch import fnmatch
@@ -205,6 +206,52 @@ def _nav_err(action: str, e) -> str:
     return msg
 
 
+def _download_nav_message(url: str, filename: str = "") -> str:
+    """URL 触发文件下载而非页面导航时的统一提示。
+
+    浏览器把 Content-Disposition: attachment 的响应当下载而不是导航,
+    page.goto 会以 "Download is starting" 失败或超时 —— 这不是导航失败,
+    要明确告诉调用方改走 http_download,否则会在超时报错里打转。
+    """
+    from uniclaw.tools.download.http_tools import http_download  # 循环导入例外: 取工具规范名
+
+    name_part = f"(文件名: {filename})" if filename else ""
+    return (
+        f"{TOOL_ERROR}: {url} 触发的是文件下载{name_part},不是页面导航,浏览器导航不会成功。\n"
+        f"请改用 {http_download.name}(url='{url}') 下载该文件"
+        "(需要 Referer/User-Agent 等防盗链头时,给 http_download 传 headers 参数)。"
+    )
+
+
+def _is_download_nav_error(e) -> bool:
+    """判断导航异常是否是"触发了下载"而非真正的导航失败。"""
+    return "download is starting" in str(e).lower()
+
+
+def _response_header(response, name: str) -> str:
+    """安全读取响应头字符串(非字符串值一律当空,避免 mock/异常响应炸后续解析)。"""
+    if response is None:
+        return ""
+    value = response.headers.get(name)
+    return value if isinstance(value, str) else ""
+
+
+def _serialise_interaction(method):
+    """把交互动作(type/click/select 等)串行到 WebBrowser._act_lock。
+
+    这些操作都是"清空/定位→写入/点击"多步构成,步间有 await 让出点;
+    并发调用会互相踩焦点与取值(实测: 两个 browser_type 的文本全落进
+    后一个元素)。串行化后并发调用排队执行,结果与单次调用一致。
+    """
+
+    @functools.wraps(method)
+    async def wrapper(self, *args, **kwargs):
+        async with self._act_lock:
+            return await method(self, *args, **kwargs)
+
+    return wrapper
+
+
 def _reject_empty_selector(
     value: Optional[str],
     name: str = "selector",
@@ -320,6 +367,10 @@ class WebBrowser:
         # 脱节。整实例一把即可: 导航操作频率低, 而 switch_page 改的
         # _active_page_id 影响所有操作的 pid 解析, 每页锁盖不住这块共享状态。
         self._nav_lock = asyncio.Lock()
+        # 交互动作锁: type/click 等改页面状态的操作必须串行 ——
+        # 并发 type_text 的 "清空→写入" 两步之间存在 await 交错窗口,
+        # 两个调用会互相踩焦点/取值,文本落进错误的元素(实测必现)
+        self._act_lock = asyncio.Lock()
 
     @property
     def is_running(self) -> bool:
@@ -362,10 +413,20 @@ class WebBrowser:
         Returns:
             操作结果消息。
         """
+        from uniclaw.tools.web_browse.tools import browser_close, browser_start  # 循环导入例外: 取工具规范名
+
         async_playwright_fn = _get_async_playwright()
 
-        if self._browser is not None and self._headless != headless:
-            await self.close()
+        # 会话互斥: 已有任何会话(内部启动或 CDP)时拒绝 —— start 会替换/
+        # 复用旧会话并把导航目标打进去,自动化脚本的页面会被原地顶掉。
+        # 一律提示先 browser_close,显式重建
+        if self._browser is not None:
+            kind = "CDP 连接的外部浏览器" if self._connected_cdp else "内部启动的浏览器"
+            return (
+                f"{TOOL_ERROR}: 当前已有 {kind} 会话(页面 ID {self._active_page_id}),"
+                f"{browser_start.name} 会替换该会话并重新导航。"
+                f"请先 {browser_close.name} 再重新启动"
+            )
 
         if self._browser is None:
             self._playwright = await async_playwright_fn().start()
@@ -397,7 +458,18 @@ class WebBrowser:
         Returns:
             操作结果消息。
         """
+        from uniclaw.tools.web_browse.tools import browser_close  # 循环导入例外: 取工具规范名
+
         async_playwright_fn = _get_async_playwright()
+
+        # 会话互斥: 已有会话(内部启动或另一 CDP 连接)时拒绝覆盖,
+        # 防止旧会话被静默销毁后操作对象不明
+        if self._browser is not None:
+            kind = "CDP 连接的外部浏览器" if self._connected_cdp else "内部启动的浏览器"
+            return (
+                f"{TOOL_ERROR}: 当前已有 {kind} 会话(页面 ID {self._active_page_id}),"
+                f"connect_over_cdp 会替换掉该会话。请先 {browser_close.name} 再连接"
+            )
 
         # 先在临时变量里连,成功了才替换现有会话 —— 否则连不上时原有的
         # 浏览器会话已被 close() 销毁,后续 get_url/close 全报"浏览器未启动"
@@ -485,7 +557,7 @@ class WebBrowser:
                     self._playwright = None
             if errors:
                 return f"{TOOL_ERROR}: " + "; ".join(errors)
-            return "已断开与外部浏览器的 CDP 连接(浏览器保持运行)"
+            return "已断开与外部浏览器的 CDP 连接(浏览器保持运行;可再次 browser_connect 重连)"
 
         for page_id, page in list(self._pages.items()):
             try:
@@ -622,14 +694,28 @@ class WebBrowser:
                 response = await page.goto(
                     url, wait_until="domcontentloaded", timeout=_NAVIGATE_TIMEOUT_MS
                 )
+                # 附件下载响应: 有些站点 Content-Disposition: attachment 但
+                # Playwright 仍返回 response,此时不能报"导航成功"
+                disposition = _response_header(response, "content-disposition").lower()
+                if disposition.startswith("attachment"):
+                    filename = ""
+                    m = re.search(r'filename\*?="?([^";]+)"?', disposition)
+                    if m:
+                        filename = m.group(1)
+                    return _download_nav_message(url, filename)
                 title = await page.title()
                 status = response.status if response else "未知"
                 # 记落地 URL 而非请求 URL —— 重定向/规范化后两者不一致
                 self._hist_push(pid, page.url or url)
                 return f"已导航到: {url}\n页面标题: {title}\n状态码: {status}"
             except (PlaywrightError, PlaywrightTimeoutError) as e:
+                # 触发文件下载时 Playwright 以 "Download is starting" 中止导航
+                # (还可能被包成超时) —— 这不是导航失败,提示改走 http_download
+                if _is_download_nav_error(e):
+                    return _download_nav_message(url)
                 return _nav_err(f"导航到 {url} 失败 (timeout=30000ms)", e)
 
+    @_serialise_interaction
     async def click(
         self,
         selector: str,
@@ -656,6 +742,7 @@ class WebBrowser:
                 "点击元素", selector, e, locator=locator, timeout=timeout
             )
 
+    @_serialise_interaction
     async def type_text(
         self,
         selector: str,
@@ -795,6 +882,11 @@ class WebBrowser:
             if selector:
                 locator = self._get_locator(page, selector, frame_selector)
                 text = await locator.inner_text(timeout=_SELECTOR_TIMEOUT_MS)
+            elif frame_selector:
+                # 只给 frame_selector 不给 selector: 取该 iframe 内全文,
+                # 而不是退回主文档(否则 frame 里的内容永远取不到)
+                locator = self._get_locator(page, "body", frame_selector)
+                text = await locator.inner_text(timeout=_SELECTOR_TIMEOUT_MS)
             else:
                 text = await page.inner_text("body")
             if len(text) > 5000:
@@ -825,6 +917,10 @@ class WebBrowser:
         try:
             if selector:
                 locator = self._get_locator(page, selector, frame_selector)
+                html = await locator.inner_html(timeout=_SELECTOR_TIMEOUT_MS)
+            elif frame_selector:
+                # 只给 frame_selector: 取该 iframe 的 HTML,而非整个主文档
+                locator = self._get_locator(page, "body", frame_selector)
                 html = await locator.inner_html(timeout=_SELECTOR_TIMEOUT_MS)
             else:
                 html = await page.content()
@@ -869,6 +965,8 @@ class WebBrowser:
         compact: bool = False,
         depth: Optional[int] = None,
         scope: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0,
     ) -> str:
         """获取页面上所有可交互元素的信息。
 
@@ -881,6 +979,8 @@ class WebBrowser:
             compact: 精简输出,仅保留有文本/id/role 的元素。
             depth: 限制 DOM 遍历深度。
             scope: 限定 CSS 选择器范围(如 "#main", ".sidebar")。
+            limit: 最多返回的元素数(1-200),默认 50。
+            offset: 跳过前 N 个元素后开始返回(分页)。
         """
         if bad := _reject_empty_selector(
             scope, "scope", omit_hint="要查整页请省略该参数"
@@ -1088,9 +1188,27 @@ class WebBrowser:
                     msg += "。" + _format_iframe_note(iframes)
                 return msg
 
+        # 分页: 超大页面(几千个元素)全量序列化会灌爆上下文,
+        # 默认只返回前 limit 个,总数与页范围写在头部,需要更多再翻页
+        total = len(elements)
+        offset = max(0, offset)
+        limit = 200 if limit > 200 else (1 if limit < 1 else limit)
+        page_els = elements[offset : offset + limit]
+        if not page_els:
+            return (
+                f"找到 {total} 个可交互元素,但 offset={offset} 超出范围"
+                f"(有效范围 0-{total - 1})。请调小 offset 重试。"
+            )
+
         # 格式化输出 — 不在此捕获:el['index'] 等 KeyError 属 JS 返回结构异常,是 bug,应外抛
-        lines = [f"找到 {len(elements)} 个可交互元素:\n"]
-        for el in elements:
+        start_shown = offset + 1
+        end_shown = offset + len(page_els)
+        lines = [
+            f"找到 {total} 个可交互元素"
+            f"(本次显示第 {start_shown}-{end_shown} 个,"
+            f"limit={limit}, offset={offset};需要更多请调大 limit 或用 offset 翻页):\n"
+        ]
+        for el in page_els:
             parts = [f"[{el['index']}] <{el['tag']}>"]
             if el["type"]:
                 parts.append(f"type={el['type']}")
@@ -1477,6 +1595,7 @@ class WebBrowser:
 
         return f"已切换到{'无头' if headless else '有头'}模式"
 
+    @_serialise_interaction
     async def press_key(self, key: str, page_id: Optional[int] = None) -> str:
         """按下键盘按键。"""
         page = self._get_page(page_id)
@@ -1486,6 +1605,7 @@ class WebBrowser:
         except (PlaywrightError, PlaywrightTimeoutError) as e:
             return f"{TOOL_ERROR}: 按下按键 {key} 失败: {e}"
 
+    @_serialise_interaction
     async def select_option(
         self,
         selector: str,
@@ -1562,6 +1682,7 @@ class WebBrowser:
                 hint=hint,
             )
 
+    @_serialise_interaction
     async def check(
         self,
         selector: str,
@@ -1591,6 +1712,7 @@ class WebBrowser:
                 locator=locator, timeout=_SELECTOR_TIMEOUT_MS, checked=checked,
             )
 
+    @_serialise_interaction
     async def hover(
         self,
         selector: str,
@@ -1615,6 +1737,7 @@ class WebBrowser:
                 locator=locator, timeout=_SELECTOR_TIMEOUT_MS,
             )
 
+    @_serialise_interaction
     async def drag(
         self, source: str, target: str, page_id: Optional[int] = None
     ) -> str:
@@ -1655,6 +1778,7 @@ class WebBrowser:
                 target=target, hint=hint,
             )
 
+    @_serialise_interaction
     async def dblclick(
         self,
         selector: str,
@@ -1681,6 +1805,7 @@ class WebBrowser:
                 "双击元素", selector, e, locator=locator, timeout=timeout
             )
 
+    @_serialise_interaction
     async def focus(
         self,
         selector: str,
@@ -1738,6 +1863,7 @@ class WebBrowser:
                 locator=locator, timeout=_SELECTOR_TIMEOUT_MS,
             )
 
+    @_serialise_interaction
     async def key_down(self, key: str, page_id: Optional[int] = None) -> str:
         """按住键盘按键不放。"""
         page = self._get_page(page_id)
@@ -1747,6 +1873,7 @@ class WebBrowser:
         except (PlaywrightError, PlaywrightTimeoutError) as e:
             return f"{TOOL_ERROR}: 按住按键 {key} 失败: {e}"
 
+    @_serialise_interaction
     async def key_up(self, key: str, page_id: Optional[int] = None) -> str:
         """松开键盘按键。"""
         page = self._get_page(page_id)
@@ -1756,6 +1883,7 @@ class WebBrowser:
         except (PlaywrightError, PlaywrightTimeoutError) as e:
             return f"{TOOL_ERROR}: 松开按键 {key} 失败: {e}"
 
+    @_serialise_interaction
     async def keyboard_type(self, text: str, page_id: Optional[int] = None) -> str:
         """使用真实按键事件逐字输入文本。适用于需要触发 keydown/keyup 事件的场景。"""
         page = self._get_page(page_id)
@@ -1781,6 +1909,7 @@ class WebBrowser:
         except (PlaywrightError, PlaywrightTimeoutError) as e:
             return f"{TOOL_ERROR}: 键盘输入失败 (text={text!r}): {e}"
 
+    @_serialise_interaction
     async def insert_text(
         self,
         text: str,

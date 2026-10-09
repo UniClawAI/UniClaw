@@ -102,3 +102,98 @@ class TestFallbackAchat:
         )
         with pytest.raises(RuntimeError, match="b failed"):
             await fallback.achat("sys", [], model_name=["model-a", "model-b"])
+
+
+# ── 多模态降级无限递归防护(现场: Stack overflow + invalid base64) ──
+
+
+class TestMultimodalFallbackNoReentry:
+    """_describe_multimodal → describe_media → achat → _describe_multimodal 不得无限递归。"""
+
+    @pytest.mark.asyncio
+    async def test_flag_set_during_describe(self):
+        """describe_media 执行期间降级标志置位(achat 降级分支据此跳过)。"""
+        from uniclaw.provider.openai_provider import (
+            _MM_FALLBACK_ACTIVE,
+            _describe_multimodal,
+        )
+
+        seen: dict = {}
+
+        async def fake_describe(*args, **kwargs):
+            seen["flag"] = _MM_FALLBACK_ACTIVE.get()
+            return "文本描述"
+
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "看图"},
+                    {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAA"}},
+                ],
+            }
+        ]
+        with patch(
+            "uniclaw.utils.media_describer.describe_media", fake_describe
+        ):
+            out = await _describe_multimodal(messages, "mm-model", config=MagicMock())
+
+        assert seen["flag"] is True, "describe 期间必须处于降级上下文(防重入)"
+        assert out[0]["content"][1]["text"] == "文本描述"
+        assert _MM_FALLBACK_ACTIVE.get() is False, "退出后标志复位"
+
+    @pytest.mark.asyncio
+    async def test_describe_media_failure_placeholder(self):
+        """describe_media 失败返回占位文本,不把降级链炸掉。"""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from uniclaw.utils.media_describer import describe_media
+
+        class BadRequestError(Exception):
+            pass
+
+        with patch(
+            "uniclaw.provider.fallback.achat",
+            AsyncMock(side_effect=BadRequestError("invalid image base64 content")),
+        ), patch(
+            "uniclaw.utils.media_describer.get_cached_description", return_value=None
+        ), patch(
+            "uniclaw.utils.media_describer.save_description"
+        ):
+            out = await describe_media(
+                "data:image/png;base64,bad", "image", "mm", config=MagicMock()
+            )
+
+        assert "描述失败" in out
+        assert "invalid image base64" in out
+
+    @pytest.mark.asyncio
+    async def test_nested_multimodal_error_does_not_recurse(self):
+        """降级上下文中再遇多模态错误: 直接抛出而非二次降级(防栈溢出)。"""
+        from uniclaw.provider.openai_provider import _MM_FALLBACK_ACTIVE
+
+        class FakeErr(Exception):
+            pass
+
+        # 模拟 achat 的降级判定条件
+        def would_fallback(err, mm_model) -> bool:
+            from uniclaw.provider.openai_provider import is_multimodal_error
+
+            return (
+                is_multimodal_error(err) and mm_model and not _MM_FALLBACK_ACTIVE.get()
+            )
+
+        import uniclaw.provider.openai_provider as op
+
+        class BadReq(Exception):
+            status_code = 400  # is_multimodal_error 要求 400/404
+
+        err = BadReq("Error code: 400 - invalid image base64 content")
+        assert op.is_multimodal_error(err) is True
+        assert would_fallback(err, "mm") is True  # 正常上下文:降级
+
+        token = _MM_FALLBACK_ACTIVE.set(True)
+        try:
+            assert would_fallback(err, "mm") is False, "降级中禁止二次降级(递归)"
+        finally:
+            _MM_FALLBACK_ACTIVE.reset(token)

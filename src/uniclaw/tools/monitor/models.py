@@ -60,6 +60,42 @@ class Monitor:
         self.buffer_full_warned: bool = False
         # ConPTY 会话(shell 类命令 + 可视模式时使用, 替代管道进程)
         self.pty = None
+        # 进程退出码: 退出时由管道/ConPTY 路径写入; None = 尚未退出或未知
+        self.exit_code: int | None = None
+
+    def has_exited(self) -> bool:
+        """进程是否已结束(含自然退出/超时/异常)。
+
+        MATCHED 是准瞬态(后续未匹配输出会恢复 RUNNING), 视为仍在运行。
+        """
+        if self.status not in (MonitorStatus.RUNNING, MonitorStatus.MATCHED):
+            return True
+        if self.pty is not None:
+            return bool(self.pty.exited.is_set())
+        if self.process is not None and self.process.returncode is not None:
+            return True
+        return False
+
+    def status_label(self) -> str:
+        """状态列展示: 已结束且已知退出码时附带 exit=N。"""
+        if self.exit_code is not None and self.status != MonitorStatus.RUNNING:
+            return f"{self.status.value}(exit={self.exit_code})"
+        return self.status.value
+
+    def exit_summary(self) -> str:
+        """退出码/结束方式摘要, 供 monitor_output / monitor_stop 使用。
+
+        Returns:
+            str: 如 "exit=42,非正常结束"; 未退出返回空串。
+        """
+        if not self.has_exited():
+            return ""
+        if self.exit_code is not None:
+            kind = "正常结束" if self.exit_code == 0 else "非正常结束"
+            return f"exit={self.exit_code},{kind}"
+        if self.status == MonitorStatus.TIMEOUT:
+            return "超时被终止,退出码未知"
+        return "退出码未知"
 
     def to_dict(self) -> dict:
         uptime = (datetime.now() - self.start_time).total_seconds()
@@ -69,7 +105,9 @@ class Monitor:
             "pattern": self.pattern,
             "description": self.description,
             "visible": self.visible,
-            "status": self.status.value,
+            "status": self.status_label(),
+            "raw_status": self.status.value,
+            "exit_code": self.exit_code,
             "uptime_seconds": int(uptime),
             "output_lines": len(self.output_lines),
             "matched_count": len(self.matched_lines),

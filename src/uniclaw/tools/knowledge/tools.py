@@ -139,7 +139,7 @@ def kg_add_entity(
         if already_exists:
             entity_id = result.get("id", "?")
             # 检查是否有实际的新内容需要更新 (type, description 等与原实体不同时可使用 update_entity)
-            return f"⚠ 实体 '{name}' (type={type}) 已存在,已跳过 (ID={entity_id}, 如需更新请使用 kg_update_entity)"
+            return f"⚠ 实体 '{name}' (type={type}) 已存在,已跳过 (ID={entity_id}, 如需更新请使用 {kg_update_entity.name})"
 
         lines.append(f"实体 '{name}' (type={type}) 已添加, ID={result['id']}")
         return "\n".join(lines)
@@ -391,6 +391,15 @@ def kg_get_entity(
     try:
         entity = graph.get_entity(name, type)
         if not entity:
+            if type:
+                # 名称存在但类型不符时,报"未找到"会让人以为实体没入库
+                other = graph.get_entity(name)
+                if other:
+                    return (
+                        f"{TOOL_ERROR}: 实体 '{name}' 存在,但类型是 "
+                        f"'{other['type']}',不是 '{type}'。"
+                        f"查看它请去掉 type 参数;同名多类型请用 {kg_search.name} 消歧"
+                    )
             return f"未找到实体 '{name}'。"
 
         lines = [f"实体: {entity['name']} (type={entity['type']})"]
@@ -490,9 +499,18 @@ def kg_neighbors(
     """
     config = tool_runtime.config
     scope = _as_scope(scope)
+    # depth=0 会静默返回空邻居(误导成"没有关系");超上限静默截断也不透明
+    if depth < 1:
+        return (
+            f"{TOOL_ERROR}: depth 必须 >= 1(收到: {depth});"
+            f"查直接邻居用 depth=1,多跳用 2~3"
+        )
+    depth_note = ""
+    if depth > 3:
+        depth_note = " —— depth 超出上限 3,已按 3 处理"
+        depth = 3
     graph = _get_graph(config, scope)
     try:
-        depth = min(depth, 3)
         # 先确认实体存在 —— 否则"实体不存在"与"实体存在但无关系"都会返回
         # "没有邻居",调用方无法区分(可能误以为实体已入库)
         if not graph.get_entity(name, entity_type=type):
@@ -506,9 +524,23 @@ def kg_neighbors(
             name, depth=depth, entity_type=type, relation_type=relation_type
         )
         if not neighbors:
+            # relation_type 过滤后的空结果 ≠ 没有任何关系
+            if relation_type:
+                all_neighbors = graph.get_neighbors(
+                    name, depth=depth, entity_type=type
+                )
+                if all_neighbors:
+                    rel_types = sorted(
+                        {n.get("relation") or "?" for n in all_neighbors}
+                    )
+                    return (
+                        f"实体 '{name}' 有 {len(all_neighbors)} 个邻居,"
+                        f"但没有 relation_type='{relation_type}' 的关系。"
+                        f"该实体实际关系类型: {', '.join(rel_types)}"
+                    )
             return f"实体 '{name}' 存在,但没有邻居(当前无任何关系)。"
 
-        lines = [f"实体 '{name}' 的邻居 (depth={depth}):"]
+        lines = [f"实体 '{name}' 的邻居 (depth={depth}){depth_note}:"]
         for n in neighbors:
             direction = "→" if n.get("direction") == "outgoing" else "←"
             rel = n.get("relation", "?")
@@ -565,7 +597,12 @@ def kg_path(
                     parts.append(f"{node['name']}")
                 else:
                     rel = node.get("via_relation", "?")
-                    parts.append(f" --[{rel}]--> {node['name']}")
+                    # 反向走边时按真实边方向标注(真实边 A--[rel]-->B,
+                    # 从 B 走到 A 应显示 B <--[rel]-- A,不能读成 B 爱 A)
+                    if node.get("via_direction") == "backward":
+                        parts.append(f" <--[{rel}]-- {node['name']}(反向查看)")
+                    else:
+                        parts.append(f" --[{rel}]--> {node['name']}")
             lines.append(f"  路径 {i}: {''.join(parts)}")
         return "\n".join(lines)
     finally:
@@ -635,7 +672,18 @@ def kg_export(
         elif ext == ".md":
             content = graph.export_markdown()
         elif ext == ".html":
-            graph.visualize(output)
+            stats = graph.get_stats()
+            try:
+                output.parent.mkdir(parents=True, exist_ok=True)
+                graph.visualize(output)
+            except Exception as e:
+                # bug 级异常照常外抛(Tool.__call__ 兜底并落堆栈),但补上
+                # 阶段/规模上下文 —— 不把内部异常原文直接甩给调用方
+                raise RuntimeError(
+                    f"HTML 可视化生成失败(path={output}, "
+                    f"实体 {stats['entities']}, 关系 {stats['relations']}): "
+                    f"{type(e).__name__}: {e}"
+                ) from e
             return f"HTML 可视化已生成: {output}\n请在浏览器中打开查看。"
         else:
             return f"{TOOL_ERROR}: 不支持的文件后缀: {ext}。支持: .json, .md, .html"
@@ -667,11 +715,32 @@ def kg_list(
     config = tool_runtime.config
     graph = _get_graph(config, scope)
     try:
+        stats = graph.get_stats()
+        total = stats["entities"]
         entities = graph.list_entities(entity_type=type, limit=limit)
         if not entities:
-            return "知识图谱为空。"
+            # "该类型没有实体"与"整个图谱为空"是两回事,不能混为一谈
+            if total == 0:
+                return "知识图谱为空。"
+            scope_desc = f"类型 '{type}'" if type else "当前条件"
+            return f"{scope_desc} 下没有实体(图谱共 {total} 个实体)。"
 
-        lines = [f"共 {len(entities)} 个实体:"]
+        matched_total = (
+            stats.get("entity_types", {}).get(type, 0) if type else total
+        )
+        shown = len(entities)
+        head = f"返回 {shown} 条"
+        if shown < matched_total:
+            head += (
+                f"(共 {matched_total} 个匹配实体, limit={limit} 已截断;"
+                f"调大 limit 可查看更多)"
+            )
+        else:
+            head += f"(共 {matched_total} 个)"
+        if type:
+            head += f", 类型过滤: {type}"
+
+        lines = [head + ":"]
         for e in entities:
             aliases = e.get("aliases", [])
             alias_str = f" (别名: {', '.join(aliases)})" if aliases else ""

@@ -22,6 +22,10 @@ API 调用对瞬时故障(网络/限流/服务端错误)自动重试 2 次;
     print(result.score)
 
 注意:需要设置环境变量 TYPESAFE_API_KEY。
+
+代理: TypeSafe 对部分地区返回 451 区域封锁。代理地址取
+显式 proxy_url 参数 > settings.json 的 proxy_url > 环境变量
+(HTTPS_PROXY 等,由 httpx 默认发现)。本地 base_url 不走代理。
 """
 
 from __future__ import annotations
@@ -32,6 +36,7 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
+import httpx2
 from typesafe_sdk import (
     AsyncTypeSafeClient,
     Choice,
@@ -136,11 +141,31 @@ def _resolve_model(model: str | None = None) -> str | None:
     return model or os.environ.get("TYPESAFE_DEFAULT_MODEL") or None
 
 
+def _resolve_proxy_url(base_url: str | None, proxy_url: str | None = None) -> str | None:
+    """解析代理地址: 显式参数 > 环境变量(httpx 默认发现)。
+
+    本地 base_url(127.0.0.1/localhost)不走代理 —— 代理出口无法回连本机服务。
+    返回 None 表示不显式指定,交给 httpx 默认的环境变量发现
+    (HTTPS_PROXY/HTTP_PROXY/ALL_PROXY)。
+
+    Args:
+        base_url: 本次请求的 API 地址(为空时用 SDK 默认的公网地址)。
+        proxy_url: 显式代理地址(如 settings.json 的 proxy_url),优先级最高。
+
+    Returns:
+        str | None: 代理地址;None 表示不显式指定。
+    """
+    if base_url and ("://127.0.0.1" in base_url or "://localhost" in base_url):
+        return None
+    return proxy_url or None
+
+
 def _create_client(
     api_key: str | None = None,
     model: str | None = None,
     base_url: str | None = None,
     timeout: float = 60.0,
+    proxy_url: str | None = None,
 ):
     """创建 AsyncTypeSafeClient 实例。"""
     key = _resolve_api_key(api_key)
@@ -150,6 +175,11 @@ def _create_client(
         kwargs["model"] = resolved_model
     if base_url:
         kwargs["base_url"] = base_url
+    proxy = _resolve_proxy_url(base_url, proxy_url)
+    if proxy:
+        # SDK 的 aclose() 会关闭传入的 client(含调用方提供的),
+        # 这里每次新建、随 async with 生命周期释放,不复用缓存
+        kwargs["http_client"] = httpx2.AsyncClient(timeout=timeout, proxy=proxy)
     return AsyncTypeSafeClient(**kwargs)
 
 
@@ -267,6 +297,7 @@ async def _system_one_requests(
     api_key: str | None = None,
     model: str | None = None,
     base_url: str | None = None,
+    proxy_url: str | None = None,
     timeout: float = 60.0,
 ) -> list[Any]:
     """执行一批 system_one 请求(每组一次),瞬时故障自动重试整组。
@@ -282,6 +313,7 @@ async def _system_one_requests(
         api_key: TypeSafe API key(为空时从环境变量读取)。
         model: Jev 模型名(为空时用 SDK 默认)。
         base_url: API 地址(为空时用默认)。
+        proxy_url: 代理地址(为空时用环境变量)。
         timeout: 首次请求超时秒数。
 
     Returns:
@@ -297,7 +329,7 @@ async def _system_one_requests(
         )
         try:
             async with _create_client(
-                api_key, model, base_url, attempt_timeout
+                api_key, model, base_url, attempt_timeout, proxy_url
             ) as client:
                 if len(question_groups) == 1:
                     return [
@@ -352,6 +384,7 @@ async def choice(
     api_key: str | None = None,
     model: str | None = None,
     base_url: str | None = None,
+    proxy_url: str | None = None,
     timeout: float = 60.0,
 ) -> ChoiceResult:
     """Choice 原语:从选项中选一个。
@@ -364,6 +397,7 @@ async def choice(
         api_key: TypeSafe API key(为空时从环境变量读取)。
         model: Jev 模型名(为空时用 SDK 默认)。
         base_url: API 地址(为空时用默认)。
+        proxy_url: 代理地址(为空时用环境变量)。
         timeout: 请求超时秒数。
 
     Returns:
@@ -380,6 +414,7 @@ async def choice(
         api_key=api_key,
         model=model,
         base_url=base_url,
+        proxy_url=proxy_url,
         timeout=timeout,
     )
     return _parse_choice(responses[0].answers[question_id])
@@ -394,6 +429,7 @@ async def score(
     api_key: str | None = None,
     model: str | None = None,
     base_url: str | None = None,
+    proxy_url: str | None = None,
     timeout: float = 60.0,
 ) -> ScoreResult:
     """Score 原语:按量表评级。
@@ -406,6 +442,7 @@ async def score(
         api_key: TypeSafe API key。
         model: Jev 模型名。
         base_url: API 地址。
+        proxy_url: 代理地址(为空时用环境变量)。
         timeout: 请求超时秒数。
 
     Returns:
@@ -422,6 +459,7 @@ async def score(
         api_key=api_key,
         model=model,
         base_url=base_url,
+        proxy_url=proxy_url,
         timeout=timeout,
     )
     return _parse_score(responses[0].answers[question_id])
@@ -436,6 +474,7 @@ async def noul(
     api_key: str | None = None,
     model: str | None = None,
     base_url: str | None = None,
+    proxy_url: str | None = None,
     timeout: float = 60.0,
 ) -> NoulResult:
     """Noul 原语:是/否概率判断。
@@ -448,6 +487,7 @@ async def noul(
         api_key: TypeSafe API key。
         model: Jev 模型名。
         base_url: API 地址。
+        proxy_url: 代理地址(为空时用环境变量)。
         timeout: 请求超时秒数。
 
     Returns:
@@ -470,6 +510,7 @@ async def noul(
         api_key=api_key,
         model=model,
         base_url=base_url,
+        proxy_url=proxy_url,
         timeout=timeout,
     )
     return _parse_noul(responses[0].answers[question_id])
@@ -556,6 +597,7 @@ async def batch(
     api_key: str | None = None,
     model: str | None = None,
     base_url: str | None = None,
+    proxy_url: str | None = None,
     timeout: float = 60.0,
 ) -> BatchResult:
     """批量问题:一次请求发送多个混合类型问题。
@@ -577,6 +619,7 @@ async def batch(
         api_key: TypeSafe API key。
         model: Jev 模型名。
         base_url: API 地址。
+        proxy_url: 代理地址(为空时用环境变量)。
         timeout: 请求超时秒数。
 
     Returns:
@@ -626,6 +669,7 @@ async def batch(
         api_key=api_key,
         model=model,
         base_url=base_url,
+        proxy_url=proxy_url,
         timeout=timeout,
     )
 
@@ -651,6 +695,7 @@ async def select_one(
     api_key: str | None = None,
     model: str | None = None,
     base_url: str | None = None,
+    proxy_url: str | None = None,
     timeout: float = 60.0,
 ) -> ChoiceResult:
     """通用单选:从多个选项中选一个最匹配的。
@@ -679,6 +724,7 @@ async def select_one(
         api_key=api_key,
         model=model,
         base_url=base_url,
+        proxy_url=proxy_url,
         timeout=timeout,
     )
 
@@ -692,6 +738,7 @@ async def select_many(
     api_key: str | None = None,
     model: str | None = None,
     base_url: str | None = None,
+    proxy_url: str | None = None,
     timeout: float = 60.0,
 ) -> dict[str, NoulResult]:
     """通用多选:判断每个选项是否被选中。
@@ -733,6 +780,7 @@ async def select_many(
         api_key=api_key,
         model=model,
         base_url=base_url,
+        proxy_url=proxy_url,
         timeout=timeout,
     )
 
@@ -753,6 +801,7 @@ async def yes_no(
     api_key: str | None = None,
     model: str | None = None,
     base_url: str | None = None,
+    proxy_url: str | None = None,
     timeout: float = 60.0,
 ) -> NoulResult:
     """通用是否判断:评估一个陈述为真的概率。
@@ -786,6 +835,7 @@ async def yes_no(
         api_key=api_key,
         model=model,
         base_url=base_url,
+        proxy_url=proxy_url,
         timeout=timeout,
     )
 
@@ -799,6 +849,7 @@ async def rate(
     api_key: str | None = None,
     model: str | None = None,
     base_url: str | None = None,
+    proxy_url: str | None = None,
     timeout: float = 60.0,
 ) -> ScoreResult:
     """通用量表评级:按定义的等级进行评级。
@@ -828,6 +879,7 @@ async def rate(
         api_key=api_key,
         model=model,
         base_url=base_url,
+        proxy_url=proxy_url,
         timeout=timeout,
     )
 
@@ -839,6 +891,7 @@ async def multi_judge(
     api_key: str | None = None,
     model: str | None = None,
     base_url: str | None = None,
+    proxy_url: str | None = None,
     timeout: float = 60.0,
 ) -> BatchResult:
     """多维度批量判断:一次请求评估多个不同维度的问题。
@@ -880,5 +933,6 @@ async def multi_judge(
         api_key=api_key,
         model=model,
         base_url=base_url,
+        proxy_url=proxy_url,
         timeout=timeout,
     )

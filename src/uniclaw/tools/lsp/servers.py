@@ -158,3 +158,19 @@ def server_install_hint(language: str) -> str:
         "css": "npm i -g vscode-langservers-extracted",
     }
     return hints.get(language, "安装对应语言的 LSP 服务器后重试")
+
+
+def server_availability_line(language: str) -> str:
+    """一行状态:区分「已注册」与「当前环境可用」。
+
+    已注册但二进制缺失的标注具体安装命令,避免 lsp_status 列出 javascript
+    却在 lsp_start 时报「未找到 typescript-language-server」的"注册=可用"假象。
+    """
+    defn = BUILTIN_SERVERS.get(language)
+    if defn is None:
+        return f"{language}: 未注册"
+    name = defn.get("name", language)
+    cmd = probe_command(defn)
+    if cmd:
+        return f"{language}: 可用({name}) — {cmd}"
+    return f"{language}: 已注册但当前环境不可用 — 需安装: {server_install_hint(language)}"

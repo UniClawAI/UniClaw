@@ -703,6 +703,7 @@ async def llm_safe_check(tc: dict, config: AppConfig) -> tuple[bool, str]:
                 question="这个工具调用是否可以安全执行？",
                 true_desc="只读、搜索、列出内容等无害操作,不涉及数据破坏或系统修改",
                 false_desc="涉及文件删除、系统修改、敏感数据泄露等风险",
+                proxy_url=config.proxy_url,
             )
             if result.noul > 0.5:
                 return True, "Jev 安全检查通过"

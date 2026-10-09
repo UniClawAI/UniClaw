@@ -154,15 +154,15 @@ class TestStopMonitor:
 
     @pytest.mark.asyncio
     async def test_not_found(self):
-        """进程不存在。"""
+        """进程不存在: 未找到进程 ID。"""
         mgr = MonitorManager()
         result = await mgr.stop_monitor("nope")
         assert TOOL_ERROR in result
-        assert "不存在" in result
+        assert "未找到进程 ID: nope" in result
 
     @pytest.mark.asyncio
     async def test_success(self):
-        """停止进程。"""
+        """停止运行中的进程。"""
         mgr = MonitorManager()
         m = _make_monitor("m1")
         process = MagicMock()
@@ -182,7 +182,7 @@ class TestStopMonitor:
 
     @pytest.mark.asyncio
     async def test_process_already_finished(self):
-        """进程已结束时只取消读取任务,不杀进程。"""
+        """进程已自然退出: 报退出码并清理, 不伪装成"刚停掉"。"""
         mgr = MonitorManager()
         m = _make_monitor("m1")
         process = MagicMock()
@@ -195,9 +195,390 @@ class TestStopMonitor:
         mgr._monitors["m1"] = m
         with patch.object(mgr, "_kill_process_tree", new=AsyncMock()) as mock_kill:
             result = await mgr.stop_monitor("m1")
-        assert "进程已停止: m1" in result
+        assert "进程已退出" in result
+        assert "exit=0" in result
+        assert "记录已清理" in result
+        assert "m1" not in mgr._monitors
         task.cancel.assert_not_called()
         mock_kill.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_natural_exit_nonzero_reported(self):
+        """自然退出(非零退出码)stop 时带上退出码。"""
+        mgr = MonitorManager()
+        m = _make_monitor("m1")
+        m.status = MonitorStatus.STOPPED
+        m.exit_code = 42
+        process = MagicMock()
+        process.returncode = 42
+        m.process = process
+        mgr._monitors["m1"] = m
+        result = await mgr.stop_monitor("m1")
+        assert "进程已退出" in result
+        assert "exit=42" in result
+        assert "记录已清理" in result
+
+    @pytest.mark.asyncio
+    async def test_repeat_stop_no_success_then_fail_flip(self):
+        """重复 stop: 首次报告已退出/已停止, 再次统一为未找到, 无语义翻转。"""
+        mgr = MonitorManager()
+        m = _make_monitor("m1")
+        m.status = MonitorStatus.STOPPED
+        m.exit_code = 7
+        mgr._monitors["m1"] = m
+
+        first = await mgr.stop_monitor("m1")
+        assert "进程已退出" in first
+        assert "exit=7" in first
+
+        second = await mgr.stop_monitor("m1")
+        assert TOOL_ERROR in second
+        assert "未找到进程 ID: m1" in second
+        # 不得出现"进程已停止"这种像刚停掉的措辞
+        assert "进程已停止" not in first
+        assert "进程已停止" not in second
+
+
+class TestExitCodeVisibility:
+    """退出码全程可见 — list / output / 模型字段(任务 1)。"""
+
+    @pytest.mark.asyncio
+    async def test_pipe_path_captures_nonzero_exit_code(self):
+        """管道路径: 非零退出码写入 Monitor 状态。"""
+        mgr = MonitorManager()
+        m = _make_monitor("m1")
+        process = MagicMock()
+        process.stdout.read = AsyncMock(side_effect=[b"done\n", b""])
+        process.returncode = 42
+        m.process = process
+        await mgr._read_output(m)
+        assert m.status == MonitorStatus.STOPPED
+        assert m.exit_code == 42
+
+    @pytest.mark.asyncio
+    async def test_pipe_path_captures_zero_exit_code(self):
+        """管道路径: 正常退出 exit=0 也被记录。"""
+        mgr = MonitorManager()
+        m = _make_monitor("m1")
+        process = MagicMock()
+        process.stdout.read = AsyncMock(side_effect=[b"ok\n", b""])
+        process.returncode = 0
+        m.process = process
+        await mgr._read_output(m)
+        assert m.exit_code == 0
+
+    @pytest.mark.asyncio
+    async def test_list_shows_nonzero_exit_code(self):
+        """monitor_list: 停止条目显示 stopped(exit=42)。"""
+        mgr = MonitorManager()
+        m = _make_monitor("m1", description="崩溃进程")
+        m.status = MonitorStatus.STOPPED
+        m.exit_code = 42
+        mgr._monitors["m1"] = m
+        result = await mgr.list_monitors()
+        assert "stopped(exit=42)" in result
+
+    @pytest.mark.asyncio
+    async def test_list_shows_zero_exit_code(self):
+        """monitor_list: 正常退出也标 exit=0。"""
+        mgr = MonitorManager()
+        m = _make_monitor("m1", description="正常进程")
+        m.status = MonitorStatus.STOPPED
+        m.exit_code = 0
+        mgr._monitors["m1"] = m
+        result = await mgr.list_monitors()
+        assert "stopped(exit=0)" in result
+
+    @pytest.mark.asyncio
+    async def test_output_footer_reports_nonzero_exit(self):
+        """monitor_output: 末尾标注退出码与非正常结束。"""
+        mgr = MonitorManager()
+        m = _make_monitor("m1", description="崩溃进程")
+        m.output_lines.append("stack trace...")
+        m.status = MonitorStatus.STOPPED
+        m.exit_code = 42
+        mgr._monitors["m1"] = m
+        result = await mgr.get_output("m1")
+        assert "stack trace..." in result
+        assert "exit=42" in result
+        assert "非正常结束" in result
+
+    @pytest.mark.asyncio
+    async def test_output_footer_reports_zero_exit(self):
+        """monitor_output: exit=0 标正常结束。"""
+        mgr = MonitorManager()
+        m = _make_monitor("m1")
+        m.output_lines.append("bye")
+        m.status = MonitorStatus.STOPPED
+        m.exit_code = 0
+        mgr._monitors["m1"] = m
+        result = await mgr.get_output("m1")
+        assert "exit=0" in result
+        assert "正常结束" in result
+
+    @pytest.mark.asyncio
+    async def test_output_footer_absent_while_running(self):
+        """运行中不追加退出标注。"""
+        mgr = MonitorManager()
+        m = _make_monitor("m1")
+        m.output_lines.append("hello")
+        process = MagicMock()
+        process.returncode = None
+        m.process = process
+        mgr._monitors["m1"] = m
+        result = await mgr.get_output("m1")
+        assert "进程结束" not in result
+        assert "exit=" not in result
+
+    @pytest.mark.asyncio
+    async def test_to_dict_includes_exit_code(self):
+        """to_dict 暴露 exit_code 与带 exit 的状态标签。"""
+        m = _make_monitor("m1")
+        m.status = MonitorStatus.STOPPED
+        m.exit_code = 3
+        d = m.to_dict()
+        assert d["exit_code"] == 3
+        assert d["status"] == "stopped(exit=3)"
+        assert d["raw_status"] == "stopped"
+
+    @pytest.mark.asyncio
+    async def test_real_process_nonzero_exit_visible(self):
+        """真实子进程 sys.exit(42): list 与 output 均可见退出码。"""
+        mgr = MonitorManager()
+        cmd = f'"{sys.executable}" -c "import sys; sys.exit(42)"'
+        result = await mgr.start_monitor(
+            cmd, pattern="", description="exit42", timeout=15
+        )
+        assert "进程已启动" in result, result
+        monitor_id = result.split("ID: ")[1].splitlines()[0].strip()
+        m = mgr._monitors[monitor_id]
+        try:
+            for _ in range(200):
+                if m.status != MonitorStatus.RUNNING:
+                    break
+                await asyncio.sleep(0.05)
+            assert m.exit_code == 42, f"exit_code={m.exit_code} status={m.status}"
+
+            listed = await mgr.list_monitors()
+            assert "exit=42" in listed
+
+            out = await mgr.get_output(monitor_id)
+            assert "exit=42" in out
+            assert "非正常结束" in out
+        finally:
+            await mgr.stop_monitor(monitor_id)
+
+    @pytest.mark.asyncio
+    async def test_real_process_zero_exit_visible(self):
+        """真实子进程 exit 0: list/output 标 exit=0 与正常结束。"""
+        mgr = MonitorManager()
+        cmd = f'"{sys.executable}" -c "import sys; sys.exit(0)"'
+        result = await mgr.start_monitor(
+            cmd, pattern="", description="exit0", timeout=15
+        )
+        assert "进程已启动" in result, result
+        monitor_id = result.split("ID: ")[1].splitlines()[0].strip()
+        m = mgr._monitors[monitor_id]
+        try:
+            for _ in range(200):
+                if m.status != MonitorStatus.RUNNING:
+                    break
+                await asyncio.sleep(0.05)
+            assert m.exit_code == 0, f"exit_code={m.exit_code} status={m.status}"
+
+            listed = await mgr.list_monitors()
+            assert "exit=0" in listed
+
+            out = await mgr.get_output(monitor_id)
+            assert "exit=0" in out
+            assert "正常结束" in out
+        finally:
+            await mgr.stop_monitor(monitor_id)
+
+    def test_conpty_path_captures_exit_code(self):
+        """ConPTY 路径: PtySession 退出时写入退出码。"""
+        import threading
+
+        from uniclaw.tools.monitor.pty_session import PtySession, ScreenBuffer, VtLineParser
+
+        m = _make_monitor("m1")
+        session = PtySession.__new__(PtySession)
+        session.monitor = m
+        session.loop = MagicMock()
+        session.loop.call_soon_threadsafe.side_effect = (
+            lambda _cb, coro: coro.close()
+        )
+        session.on_notify = lambda *_: None
+        session._last_idle_snapshot = None
+        session._parser = VtLineParser(session._commit_line)
+        session._screen = ScreenBuffer(5, 20)
+        session.exited = threading.Event()
+        session._raw_queue = MagicMock()
+        # 模拟读线程 EOF 哨兵
+        session._raw_queue.get.side_effect = [None]
+        session.proc = MagicMock()
+        session.proc.exitstatus = 7
+
+        session._process_loop()
+
+        assert m.exit_code == 7
+        assert m.status == MonitorStatus.STOPPED
+        assert session.exited.is_set()
+
+
+class TestVisibleDegrade:
+    """visible=True 环境不支持 ConPTY 时降级, 不假报弹窗(任务 2)。"""
+
+    @pytest.mark.asyncio
+    async def test_visible_without_winpty_degrades_to_pipe(self):
+        """缺 pywinpty: 降级管道, 说明原因, 不宣称 ConPTY 窗口。"""
+        mgr = MonitorManager()
+        process = MagicMock()
+        process.returncode = None
+        with patch.object(
+            MonitorManager, "_winpty_available", staticmethod(lambda: False)
+        ), patch(
+            "uniclaw.tools.monitor.manager.os.name", "nt"
+        ), patch(
+            "uniclaw.tools.monitor.manager.asyncio.create_subprocess_shell",
+            new_callable=AsyncMock,
+            return_value=process,
+        ), patch(
+            "uniclaw.tools.monitor.manager.asyncio.create_task",
+            side_effect=_fake_create_task,
+        ), patch.object(
+            mgr, "_spawn_viewer", new=AsyncMock(return_value=None)
+        ):
+            result = await mgr.start_monitor(
+                "cmd /c echo hi",
+                pattern="",
+                description="",
+                timeout=0,
+                visible=True,
+            )
+
+        assert "进程已启动" in result
+        assert "未启用可见控制台" in result
+        assert "输出走管道" in result
+        assert "monitor_output" in result
+        assert "pywinpty" in result or "ConPTY" in result
+        # 不得宣称 ConPTY 终端已弹出
+        assert "ConPTY 终端模式" not in result
+
+    @pytest.mark.asyncio
+    async def test_visible_non_shell_command_explains_reason(self):
+        """visible=True + 非 shell 命令: 说明命令类型原因, 不假报 ConPTY。"""
+        mgr = MonitorManager()
+        process = MagicMock()
+        process.returncode = None
+        with patch.object(
+            MonitorManager, "_winpty_available", staticmethod(lambda: True)
+        ), patch(
+            "uniclaw.tools.monitor.manager.asyncio.create_subprocess_shell",
+            new_callable=AsyncMock,
+            return_value=process,
+        ), patch(
+            "uniclaw.tools.monitor.manager.asyncio.create_task",
+            side_effect=_fake_create_task,
+        ), patch.object(
+            mgr, "_spawn_viewer", new=AsyncMock(return_value=None)
+        ):
+            result = await mgr.start_monitor(
+                "npm run dev",
+                pattern="",
+                description="",
+                timeout=0,
+                visible=True,
+            )
+
+        assert "未启用可见控制台" in result
+        assert "命令非 shell" in result
+        assert "ConPTY 终端模式" not in result
+
+    @pytest.mark.asyncio
+    async def test_visible_viewer_spawn_failure_reported(self):
+        """镜像窗口弹出失败: 明确报失败, 不宣称已弹窗。"""
+        mgr = MonitorManager()
+        process = MagicMock()
+        process.returncode = None
+        with patch(
+            "uniclaw.tools.monitor.manager.asyncio.create_subprocess_shell",
+            new_callable=AsyncMock,
+            return_value=process,
+        ), patch(
+            "uniclaw.tools.monitor.manager.asyncio.create_task",
+            side_effect=_fake_create_task,
+        ), patch.object(
+            mgr, "_spawn_viewer", new=AsyncMock(return_value="无显示环境")
+        ):
+            result = await mgr.start_monitor(
+                "npm run dev",
+                pattern="",
+                description="",
+                timeout=0,
+                visible=True,
+            )
+
+        assert "弹出失败" in result
+        assert "无显示环境" in result
+        assert "已弹出" not in result
+
+    @pytest.mark.asyncio
+    async def test_visible_conpty_success_claims_window(self):
+        """ConPTY 真正可用且弹窗成功: 才允许宣称 ConPTY 终端模式。"""
+        mgr = MonitorManager()
+        fake_session = MagicMock()
+        fake_session.pty = None
+        with patch(
+            "uniclaw.tools.monitor.manager.asyncio.create_subprocess_shell",
+            new_callable=AsyncMock,
+        ) as mock_shell, patch(
+            "uniclaw.tools.monitor.manager.asyncio.create_task",
+            side_effect=_fake_create_task,
+        ), patch.object(
+            MonitorManager, "_winpty_available", staticmethod(lambda: True)
+        ), patch(
+            "uniclaw.tools.monitor.pty_session.PtySession",
+            return_value=fake_session,
+        ) as mock_pty, patch.object(
+            mgr, "_spawn_viewer", new=AsyncMock(return_value=None)
+        ), patch(
+            "uniclaw.tools.monitor.manager.os.name", "nt"
+        ):
+            result = await mgr.start_monitor(
+                "cmd /c echo hi",
+                pattern="",
+                description="",
+                timeout=0,
+                visible=True,
+            )
+
+        mock_pty.assert_called_once()
+        mock_shell.assert_not_awaited()
+        assert "ConPTY 终端模式" in result
+        assert "已弹出" in result
+
+    def test_winpty_available_false_on_non_windows(self):
+        """非 Windows 一律不可用。"""
+        with patch("uniclaw.tools.monitor.manager.os.name", "posix"):
+            assert MonitorManager._winpty_available() is False
+
+    def test_explain_no_console_reused_for_degrade(self):
+        """_explain_no_console 按优先级给根因(与 monitor_screen 同源)。"""
+        m = _make_monitor("m1")
+        m.visible = False
+        assert "非可视模式" in MonitorManager._explain_no_console(m)
+
+        m.visible = True
+        m.command = "npm run dev"
+        with patch("uniclaw.tools.monitor.manager.os.name", "nt"):
+            assert "命令非 shell" in MonitorManager._explain_no_console(m)
+
+        m.command = "cmd /c echo hi"
+        with patch("uniclaw.tools.monitor.manager.os.name", "nt"), patch.object(
+            MonitorManager, "_winpty_available", staticmethod(lambda: False)
+        ):
+            assert "pywinpty" in MonitorManager._explain_no_console(m)
 
 
 class TestListMonitors:
@@ -888,3 +1269,64 @@ class TestKillProcessTree:
         ):
             await mgr._kill_process_tree(process)
         process.kill.assert_called_once()
+
+# ── monitor 溢出提示动态化(第 29 轮 #7) ────────────────────
+
+
+class TestOverflowNote:
+    """溢出提示不占环形缓冲,读取输出时动态附加。"""
+
+    @pytest.mark.asyncio
+    async def test_overflow_note_in_output(self):
+        from uniclaw.tools.monitor.manager import MonitorManager
+        from uniclaw.tools.monitor.models import Monitor
+
+        mgr = MonitorManager()
+        m = Monitor(monitor_id="p1", command="echo hi", pattern="", description="", timeout=0)
+        for i in range(3):
+            m.output_lines.append(f"line-{i}")
+        m.buffer_full_warned = True
+        mgr._monitors["p1"] = m
+
+        out = await mgr.get_output("p1")
+
+        assert "已被丢弃" in out
+        assert "line-2" in out
+        # 警告本身不占缓冲: 缓冲里只有真实输出
+        assert all(x.startswith("line-") for x in m.output_lines)
+
+    @pytest.mark.asyncio
+    async def test_no_note_when_not_overflowed(self):
+        from uniclaw.tools.monitor.manager import MonitorManager
+        from uniclaw.tools.monitor.models import Monitor
+
+        mgr = MonitorManager()
+        m = Monitor(monitor_id="p2", command="echo hi", pattern="", description="", timeout=0)
+        m.output_lines.append("line-0")
+        mgr._monitors["p2"] = m
+
+        out = await mgr.get_output("p2")
+
+        assert "已被丢弃" not in out
+
+class TestClearKeepsAliveMatched:
+    @pytest.mark.asyncio
+    async def test_matched_running_not_cleared(self):
+        from uniclaw.tools.monitor.manager import MonitorManager
+        from uniclaw.tools.monitor.models import Monitor, MonitorStatus
+
+        mgr = MonitorManager()
+        alive = Monitor(monitor_id="m1", command="sleep", pattern="", description="", timeout=0)
+        alive.status = MonitorStatus.MATCHED
+        alive.process = MagicMock()  # has_exited: returncode None → 在跑
+        alive.process.returncode = None
+        done = Monitor(monitor_id="m2", command="echo", pattern="", description="", timeout=0)
+        done.status = MonitorStatus.STOPPED
+        mgr._monitors = {"m1": alive, "m2": done}
+
+        result = await mgr.clear_monitors()
+
+        assert "m1" not in mgr._monitors or "m2" not in mgr._monitors
+        assert "m1" in mgr._monitors, "仍在运行的 matched 进程不得被清成孤儿"
+        assert "m2" not in mgr._monitors
+        assert "已清理 1 个" in result

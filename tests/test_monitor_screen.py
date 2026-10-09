@@ -313,13 +313,16 @@ class TestGetToolsGating:
             assert monitor_tools._screen_supported() is False
 
     def test_screen_supported_requires_pywinpty(self):
-        """Windows 但 pywinpty 装不上 → 不支持。"""
+        """Windows 但 pywinpty(winpty)装不上 → 不支持。
+
+        注意: PyPI 包名 pywinpty, 导入模块名 winpty。
+        """
         import builtins
 
         real_import = builtins.__import__
 
         def fake_import(name, *args, **kwargs):
-            if name == "pywinpty":
+            if name in ("winpty", "pywinpty"):
                 raise ImportError("no pywinpty")
             return real_import(name, *args, **kwargs)
 

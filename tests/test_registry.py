@@ -979,3 +979,26 @@ class TestSearchToolsDocstring:
         doc = self._doc()
         assert "搜不到" in doc
         assert "不存在" in doc
+
+def test_core_tools_all_decorated():
+    """核心工具必须都是 Tool 对象(裸函数=装饰器丢失,启动即崩,第 37 轮现场)。"""
+    from uniclaw.tools.registry import CORE_TOOLS
+
+    bare = [getattr(t, "__name__", t) for t in CORE_TOOLS if not hasattr(t, "name")]
+    assert not bare, f"以下工具未用 @tool 装饰: {bare}"
+
+@pytest.mark.asyncio
+async def test_all_registered_tools_decorated():
+    """全部工具(含扩展)必须是 Tool 对象 —— 裸函数在执行期以
+    "'...' object has no attribute 'name'" 炸在文案拼装处(第 37 轮现场 2)。"""
+    from uniclaw.tools import get_all_tools
+    from uniclaw.tools.registry import _tool_name
+
+    bare = []
+    for t in await get_all_tools():
+        try:
+            _tool_name(t)
+        except TypeError as e:
+            bare.append(str(e))
+    assert not bare, bare
+

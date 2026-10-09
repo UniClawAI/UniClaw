@@ -610,7 +610,8 @@ class TestList:
         await kg_add_entity("Python", type="technology", description="编程语言", tool_runtime=ToolRuntime(config=config))
         await kg_add_entity("Java", type="technology", tool_runtime=ToolRuntime(config=config))
         result = await kg_list(tool_runtime=ToolRuntime(config=config))
-        assert "共 2 个实体" in result
+        assert "返回 2 条" in result
+        assert "共 2 个" in result
         assert "[technology] Python" in result
         assert "编程语言" in result
 
@@ -621,7 +622,9 @@ class TestList:
         await kg_add_entity("Python", type="technology", tool_runtime=ToolRuntime(config=config))
         await kg_add_entity("Guido", type="person", tool_runtime=ToolRuntime(config=config))
         result = await kg_list(type="person", tool_runtime=ToolRuntime(config=config))
-        assert "共 1 个实体" in result
+        assert "返回 1 条" in result
+        assert "共 1 个" in result
+        assert "类型过滤: person" in result
         assert "[person] Guido" in result
         assert "Python" not in result
 
@@ -654,6 +657,29 @@ class TestExtract:
         assert "子代理" in doc
         assert "嵌套" in doc
         assert "主会话" in doc
+
+    def test_kg_extract_prompt_has_direction_and_predicate_rules(self):
+        """kg-extract subagent 系统提示必须含关系方向约定与谓词白名单。
+
+        回归: 同一文本两次提取方向相反、谓词自由命名漂移。
+        """
+        from uniclaw.tools.multi_agent.sub_agent import get_builtin_agent_definitions
+
+        prompt = get_builtin_agent_definitions()["kg-extract"].system_prompt
+        # 方向约定: 主语 → 宾语
+        assert "主语" in prompt
+        assert "宾语" in prompt
+        assert "works_at" in prompt
+        # 不要同时写正反两个方向
+        assert "正反" in prompt or "两个方向" in prompt
+        # 谓词格式: 小写英文动词/动名词
+        assert "小写" in prompt
+        # 谓词白名单关键词
+        for keyword in ("works_at", "founded", "created_by", "part_of", "located_in", "uses", "causes"):
+            assert keyword in prompt, f"白名单缺少谓词: {keyword}"
+        # 白名单是建议不是强制
+        assert "建议" in prompt
+        assert "复用" in prompt
 
     @pytest.mark.asyncio
     async def test_no_input(self, tmp_path):
@@ -783,3 +809,218 @@ class TestExtract:
         result = await kg_extract(text="hello", tool_runtime=ToolRuntime(config=config))
         assert "subagent 启动失败" in result
         assert "初始化错误" in result
+
+
+# ── kg_neighbors depth 校验(第 29 轮 #4/#5) ────────────────
+
+
+class TestNeighborsDepthValidation:
+    """depth=0 报参数错;超上限截断并提示。"""
+
+    @pytest.mark.asyncio
+    async def test_depth_zero_rejected(self, tmp_path):
+        from uniclaw.tools.base import ToolRuntime
+        from uniclaw.tools.knowledge.tools import kg_add_entity, kg_neighbors
+
+        config = _make_config(tmp_path)
+        rt = ToolRuntime(config=config)
+        await kg_add_entity(name="A", type="concept", tool_runtime=rt)
+        result = await kg_neighbors(name="A", depth=0, tool_runtime=rt)
+
+        assert "TOOL_ERROR" in result
+        assert "depth" in result
+
+    @pytest.mark.asyncio
+    async def test_depth_over_max_clamped_with_note(self, tmp_path):
+        from uniclaw.tools.base import ToolRuntime
+        from uniclaw.tools.knowledge.tools import (
+            kg_add_entity,
+            kg_add_relation,
+            kg_neighbors,
+        )
+
+        config = _make_config(tmp_path)
+        rt = ToolRuntime(config=config)
+        await kg_add_entity(name="A", type="concept", tool_runtime=rt)
+        await kg_add_entity(name="B", type="concept", tool_runtime=rt)
+        await kg_add_relation(source="A", target="B", relation="related_to", tool_runtime=rt)
+
+        result = await kg_neighbors(name="A", depth=5, tool_runtime=rt)
+
+        assert "B" in result
+        assert "depth=3" in result  # 截断后的实际值
+        assert "超出上限" in result  # 截断必须透明
+
+
+# ── kg 族输出口径(第 31 轮 #5/#6/#7/#8) ───────────────────
+
+
+class TestKgOutputAccuracy:
+    """列表计数/空结果/类型消歧/关系过滤的输出必须与事实一致。"""
+
+    @pytest.mark.asyncio
+    async def test_list_limit_truncation_stated(self, tmp_path):
+        """limit 截断要说明"返回 N 条 / 共 M 个",不能把返回数当总数。"""
+        from uniclaw.tools.base import ToolRuntime
+        from uniclaw.tools.knowledge.tools import kg_add_entity, kg_list
+
+        config = _make_config(tmp_path)
+        rt = ToolRuntime(config=config)
+        for i in range(3):
+            await kg_add_entity(name=f"实体{i}", type="concept", tool_runtime=rt)
+
+        result = await kg_list(limit=2, tool_runtime=rt)
+
+        assert "返回 2 条" in result
+        assert "共 3 个" in result
+        assert "截断" in result
+
+    @pytest.mark.asyncio
+    async def test_list_type_empty_not_global_empty(self, tmp_path):
+        """类型无匹配 ≠ 图谱为空,文案要区分。"""
+        from uniclaw.tools.base import ToolRuntime
+        from uniclaw.tools.knowledge.tools import kg_add_entity, kg_list
+
+        config = _make_config(tmp_path)
+        rt = ToolRuntime(config=config)
+        await kg_add_entity(name="A", type="concept", tool_runtime=rt)
+
+        result = await kg_list(type="event", tool_runtime=rt)
+
+        assert "知识图谱为空" not in result
+        assert "类型 'event' 下没有实体" in result
+        assert "图谱共 1 个" in result
+
+    @pytest.mark.asyncio
+    async def test_get_entity_type_mismatch_not_missing(self, tmp_path):
+        """实体存在但类型不符: 报"存在但类型是 X",不能报"未找到"。"""
+        from uniclaw.tools.base import ToolRuntime
+        from uniclaw.tools.knowledge.tools import kg_add_entity, kg_get_entity
+
+        config = _make_config(tmp_path)
+        rt = ToolRuntime(config=config)
+        await kg_add_entity(name="测试公司", type="organization", tool_runtime=rt)
+
+        result = await kg_get_entity(
+            name="测试公司", type="person", tool_runtime=rt
+        )
+
+        assert "存在" in result
+        assert "organization" in result
+        assert "未找到实体" not in result
+
+    @pytest.mark.asyncio
+    async def test_neighbors_relation_filter_empty_not_no_relations(self, tmp_path):
+        """relation_type 过滤后的空结果不能说"无任何关系"。"""
+        from uniclaw.tools.base import ToolRuntime
+        from uniclaw.tools.knowledge.tools import (
+            kg_add_entity,
+            kg_add_relation,
+            kg_neighbors,
+        )
+
+        config = _make_config(tmp_path)
+        rt = ToolRuntime(config=config)
+        await kg_add_entity(name="A", type="concept", tool_runtime=rt)
+        await kg_add_entity(name="B", type="concept", tool_runtime=rt)
+        await kg_add_relation(source="A", target="B", relation="works_at", tool_runtime=rt)
+
+        result = await kg_neighbors(
+            name="A", relation_type="founded", tool_runtime=rt
+        )
+
+        assert "无任何关系" not in result
+        assert "works_at" in result  # 列出实际关系类型
+        assert "没有 relation_type='founded'" in result
+
+
+# ── LSP 坐标自检(第 31 轮 #1) ──────────────────────────────
+
+
+class TestPositionSelfCheck:
+    """空结果时给出列指针与该行标识符,把"未找到"变成可自纠。"""
+
+    def test_pointing_at_operator(self, tmp_path):
+        from uniclaw.tools.lsp.tools import _position_self_check
+
+        p = tmp_path / "use.py"
+        p.write_text("    d = Dog()\n", encoding="utf-8")
+        note = _position_self_check(p, 0, 6)  # 0-based 6 = '='
+
+        assert "定位自检" in note
+        assert "不在标识符上" in note
+        assert "d(列 5-5)" in note
+        assert "Dog(列 9-11)" in note
+
+    def test_pointing_at_identifier(self, tmp_path):
+        from uniclaw.tools.lsp.tools import _position_self_check
+
+        p = tmp_path / "use.py"
+        p.write_text("    d = Dog()\n", encoding="utf-8")
+        note = _position_self_check(p, 0, 8)  # 0-based 8 = 'D'
+
+        assert "落在标识符字符 'D'" in note
+
+    def test_line_out_of_range(self, tmp_path):
+        from uniclaw.tools.lsp.tools import _position_self_check
+
+        p = tmp_path / "use.py"
+        p.write_text("x = 1\n", encoding="utf-8")
+        note = _position_self_check(p, 10, 0)
+        assert "超出文件范围" in note
+
+
+# ── session 时间格式统一(第 31 轮 #9) ──────────────────────
+
+
+class TestSessionTimeFormat:
+    def test_iso_and_plain_both_normalised(self):
+        from uniclaw.tools.session.tools import _fmt_time
+
+        assert _fmt_time("2026-10-07T09:58:33.859304") == "2026-10-07 09:58:33"
+        assert _fmt_time("2026-10-08 13:58:17") == "2026-10-08 13:58:17"
+        assert _fmt_time("") == ""
+        assert _fmt_time("未知格式") == "未知格式"
+
+class TestKgPathDirection:
+    @pytest.mark.asyncio
+    async def test_backward_edge_shows_true_direction(self, tmp_path):
+        """B→A 查路径: 真实边 A--[loves]-->B,展示须为反向而非 B-->A。"""
+        from uniclaw.tools.base import ToolRuntime
+        from uniclaw.tools.knowledge.tools import (
+            kg_add_entity,
+            kg_add_relation,
+            kg_path,
+        )
+
+        config = _make_config(tmp_path)
+        rt = ToolRuntime(config=config)
+        await kg_add_entity(name="A", type="person", tool_runtime=rt)
+        await kg_add_entity(name="B", type="person", tool_runtime=rt)
+        await kg_add_relation(source="A", target="B", relation="loves", tool_runtime=rt)
+
+        out = await kg_path(source="B", target="A", tool_runtime=rt)
+
+        assert "反向查看" in out
+        assert "<--[loves]--" in out
+        assert "--[loves]--> A" not in out
+
+    @pytest.mark.asyncio
+    async def test_forward_edge_unchanged(self, tmp_path):
+        from uniclaw.tools.base import ToolRuntime
+        from uniclaw.tools.knowledge.tools import (
+            kg_add_entity,
+            kg_add_relation,
+            kg_path,
+        )
+
+        config = _make_config(tmp_path)
+        rt = ToolRuntime(config=config)
+        await kg_add_entity(name="A", type="person", tool_runtime=rt)
+        await kg_add_entity(name="B", type="person", tool_runtime=rt)
+        await kg_add_relation(source="A", target="B", relation="loves", tool_runtime=rt)
+
+        out = await kg_path(source="A", target="B", tool_runtime=rt)
+
+        assert "--[loves]--> B" in out
+        assert "反向查看" not in out

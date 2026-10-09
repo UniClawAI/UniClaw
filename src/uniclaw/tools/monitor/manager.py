@@ -67,6 +67,7 @@ class MonitorManager:
         Args:
             visible: 可视模式,弹出真实控制台窗口,用户可在窗口中查看输出并直接键入交互
         """
+        from uniclaw.tools.monitor.tools import monitor_output  # 循环导入例外: 取工具规范名
         # 验证正则表达式
         if pattern:
             try:
@@ -106,7 +107,7 @@ class MonitorManager:
                 for m in self._monitors.values():
                     uptime = int((datetime.now() - m.start_time).total_seconds())
                     info_lines.append(
-                        f"  [{m.status.value}] {m.description or m.command[:30]} "
+                        f"  [{m.status_label()}] {m.description or m.command[:30]} "
                         f"(ID:{m.id} | 运行:{uptime}s)"
                     )
                 proc_list = "\n".join(info_lines)
@@ -132,12 +133,14 @@ class MonitorManager:
             )
 
             # shell 类命令 + 可视模式 → ConPTY 伪控制台:
-            # 提示符同行、原生回显、中文正常, 完整还原真实终端行为
-            use_pty = (
+            # 提示符同行、原生回显、中文正常, 完整还原真实终端行为。
+            # 能力检测: Windows + shell 类命令 + pywinpty(winpty)。
+            # 任一不满足则降级管道模式 —— 绝不宣称弹了 ConPTY 窗口。
+            want_conpty = (
                 visible and os.name == "nt" and bool(self._SHELL_CMD_RE.match(command))
             )
-
-            if use_pty:
+            use_pty = False
+            if want_conpty and self._winpty_available():
                 try:
                     from .pty_session import PtySession
 
@@ -148,14 +151,14 @@ class MonitorManager:
                         self._notify_match,
                     )
                     monitor.pty = session
+                    use_pty = True
                 except ModuleNotFoundError:
-                    return (
-                        f"{TOOL_ERROR}: ConPTY 启动失败 - pywinpty 未安装。\n"
-                        "Windows ConPTY 可视模式需要 pywinpty 库。\n"
-                        "请执行: uv add pywinpty"
-                    )
+                    # pywinpty 在能力检测后又消失(竞态/卸载): 降级管道
+                    use_pty = False
                 except Exception as e:
                     return f"{TOOL_ERROR}: ConPTY 启动失败 - {e}"
+
+            if use_pty:
                 if visible:
                     self._setup_visible_paths(monitor)
                     session.raw_log_path = monitor.log_path
@@ -212,14 +215,21 @@ class MonitorManager:
 
             visible_note = ""
             if visible:
+                # 降级说明: 说清为何没有真实控制台, 不宣称 ConPTY 弹窗
+                reason = self._explain_no_console(monitor)
+                visible_note = (
+                    f"\n  未启用可见控制台({reason}),"
+                    f"输出走管道,可用 {monitor_output.name} 查看"
+                )
                 spawn_error = await self._spawn_viewer(monitor)
                 if spawn_error is None:
-                    visible_note = (
-                        "\n  可视窗口: 已弹出,用户可在窗口中查看输出并直接键入交互"
+                    visible_note += (
+                        "\n  输出镜像窗口: 已弹出(非真实控制台,"
+                        "用户可在窗口中查看输出并直接键入交互)"
                     )
                 else:
-                    visible_note = (
-                        f"\n  可视窗口: 弹出失败({spawn_error}),已回退为后台模式"
+                    visible_note += (
+                        f"\n  输出镜像窗口: 弹出失败({spawn_error}),无可见窗口"
                     )
                 monitor.viewer_thread = asyncio.create_task(
                     self._poll_user_input(monitor)
@@ -278,7 +288,7 @@ class MonitorManager:
                 for m in self._monitors.values():
                     uptime = int((datetime.now() - m.start_time).total_seconds())
                     info_lines.append(
-                        f"  [{m.status.value}] {m.description or m.command[:30]} "
+                        f"  [{m.status_label()}] {m.description or m.command[:30]} "
                         f"(ID:{m.id} | 运行:{uptime}s)"
                     )
                 proc_list = "\n".join(info_lines)
@@ -560,6 +570,29 @@ class MonitorManager:
             except UnicodeDecodeError:
                 return raw.decode("utf-8", errors="replace")
 
+    @staticmethod
+    async def _capture_exit_code(monitor: Monitor):
+        """管道路径: 进程结束后写入退出码。
+
+        stdout EOF 时 returncode 可能尚未被事件循环补写, 短暂等待兜底;
+        超时则保持 None(未知), 绝不假装 exit=0。
+        """
+        if monitor.exit_code is not None:
+            return
+        process = monitor.process
+        if process is None:
+            return
+        if process.returncode is None:
+            try:
+                await asyncio.wait_for(process.wait(), timeout=1.0)
+            except asyncio.TimeoutError:
+                pass
+            except Exception:
+                # mock/异常句柄: 无法读取退出码, 保持未知
+                pass
+        if process.returncode is not None:
+            monitor.exit_code = process.returncode
+
     async def _read_output(self, monitor: Monitor, is_stderr: bool = False):
         """异步读取进程输出并匹配模式。
 
@@ -585,15 +618,13 @@ class MonitorManager:
                 return
             output_line = f"{prefix}{line}"
 
-            # 输出缓冲区达到上限(1000行)时插入一次性警告, 提醒用户尾部可能会丢失
+            # 输出缓冲区达到上限(1000行)时记标记; 提示行不进缓冲 ——
+            # 警告自身占一条的话, 后续输出一多就把警告挤掉, 等于没提示
             if (
                 len(monitor.output_lines) == monitor.output_lines.maxlen
                 and not monitor.buffer_full_warned
             ):
                 monitor.buffer_full_warned = True
-                monitor.output_lines.append(
-                    "⚠️ 输出缓冲区已满(1000行), 最旧的输出将被丢弃"
-                )
             monitor.output_lines.append(output_line)
 
             # 可视模式:镜像到日志文件供查看器窗口实时显示
@@ -654,6 +685,7 @@ class MonitorManager:
                 MonitorStatus.RUNNING,
                 MonitorStatus.MATCHED,
             ):
+                await self._capture_exit_code(monitor)
                 monitor.status = MonitorStatus.STOPPED
                 if monitor.visible:
                     self._touch_exit(monitor)
@@ -715,11 +747,31 @@ class MonitorManager:
                 logger.warning("唤醒模型失败: %s", e)
 
     async def stop_monitor(self, monitor_id: str) -> str:
-        """停止进程(杀掉整棵进程树)"""
+        """停止进程(杀掉整棵进程树)并清理注册记录。
+
+        语义约定:
+        - 进程仍在运行 → 终止并清理, 返回「进程已停止」
+        - 进程已自然退出但仍在注册表 → 报退出码并清理, 返回「进程已退出」
+        - 真不存在 → 「未找到进程 ID: xxx」
+        - 重复 stop: 记录清理后只剩「未找到」, 不会出现
+          "先报已停止/已退出、再报不存在" 的成功→失败翻转
+        """
         async with self._manager_lock:
             monitor = self._monitors.get(monitor_id)
             if not monitor:
-                return f"{TOOL_ERROR}: 进程 '{monitor_id}' 不存在"
+                return f"{TOOL_ERROR}: 未找到进程 ID: {monitor_id}"
+
+            # 先判断是否已结束(含自然退出/超时/异常), 再统一清理
+            already_exited = monitor.has_exited()
+            if already_exited and monitor.exit_code is None:
+                # 补捕退出码: 进程已死但读线程可能还没写入
+                if monitor.pty is not None:
+                    code = monitor.pty.exit_code()
+                    if code is not None:
+                        monitor.exit_code = code
+                elif monitor.process is not None and monitor.process.returncode is not None:
+                    monitor.exit_code = monitor.process.returncode
+            exit_summary = monitor.exit_summary()
 
             monitor.status = MonitorStatus.STOPPED
             process = monitor.process
@@ -761,12 +813,16 @@ class MonitorManager:
                     await self._kill_process_tree(viewer_process)
             asyncio.create_task(self._cleanup_visible_files(visible_files))
 
-        # 终止主进程: ConPTY 会话或管道进程树
+        # 终止主进程: ConPTY 会话或管道进程树(已退出则跳过)
         if monitor.pty is not None:
-            monitor.pty.terminate()
+            if not already_exited:
+                monitor.pty.terminate()
         elif process and process.returncode is None:
             await self._kill_process_tree(process)
 
+        if already_exited:
+            # 自然退出记录: 说清退出码 + 清理动作, 不伪装成"刚停掉"
+            return f"进程已退出({exit_summary}),记录已清理: {monitor_id}"
         return f"进程已停止: {monitor_id}"
 
     @staticmethod
@@ -796,16 +852,16 @@ class MonitorManager:
                 logger.warning("直接 kill 进程失败: %s", e2)
 
     async def clear_monitors(self) -> str:
-        """批量清理所有已结束的监控条目(保留 running)。
+        """批量清理所有已结束的监控条目(保留仍在运行的进程)。
 
-        用于历史进程累积时手动清理: 自然退出/超时/异常/匹配态等
-        非运行条目会从 _monitors 移除, 释放列表空间。
+        判定以"进程已退出"为准 —— MATCHED 是准瞬态(匹配后进程往往
+        还在跑),只看状态 != RUNNING 会把活着的进程清成孤儿。
         """
         async with self._manager_lock:
             removed = [
                 mid
                 for mid, m in self._monitors.items()
-                if m.status != MonitorStatus.RUNNING
+                if m.status != MonitorStatus.RUNNING and m.has_exited()
             ]
             for mid in removed:
                 self._monitors.pop(mid, None)
@@ -836,19 +892,41 @@ class MonitorManager:
         return "\n".join(lines)
 
     async def get_output(self, monitor_id: str, lines: int = 50) -> str:
-        """获取进程输出"""
+        """获取进程输出; 进程已结束时在末尾标注退出码与是否正常结束。"""
+
         async with self._manager_lock:
             monitor = self._monitors.get(monitor_id)
             if not monitor:
                 return f"{TOOL_ERROR}: 进程 '{monitor_id}' 不存在"
 
+            exit_footer = self._exit_footer(monitor)
+
             if not monitor.output_lines:
-                return f"进程 {monitor_id} 暂无输出。"
+                return f"进程 {monitor_id} 暂无输出。{exit_footer}"
 
             n = max(lines, 0)
             output = list(monitor.output_lines)[-n:] if n > 0 else []
             header = f"[{monitor.id}] {monitor.description or monitor.command[:50]}"
-            return f"{header}\n" + "\n".join(output)
+            overflow = self._overflow_note(monitor)
+            return f"{header}\n{overflow}" + "\n".join(output) + exit_footer
+
+    @staticmethod
+    def _overflow_note(monitor: Monitor) -> str:
+        """缓冲曾溢出时的提示 —— 动态附加,不占用环形缓冲本身。"""
+        if not monitor.buffer_full_warned:
+            return ""
+        return (
+            f"⚠️ 输出缓冲区已满(1000行环形), 最旧的输出已被丢弃, "
+            f"以下仅是尾部内容\n"
+        )
+
+    @staticmethod
+    def _exit_footer(monitor: Monitor) -> str:
+        """monitor_output 尾部的退出码标注; 仍在运行则不追加。"""
+        if not monitor.has_exited():
+            return ""
+        summary = monitor.exit_summary()
+        return f"\n[进程结束: {summary}]"
 
     async def get_screen(self, monitor_id: str) -> str:
         """获取控制台当前屏幕的全部内容(整屏快照)
@@ -882,11 +960,29 @@ class MonitorManager:
         return f"{header} 当前屏幕:\n{body}"
 
     @staticmethod
+    def _winpty_available() -> bool:
+        """ConPTY 依赖是否可用: Windows + pywinpty(导入名 winpty)。
+
+        注意: PyPI 包名是 pywinpty, 但导入模块名是 ``winpty``。
+        """
+        if os.name != "nt":
+            return False
+        try:
+            import winpty  # noqa: F401
+        except ImportError:
+            return False
+        return True
+
+    @staticmethod
     def _explain_no_console(monitor: Monitor) -> str:
-        """解释为何没有真实控制台(ConPTY), 给出可操作的根因。"""
+        """解释为何没有真实控制台(ConPTY), 给出可操作的根因。
+
+        按优先级区分 4 种真因; monitor_start 降级提示与 monitor_screen
+        回退说明共用本函数, 避免两处口径漂移。
+        """
         if not monitor.visible:
             return "非可视模式,无真实控制台"
-        # visible=True 但未走 ConPTY 的可能原因
+        # visible=True 但未走 ConPTY 的可能原因(按优先级)
         if os.name != "nt":
             return "当前平台非 Windows,不支持 ConPTY 伪控制台"
         if not MonitorManager._SHELL_CMD_RE.match(monitor.command):
@@ -894,9 +990,12 @@ class MonitorManager:
                 "命令非 shell 类(cmd/bash/powershell 等),"
                 "未启用 ConPTY 伪控制台"
             )
-        # shell 命令 + Windows + visible=True 理论上应走 ConPTY,
-        # 落到此处说明 pywinpty 缺失时回退了管道模式(或 ConPTY 启动失败)
-        return "ConPTY 伪控制台不可用(可能缺少 pywinpty,可 pip install pywinpty)"
+        if not MonitorManager._winpty_available():
+            return (
+                "ConPTY 伪控制台不可用(缺少 pywinpty,可 pip install pywinpty)"
+            )
+        # shell + Windows + pywinpty 齐备仍走管道: ConPTY 启动失败后回退
+        return "ConPTY 会话启动失败,已回退为管道模式"
 
     async def send_input(self, monitor_id: str, input_text: str) -> str:
         """向进程发送输入"""

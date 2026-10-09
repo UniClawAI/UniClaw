@@ -413,19 +413,43 @@ async def subagent_discuss(topic: str, participants: list[str], rounds: int = 2)
     """
     from uniclaw.agent import MultiAgent, AgentStatus
 
+    # 参数校验: 空/单参与者、rounds 越界都不应静默执行
+    if not participants:
+        return (
+            f"{TOOL_ERROR}: participants 不能为空;"
+            f"至少需要 2 个子代理任务 ID(可用 {subagent_list_tasks.name} 查看)"
+        )
+    if len(participants) < 2:
+        return (
+            f"{TOOL_ERROR}: 讨论至少需要 2 个参与者(收到 {len(participants)} 个);"
+            f"单个参与者没有讨论对象,如需让单个子代理思考请用 {subagent_send_to_child.name}"
+        )
+    try:
+        rounds = int(rounds)
+    except (TypeError, ValueError):
+        return f"{TOOL_ERROR}: rounds 必须是 1-5 之间的整数(收到: {rounds!r})"
+    if not (1 <= rounds <= 5):
+        return f"{TOOL_ERROR}: rounds 必须在 1-5 之间(收到: {rounds});0 不会执行任何讨论轮次"
+
     mgr = MultiAgent.get_instance()
     tasks = []
-    # 验证所有参与者是否存在且状态可用
+    # 验证所有参与者是否存在且状态可用(COMPLETED 且 keep_alive 驻留的
+    # 子代理仍可收消息继续讨论 —— 与 subagent_send_to_child 的口径一致)
     for task_id in participants:
         task = mgr.id2AgentTask.get(task_id)
         if task is None:
-            return f"{TOOL_ERROR}: child agent '{task_id}' was not found."
-        if task.status not in (AgentStatus.RUNNING, AgentStatus.PENDING):
+            return (
+                f"{TOOL_ERROR}: child agent '{task_id}' was not found. "
+                f"participants 需要子代理的**任务 ID**(不是名称)"
+                f"(可用 {subagent_list_tasks.name} 查看 ID)"
+            )
+        if task.status not in (
+            AgentStatus.RUNNING,
+            AgentStatus.PENDING,
+            AgentStatus.COMPLETED,
+        ):
             return f"{TOOL_ERROR}: child agent '{task_id}' is not available (status: {task.status})."
         tasks.append(task)
-
-    # 限制讨论轮数在1-5之间
-    rounds = max(1, min(int(rounds), 5))
     transcript = [f"Topic: {topic}"]
 
     # 执行多轮讨论
