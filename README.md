@@ -15,7 +15,7 @@
 - 🩺 **错误分类重试**: 内置错误分类器将 LLM 调用错误分为六类(RATE_LIMIT/CONTEXT_OVERFLOW/AUTH/SERVER_ERROR/TIMEOUT/UNKNOWN),按分类采用差异化重试与退避策略(CONTEXT_OVERFLOW 先压缩会话再重试,指数/线性退避),LLM 请求默认 180 秒超时且可按调用覆盖
 - 🎓 **顾问模型**: 配置 `large_model_name` 作为顾问模型,遇到难题时可同时咨询多个更强力模型获取第二意见
 - 🔍 **工具注册表**: BM25 智能工具搜索,核心工具常驻加载 + 扩展工具按需发现(search_tools 元工具),LRU + 能量机制(每工具 30 点能量,每轮-1,调用/搜索恢复满,归零淘汰)自动管理已加载工具,优化 prompt 缓存
-- 📡 **工具可用性跟踪**: 环境检测自动记录不可用工具及原因(如 Docker 未安装、未配置 embedding_model),search_tools 搜索时自动提示不可用原因,避免无用调用
+- 📡 **工具可用性跟踪**: 环境检测自动记录不可用工具及原因(如 Docker 未安装、未配置 embedding_model),search_tools 搜索时自动提示不可用原因,避免无用调用;直接调用未启用工具时返回"未启用 + 原因",而非误导性的"工具不存在"
 - 🌐 **WebUI 界面**: 基于 WebSocket 的 Web 用户界面,支持浏览器中与 AI 对话,可局域网共享,支持移动端响应式设计和触摸手势,支持 HTTPS 和 IPv6
 - ⚡ **工具流式输出**: 工具执行过程中实时推送输出到前端,无需等待完成即可看到进度
 - 🔐 **可信 IP 免登录**: 配置 `trusted_ips` 后,指定 IP 地址的客户端可跳过 WebUI 登录认证,适合家庭/办公网络环境
@@ -32,7 +32,7 @@
 - ⏰ **定时任务**: 支持创建和管理周期性或一次性定时任务,支持会话关联和 monitor 监控类型(命令退出码触发 agent)
 - 🔄 **后台进程**: 启动和管理后台进程(异步实现),支持输入/输出流控制
 - 🎯 **Jev 结构化决策**: 集成 TypeSafe SDK 提供快速、低成本的 AI 结构化决策能力(select_one/select_many/yes_no/rate),应用于记忆语义搜索、安全快速筛选、RAG 文档重排序、技能智能推荐等场景,Jev 不可用时自动回退到 LLM
-- 🛡️ **死循环检测**: 自动检测 AI 连续相同工具调用,智能打破循环并引导换策略
+- 🛡️ **死循环检测**: 自动检测 AI 连续相同工具调用(结合结果指纹比对,区分"原地打转"与"每步都有进展",避免误判),智能打破循环并引导换策略
 - 💾 **自动保存**: 会话在对话结束时自动持久化;记忆系统定期回顾会话并提取值得长期保存的信息
 - 🪝 **Hook 系统**: 事件驱动的 Shell 命令钩子,支持会话和工具调用生命周期事件
 - 🔔 **系统通知**: 支持 Windows/macOS/Linux 桌面通知,任务完成时自动提醒
@@ -965,16 +965,20 @@ UniClaw 提供了丰富的内置工具,AI 助手可以自动调用这些工具�
 #### 文件系统工具
 
 - **Read** - 读取文件内容(支持指定行范围和偏移量)
+  - `offset` 超出文件范围时明确报错并给出总行数(不伪装成空文件),`limit` 超过剩余行数时注明已达文件末尾
 - **Write** - 写入或创建文件(自动创建父目录,返回差异报告)
 - **Edit** - 精确替换文件中的字符串(支持统一差异格式)
 - **Glob** - 根据通配符模式搜索文件(如 `*.py`, `**/*.txt`)
+  - 单次最多返回 500 条结果,超出时截断并标注总匹配数(不静默丢弃)
 - **ConvertToMarkdown** - 将文档转换为 Markdown 格式并保存为 .md 文件(支持 PDF、DOCX、PPTX、XLSX 等,基于 markitdown)
 
 #### Shell 工具
 
-- **Bash** - 执行 Shell 命令(支持超时控制和上限校验,跨平台兼容,支持流式输出)
+- **Bash** - 执行 Shell 命令(支持超时控制和输出上限,跨平台兼容,支持流式输出)
   - 超时后进程自动转入后台监控系统(返回监控 ID,用 monitor_output 查看后续输出)
   - 执行过程中实时推送输出到前端(WebUI),无需等待命令完成即可看到进度
+  - 输出上限 50000 行 / 10MB: 超出时终止进程树并明确标注截断原因,避免刷屏冲垮上下文
+  - Windows heredoc 兼容: 命令含 heredoc(`<<` / `<<-`)时自动改写为 bash 执行临时脚本,避免拖入 cmd.exe 交互式 REPL
 - **Grep** - 在文件中搜索文本模式,支持正则表达式
   - 执行链: ripgrep → grep(非 Windows)→ 纯 Python 回退实现,保证全平台可用
   - 支持 `output_mode`(content/files_with_matches/count)、`case_insensitive`、`context` 上下文行数
@@ -1114,6 +1118,7 @@ HTTP/HTTPS 文件下载引擎,支持多协程并发、断点续传、代理、�
   - **自动重试**: 失败自动重试(默认 3 次),支持指数退避
   - **文件校验**: 支持 MD5/SHA256 校验,确保文件完整性
   - **Cookie 支持**: 支持需要登录的下载场景
+  - **自定义请求头**: `headers` 参数支持防盗链场景(如 Referer/User-Agent)
   - **同步模式**: 流式显示进度,下载完成返回结果
   - **异步模式**: 立即返回任务 ID,后台执行,完成/失败时自动唤醒 AI
   - **智能取消**: 同步下载时用户取消自动转为后台继续下载
@@ -1128,13 +1133,14 @@ HTTP/HTTPS 文件下载引擎,支持多协程并发、断点续传、代理、�
 M3U8/HLS 流媒体下载引擎,与 HTTP 下载管理器分离,独立管理异步任务：
 
 - **m3u8_download** - 下载 M3U8/HLS 视频流
-  - **多分辨率选择**: 播放列表为主播放列表(含多个 `#EXT-X-STREAM-INF`)时自动列出可用分辨率,通过 `variant` 参数指定清晰度(序号或分辨率);媒体播放列表(直接含 TS 分片)无需 variant 直接下载
+  - **多分辨率选择**: 播放列表为主播放列表(含多个 `#EXT-X-STREAM-INF`)时自动列出可用分辨率(按码率降序,含音轨/字幕清单),通过 `variant` 参数指定清晰度(序号或分辨率);媒体播放列表(直接含 TS 分片)无需 variant 直接下载
   - **多协程并发**: 默认 8 个协程并发下载分片,大幅提速
-  - **AES-128 解密**: 自动解析并解密加密分片
-  - **断点续传**: 已下载分片自动跳过,中断后可继续
+  - **AES-128 解密**: 自动解析并解密加密分片,兼容 fMP4/CMAF 流的 `#EXT-X-MAP` 初始化段(`init_iv` 参数可指定 IV 约定)
+  - **fMP4/CMAF 支持**: 自动处理 `#EXT-X-MAP` 初始化段与 `#EXT-X-BYTERANGE` 字节区间分片,支持 `#EXT-X-MEDIA` 替代音轨/字幕
+  - **断点续传**: 已下载分片自动跳过,中断后可继续;取消时自动清理中间分片工作目录,保留最终交付物
   - **自定义请求头**: 支持代理、Cookie 等登录场景
   - **异步模式**: `async_mode=True` 时后台下载并立即返回任务 ID
-  - **自动合并**: 下载完成后自动合并为单个 TS 文件
+  - **自动合并**: 下载完成后自动合并为单个 TS 文件(含初始化段)
 - **m3u8_download_status** - 查看或管理 m3u8 异步下载任务(暂停/恢复/取消,或列出所有任务)
 - **m3u8_download_remove** - 删除已完成的 M3U8 下载任务,释放内存
 
@@ -1196,7 +1202,7 @@ http_download(
 - **browser_get_html** - 获取页面 HTML
 - **browser_get_attribute** - 获取元素属性值
 - **browser_get_value** - 获取输入框的值
-- **browser_get_elements** - 获取匹配选择器的所有元素
+- **browser_get_elements** - 获取匹配选择器的所有元素(支持 `limit`/`offset` 分页,默认返回前 50 个并标注总数)
 - **browser_get_count** - 获取匹配元素的数量
 - **browser_get_box** - 获取元素的位置和尺寸
 - **browser_get_styles** - 获取元素的计算样式
@@ -1215,7 +1221,7 @@ http_download(
 - **browser_list_pages** - 列出所有标签页
 
 **外部浏览器连接：**
-- **connect_over_cdp** - 通过 CDP (Chrome DevTools Protocol) 连接到已运行的外部浏览器(默认端点 `http://localhost:9222`),无需启动新的浏览器实例,可复用已登录的浏览器会话
+- **browser_connect** - 通过 CDP (Chrome DevTools Protocol) 连接到已运行的外部浏览器(默认端点 `http://localhost:9222`),无需启动新的浏览器实例,可复用已登录的浏览器会话
 
 #### 记忆系统工具 🧠
 
@@ -1679,7 +1685,7 @@ UniClaw/
 │
 └── src/uniclaw/            # 📦 包根目录
     ├── main.py             # 程序入口(argparse --mode → launcher,run_mode 枚举)
-    ├── agent/              # 核心代理(全异步消息循环、工具调用、事件流、死循环检测、asyncio.Queue)
+    ├── agent/              # 核心代理(全异步消息循环、工具调用、事件流、死循环检测含结果指纹比对、asyncio.Queue)
     │   ├── __init__.py     # 向后兼容的 re-export(MultiAgent, AgentTask, 事件类)
     │   ├── multi_agent.py  # MultiAgent 单例,事件循环,子代理管理,权限检查
     │   └── types.py        # AgentStatus, AgentTask, 事件类定义
@@ -1888,12 +1894,12 @@ UniClaw/
   - 计划: `enter/exit_plan_mode`
   - 技能: `skill_suggest/read`
   - 元工具: `search_tools`（按需发现和加载扩展工具）
-- **扩展工具** (170+ 个): 初始不加载,通过 `search_tools` 元工具按需发现
+- **扩展工具** (185 个): 初始不加载,通过 `search_tools` 元工具按需发现
   - 基于 BM25 算法搜索,支持中英文关键词 + 语义同义词
   - **LRU + 能量机制**: 每个扩展工具初始 30 点能量,每轮对话 -1,被调用或搜索命中恢复满能量,归零自动卸载;最多同时加载 25 个扩展工具,超出时按 LRU 顺序淘汰能量最低者
   - 搜索结果自动注入到当前任务的可用工具集
   - 按类别组织: 系统管理、计算机操作、多智能体、任务清单、进程监控、会话管理、定时任务、MCP 管理、安全管理、Hook 管理、Docker、浏览器、知识图谱、顾问、下载、RAG、IPython、LSP、微信、文件、帮助、通知等
-  - **可用性跟踪**: 各模块 `get_tools()` 检测依赖(Docker/Everything/embedding_model 等),不可用的工具记录到 `config.unavailable_tool_reasons` 并附带原因;`search_tools` 搜索到不可用工具时自动提示"当前不可用(未启用或无权限)"及原因,避免 AI 做无效调用。Jev 相关功能检测 `TYPESAFE_API_KEY` 环境变量
+  - **可用性跟踪**: 各模块 `get_tools()` 检测依赖(Docker/Everything/embedding_model 等),不可用的工具记录到 `config.unavailable_tool_reasons` 并附带原因;`search_tools` 搜索到不可用工具时自动提示"当前不可用(未启用或无权限)"及原因,避免 AI 做无效调用。直接调用未启用工具时返回"未启用 + 原因",而工具名不在全量清单中才报"工具不存在",两者措辞区分避免误导调用方去改工具名。Jev 相关功能检测 `TYPESAFE_API_KEY` 环境变量
 
 **工作流程**: AI 需要使用非常用工具时 → 调用 `search_tools(query)` → BM25 匹配 → 工具自动加载(若超过上限则淘汰 LRU 端能量最低的工具) → 下一轮即可调用。已加载工具每轮能量-1,被调用/搜索命中恢复满,归零自动卸载。
 
@@ -3149,13 +3155,13 @@ Dockerfile 基于 `python:3.14-slim`,使用 `uv` 管理依赖,预装 Playwright 
 
 ### Q: 如何连接外部浏览器进行自动化操作？
 
-A: 使用 `connect_over_cdp` 工具通过 CDP (Chrome DevTools Protocol) 连接到已运行的浏览器：
+A: 使用 `browser_connect` 工具通过 CDP (Chrome DevTools Protocol) 连接到已运行的浏览器：
 
 1. 启动 Chrome/Chromium 时添加远程调试参数：
    ```bash
    chrome --remote-debugging-port=9222
    ```
-2. AI 调用 `connect_over_cdp(endpoint="http://localhost:9222")` 连接
+2. AI 调用 `browser_connect(cdp_url="http://localhost:9222")` 连接
 3. 连接后可复用已登录的浏览器会话,无需重新登录网站
 
 适用于需要操作已认证页面、复用浏览器状态的场景。
