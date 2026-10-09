@@ -285,6 +285,19 @@ class TestReadAudioVideo:
         assert blocks[1]["video_url"]["url"].startswith("data:video")
 
 
+class TestSmallFileSizeDisplay:
+    """小文件尺寸显示 —— 不四舍五入成 "0 KB"。"""
+
+    def test_tiny_image_block_shows_bytes(self, tmp_path):
+        """69B 级小图的展示块给出字节级大小。"""
+        p = tmp_path / "tiny.png"
+        p.write_bytes(b"\x89PNG" + b"x" * 65)
+        blocks = _read_media_impl(str(p))
+        text = blocks[0]["text"]
+        assert "65B" in text or "69B" in text, f"小文件须显示字节数: {text}"
+        assert "0 KB" not in text
+
+
 class TestReadMediaImpl:
     """_read_media_impl 测试。"""
 

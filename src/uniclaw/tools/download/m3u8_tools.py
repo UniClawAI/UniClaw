@@ -15,11 +15,11 @@ from uniclaw.tools.download.m3u8 import (
     M3u8Status,
 )
 from uniclaw.tools.download.manager import get_m3u8_download_manager
+from uniclaw.utils.format import format_size
 from uniclaw.utils.http_download import (
     DEFAULT_BLOCK_TIMEOUT,
     DEFAULT_MAX_RETRIES,
     DownloadChunkInfo,
-    file_format,
     parse_headers,
     time_format,
 )
@@ -168,8 +168,8 @@ async def m3u8_download(
         percent = info.downloaded / info.total * 100 if info.total > 0 else 0.0
         msg = (
             f"\rM3U8 下载进度: {seg_info} | "
-            f"{file_format(info.downloaded)}/{file_format(info.total)} ({percent:.1f}%) "
-            f"速度: {file_format(info.speed)}/s "
+            f"{format_size(info.downloaded)}/{format_size(info.total)} ({percent:.1f}%) "
+            f"速度: {format_size(info.speed)}/s "
             f"剩余: {eta}"
         )
         await tool_runtime.stream(msg)

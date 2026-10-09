@@ -13,7 +13,8 @@ import asyncio
 from uniclaw.config import AppConfig
 from uniclaw.tools.download.m3u8 import M3u8Downloader
 from uniclaw.utils.downloader import BaseDownloader
-from uniclaw.utils.http_download import HttpDownloader, file_format
+from uniclaw.utils.format import format_size
+from uniclaw.utils.http_download import HttpDownloader
 
 
 class DownloadManager:
@@ -157,7 +158,7 @@ class HttpDownloadManager(DownloadManager):
                 message = (
                     f"{SYSTEM_PREFIX}(download_complete)\n"
                     f"下载完成: {progress.save_path}\n"
-                    f"大小: {file_format(progress.total_size)}, "
+                    f"大小: {format_size(progress.total_size)}, "
                     f"耗时: {progress.elapsed:.1f}s\n"
                     f"可使用 {http_download_status.name}(task_id='{task_id}') 查看详情"
                 )
@@ -165,7 +166,7 @@ class HttpDownloadManager(DownloadManager):
                 message = (
                     f"{SYSTEM_PREFIX}(download_cancelled)\n"
                     f"下载已取消: {progress.save_path}\n"
-                    f"进度: {file_format(progress.downloaded_size)}/{file_format(progress.total_size)} "
+                    f"进度: {format_size(progress.downloaded_size)}/{format_size(progress.total_size)} "
                     f"({progress.progress_percent:.1f}%)\n"
                     f"可使用 {http_download.name}(url='{progress.url}') 重新下载以继续,或使用 {http_download_remove.name}(task_id='{task_id}') 删除任务"
                 )
@@ -221,7 +222,7 @@ class M3u8DownloadManager(DownloadManager):
                 message = (
                     f"{SYSTEM_PREFIX}(download_complete)\n"
                     f"M3U8 下载完成: {progress.merged_file or progress.save_path}\n"
-                    f"大小: {file_format(progress.total_size)}, "
+                    f"大小: {format_size(progress.total_size)}, "
                     f"耗时: {progress.elapsed:.1f}s\n"
                     f"可使用 {m3u8_download_status.name}(task_id='{task_id}') 查看详情"
                 )

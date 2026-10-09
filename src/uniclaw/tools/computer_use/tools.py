@@ -12,6 +12,7 @@ import mss
 from mss.exception import ScreenShotError
 from uniclaw.tools.base import tool
 from uniclaw.utils.constants import SYSTEM_PREFIX, TOOL_ERROR
+from uniclaw.utils.format import format_size
 from PIL import Image, ImageDraw
 
 # pyautogui 延迟导入:避免无 X11 显示器时模块加载崩溃
@@ -274,13 +275,13 @@ def _screenshot_impl(
         # 转换为 base64
         buffer = io.BytesIO()
         img.save(buffer, format="PNG")
-        size_kb = buffer.getbuffer().nbytes / 1024
+        size_str = format_size(buffer.getbuffer().nbytes)
         img_base64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
 
         return [
             {
                 "type": "text",
-                "text": f"{SYSTEM_PREFIX}[屏幕截图: {screenshot.width}x{screenshot.height}, {size_kb:.0f} KB | 鼠标位置: ({cursor_x}, {cursor_y})]",
+                "text": f"{SYSTEM_PREFIX}[屏幕截图: {screenshot.width}x{screenshot.height}, {size_str} | 鼠标位置: ({cursor_x}, {cursor_y})]",
             },
             {
                 "type": "image_url",

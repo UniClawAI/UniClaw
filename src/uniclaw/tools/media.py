@@ -14,6 +14,7 @@ import httpx
 logger = logging.getLogger(__name__)
 
 from uniclaw.utils.constants import SYSTEM_PREFIX, TOOL_ERROR
+from uniclaw.utils.format import format_size
 from uniclaw.tools.base import tool, ToolRuntime
 
 IMAGE_EXTENSIONS = {
@@ -148,9 +149,9 @@ def _check_ffmpeg() -> bool:
 
 
 def _read_image(p: Path, suffix: str) -> list:
-    size_kb = p.stat().st_size / 1024
+    size_str = format_size(p.stat().st_size)
     blocks = [
-        {"type": "text", "text": f"{SYSTEM_PREFIX}[图片: {p.name}, {size_kb:.0f} KB]"}
+        {"type": "text", "text": f"{SYSTEM_PREFIX}[图片: {p.name}, {size_str}]"}
     ]
     if suffix == ".svg":
         text = p.read_text(encoding="utf-8")
@@ -264,14 +265,14 @@ def _read_url(url: str, fps: int = 2) -> list | str:
 
 
 def _read_audio(p: Path) -> list:
-    size_kb = p.stat().st_size / 1024
+    size_str = format_size(p.stat().st_size)
     # info = _get_media_info(p) if _check_ffmpeg() else {}
     # info_str = ", ".join(f"{k}: {v}" for k, v in info.items())
     # detail = f", {info_str}" if info_str else ""
     mime_type = mimetypes.guess_type(str(p))[0] or "audio/mpeg"
     data_uri = _make_data_uri(p, mime_type)
     return [
-        {"type": "text", "text": f"{SYSTEM_PREFIX}[音频: {p.name}, {size_kb:.0f} KB]"},
+        {"type": "text", "text": f"{SYSTEM_PREFIX}[音频: {p.name}, {size_str}]"},
         {
             "type": "input_audio",
             "input_audio": {"data": data_uri},
@@ -280,14 +281,14 @@ def _read_audio(p: Path) -> list:
 
 
 def _read_video(p: Path, fps: int = 2) -> list:
-    size_kb = p.stat().st_size / 1024
+    size_str = format_size(p.stat().st_size)
     # info = _get_media_info(p) if _check_ffmpeg() else {}
     # info_str = ", ".join(f"{k}: {v}" for k, v in info.items())
     # detail = f", {info_str}" if info_str else ""
     mime_type = mimetypes.guess_type(str(p))[0] or "video/mp4"
     data_uri = _make_data_uri(p, mime_type)
     return [
-        {"type": "text", "text": f"{SYSTEM_PREFIX}[视频: {p.name}, {size_kb:.0f} KB]"},
+        {"type": "text", "text": f"{SYSTEM_PREFIX}[视频: {p.name}, {size_str}]"},
         {
             "type": "video_url",
             "video_url": {"url": data_uri},

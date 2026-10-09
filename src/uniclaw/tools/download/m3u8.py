@@ -25,12 +25,12 @@ import httpx
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 from uniclaw.utils.downloader import BaseDownloader
+from uniclaw.utils.format import format_size
 from uniclaw.utils.http_download import (
     DEFAULT_BLOCK_TIMEOUT,
     DEFAULT_MAX_RETRIES,
     DEFAULT_TIMEOUT,
     DownloadChunkInfo,
-    file_format,
     time_format,
     _parse_cookies,
 )
@@ -197,7 +197,7 @@ class M3u8Progress:
             if self.resolution:
                 lines.append(f"分辨率: {self.resolution}")
             lines.append(
-                f"大小: {file_format(self.total_size)}, 耗时: {time_format(self.elapsed)}"
+                f"大小: {format_size(self.total_size)}, 耗时: {time_format(self.elapsed)}"
             )
             if self.init_iv_note:
                 lines.append(self.init_iv_note)
@@ -239,7 +239,7 @@ class M3u8Progress:
             lines.append(f"加密: {self.encryption_method}")
         if self.speed > 0:
             lines.append(
-                f"速度: {file_format(self.speed)}/s, 剩余: {time_format(self.eta)}"
+                f"速度: {format_size(self.speed)}/s, 剩余: {time_format(self.eta)}"
             )
         lines.append("状态: 下载中")
         return "\n".join(lines)

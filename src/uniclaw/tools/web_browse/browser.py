@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 from uniclaw.tools.base import ToolUserError
 from uniclaw.utils.constants import SYSTEM_PREFIX, TOOL_ERROR
+from uniclaw.utils.format import format_size
 
 # Playwright 异常类。
 # 不从 playwright.async_api 导入 — 那会连带加载 greenlet DLL(见 _get_async_playwright 注释)。
@@ -806,7 +807,7 @@ class WebBrowser:
                 }
             ]
 
-        size_kb = len(screenshot_bytes) / 1024
+        size_str = format_size(len(screenshot_bytes))
 
         if save_path:
             save_file = Path(save_path)
@@ -847,14 +848,14 @@ class WebBrowser:
                         "text": f"{TOOL_ERROR}: 写入截图文件失败 (save_path={save_path}): {e}",
                     }
                 ]
-            return f"截图已保存: {save_file.resolve()} ({size_kb:.0f} KB)"
+            return f"截图已保存: {save_file.resolve()} ({size_str})"
 
         img_base64 = base64.b64encode(screenshot_bytes).decode("utf-8")
 
         return [
             {
                 "type": "text",
-                "text": f"{SYSTEM_PREFIX}[浏览器截图: {size_kb:.0f} KB]",
+                "text": f"{SYSTEM_PREFIX}[浏览器截图: {size_str}]",
             },
             {
                 "type": "image_url",

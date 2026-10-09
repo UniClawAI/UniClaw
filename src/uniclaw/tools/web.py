@@ -6,6 +6,7 @@ import httpx
 from uniclaw.tools.base import tool
 from uniclaw.tools.search.base import DEFAULT_UA
 from uniclaw.utils.constants import TOOL_ERROR
+from uniclaw.utils.format import format_size
 from uniclaw.utils.http_download import format_network_error
 from uniclaw.tools.fs import _decode_markup
 
@@ -153,11 +154,10 @@ async def webFetch(url: str, proxy: str | None = None, raw: bool = False) -> str
 
     # 二进制/非文本内容不内联倾倒 —— 乱码字节只会污染上下文
     if not _is_text_content(mime, body_bytes):
-        size_kb = len(body_bytes) / 1024
         from uniclaw.tools.download.http_tools import http_download
         return (
             f"{TOOL_ERROR}: {url} 返回的是二进制内容"
-            f"(content-type: {mime or 'unknown'}, {size_kb:.0f} KB),无法作为文本展示。"
+            f"(content-type: {mime or 'unknown'}, {format_size(len(body_bytes))}),无法作为文本展示。"
             f"请用 {http_download.name}(url='{url}') 下载后处理"
         )
 

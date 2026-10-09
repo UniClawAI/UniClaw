@@ -1036,3 +1036,12 @@ class TestIpythonVarsTruncationLabel:
 
         src = Path(kernel.__file__).read_text(encoding="utf-8")
         assert "截断, 共 " in src
+
+    def test_kernel_code_labels_item_count(self):
+        """清单截断标注同时给出项数与 repr 字符数,与 inspect 的长度摘要同口径。"""
+        from pathlib import Path
+
+        from uniclaw.tools.ipython import kernel
+
+        src = Path(kernel.__file__).read_text(encoding="utf-8")
+        assert "项, repr " in src

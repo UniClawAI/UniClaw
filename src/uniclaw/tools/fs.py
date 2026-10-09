@@ -617,9 +617,9 @@ def _pptx_table_to_markdown(table) -> str:
     Returns:
         str: Markdown 表格文本。
     """
-    rows_md: list[str] = []
+    parsed_rows: list[list[str]] = []
     merge_notes: list[tuple[str, int]] = []
-    for r, row in enumerate(table.rows):
+    for row in table.rows:
         cells: list[str] = []
         # 合并单元格: is_spanned 标记被合并覆盖的重复位置(留空占位),
         # 跨列数取合并源格的 span_width,语义在表后注明
@@ -635,12 +635,25 @@ def _pptx_table_to_markdown(table) -> str:
             if span > 1:
                 merge_notes.append((text, span))
             cells.append(text)
+        parsed_rows.append(cells)
+
+    # 列数取"最宽行"与 tblGrid 声明的较大者,谁都不能让分隔行塌缩:
+    # - 部分工具(WPS 等)导出的表格 tblGrid 少声明列,行内单元格数才是真实宽度
+    # - 表头合并行的单元格数会少于列数,统一按最宽行补齐
+    grid_cols = len(table.columns) if hasattr(table, "columns") else 0
+    ncols = max([grid_cols, *(len(r) for r in parsed_rows)], default=1)
+
+    rows_md: list[str] = []
+    for i, cells in enumerate(parsed_rows):
+        cells = cells + ["" for _ in range(ncols - len(cells))]
         rows_md.append("| " + " | ".join(cells) + " |")
-        if r == 0:
-            # 分隔行列数以真实列数为准 —— 表头行有合并单元格时
-            # len(cells) 会少于列数, GFM 渲染错乱
-            ncols = len(table.columns) if hasattr(table, "columns") else len(cells)
-            rows_md.append("| " + " | ".join(["---"] * ncols) + " |")
+        if i == 0:
+            # 分隔行用 listcomp 构建,不用"列表/元组字面量 × 变量"的写法 ——
+            # Cython 3.2.4 会把这类乘法包进字符串拼接链后错误折叠成单元素:
+            # 源码运行 3 列正确,编译产物塌缩成单列分隔行。listcomp 实测编译安全。
+            rows_md.append(
+                "| " + " | ".join(["---" for _ in range(ncols)]) + " |"
+            )
     if merge_notes:
         rows_md.append("")
         for text, span in merge_notes:
@@ -1082,11 +1095,6 @@ def _convert_document(p: Path, config=None) -> str:
 # 支持的文档格式清单 — docstring 与报错文案共用,避免两处不一致
 # (docstring 是 LLM 的 schema,漏列格式会让 LLM 误判"不支持";
 #  改动格式时先改这里,docstring 由测试校验与本清单一致)
-# 构建水位标记: 用于区分"源码已修"与"发布构建含修复"。
-# 旧构建/旧编译产物 import 此常量会 ImportError —— 正是"同实例新旧特征
-# 并存"争议的判别命令:
-#   python -c "from uniclaw.tools.fs import FS_CONV_BUILD_TAG; print(FS_CONV_BUILD_TAG)"
-FS_CONV_BUILD_TAG = "2026-10-09-r36-table-sep-per-column"
 
 # 转换目标是"文本模型读不了的二进制/富文本文档" —— JSON/CSV/XML/HTML 等
 # 文本文件没有转换价值,直接 Read 读取即可
@@ -1243,7 +1251,7 @@ async def ConvertToMarkdown(file_path: str, output_path: str = "", tool_runtime:
                 heading_info += f"\n二级标题({len(h2_headings)}个): {', '.join(items)}"
 
             summary = (
-                f"已将 {p.name} 转换为 Markdown 格式(耗时 {elapsed:.1f}s, build {FS_CONV_BUILD_TAG})\n"
+                f"已将 {p.name} 转换为 Markdown 格式(耗时 {elapsed:.1f}s)\n"
                 f"输出文件: {out}\n"
                 f"统计: {lines} 行, {chars} 字符, {size_kb:.1f} KB"
                 f"{heading_info}"

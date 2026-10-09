@@ -684,7 +684,12 @@ for _k, _v in list(_ns.items()):
     try:
         _r = repr(_v)
         if len(_r) > 200:
-            _r = _r[:200] + '…(截断, 共 ' + str(len(_r)) + ' 字符)'
+            try:
+                _n = len(_v)
+                _note = '…(截断, 共 ' + str(_n) + ' 项, repr ' + str(len(_r)) + ' 字符)'
+            except Exception:
+                _note = '…(截断, 共 ' + str(len(_r)) + ' 字符)'
+            _r = _r[:200] + _note
     except:
         _r = '<无法显示>'
     _vars.append({

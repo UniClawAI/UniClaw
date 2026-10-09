@@ -14,6 +14,7 @@ from typing import Any, Callable, Awaitable
 import httpx
 
 from uniclaw.utils.downloader import BaseDownloader
+from uniclaw.utils.format import format_size
 
 logger = logging.getLogger(__name__)
 
@@ -23,15 +24,6 @@ DEFAULT_CHUNK_SIZE = 1024 * 1024  # 1MB
 DEFAULT_MAX_RETRIES = 3
 DEFAULT_TIMEOUT = 30
 DEFAULT_BLOCK_TIMEOUT = 10.0
-
-
-def file_format(size: float) -> str:
-    """将字节数转换为人类可读的文件大小。"""
-    for unit in ("B", "KB", "MB", "GB", "TB", "PB", "EB"):
-        if abs(size) < 1024.0:
-            return f"{size:.2f}{unit}"
-        size /= 1024.0
-    return f"{size:.2f}ZB"
 
 
 def time_format(seconds: float) -> str:
@@ -447,7 +439,7 @@ class DownloadProgress:
         if self.status == DownloadStatus.COMPLETED:
             lines = [
                 f"下载完成: {self.save_path}",
-                f"大小: {file_format(self.total_size)}, "
+                f"大小: {format_size(self.total_size)}, "
                 f"耗时: {time_format(self.elapsed)}",
             ]
             if self.skipped_note:
@@ -462,12 +454,12 @@ class DownloadProgress:
         # downloading / paused
         lines = [
             f"文件: {self.save_path}",
-            f"进度: {file_format(self.downloaded_size)}/{file_format(self.total_size)} "
+            f"进度: {format_size(self.downloaded_size)}/{format_size(self.total_size)} "
             f"({self.progress_percent:.1f}%)",
         ]
         if self.speed > 0:
             lines.append(
-                f"速度: {file_format(self.speed)}/s, 剩余: {time_format(self.eta)}"
+                f"速度: {format_size(self.speed)}/s, 剩余: {time_format(self.eta)}"
             )
         lines.append(
             f"状态: {'已暂停' if self.status == DownloadStatus.PAUSED else '下载中'}"
@@ -856,7 +848,7 @@ class HttpDownloader(BaseDownloader):
                     and not (self.checksum_algorithm and self.checksum_value)
                 ):
                     self.progress.skipped_note = (
-                        f"目标文件已存在且大小一致({file_format(total_size)}),"
+                        f"目标文件已存在且大小一致({format_size(total_size)}),"
                         f"跳过下载;如需强制重下请先删除该文件"
                     )
                     self.progress.finish(DownloadStatus.COMPLETED)

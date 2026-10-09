@@ -8,6 +8,27 @@ import re
 from uniclaw.utils.message import MessageRole, extract_text
 
 
+def format_size(size: float) -> str:
+    """将字节数转换为人类可读的文件大小。
+
+    B 级取整(小数位无意义,也让小文件不显示成 "0.00KB" 这类失真值),
+    KB 及以上保留两位小数。
+
+    Args:
+        size: 字节数(可为速度等小数)。
+
+    Returns:
+        str: 如 "69B"、"1.50KB"、"3.00MB"。
+    """
+    for unit in ("B", "KB", "MB", "GB", "TB", "PB", "EB"):
+        if abs(size) < 1024.0:
+            if unit == "B":
+                return f"{size:.0f}B"
+            return f"{size:.2f}{unit}"
+        size /= 1024.0
+    return f"{size:.2f}ZB"
+
+
 def parse_json_from_llm(text: str) -> dict | None:
     """从 LLM 返回的文本中解析 JSON。
 

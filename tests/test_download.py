@@ -21,12 +21,12 @@ from uniclaw.utils.http_download import (
     HttpDownloader,
     DownloadProgress,
     calculate_checksum,
-    file_format,
     parse_headers,
     time_format,
     _parse_cookies,
     _RangeNotSupported,
 )
+from uniclaw.utils.format import format_size
 
 
 def _sha256_hex(data: bytes) -> str:
@@ -34,39 +34,39 @@ def _sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-# ==================== file_format 测试 ====================
+# ==================== format_size 测试 ====================
 
 
-class TestFileFormat:
-    """file_format 函数测试。"""
+class TestFormatSize:
+    """format_size 函数测试(字节取整,KB 及以上两位小数)。"""
 
     def test_bytes(self):
-        assert file_format(0) == "0.00B"
-        assert file_format(512) == "512.00B"
-        assert file_format(1023) == "1023.00B"
+        assert format_size(0) == "0B"
+        assert format_size(512) == "512B"
+        assert format_size(1023) == "1023B"
 
     def test_kilobytes(self):
-        assert file_format(1024) == "1.00KB"
-        assert file_format(1536) == "1.50KB"
+        assert format_size(1024) == "1.00KB"
+        assert format_size(1536) == "1.50KB"
 
     def test_megabytes(self):
-        assert file_format(1024 * 1024) == "1.00MB"
-        assert file_format(1024 * 1024 * 5) == "5.00MB"
+        assert format_size(1024 * 1024) == "1.00MB"
+        assert format_size(1024 * 1024 * 5) == "5.00MB"
 
     def test_gigabytes(self):
-        assert file_format(1024**3) == "1.00GB"
+        assert format_size(1024**3) == "1.00GB"
 
     def test_terabytes(self):
-        assert file_format(1024**4) == "1.00TB"
+        assert format_size(1024**4) == "1.00TB"
 
     def test_petabytes(self):
-        assert file_format(1024**5) == "1.00PB"
+        assert format_size(1024**5) == "1.00PB"
 
     def test_exabytes(self):
-        assert file_format(1024**6) == "1.00EB"
+        assert format_size(1024**6) == "1.00EB"
 
     def test_zettabytes(self):
-        assert file_format(1024**7) == "1.00ZB"
+        assert format_size(1024**7) == "1.00ZB"
 
 
 # ==================== time_format 测试 ====================

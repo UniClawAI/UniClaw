@@ -836,6 +836,52 @@ class TestConvertTableAndHeadings:
         sep = [ln for ln in md.splitlines() if "---" in ln][0]
         assert sep.count("---") == 3, f"合并表头时分隔行须 3 列: {sep}"
 
+    def test_pptx_broken_tblgrid_separator_matches_rows(self, tmp_path):
+        """tblGrid 少声明列(WPS 等导出)时分隔行按行内真实单元格数。
+
+        分隔行不能信 tblGrid 声明 —— 声明 1 列而每行 3 格时,
+        信声明会让分隔行塌缩成单列(GFM 渲染错乱)。
+        """
+        from pptx import Presentation
+        from pptx.util import Inches
+
+        from uniclaw.tools.fs import _convert_document
+
+        prs = Presentation()
+        slide = prs.slides.add_slide(prs.slide_layouts[6])
+        shape = slide.shapes.add_table(3, 3, Inches(1), Inches(1), Inches(5), Inches(2))
+        tbl = shape.table
+        data = [["姓名", "年龄", "城市"], ["a", "1", "x"], ["b", "2", "y"]]
+        for r in range(3):
+            for c in range(3):
+                tbl.cell(r, c).text = data[r][c]
+        # 破坏 tblGrid: 只留 1 个 gridCol(行内单元格仍是 3 个)
+        grid = tbl._tbl.tblGrid
+        for grid_col in list(grid)[1:]:
+            grid.remove(grid_col)
+        p = tmp_path / "g.pptx"
+        prs.save(str(p))
+
+        md = _convert_document(p)
+        sep = [ln for ln in md.splitlines() if "---" in ln][0]
+        assert sep.count("---") == 3, f"tblGrid 异常时分隔行须按行内列数: {sep}"
+
+    def test_separator_avoids_list_multiply_construct(self):
+        """分隔行禁用 ["---"] * n 构造 —— Cython 3.2.4 折叠 bug 的防回归守卫。
+
+        该构造源码运行正确,但 Cython 编译后会把"列表/元组字面量×变量"
+        包进字符串拼接链错误折叠成单元素 —— 发布包分隔行塌缩成 1 列,
+        源码测试却全绿(第 37-40 轮连错 7 次的根因)。必须用 listcomp。
+        打包侧由 .package/check_dist.py 的编译产物行为冒烟兜底。
+        """
+        import inspect
+
+        from uniclaw.tools import fs
+
+        src = inspect.getsource(fs._pptx_table_to_markdown)
+        assert '["---"] *' not in src, "分隔行禁止列表字面量乘法,须用 listcomp"
+        assert "['---'] *" not in src
+
     def test_docx_chinese_heading_styles(self, tmp_path):
         """中文 Word 样式名(标题 1/2)也要转成 # 层级。"""
         from docx import Document

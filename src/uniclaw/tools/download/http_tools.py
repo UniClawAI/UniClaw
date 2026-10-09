@@ -17,6 +17,7 @@ from uniclaw.context import Scope, get_app_dir
 from uniclaw.tools.base import tool, ToolRuntime
 from uniclaw.tools.download.manager import get_http_download_manager
 from uniclaw.utils.constants import TOOL_ERROR
+from uniclaw.utils.format import format_size
 from uniclaw.utils.http_download import (
     DEFAULT_BLOCK_TIMEOUT,
     DEFAULT_CHUNK_SIZE,
@@ -25,7 +26,6 @@ from uniclaw.utils.http_download import (
     DownloadChunkInfo,
     HttpDownloader,
     DownloadStatus,
-    file_format,
     parse_headers,
     time_format,
 )
@@ -195,9 +195,9 @@ async def http_download(
         else:
             eta = "计算中..."
         msg = (
-            f"\r[{now}] 下载进度: {file_format(info.downloaded)}/{file_format(info.total)} "
+            f"\r[{now}] 下载进度: {format_size(info.downloaded)}/{format_size(info.total)} "
             f"({percent:.1f}%) "
-            f"速度: {file_format(info.speed)}/s "
+            f"速度: {format_size(info.speed)}/s "
             f"剩余: {eta}"
         )
         await tool_runtime.stream(msg)
