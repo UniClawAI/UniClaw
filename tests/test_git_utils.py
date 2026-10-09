@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from uniclaw.utils import git as git_mod
+from uniclaw.utils.process import RunResult
 from uniclaw.utils.git import (
     _get_stash_untracked_tree,
     _run_git,
@@ -34,19 +35,18 @@ def _result(returncode=0, stdout="", stderr=""):
 
 
 class TestRunGit:
-    """_run_git 测试。"""
+    """_run_git 测试(mock run_command,验证结果适配与超时语义)。"""
 
-    def _proc(self, returncode=0, out=b"", err=b""):
-        proc = AsyncMock()
-        proc.returncode = returncode
-        proc.communicate.return_value = (out, err)
-        return proc
+    @staticmethod
+    def _patch(result):
+        return patch(
+            "uniclaw.utils.git.run_command", new_callable=AsyncMock, return_value=result
+        )
 
     @pytest.mark.asyncio
     async def test_success(self):
         """成功执行。"""
-        proc = self._proc(out=b"stdout data", err=b"stderr data")
-        with patch("uniclaw.utils.git.asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=proc):
+        with self._patch(RunResult(0, "stdout data", "stderr data")):
             result = await _run_git("git", "status", cwd="/repo")
         assert result.returncode == 0
         assert result.stdout == "stdout data"
@@ -56,8 +56,7 @@ class TestRunGit:
     @pytest.mark.asyncio
     async def test_failure_no_check(self):
         """失败但不 check。"""
-        proc = self._proc(returncode=1, err=b"boom")
-        with patch("uniclaw.utils.git.asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=proc):
+        with self._patch(RunResult(1, "", "boom")):
             result = await _run_git("git", "status")
         assert result.returncode == 1
         assert result.stderr == "boom"
@@ -65,10 +64,16 @@ class TestRunGit:
     @pytest.mark.asyncio
     async def test_check_raises(self):
         """check=True 时失败抛出。"""
-        proc = self._proc(returncode=2, err=b"fatal")
-        with patch("uniclaw.utils.git.asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=proc):
+        with self._patch(RunResult(2, "", "fatal")):
             with pytest.raises(subprocess.CalledProcessError):
                 await _run_git("git", "status", check=True)
+
+    @pytest.mark.asyncio
+    async def test_timeout_raises(self):
+        """超时抛 TimeoutError,不让 git 卡死拖住调用方。"""
+        with self._patch(RunResult(-1, timed_out=True)):
+            with pytest.raises(TimeoutError):
+                await _run_git("git", "status")
 
 
 class TestGetGitRoot:

@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 import uuid
 
 from uniclaw.utils.constants import TOOL_ERROR
+from uniclaw.utils.process import run_command, smart_decode
 
-from ..shell import smart_decode, STDERR_MARKER
+from ..shell import STDERR_MARKER
 from .models import ContainerInfo, ContainerStatus
 
 logger = logging.getLogger(__name__)
@@ -41,25 +41,13 @@ class DockerManager:
     async def _run(self, args: list[str], timeout: int = 60) -> tuple[str, str, int]:
         """执行 docker 命令,返回 (stdout, stderr, returncode)。"""
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *args,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                proc.communicate(), timeout=timeout
-            )
-            return (
-                smart_decode(stdout_bytes),
-                smart_decode(stderr_bytes),
-                proc.returncode or 0,
-            )
-        except asyncio.TimeoutError:
-            proc.kill()
-            await proc.wait()
-            return ("", f"命令超时({timeout}秒)", 1)
-        except Exception as e:
+            r = await run_command(args, timeout=timeout, decode=smart_decode)
+        except OSError as e:
+            # 非 bug: docker 未安装/不可执行
             return ("", str(e), 1)
+        if r.timed_out:
+            return ("", f"命令超时({timeout}秒)", 1)
+        return (r.stdout, r.stderr, r.code)
 
     # ── 容器操作 ──────────────────────────────────────────────
 

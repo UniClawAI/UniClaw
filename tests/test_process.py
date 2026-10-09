@@ -3,6 +3,7 @@
 两者参数与返回值一致,测试按同一组行为断言,只有调用方式(async / sync)不同。
 """
 
+import os
 import sys
 
 import pytest
@@ -83,6 +84,27 @@ class TestRunCommandAsync:
         )
         assert r.stdout == "echoed"
 
+    async def test_env_replace_replaces_whole_env(self, monkeypatch):
+        """env_replace 整份替换: 过滤掉的变量不会从当前环境泄漏给子进程。"""
+        monkeypatch.setenv("UNICLAW_TEST_LEAK", "secret")
+        base = {k: v for k, v in os.environ.items() if k != "UNICLAW_TEST_LEAK"}
+        base["UNICLAW_TEST_KEEP"] = "ok"
+        script = (
+            "import os, sys; "
+            "sys.stdout.write(os.environ.get('UNICLAW_TEST_LEAK', 'absent')); "
+            "sys.stdout.write(' '); "
+            "sys.stdout.write(os.environ.get('UNICLAW_TEST_KEEP', 'absent'))"
+        )
+        r = await run_command([sys.executable, "-c", script], env_replace=base)
+        assert r.stdout == "absent ok"
+
+    async def test_env_and_env_replace_mutex(self):
+        """env 与 env_replace 同时给定抛 ValueError。"""
+        with pytest.raises(ValueError):
+            await run_command(
+                [sys.executable, "-c", ""], env={"A": "1"}, env_replace={"B": "2"}
+            )
+
 
 class TestRunCommandSync:
     """run_command_sync 同步版 —— 行为应与异步版一致。"""
@@ -135,6 +157,20 @@ class TestRunCommandSync:
             input="echoed",
         )
         assert r.stdout == "echoed"
+
+    def test_env_replace_replaces_whole_env(self, monkeypatch):
+        """env_replace 整份替换(同步版语义与异步版一致)。"""
+        monkeypatch.setenv("UNICLAW_TEST_LEAK", "secret")
+        base = {k: v for k, v in os.environ.items() if k != "UNICLAW_TEST_LEAK"}
+        base["UNICLAW_TEST_KEEP"] = "ok"
+        script = (
+            "import os, sys; "
+            "sys.stdout.write(os.environ.get('UNICLAW_TEST_LEAK', 'absent')); "
+            "sys.stdout.write(' '); "
+            "sys.stdout.write(os.environ.get('UNICLAW_TEST_KEEP', 'absent'))"
+        )
+        r = run_command_sync([sys.executable, "-c", script], env_replace=base)
+        assert r.stdout == "absent ok"
 
 
 class TestSmartDecode:

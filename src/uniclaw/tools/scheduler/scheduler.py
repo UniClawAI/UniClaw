@@ -19,6 +19,7 @@ from croniter import croniter, CroniterBadCronError, CroniterBadDateError
 from uniclaw.config import AppConfig
 from uniclaw.console.ui import info, warn, err
 from uniclaw.context import get_app_dir, Scope
+from uniclaw.utils.process import run_command
 
 
 @dataclass
@@ -482,75 +483,26 @@ class Scheduler:
             return True
         return True
 
-    @staticmethod
-    def _terminate_process_tree(proc: asyncio.subprocess.Process) -> None:
-        """终止整个进程树(含孙进程)。
-
-        Windows 上 proc.kill() 只杀 cmd.exe /c 包装,`sleep 70` 之类的真实
-        子进程会跑完;POSIX 同理(sh -c 派生的子进程残留)。taskkill /T
-        与 killpg 按树清。
-        """
-        import os
-        import signal
-        import subprocess
-        import sys
-
-        if proc.returncode is not None:
-            return
-        if sys.platform == "win32":
-            subprocess.run(
-                ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
-                capture_output=True,
-                check=False,
-            )
-        else:
-            try:
-                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-            except (ProcessLookupError, PermissionError, OSError):
-                try:
-                    proc.kill()
-                except (ProcessLookupError, OSError):
-                    pass
-
     async def _exec_shell(self, cmd: str, task: Task, config: AppConfig | None = None):
         """执行 shell 命令。"""
         from uniclaw.tools.notify import push_notification
 
         cwd = task.root_dir or None
-        import sys
-
-        popen_kwargs: dict = {}
-        if sys.platform != "win32":
-            # POSIX: 独立会话便于超时时 killpg 整树;Windows 无此参数
-            popen_kwargs["start_new_session"] = True
-        proc = await asyncio.create_subprocess_shell(
-            cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=cwd,
-            **popen_kwargs,
-        )
-        try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
-        except asyncio.TimeoutError:
-            # 超时的子进程树必须终止 —— 否则 sleep70 之类会继续跑完,
-            # 且这里不能报"执行失败"(任务是被超时保护中止,不是出错)
-            self._terminate_process_tree(proc)
-            try:
-                await asyncio.wait_for(proc.wait(), timeout=5)
-            except (asyncio.TimeoutError, ProcessLookupError):
-                pass
+        # 超时的子进程树由 run_command 终止(taskkill /T 或 killpg),
+        # 否则 sleep70 之类会继续跑完;超时不算"执行失败"(是被保护中止)
+        r = await run_command(cmd, cwd=cwd, timeout=60)
+        if r.timed_out:
             raise TimeoutError(
                 "执行超过 60s 超时保护,已终止子进程(如需长任务请拆分或用 monitor 类型)"
-            ) from None
-        out = stdout.decode("utf-8", errors="replace").strip() if stdout else ""
-        err_text = stderr.decode("utf-8", errors="replace").strip() if stderr else ""
+            )
+        out = r.stdout.strip()
+        err_text = r.stderr.strip()
         if out:
             await info(out, config)
         if err_text:
             await warn(f"[stderr] {err_text}", config)
         name = task.name or task.id
-        status = "成功" if proc.returncode == 0 else f"失败(exit={proc.returncode})"
+        status = "成功" if r.code == 0 else f"失败(exit={r.code})"
         await push_notification(f"{name} {status}", title="定时任务")
 
     async def _exec_monitor(
@@ -563,22 +515,15 @@ class Scheduler:
     ):
         """执行 monitor: shell 命令,退出码非零时触发 agent。"""
         cwd = task.root_dir or None
-        proc = await asyncio.create_subprocess_shell(
-            cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=cwd,
-        )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
+        # 超时同样走 run_command 的进程树回收,避免挂起的子进程残留
+        r = await run_command(cmd, cwd=cwd, timeout=60)
+        if r.timed_out:
+            raise TimeoutError("monitor 命令超过 60s 超时保护,已终止子进程")
 
-        if proc.returncode != 0:
-            await info(f"[monitor] 触发 (exit={proc.returncode}): {cmd}", config)
-            out_text = (
-                stdout.decode("utf-8", errors="replace").strip() if stdout else ""
-            )
-            err_text = (
-                stderr.decode("utf-8", errors="replace").strip() if stderr else ""
-            )
+        if r.code != 0:
+            await info(f"[monitor] 触发 (exit={r.code}): {cmd}", config)
+            out_text = r.stdout.strip()
+            err_text = r.stderr.strip()
             if err_text:
                 await info(f"[monitor] stderr: {err_text}", config)
 
@@ -588,7 +533,7 @@ class Scheduler:
             full_message = (
                 f"用户刚才执行了以下命令\n\n"
                 f"执行的命令: {cmd}\n"
-                f"退出码: {proc.returncode}\n"
+                f"退出码: {r.code}\n"
             )
             if out_text:
                 full_message += f"\n命令输出(stdout):\n{out_text}\n"
@@ -602,7 +547,7 @@ class Scheduler:
                 config,
             )
         else:
-            out = stdout.decode("utf-8", errors="replace").strip() if stdout else ""
+            out = r.stdout.strip()
             await info(f"[monitor] 未触发 ({cmd}): {out or '(无输出)'}", config)
 
     async def _exec_py(self, code: str, config: AppConfig | None = None):

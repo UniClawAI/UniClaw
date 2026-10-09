@@ -107,6 +107,27 @@ def _decode(
     return data.decode(encoding, errors)
 
 
+def _build_env(
+    env: dict[str, str] | None,
+    env_replace: dict[str, str] | None,
+) -> dict[str, str] | None:
+    """构建子进程环境变量。
+
+    ``env`` 叠加到当前环境;``env_replace`` 整份替换当前环境(两者互斥)。
+    需要过滤敏感变量等自定义环境时用 ``env_replace`` —— 叠加语义会把
+    已过滤的变量从当前环境重新带回。
+    """
+    if env_replace is not None:
+        if env:
+            raise ValueError("env 与 env_replace 互斥")
+        return dict(env_replace)
+    if env:
+        full_env = dict(os.environ)
+        full_env.update(env)
+        return full_env
+    return None
+
+
 async def _kill_tree(proc: asyncio.subprocess.Process) -> None:
     """终止整个进程树,避免孙进程残留(超时回收用)。
 
@@ -173,6 +194,7 @@ async def run_command(
     *,
     cwd: str | os.PathLike | None = None,
     env: dict[str, str] | None = None,
+    env_replace: dict[str, str] | None = None,
     timeout: float | None = None,
     input: str | bytes | None = None,
     encoding: str = "utf-8",
@@ -190,6 +212,8 @@ async def run_command(
               POSIX→/bin/sh),支持管道/重定向/环境变量展开;仅执行可信来源。
         cwd: 工作目录。
         env: 附加环境变量(合并到当前环境)。
+        env_replace: 完整环境变量,整份替换当前环境(与 env 互斥)。
+            需要过滤敏感变量等自定义环境时使用。
         timeout: 超时秒数;超时后终止进程树,返回 timed_out=True。
         input: 写入子进程 stdin 的内容(字符串或字节)。
         encoding / errors: stdout/stderr 解码参数(被 decode 覆盖时忽略)。
@@ -200,16 +224,13 @@ async def run_command(
         RunResult。
 
     Raises:
-        ValueError: cmd 为空。
+        ValueError: cmd 为空,或 env 与 env_replace 同时给定。
     """
     if not cmd or (isinstance(cmd, (list, tuple)) and not cmd):
         raise ValueError("命令不能为空")
-    # input 编码前置:避免启动子进程后才编码失败导致进程泄漏
+    # input 编码与环境构建前置:避免启动子进程后才失败导致进程泄漏
     data = input.encode(encoding) if isinstance(input, str) else input
-    full_env = None
-    if env:
-        full_env = dict(os.environ)
-        full_env.update(env)
+    full_env = _build_env(env, env_replace)
     stdin = asyncio.subprocess.PIPE if input is not None else None
     if isinstance(cmd, (list, tuple)):
         proc = await asyncio.create_subprocess_exec(
@@ -255,6 +276,7 @@ def run_command_sync(
     *,
     cwd: str | os.PathLike | None = None,
     env: dict[str, str] | None = None,
+    env_replace: dict[str, str] | None = None,
     timeout: float | None = None,
     input: str | bytes | None = None,
     encoding: str = "utf-8",
@@ -271,6 +293,7 @@ def run_command_sync(
         cmd: 同 run_command;list 直接执行,str 经系统 shell。
         cwd: 工作目录。
         env: 附加环境变量(合并到当前环境)。
+        env_replace: 完整环境变量,整份替换当前环境(与 env 互斥)。
         timeout: 超时秒数;超时后终止进程树,返回 timed_out=True。
         input: 写入子进程 stdin 的内容(字符串或字节)。
         encoding / errors: stdout/stderr 解码参数(被 decode 覆盖时忽略)。
@@ -280,15 +303,12 @@ def run_command_sync(
         RunResult。
 
     Raises:
-        ValueError: cmd 为空。
+        ValueError: cmd 为空,或 env 与 env_replace 同时给定。
     """
     if not cmd or (isinstance(cmd, (list, tuple)) and not cmd):
         raise ValueError("命令不能为空")
     data = input.encode(encoding) if isinstance(input, str) else input
-    full_env = None
-    if env:
-        full_env = dict(os.environ)
-        full_env.update(env)
+    full_env = _build_env(env, env_replace)
     proc = subprocess.Popen(
         cmd,
         shell=isinstance(cmd, str),

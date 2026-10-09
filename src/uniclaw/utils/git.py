@@ -1,4 +1,3 @@
-import asyncio
 import logging
 import os
 from pathlib import Path
@@ -8,27 +7,44 @@ import time
 from typing import Optional
 import uuid
 
+from uniclaw.utils.process import run_command
+
 logger = logging.getLogger(__name__)
 
 
 async def _run_git(
-    *args: str, cwd: str | None = None, check: bool = False
+    *args: str,
+    cwd: str | None = None,
+    check: bool = False,
+    timeout: float = 60,
 ) -> subprocess.CompletedProcess:
-    """异步执行 git 命令,返回 CompletedProcess 风格的结果。"""
-    proc = await asyncio.create_subprocess_exec(
-        *args,
-        cwd=cwd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout_bytes, stderr_bytes = await proc.communicate()
-    stdout = stdout_bytes.decode("utf-8", errors="replace") if stdout_bytes else ""
-    stderr = stderr_bytes.decode("utf-8", errors="replace") if stderr_bytes else ""
+    """异步执行 git 命令,返回 CompletedProcess 风格的结果。
+
+    经 run_command 统一处理超时(进程树回收)与解码。超时抛 TimeoutError,
+    避免 git 卡死(如锁竞争)时永久挂起调用方。
+
+    Args:
+        *args: git 命令行(含可执行文件名,如 "git", "status")。
+        cwd: 工作目录。
+        check: 为 True 且命令失败时抛 subprocess.CalledProcessError。
+        timeout: 超时秒数。
+
+    Returns:
+        subprocess.CompletedProcess: 带 returncode/stdout/stderr 的结果。
+
+    Raises:
+        FileNotFoundError: git 未安装。
+        TimeoutError: 执行超时(TimeoutError 是 OSError 子类)。
+        subprocess.CalledProcessError: check 为 True 且命令失败。
+    """
+    r = await run_command(list(args), cwd=cwd, timeout=timeout)
+    if r.timed_out:
+        raise TimeoutError(f"git 命令超时({timeout}秒): {' '.join(args)}")
     result = subprocess.CompletedProcess(
-        args=args, returncode=proc.returncode, stdout=stdout, stderr=stderr
+        args=args, returncode=r.code, stdout=r.stdout, stderr=r.stderr
     )
-    if check and proc.returncode != 0:
-        raise subprocess.CalledProcessError(proc.returncode, args, stdout, stderr)
+    if check and r.code != 0:
+        raise subprocess.CalledProcessError(r.code, args, r.stdout, r.stderr)
     return result
 
 

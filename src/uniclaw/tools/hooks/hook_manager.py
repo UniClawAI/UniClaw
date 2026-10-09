@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import fnmatch
 import json
 import os
@@ -18,6 +17,7 @@ from uniclaw.context import Scope
 from enum import StrEnum
 from uniclaw.utils.cache import ttl_cache
 from uniclaw.utils.logger import get_logger
+from uniclaw.utils.process import run_command
 
 HOOKS_DIR_NAME = ".uniclaw"
 HOOKS_FILE_NAME = "hooks.json"
@@ -300,46 +300,31 @@ async def _run_entries(
                 timeout = DEFAULT_HOOK_TIMEOUT_SECONDS
             hook_env = {**env, "UNICLAW_HOOK_EVENT": event}
             start = time.monotonic()
-            try:
-                proc = await asyncio.create_subprocess_shell(
-                    command,
-                    stdin=asyncio.subprocess.PIPE,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    cwd=root_dir,
-                    env=hook_env,
-                )
-                stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                    proc.communicate(input=input_text.encode("utf-8")),
-                    timeout=timeout,
-                )
-                stdout = (
-                    stdout_bytes.decode("utf-8", errors="replace")
-                    if stdout_bytes
-                    else ""
-                )
-                stderr = (
-                    stderr_bytes.decode("utf-8", errors="replace")
-                    if stderr_bytes
-                    else ""
-                )
-                result = HookResult(
-                    event=event,
-                    command=command,
-                    returncode=proc.returncode,
-                    stdout=stdout,
-                    stderr=stderr,
-                    duration_ms=int((time.monotonic() - start) * 1000),
-                )
-            except asyncio.TimeoutError:
-                proc.kill()
-                await proc.wait()
+            # env_replace 整份替换环境:过滤后的敏感变量不能经 os.environ 合并回来
+            r = await run_command(
+                command,
+                cwd=root_dir,
+                env_replace=hook_env,
+                input=input_text,
+                timeout=timeout,
+            )
+            if r.timed_out:
+                # 超时进程树已由 run_command 回收;124 沿用 GNU timeout 约定
                 result = HookResult(
                     event=event,
                     command=command,
                     returncode=124,
                     stdout="",
                     stderr=f"hooks超时,超过 {timeout} 秒",
+                    duration_ms=int((time.monotonic() - start) * 1000),
+                )
+            else:
+                result = HookResult(
+                    event=event,
+                    command=command,
+                    returncode=r.code,
+                    stdout=r.stdout,
+                    stderr=r.stderr,
                     duration_ms=int((time.monotonic() - start) * 1000),
                 )
             results.append(result)

@@ -1,22 +1,19 @@
 """环境诊断命令"""
 
-import asyncio
 import os
 import shutil
 import sys
 from uniclaw.config import AppConfig
 from uniclaw.console.ui import info, ok, warn, err
 from uniclaw.context import APP_NAME
+from uniclaw.utils.process import run_command
 
 
 async def _run_tool_version(*args: str) -> str:
-    proc = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
-    return stdout.decode("utf-8", errors="replace").strip()
+    r = await run_command(list(args), timeout=5)
+    if r.timed_out:
+        raise TimeoutError(f"{args[0]} 响应超时")
+    return r.stdout.strip()
 
 
 async def cmd_doctor(_args: str, config: AppConfig) -> bool:
@@ -94,14 +91,10 @@ async def cmd_doctor(_args: str, config: AppConfig) -> bool:
     async def _docker():
         if not shutil.which("docker"):
             raise FileNotFoundError("Docker 未安装(Docker 工具不可用)")
-        proc = await asyncio.create_subprocess_exec(
-            "docker",
-            "info",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        await asyncio.wait_for(proc.communicate(), timeout=5)
-        if proc.returncode != 0:
+        r = await run_command(["docker", "info"], timeout=5)
+        if r.timed_out:
+            raise TimeoutError("Docker 响应超时")
+        if r.code != 0:
             raise RuntimeError("Docker 未运行(Docker 工具不可用)")
         return "Docker 运行中"
 

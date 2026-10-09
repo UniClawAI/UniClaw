@@ -577,15 +577,9 @@ def _binary_skip_note(binary: int, total: int) -> str:
 
 async def _has_rg() -> bool:
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "rg",
-            "--version",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        await asyncio.wait_for(proc.communicate(), timeout=5)
-        return proc.returncode == 0
-    except Exception as e:
+        r = await run_command(["rg", "--version"], timeout=5)
+        return r.ok
+    except OSError as e:
         logger.warning("检测 rg 可用性失败: %s", e)
         return False
 
@@ -597,15 +591,9 @@ async def _has_native_grep() -> bool:
     if await _has_rg():
         return True
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "grep",
-            "--version",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        await asyncio.wait_for(proc.communicate(), timeout=5)
-        return proc.returncode == 0
-    except Exception as e:
+        r = await run_command(["grep", "--version"], timeout=5)
+        return r.ok
+    except OSError as e:
         logger.warning("检测 grep 可用性失败: %s", e)
         return False
 
@@ -819,23 +807,16 @@ async def Grep(
 async def _check_es() -> str | None:
     """检查 Everything (es.exe) 是否可用,返回错误信息或 None"""
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "es",
-            "test_sandbox_check",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+        r = await run_command(
+            ["es", "test_sandbox_check"], timeout=5, decode=smart_decode
         )
-        _, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=5)
-        stderr = smart_decode(stderr_bytes).strip()
-        if stderr:
-            return stderr
     except FileNotFoundError:
         return "未找到 es.exe 命令,请安装 Everything 并确保 es.exe 在 PATH 中"
-    except asyncio.TimeoutError:
-        return "es.exe 响应超时"
-    except Exception as e:
+    except OSError as e:
         return str(e)
-    return None
+    if r.timed_out:
+        return "es.exe 响应超时"
+    return r.stderr.strip() or None
 
 
 @tool
@@ -907,22 +888,18 @@ async def search_files_with_everything(
         args += ["-n", str(max_results)]
     args.append(query)
 
-    proc = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, stderr = await proc.communicate()
-
-    if proc.returncode != 0:
-        error_msg = stderr.decode(errors="replace").strip()
+    r = await run_command(args, timeout=30, decode=smart_decode)
+    if r.timed_out:
+        return f"{STDERR_MARKER} es.exe 执行超时(30 秒)"
+    if r.code != 0:
+        error_msg = r.stderr.strip()
         return (
             f"{STDERR_MARKER} {error_msg}"
             if error_msg
-            else f"{STDERR_MARKER} 命令执行失败 (退出码: {proc.returncode})"
+            else f"{STDERR_MARKER} 命令执行失败 (退出码: {r.code})"
         )
 
-    output = stdout.decode(errors="replace").strip()
+    output = r.stdout.strip()
     return output if output else "(没有输出)"
 
 

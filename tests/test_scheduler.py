@@ -424,12 +424,18 @@ class TestLastRunSurvivesReload:
         )
         assert snapshot.last_run is not None
 
-class TestShellTimeoutKillsTree:
-    """60s 超时必须终止整个进程树(含孙进程),并报"超时已中止"(验证 #3-3)。"""
+class TestShellTimeout:
+    """60s 超时报"超时已中止"(验证 #3-3)。
+
+    进程树回收由 run_command 内部完成(taskkill /T 或 killpg,见
+    test_process 的超时用例),这里验证 _exec_shell 把 timed_out
+    翻译成 TimeoutError 且不伪装成"执行失败"。
+    """
 
     @pytest.mark.asyncio
-    async def test_timeout_kills_process_tree(self):
+    async def test_timeout_raises(self):
         from uniclaw.tools.scheduler.scheduler import Scheduler
+        from uniclaw.utils.process import RunResult
 
         sched = Scheduler()
         task = MagicMock()
@@ -437,36 +443,34 @@ class TestShellTimeoutKillsTree:
         task.name = "t"
         task.id = "t1"
 
-        proc = AsyncMock()
-        proc.communicate = AsyncMock(side_effect=asyncio.TimeoutError())
-        proc.wait = AsyncMock(return_value=0)
-        proc.pid = 4242
-
-        killed = []
-
-        def fake_tree(p):
-            killed.append(p.pid)
-
         with patch(
-            "asyncio.create_subprocess_shell", AsyncMock(return_value=proc)
-        ), patch.object(
-            Scheduler, "_terminate_process_tree", side_effect=fake_tree
-        ):
+            "uniclaw.tools.scheduler.scheduler.run_command",
+            new_callable=AsyncMock,
+            return_value=RunResult(-1, timed_out=True),
+        ) as m:
             with pytest.raises(TimeoutError) as ei:
                 await sched._exec_shell("sleep 70", task, None)
 
-        assert killed == [4242], "超时必须终止进程树"
+        assert m.await_args.args[0] == "sleep 70"
         assert "60s" in str(ei.value) or "超时" in str(ei.value)
 
-    def test_terminate_tree_calls_taskkill_on_windows(self):
+    @pytest.mark.asyncio
+    async def test_monitor_timeout_raises(self):
+        """monitor 同样有超时保护,且同样以 TimeoutError 中止(不再泄漏子进程)。"""
         from uniclaw.tools.scheduler.scheduler import Scheduler
+        from uniclaw.utils.process import RunResult
 
-        proc = MagicMock()
-        proc.returncode = None
-        proc.pid = 123
-        with patch("subprocess.run") as run, patch("sys.platform", "win32"):
-            Scheduler._terminate_process_tree(proc)
-        args = run.call_args[0][0]
-        assert args[:2] == ["taskkill", "/PID"]
-        assert "/T" in args and "/F" in args
+        sched = Scheduler()
+        task = MagicMock()
+        task.root_dir = None
+        task.name = "t"
+        task.id = "t1"
+
+        with patch(
+            "uniclaw.tools.scheduler.scheduler.run_command",
+            new_callable=AsyncMock,
+            return_value=RunResult(-1, timed_out=True),
+        ):
+            with pytest.raises(TimeoutError):
+                await sched._exec_monitor("sleep 70", {}, task, "t", None)
 
