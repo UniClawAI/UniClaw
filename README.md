@@ -7,6 +7,12 @@
 
 > 📦 项目采用 **src layout** — 所有源码位于 `src/uniclaw/` 下。
 
+## 🎬 演示视频
+
+| UniClaw 简介 | WebUI 使用说明 |
+|:---:|:---:|
+| [▶ 播放](https://github.com/user-attachments/assets/4d4dc952-7536-4f33-883b-bfb2149b1049) | [▶ 播放](https://github.com/user-attachments/assets/5ae0010f-6770-4507-b34c-d832be8b1ac7) |
+
 ## ✨ 特性
 
 - 🤖 **智能代理**: 基于 OpenAI SDK 和 Anthropic SDK 的全异步对话式 AI 助手,多 provider 自动路由,支持 reasoning_content 和思考标签流式解析,内置死循环检测防止工具调用陷入无限循环
@@ -77,6 +83,7 @@
 
 ## 📋 目录
 
+- [演示视频](#-演示视频)
 - [安装](#-安装)
 - [快速开始](#-快速开始)
 - [Docker 部署](#-docker-部署)
