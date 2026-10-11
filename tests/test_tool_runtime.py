@@ -459,6 +459,98 @@ class TestUserErrorNoLog:
         assert len(logged) == 1  # bug 要留痕
 
 
+class TestFileNotFoundWarnOnly:
+    """FileNotFoundError: 非 bug(外部路径问题), 只警告不写错误日志。"""
+
+    @pytest.mark.asyncio
+    async def test_warns_not_logs(self, monkeypatch, tmp_path):
+        """文件不存在 → 报警告并返回 TOOL_ERROR, 不落错误日志。"""
+        from uniclaw.console import ui
+
+        err_log, warn_log = [], []
+        monkeypatch.setattr(
+            ui, "err", AsyncMock(side_effect=lambda *a, **k: err_log.append(a))
+        )
+        monkeypatch.setattr(
+            ui, "warn", AsyncMock(side_effect=lambda *a, **k: warn_log.append(a))
+        )
+
+        @tool
+        def read_file(path: str, tool_runtime: ToolRuntime = None) -> str:
+            """Read file.
+
+            Args:
+                path: 文件路径。
+            """
+            return open(path, encoding="utf-8").read()
+
+        # 父目录缺失, 等价于保存/读取不存在路径的场景(如 TTS 存到未建目录)
+        missing = tmp_path / "no_such_dir" / "seg7_test.wav"
+        result = await read_file(path=str(missing))
+
+        assert "文件不存在" in result
+        assert err_log == []  # 非 bug 不写错误日志
+        assert len(warn_log) == 1  # 报个警告就行
+        assert "read_file" in warn_log[0][0]
+
+
+class TestNetworkErrorWarnOnly:
+    """网络/模型厂商 API 错误(限流 429 等): 非 bug, 只警告不写错误日志。"""
+
+    @pytest.mark.asyncio
+    async def test_rate_limit_warns_not_logs(self, monkeypatch):
+        """429 限流 → 报警告并返回 TOOL_ERROR, 不落错误堆栈。"""
+        from uniclaw.console import ui
+
+        err_log, warn_log = [], []
+        monkeypatch.setattr(
+            ui, "err", AsyncMock(side_effect=lambda *a, **k: err_log.append(a))
+        )
+        monkeypatch.setattr(
+            ui, "warn", AsyncMock(side_effect=lambda *a, **k: warn_log.append(a))
+        )
+
+        class RateLimitError(Exception):
+            """仿 openai.RateLimitError(429), 无需 SDK。"""
+
+            status_code = 429
+
+        @tool
+        def call_model(tool_runtime: ToolRuntime = None) -> str:
+            """Call model."""
+            raise RateLimitError("Error code: 429 - Too Many Requests")
+
+        result = await call_model()
+
+        assert "模型/网络服务异常" in result
+        assert err_log == []  # 非 bug 不写错误日志
+        assert len(warn_log) == 1  # 报个警告就行
+        assert "call_model" in warn_log[0][0]
+
+    @pytest.mark.asyncio
+    async def test_unknown_exception_still_logs(self, monkeypatch):
+        """与网络无关的异常仍是 bug, 照常记日志(降噪判定不能误伤)。"""
+        from uniclaw.console import ui
+
+        err_log, warn_log = [], []
+        monkeypatch.setattr(
+            ui, "err", AsyncMock(side_effect=lambda *a, **k: err_log.append(a))
+        )
+        monkeypatch.setattr(
+            ui, "warn", AsyncMock(side_effect=lambda *a, **k: warn_log.append(a))
+        )
+
+        @tool
+        def broken(tool_runtime: ToolRuntime = None) -> str:
+            """Broken tool."""
+            raise ValueError("boom")
+
+        result = await broken()
+        assert "boom" in result
+        assert len(err_log) == 1
+        assert warn_log == []
+
+
 class TestSchemaExclusion:
     """schema 生成排除注入参数。"""
 

@@ -29,6 +29,7 @@ from typing import (
 if TYPE_CHECKING:
     from uniclaw.config import AppConfig
 
+from uniclaw.provider.error_classifier import is_network_or_provider_error
 from uniclaw.utils.constants import TOOL_ERROR
 
 logger = logging.getLogger(__name__)
@@ -654,12 +655,14 @@ class Tool:
         """调用工具(异常兜底):委托 execute(),异常不外抛。
 
         模型传参错误(漏传/拼错/多传参数)返回友好提示并给出正确签名,**不记日志**
-        —— 那是调用方的问题,不是代码 bug,不需要堆栈。其余异常经 console.ui.err
-        记日志(含调用入参与完整堆栈),并返回 `{TOOL_ERROR}: ...` 文本,让 LLM 看到
-        失败原因继续对话。
+        —— 那是调用方的问题,不是代码 bug,不需要堆栈。文件不存在(FileNotFoundError)
+        与网络/模型厂商错误(限流 429、超时、远端 5xx 等)同属非 bug:换个路径/换个
+        时间就不复现,只 warn 提示,同样不写错误日志。
+        其余异常经 console.ui.err 记日志(含调用入参与完整堆栈),并返回
+        `{TOOL_ERROR}: ...` 文本,让 LLM 看到失败原因继续对话。
         asyncio.CancelledError 等 BaseException 仍会上抛,以免吞掉中断信号。
         """
-        from uniclaw.console.ui import err
+        from uniclaw.console.ui import err, warn
 
         try:
             bound = self._bind_call(args, kwargs)
@@ -672,8 +675,18 @@ class Tool:
         except ToolUserError as e:
             # 预期失败(状态/参数校验): 消息已带上下文, 不写错误日志
             return f"{TOOL_ERROR}: {e}"
+        except FileNotFoundError as e:
+            # 非 bug: 文件/目录不存在是外部条件, 警告即可, 不写错误堆栈
+            config = getattr(rt, "config", None)
+            await warn(f"[{self.name}] 文件不存在: {e}", config)
+            return f"{TOOL_ERROR}: 文件不存在: {e}"
         except Exception as e:
             config = getattr(rt, "config", None)
+            if is_network_or_provider_error(e):
+                # 非 bug: 限流/超时/远端 5xx 等外部故障(fallback 已重试耗尽),
+                # 警告即可, 不写错误堆栈
+                await warn(f"[{self.name}] 模型/网络服务异常: {e}", config)
+                return f"{TOOL_ERROR}: 模型/网络服务异常: {e}"
             shown = {
                 k: _shorten(v)
                 for k, v in bound.items()
