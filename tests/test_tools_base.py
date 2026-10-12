@@ -10,6 +10,7 @@ from uniclaw.tools.base import (
     _parse_docstring,
     _python_type_to_schema,
     extract_explains,
+    parse_tc_args,
     should_explain,
     tc_args,
     tc_name,
@@ -325,8 +326,9 @@ class TestTcArgs:
         assert tc_args(tc) == {}
 
     def test_invalid_json(self):
+        """非法 JSON 不吞掉 —— 原始 arguments 随 _raw_arguments 保留。"""
         tc = {"function": {"arguments": "not json"}}
-        assert tc_args(tc) == {}
+        assert tc_args(tc) == {"_raw_arguments": "not json"}
 
     def test_no_arguments(self):
         tc = {"function": {}}
@@ -339,6 +341,48 @@ class TestTcArgs:
     def test_no_function_no_args(self):
         tc = {}
         assert tc_args(tc) == {}
+
+
+class TestParseTcArgs:
+    """parse_tc_args 区分"模型没传参数"与"参数被截断/损坏"。"""
+
+    def test_valid_json(self):
+        tc = {"function": {"arguments": '{"path": "/tmp"}'}}
+        assert parse_tc_args(tc) == ({"path": "/tmp"}, None)
+
+    def test_valid_dict(self):
+        tc = {"function": {"arguments": {"path": "/tmp"}}}
+        assert parse_tc_args(tc) == ({"path": "/tmp"}, None)
+
+    def test_empty_arguments_is_not_issue(self):
+        """空 arguments = 模型没传参数, 不是解析问题(无参工具也走这条路)。"""
+        assert parse_tc_args({"function": {"arguments": ""}}) == ({}, None)
+        assert parse_tc_args({"function": {"arguments": "{}"}}) == ({}, None)
+        assert parse_tc_args({"function": {}}) == ({}, None)
+
+    def test_invalid_json_keeps_raw_in_args(self):
+        """截断/损坏的 JSON: 报错点明原因, 原始 arguments 随 args 保留, 不伪装成空参数。"""
+        raw = '{"file_path": "a.txt", "content": "x'
+        args, issue = parse_tc_args({"function": {"arguments": raw}})
+        assert args == {"_raw_arguments": raw}  # 完整原始记录不丢
+        assert issue is not None
+        assert "解析失败" in issue
+        assert raw[:20] in issue  # issue 只带预览
+
+    def test_non_object_json(self):
+        args, issue = parse_tc_args({"function": {"arguments": "[1, 2]"}})
+        assert args == {"_raw_arguments": "[1, 2]"}
+        assert issue is not None
+        assert "不是对象" in issue
+
+    def test_non_str_arguments(self):
+        args, issue = parse_tc_args({"function": {"arguments": 123}})
+        assert args == {"_raw_arguments": "123"}
+        assert issue is not None
+        assert "类型非法" in issue
+
+    def test_legacy_format(self):
+        assert parse_tc_args({"args": {"x": 1}}) == ({"x": 1}, None)
 
 
 # ── Tool schema 转换 ─────────────────────────────────────────────

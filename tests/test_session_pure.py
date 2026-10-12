@@ -16,9 +16,11 @@ from PIL import Image
 
 from uniclaw.tools.session.session import (
     AIMessage,
+    MessageRole,
     MultimodalBlock,
     MultimodalType,
     Session,
+    ToolCallMessage,
     UserMessage,
     _count_str_chars,
     _detect_audio_suffix,
@@ -265,3 +267,80 @@ class TestGetAssistantMessages:
         session = Session()
         assert session.get_assistant_messages() == ""
         assert session.get_assistant_messages(separator=None) == []
+
+
+# ── 工具调用参数记录 ─────────────────────────────────────────
+
+
+class TestToolArgsRecord:
+    """调用参数在会话里完整保留 —— 不能在入库时丢失或被销毁。"""
+
+    def test_tool_message_keeps_args(self):
+        """tool 消息的 args 随 to_dict 往返保留(前端回放/compact 依赖它)。"""
+        s = Session()
+        s.add_message(
+            MessageRole.TOOL,
+            "ok",
+            name="Write",
+            tool_call_id="call_1",
+            args={"file_path": "a.txt", "content": "x"},
+        )
+        data = s.to_messages()[0]
+        assert data["args"] == {"file_path": "a.txt", "content": "x"}
+        restored = ToolCallMessage.from_dict(data)
+        assert restored.args == {"file_path": "a.txt", "content": "x"}
+
+    def test_assistant_message_keeps_raw_arguments(self):
+        """畸形 arguments 原样入库 —— 完整记录不被清洗销毁。"""
+        raw = '{"file_path": "a.txt", "content": "x'
+        s = Session()
+        s.add_message(
+            MessageRole.ASSISTANT,
+            "",
+            model_name="m",
+            usage={},
+            tool_calls=[
+                {
+                    "id": "c1",
+                    "type": "function",
+                    "function": {"name": "Write", "arguments": raw},
+                }
+            ],
+        )
+        stored = s.to_messages()[0]["tool_calls"][0]["function"]["arguments"]
+        assert stored == raw
+
+    def test_sanitize_returns_copy_only(self):
+        """API 边界清洗只改副本, 原始 tool_calls 不被改写。"""
+        raw = '{"bad'
+        tcs = [
+            {
+                "id": "c1",
+                "type": "function",
+                "function": {"name": "Write", "arguments": raw},
+            }
+        ]
+        cleaned = Session._sanitize_tool_calls(tcs)
+        assert cleaned[0]["function"]["arguments"] == "{}"
+        assert tcs[0]["function"]["arguments"] == raw  # 原记录不动
+
+    def test_to_openai_messages_sanitizes_for_api_only(self):
+        """发 API 用清洗后的副本;会话里的原始记录不受影响。"""
+        raw = '{"bad'
+        s = Session()
+        s.add_message(
+            MessageRole.ASSISTANT,
+            "",
+            model_name="m",
+            usage={},
+            tool_calls=[
+                {
+                    "id": "c1",
+                    "type": "function",
+                    "function": {"name": "Write", "arguments": raw},
+                }
+            ],
+        )
+        payload = s.to_openai_messages()[0]
+        assert payload["tool_calls"][0]["function"]["arguments"] == "{}"
+        assert s.to_messages()[0]["tool_calls"][0]["function"]["arguments"] == raw

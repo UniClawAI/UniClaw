@@ -62,7 +62,11 @@ _TYPE_MAP = {
 _INJECTED_PARAMS = {"tool_runtime"}
 
 def _shorten(value, limit: int = 200) -> str:
-    """把参数值渲染成短字符串,超长截断 —— 报错文本不能被大值撑爆。"""
+    """把参数值渲染成短字符串,超长截断 —— 报错文本不能被大值撑爆。
+
+    完整参数记录由会话保留(tool 消息 args + assistant.tool_calls), 报错文本
+    只留预览, 不用重复一遍大值。
+    """
     text = value if isinstance(value, str) else repr(value)
     return text if len(text) <= limit else text[: limit - 3] + "..."
 
@@ -538,15 +542,17 @@ class Tool:
                     except asyncio.CancelledError:
                         pass
 
-    def _bind_call(self, args: tuple, kwargs: dict) -> dict:
+    def _bind_call(self, args: tuple, kwargs: dict) -> dict | str:
         """把 (args, kwargs) 绑定到函数签名,返回可直接调用的 kwargs。
 
-        显式 bind 校验:漏传必填、参数名拼错、多传不存在的参数 —— 这些是
-        **模型传参错误**,不是代码 bug,应给出友好提示而不是记错误堆栈。
-        绑定通过后再抛出的 TypeError 才是函数体内的真 bug。
+        显式 bind 校验:漏传必填、参数名拼错、多传不存在的参数、类型不符 ——
+        这些是**模型传参错误**,不是代码 bug,也不走异常:直接返回给模型看的
+        错误说明文本,由 `__call__` 作为工具结果返回,与工具函数
+        `return f"{TOOL_ERROR}: ..."` 是同一约定。
 
-        Raises:
-            TypeError: 参数与签名不匹配。
+        Returns:
+            dict: 绑定通过,可直接传给 execute() 的 kwargs。
+            str: 参数错误说明(带 TOOL_ERROR 前缀),调用方应直接返回给模型。
         """
         sig = inspect.signature(self.func)
         params = list(sig.parameters)
@@ -554,16 +560,19 @@ class Tool:
         call = dict(kwargs)
         if args:
             if len(args) > len(params):
-                raise TypeError(
-                    f"{self.name}() takes {len(params)} positional arguments "
-                    f"but {len(args)} were given"
+                return self._param_error(
+                    f"位置参数过多: 最多 {len(params)} 个, 实际 {len(args)} 个",
+                    args,
+                    kwargs,
                 )
             for i, arg in enumerate(args):
                 name = params[i]
                 if name in call:
                     # 与 Python 语义一致: 同一参数不能既位置又关键字传入
-                    raise TypeError(
-                        f"{self.name}() got multiple values for argument {name!r}"
+                    return self._param_error(
+                        f"参数 '{name}' 重复传入(位置参数与关键字参数各传了一次)",
+                        args,
+                        kwargs,
                     )
                 call[name] = arg
         call.pop("_explain", None)
@@ -586,39 +595,64 @@ class Tool:
                 k for k in call if k not in params and k not in _INJECTED_PARAMS
             )
             if unknown:
-                raise TypeError(
-                    f"unexpected keyword argument(s): {', '.join(unknown)}"
+                return self._param_error(
+                    f"未知参数: {', '.join(unknown)}(不在 {self.name} 签名中)",
+                    args,
+                    kwargs,
                 )
 
-        self._check_types(bindable)
-        sig.bind(**bindable)
+        type_err = self._check_types(bindable)
+        if type_err:
+            return self._param_error(type_err, args, kwargs)
+        # 必填参数缺失单独检查 —— sig.bind 原文是英文("missing a required
+        # argument"), 报错要明确, 统一给中文原因
+        missing = [
+            name
+            for name, p in sig.parameters.items()
+            if p.default is inspect.Parameter.empty
+            and p.kind is not inspect.Parameter.VAR_POSITIONAL
+            and p.kind is not inspect.Parameter.VAR_KEYWORD
+            and name not in bindable
+        ]
+        if missing:
+            return self._param_error(
+                f"缺少必填参数: {', '.join(missing)}", args, kwargs
+            )
+        try:
+            sig.bind(**bindable)
+        except TypeError as e:
+            # 兜底: 常规检查没拦住的绑定问题, 仍按传参错误返回, 不外抛
+            return self._param_error(str(e), args, kwargs)
         return call
 
-    def _check_types(self, call: dict) -> None:
-        """按注解做保守的参数类型检查。
+    def _check_types(self, call: dict) -> str | None:
+        """按注解做保守的参数类型检查,不匹配时返回错误说明(不抛异常)。
 
         模型传错类型(如该传 list 却传了 str、该传 int 却传了 str)属传参错误,
-        应在调用前拦下并给出友好提示 —— 等底层抛 TypeError 就会掉进错误日志。
-
-        Raises:
-            TypeError: 参数类型与注解明显不符。
+        应在调用前拦下并给出友好提示 —— 等函数体内抛 TypeError 就会掉进错误日志。
         """
         try:
             hints = get_type_hints(self.func)
         except Exception:
-            return  # 注解解析不了就跳过, 不做检查
+            return None  # 注解解析不了就跳过, 不做检查
         for name, value in call.items():
             expected = hints.get(name)
             if expected is None:
                 continue
             if not _value_matches(value, expected):
-                raise TypeError(
-                    f"Argument '{name}' has incorrect type "
-                    f"(expected {_type_name(expected)}, got {type(value).__name__})"
+                return (
+                    f"参数 '{name}' 类型不匹配: "
+                    f"需要 {_type_name(expected)}, 实际 {type(value).__name__}"
                 )
+        return None
 
-    def _param_error(self, err: TypeError, args: tuple, kwargs: dict) -> str:
-        """把参数绑定失败转成给模型看的友好提示(不记日志 —— 不是代码 bug)。"""
+    def _param_error(self, reason: str, args: tuple, kwargs: dict) -> str:
+        """把参数校验失败转成给模型看的错误说明(返回值, 不走异常)。
+
+        原因用中文点名具体参数;实际传入的值只留预览(_shorten)——完整调用
+        参数记录由会话保留(tool 消息 args + assistant.tool_calls), 报错文本
+        不用重复一遍大值。
+        """
         shown = {
             k: _shorten(v)
             for k, v in kwargs.items()
@@ -640,11 +674,19 @@ class Tool:
             else:
                 visible.append(name)
 
+        # 参数完全为空时点明"没收到任何参数" —— 参数被截断/损坏的情况已在
+        # parse_tc_args 拦下, 走到这里就是模型侧真的没传
+        if shown:
+            shown_line = f"实际传入: {shown}"
+            hint = "请核对参数名拼写、必填参数是否漏传、是否多传了不存在的参数"
+        else:
+            shown_line = "实际传入: {} — 未收到任何参数(arguments 为空, 模型侧没有生成参数)"
+            hint = "请重新调用并带上全部必填参数"
         return (
-            f"{TOOL_ERROR}: {self.name} 参数有误: {err}\n"
-            f"实际传入: {shown}\n"
+            f"{TOOL_ERROR}: {self.name} 参数有误: {reason}\n"
             f"正确签名: {self.name}({', '.join(visible)})\n"
-            f"请核对参数名拼写、必填参数是否漏传、是否多传了不存在的参数"
+            f"{shown_line}\n"
+            f"{hint}"
         )
 
     async def __call__(
@@ -652,22 +694,23 @@ class Tool:
         *args,
         **kwargs,
     ):
-        """调用工具(异常兜底):委托 execute(),异常不外抛。
+        """调用工具(异常兜底):委托 execute(),**以返回值报错, 不外抛异常**。
 
-        模型传参错误(漏传/拼错/多传参数)返回友好提示并给出正确签名,**不记日志**
-        —— 那是调用方的问题,不是代码 bug,不需要堆栈。文件不存在(FileNotFoundError)
-        与网络/模型厂商错误(限流 429、超时、远端 5xx 等)同属非 bug:换个路径/换个
-        时间就不复现,只 warn 提示,同样不写错误日志。
-        其余异常经 console.ui.err 记日志(含调用入参与完整堆栈),并返回
-        `{TOOL_ERROR}: ...` 文本,让 LLM 看到失败原因继续对话。
+        模型传参错误(漏传/拼错/多传参数)由 _bind_call 直接返回错误说明文本
+        (含正确签名),与工具函数 `return f"{TOOL_ERROR}: ..."` 同一约定;
+        **不写错误日志** —— 那是调用方的问题,不是代码 bug,不需要堆栈;完整
+        调用参数记录由会话保留,排查时看会话即可。文件不存在(FileNotFoundError)
+        与网络/模型厂商错误(限流 429、超时、远端 5xx 等)同属非 bug:换个路径/
+        换个时间就不复现,只 warn 提示,同样不写错误堆栈。其余异常经
+        console.ui.err 记日志(含调用入参与完整堆栈),并返回 `{TOOL_ERROR}: ...`
+        文本,让 LLM 看到失败原因继续对话。
         asyncio.CancelledError 等 BaseException 仍会上抛,以免吞掉中断信号。
         """
         from uniclaw.console.ui import err, warn
 
-        try:
-            bound = self._bind_call(args, kwargs)
-        except TypeError as e:
-            return self._param_error(e, args, kwargs)
+        bound = self._bind_call(args, kwargs)
+        if isinstance(bound, str):
+            return bound
 
         rt = bound.get("tool_runtime")
         try:
@@ -782,16 +825,52 @@ def tc_name(tc: dict) -> str:
     return tc.get("name", "")
 
 
-def tc_args(tc: dict) -> dict:
-    """从 tool_call 提取参数 dict(兼容 OpenAI 和旧格式)。"""
+def parse_tc_args(tc: dict) -> tuple[dict, str | None]:
+    """解析 tool_call 的参数, 区分"模型没传参数"与"参数被截断/损坏"。
+
+    Returns:
+        tuple[dict, str | None]: (参数 dict, 问题说明)。
+            - 问题说明为 None: 解析成功(含合法的空参数 —— 无参工具的正常形态)
+            - 问题说明非 None: arguments 非空但解析不了(JSON 被截断/损坏, 或不是
+              对象)。此时参数 dict 为 `{"_raw_arguments": 原始字符串}` —— 原始
+              记录随 args 流入工具事件与会话 tool 消息, 完整保留、不丢失;
+              问题说明只带预览(_shorten)。调用方据此拦下执行, 免得损坏参数被
+              伪装成"模型没传参数"的缺参错误。
+    """
     fn = tc.get("function")
-    if fn:
-        args = fn.get("arguments", "")
-        if isinstance(args, str):
-            try:
-                return json.loads(args) if args else {}
-            except (json.JSONDecodeError, TypeError):
-                return {}
-        return args if isinstance(args, dict) else {}
-    args = tc.get("args", {})
-    return args if isinstance(args, dict) else {}
+    raw = fn.get("arguments", "") if fn else tc.get("args", {})
+    if isinstance(raw, dict):
+        return raw, None
+    if not isinstance(raw, str):
+        return (
+            {"_raw_arguments": repr(raw)},
+            f"arguments 类型非法: {type(raw).__name__}",
+        )
+    text = raw.strip()
+    if not text or text == "{}":
+        # 空 arguments = 模型侧没生成参数, 交给参数绑定校验报缺参
+        return {}, None
+    try:
+        parsed = json.loads(text)
+    except (json.JSONDecodeError, TypeError) as e:
+        return (
+            {"_raw_arguments": text},
+            f"arguments JSON 解析失败(疑似被截断或传输损坏): {e};"
+            f"原始内容预览: {_shorten(text)}",
+        )
+    if not isinstance(parsed, dict):
+        return (
+            {"_raw_arguments": text},
+            f"arguments JSON 不是对象({type(parsed).__name__});"
+            f"原始内容预览: {_shorten(text)}",
+        )
+    return parsed, None
+
+
+def tc_args(tc: dict) -> dict:
+    """从 tool_call 提取参数 dict(兼容 OpenAI 和旧格式)。
+
+    解析失败时返回 {}, 不做区分 —— 显示/死循环检测等只关心参数值的场景够用。
+    工具执行入口要区分"没传参数"与"参数损坏", 用 parse_tc_args。
+    """
+    return parse_tc_args(tc)[0]

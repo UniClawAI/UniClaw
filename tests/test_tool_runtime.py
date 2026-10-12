@@ -263,6 +263,8 @@ class TestParamErrorFriendly:
         assert "sample(" in result
         assert "value" in result
         assert "limit=" in result  # 含默认值展示
+        # 参数为空时要点明"没收到任何参数", 与"参数被截断/损坏"区分开
+        assert "未收到任何参数" in result
         assert logged == []  # 关键: 模型传参错误不写错误日志
 
     @pytest.mark.asyncio
@@ -279,8 +281,8 @@ class TestParamErrorFriendly:
         result = await sample(valu="x")
 
         assert "参数有误" in result
-        # 要点出拼错的名字, 不能只报 "missing required argument: 'value'"
-        assert "unexpected keyword" in result
+        # 要点出拼错的名字, 不能只报"缺少必填参数"
+        assert "未知参数" in result
         assert "valu" in result
         assert logged == []
 
@@ -609,11 +611,11 @@ class TestExecuteBugs:
 
         result = await f("x", a="y")
         assert "参数有误" in result
-        assert "multiple values" in result
+        assert "重复传入" in result
 
     @pytest.mark.asyncio
     async def test_param_error_truncates_large_values(self):
-        """报错里的入参要截断, 大值不能撑爆报错文本。"""
+        """报错里的入参要截断, 大值不能撑爆报错文本(完整记录由会话保留)。"""
 
         @tool
         def g(value: str = "", tool_runtime: ToolRuntime = None) -> str:

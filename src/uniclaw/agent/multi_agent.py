@@ -33,6 +33,7 @@ from uniclaw.tools.fs import Edit, Write
 from uniclaw.tools.base import (
     tc_name as _tc_name,
     tc_args as _tc_args,
+    parse_tc_args,
     Tool,
     ToolRuntime,
     extract_explains,
@@ -1068,6 +1069,7 @@ class MultiAgent:
                 loop_break_msg,
                 name=tc_name,
                 tool_call_id=tc_id,
+                args=tc_args,
             )
         recent_tool_calls.clear()
         return True
@@ -1082,7 +1084,7 @@ class MultiAgent:
         task = config.current_agent
         tool_resp_content = None
         tc_name = _tc_name(tool_call)
-        tc_args = _tc_args(tool_call)
+        tc_args, args_issue = parse_tc_args(tool_call)
 
         # 查找工具
         try:
@@ -1108,6 +1110,19 @@ class MultiAgent:
                 )
             else:
                 tool_resp_content = f"{TOOL_ERROR}: 工具不存在: {tc_name}"
+
+        # 参数 JSON 非法(疑似截断/损坏): 不调用工具, 直接返回诊断信息。
+        # 与"模型没传参数"(空 arguments, 走参数绑定校验报缺参)区分开,
+        # 免得参数丢失被伪装成缺参错误, 两种情况报错文本一模一样。
+        # 完整原始 arguments 在 tc_args 的 _raw_arguments 里, 随工具事件与
+        # 会话 tool 消息保留, 丢失现场可还原
+        if tool_resp_content is None and args_issue:
+            await warn(f"[{tc_name}] {args_issue}", config)
+            tool_resp_content = (
+                f"{TOOL_ERROR}: {tc_name} 参数解析失败: {args_issue}\n"
+                f"参数在到达执行器前已损坏, 不是漏传。请重新调用并附上完整参数;"
+                f"若内容过长疑似被截断, 请分块传入"
+            )
 
         # PRE_TOOL_USE hook
         if tool_resp_content is None:
@@ -1304,6 +1319,7 @@ class MultiAgent:
                     extracted or "(见下方多媒体内容)",
                     name=tc_name,
                     tool_call_id=tc_id,
+                    args=_tc_args(tool_call),
                     explain=explain_text,
                 )
                 # 将多模态内容作为 user 消息,让 LLM 能看到图片/音频/视频
@@ -1322,6 +1338,7 @@ class MultiAgent:
                     final_content,
                     name=tc_name,
                     tool_call_id=tc_id,
+                    args=_tc_args(tool_call),
                     explain=explain_text,
                 )
         if task.cancel_event.is_set():

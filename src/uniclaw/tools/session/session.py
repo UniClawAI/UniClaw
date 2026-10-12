@@ -421,17 +421,20 @@ class AIMessage(BaseMessage):
         if self.tool_calls:
             for tc in self.tool_calls:
                 func = tc.get("function", {})
-
+                raw = func.get("arguments", "")
+                if isinstance(raw, str):
+                    try:
+                        parsed = json.loads(raw) if raw else {}
+                    except (json.JSONDecodeError, TypeError):
+                        parsed = {}
+                else:
+                    parsed = raw if isinstance(raw, dict) else {}
                 blocks.append(
                     {
                         "type": "tool_use",
                         "id": tc.get("id", ""),
                         "name": func.get("name", ""),
-                        "input": (
-                            json.loads(func.get("arguments", "{}"))
-                            if isinstance(func.get("arguments"), str)
-                            else func.get("arguments", {})
-                        ),
+                        "input": parsed if isinstance(parsed, dict) else {},
                     }
                 )
         return {"role": MessageRole.ASSISTANT, "content": blocks}
@@ -1214,7 +1217,11 @@ class Session:
     def to_openai_messages(self) -> list[dict[str, str | list[dict[str, Any]]]]:
         messages = []
         for message in self._messages:
-            messages.append(message.to_openai_message())
+            msg = message.to_openai_message()
+            # API 边界: 畸形 arguments 在**副本**里换成 {}, 避免上游 400
+            if msg.get("tool_calls"):
+                msg["tool_calls"] = self._sanitize_tool_calls(msg["tool_calls"])
+            messages.append(msg)
         return messages
 
     def to_messages(self) -> list[dict[str, Any]]:
@@ -1321,25 +1328,28 @@ class Session:
 
     @staticmethod
     def _sanitize_tool_calls(tool_calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """修复畸形 tool_call arguments JSON,避免后续 API 调用 400 错误。"""
+        """返回 arguments 可安全发给 API 的**副本**(畸形 JSON 替换为 {})。
+
+        只在 API 发送边界调用 —— 会话里保留原始 arguments 不动,完整调用参数
+        记录不被破坏(落盘、to_dict、前端回放都读原始值)。原地改写会把
+        "参数被截断"的现场证据一起销毁,排查时无从还原模型到底传了什么。
+        """
+        cleaned = []
         for tc in tool_calls:
             fn = tc.get("function")
             if not fn:
+                cleaned.append(tc)
                 continue
             raw = fn.get("arguments", "")
             if isinstance(raw, str) and raw:
                 try:
                     json.loads(raw)
+                    cleaned.append(tc)
                 except (json.JSONDecodeError, TypeError):
-                    import logging
-
-                    logging.getLogger("session").warning(
-                        "畸形 tool_call arguments,已替换为空 JSON: " "tool=%s, args=%s",
-                        fn.get("name"),
-                        raw[:200],
-                    )
-                    fn["arguments"] = "{}"
-        return tool_calls
+                    cleaned.append({**tc, "function": {**fn, "arguments": "{}"}})
+            else:
+                cleaned.append(tc)
+        return cleaned
 
     def add_assistant_message(
         self,
@@ -1350,8 +1360,8 @@ class Session:
         tool_calls: list[dict[str, Any]] | None = None,
         created_at: datetime | None = _UNSET,
     ) -> None:
-        if tool_calls:
-            tool_calls = self._sanitize_tool_calls(tool_calls)
+        # 原样保存 tool_calls(含畸形 arguments)—— 完整调用参数记录不能在
+        # 入库时被销毁;API 发送边界(to_openai_messages)再做清洗
         assistant_message = AIMessage(
             content=content,
             model_name=model_name,
