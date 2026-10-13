@@ -1,9 +1,13 @@
 """tests for src/uniclaw/utils/checkpoint.py — 检查点系统。"""
 
 import json
+import shutil
 from pathlib import Path
 
+import pytest
+
 from uniclaw.utils.checkpoint import (
+    _file_create_checkpoint,
     _file_delete_checkpoint,
     _file_diff_two_dirs,
     _file_has_diff_sync,
@@ -11,6 +15,7 @@ from uniclaw.utils.checkpoint import (
     _file_pop_checkpoint,
     _file_restore_checkpoint,
     _generate_diff,
+    _get_all_files,
     _load_index,
     _read_file_content,
     _save_index,
@@ -357,3 +362,71 @@ class TestFilePopCheckpoint:
         assert (tmp_path / "test.txt").read_text(encoding="utf-8") == "saved"
         # Checkpoint directory deleted
         assert not cp_path.exists()
+
+
+# ── _get_all_files / 特殊文件名(中文、下划线)──────────────────
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git 未安装")
+class TestGetAllFilesSpecialNames:
+    async def test_chinese_and_underscore_names_kept(self, tmp_path):
+        """中文名与下划线开头文件不应被 git ls-files 转义/忽略。"""
+        (tmp_path / "正常中文名.txt").write_text("中文内容", encoding="utf-8")
+        (tmp_path / "_下划线开头.txt").write_text("下划线中文", encoding="utf-8")
+        (tmp_path / "_ascii.txt").write_text("underscore ascii", encoding="utf-8")
+        (tmp_path / "__init__.py").write_text("", encoding="utf-8")
+        (tmp_path / "plain.txt").write_text("plain", encoding="utf-8")
+        (tmp_path / ".hidden.txt").write_text("hidden", encoding="utf-8")
+        pycache = tmp_path / "__pycache__"
+        pycache.mkdir()
+        (pycache / "p.pyc").write_text("x", encoding="utf-8")
+
+        files = await _get_all_files(tmp_path)
+
+        # 中文/下划线文件名必须原样保留,不能是 "\xxx" 转义字面量
+        assert "正常中文名.txt" in files
+        assert "_下划线开头.txt" in files
+        assert "_ascii.txt" in files
+        assert "__init__.py" in files
+        assert "plain.txt" in files
+        # 默认排除规则仍然生效
+        assert ".hidden.txt" not in files
+        assert not any("__pycache__" in f for f in files)
+
+    async def test_subdir_root_lists_only_subtree(self, tmp_path):
+        """root_dir 为 git 子目录时,列表相对 root_dir 且只含子树。"""
+        (tmp_path / "top.txt").write_text("top", encoding="utf-8")
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        (sub / "正常中文名.txt").write_text("中文", encoding="utf-8")
+
+        files = await _get_all_files(sub)
+
+        assert "正常中文名.txt" in files
+        assert "top.txt" not in files
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git 未安装")
+class TestCheckpointSpecialNamesRoundTrip:
+    async def test_create_restore_chinese_and_underscore(self, tmp_path):
+        """快照/恢复必须覆盖中文名与下划线名文件。"""
+        (tmp_path / "正常中文名.txt").write_text("原始中文内容", encoding="utf-8")
+        (tmp_path / "_下划线开头.txt").write_text("原始下划线内容", encoding="utf-8")
+        (tmp_path / "_ascii.txt").write_text("original", encoding="utf-8")
+
+        ok = await _file_create_checkpoint(tmp_path, "中文消息")
+        assert ok is True
+
+        (tmp_path / "正常中文名.txt").write_text("修改后", encoding="utf-8")
+        (tmp_path / "_下划线开头.txt").write_text("changed", encoding="utf-8")
+        (tmp_path / "_ascii.txt").write_text("changed", encoding="utf-8")
+
+        ok, msg = _file_restore_checkpoint(tmp_path, index=0)
+        assert ok is True
+        assert (
+            tmp_path / "正常中文名.txt"
+        ).read_text(encoding="utf-8") == "原始中文内容"
+        assert (
+            tmp_path / "_下划线开头.txt"
+        ).read_text(encoding="utf-8") == "原始下划线内容"
+        assert (tmp_path / "_ascii.txt").read_text(encoding="utf-8") == "original"

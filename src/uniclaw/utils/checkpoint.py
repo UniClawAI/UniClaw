@@ -120,14 +120,18 @@ async def _get_all_files(root_dir: Path) -> list[str]:
         result = await _run_git(
             "git",
             "ls-files",
+            "-z",
             "--cached",
             "--others",
             "--exclude-standard",
             *exclude_args,
-            cwd=str(git_root),
+            # 在 root_dir 下执行:输出相对 root_dir,与 _copy_files_sync 的拼接基准一致
+            cwd=str(root_dir),
         )
         if result.returncode == 0:
-            return [f for f in result.stdout.strip().splitlines() if f]
+            # -z 用 NUL 分隔且按原始字节输出路径,不做 core.quotepath 转义
+            # (默认转义会把中文文件名变成 "\xxx" 字面量,导致快照静默漏拷贝)
+            return [f for f in result.stdout.split("\0") if f]
 
     # 无 git 时扫描目录(同步 I/O,放到线程池避免阻塞事件循环)
     return await asyncio.to_thread(_scan_files_sync, root_dir)
