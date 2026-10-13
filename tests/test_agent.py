@@ -369,3 +369,28 @@ class TestExecuteSingleToolLookup:
             _, content = await self._call(config, name2tool={}, name="monitor_screen")
         assert "未启用" in content
         assert "缺少真实屏幕快照支持" in content
+
+
+class TestOutputTruncationDetect:
+    """输出截断检测: finish_reason 为 length/max_tokens 时判定被截断。"""
+
+    def test_truncated_reasons(self):
+        from uniclaw.agent.multi_agent import _is_output_truncated
+        from uniclaw.tools.session.session import StreamChunk
+
+        assert _is_output_truncated(StreamChunk(finish_reason="length")) is True
+        assert _is_output_truncated(StreamChunk(finish_reason="max_tokens")) is True
+
+    def test_normal_finish_not_truncated(self):
+        from uniclaw.agent.multi_agent import _is_output_truncated
+        from uniclaw.tools.session.session import StreamChunk
+
+        assert _is_output_truncated(StreamChunk(finish_reason="stop")) is False
+        assert _is_output_truncated(StreamChunk(finish_reason="tool_calls")) is False
+        assert _is_output_truncated(StreamChunk()) is False
+
+    def test_resp_without_finish_reason(self):
+        """无 finish_reason 字段的对象(如旧 AIMessage)不误判。"""
+        from uniclaw.agent.multi_agent import _is_output_truncated
+
+        assert _is_output_truncated(object()) is False

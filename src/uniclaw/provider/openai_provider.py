@@ -304,6 +304,7 @@ def _stream_inner(client: OpenAI, kwargs: dict):
     parser = ThoughtParser()
     # tool_calls 按 index 累积
     tc_accum: dict[int, dict] = {}
+    finish_reason = ""
 
     response = client.chat.completions.create(**kwargs)
     for chunk in response:
@@ -311,7 +312,13 @@ def _stream_inner(client: OpenAI, kwargs: dict):
 
         # content + reasoning + tool_calls
         if chunk.choices:
-            delta = chunk.choices[0].delta
+            choice = chunk.choices[0]
+            delta = choice.delta
+
+            if getattr(choice, "finish_reason", None):
+                # "length" = 输出被截断(达到 max_tokens), 参数可能只生成一半
+                finish_reason = choice.finish_reason
+                sc.finish_reason = finish_reason
 
             raw_content = delta.content or ""
             if raw_content:
@@ -372,6 +379,7 @@ def _stream_inner(client: OpenAI, kwargs: dict):
     if tc_accum:
         final = StreamChunk()
         final.tool_calls = [tc_accum[i] for i in sorted(tc_accum)]
+        final.finish_reason = finish_reason
         yield final
 
 
@@ -468,6 +476,7 @@ async def _astream_inner(client: AsyncOpenAI, kwargs: dict):
     """内部异步流式调用,处理 delta 累积。"""
     parser = ThoughtParser()
     tc_accum: dict[int, dict] = {}
+    finish_reason = ""
 
     response = await client.chat.completions.create(**kwargs)
     async for chunk in response:
@@ -476,7 +485,13 @@ async def _astream_inner(client: AsyncOpenAI, kwargs: dict):
             continue
 
         if chunk.choices:
-            delta = chunk.choices[0].delta
+            choice = chunk.choices[0]
+            delta = choice.delta
+
+            if getattr(choice, "finish_reason", None):
+                # "length" = 输出被截断(达到 max_tokens), 参数可能只生成一半
+                finish_reason = choice.finish_reason
+                sc.finish_reason = finish_reason
 
             raw_content = delta.content or ""
             if raw_content:
@@ -533,6 +548,7 @@ async def _astream_inner(client: AsyncOpenAI, kwargs: dict):
     if tc_accum:
         final = StreamChunk()
         final.tool_calls = [tc_accum[i] for i in sorted(tc_accum)]
+        final.finish_reason = finish_reason
         yield final
 
 

@@ -42,6 +42,14 @@ from uniclaw.tools.base import (
 # 死循环检测:连续相同工具调用次数阈值
 LOOP_DETECTION_THRESHOLD = 5
 
+# 输出被截断的停止原因(OpenAI "length" / Anthropic "max_tokens")
+_TRUNCATED_FINISH_REASONS = {"length", "max_tokens"}
+
+
+def _is_output_truncated(resp) -> bool:
+    """LLM 输出是否因达到长度上限被截断(内容/工具参数可能只生成了一半)。"""
+    return (getattr(resp, "finish_reason", "") or "") in _TRUNCATED_FINISH_REASONS
+
 
 def _is_loop_shutdown_noise(e: BaseException) -> bool:
     """进程/事件循环关闭期的噪音错误(非缺陷)。
@@ -916,6 +924,15 @@ class MultiAgent:
         else:
             tool_explains = {}
 
+        # 输出被截断(达到输出长度上限): 内容与工具参数可能只生成了一半。
+        # 无论有没有 tool_calls 都要提示 —— 正文被截断同样不完整
+        if _is_output_truncated(resp):
+            await warn(
+                f"模型输出被截断(finish_reason={resp.finish_reason}, 达到输出长度"
+                f"上限), 本轮内容/工具参数可能不完整",
+                config,
+            )
+
         in_tokens = resp.usage.input_tokens if resp.usage else 0
         out_tokens = resp.usage.output_tokens if resp.usage else 0
         total_tokens = resp.usage.total_tokens if resp.usage else in_tokens + out_tokens
@@ -1075,9 +1092,18 @@ class MultiAgent:
         return True
 
     async def _execute_single_tool(
-        self, tool_call, name2tool, config: AppConfig, explain: str | None = None
+        self,
+        tool_call,
+        name2tool,
+        config: AppConfig,
+        explain: str | None = None,
+        output_truncated: bool = False,
     ) -> tuple[dict, Any]:
         """执行单个工具调用(权限检查 + hooks + 执行 + UI 事件)。
+
+        Args:
+            output_truncated: 本轮 LLM 输出被截断 —— 参数解析失败时可断定是
+                生成中断而非模型没传, 报错给出分块重试指引。
 
         返回 (tool_call, tool_resp_content)。
         """
@@ -1118,11 +1144,21 @@ class MultiAgent:
         # 会话 tool 消息保留, 丢失现场可还原
         if tool_resp_content is None and args_issue:
             await warn(f"[{tc_name}] {args_issue}", config)
-            tool_resp_content = (
-                f"{TOOL_ERROR}: {tc_name} 参数解析失败: {args_issue}\n"
-                f"参数在到达执行器前已损坏, 不是漏传。请重新调用并附上完整参数;"
-                f"若内容过长疑似被截断, 请分块传入"
-            )
+            if output_truncated:
+                # 有 finish_reason=length/max_tokens 佐证, 可以断定是生成被截断
+                tool_resp_content = (
+                    f"{TOOL_ERROR}: {tc_name} 参数解析失败: 模型输出被截断(达到输出"
+                    f"长度上限), 工具参数只生成了一半, 不是漏传。\n"
+                    f"{args_issue}\n"
+                    f"请把内容拆小后分多次调用(如大文件先写骨架, 再用 Edit 分段追加),"
+                    f"或调大 max_tokens 后重试"
+                )
+            else:
+                tool_resp_content = (
+                    f"{TOOL_ERROR}: {tc_name} 参数解析失败: {args_issue}\n"
+                    f"参数在到达执行器前已损坏, 不是漏传。请重新调用并附上完整参数;"
+                    f"若内容过长疑似被截断, 请分块传入"
+                )
 
         # PRE_TOOL_USE hook
         if tool_resp_content is None:
@@ -1268,11 +1304,13 @@ class MultiAgent:
         tools: list = None,
         tool_explains: dict[str, str] | None = None,
         loop_records: list[tuple] | None = None,
+        output_truncated: bool = False,
     ) -> bool:
         """并行执行工具调用列表。返回 True 表示被 cancel。
 
         loop_records 非空时,把本轮结果指纹回填进最后一条记录,
         供死循环检测区分"原地打转"与"每步都有进展"。
+        output_truncated: 本轮 LLM 输出被截断, 透传给单工具执行生成明确报错。
         """
         task = config.current_agent
         if tool_explains is None:
@@ -1282,7 +1320,11 @@ class MultiAgent:
         results = await asyncio.gather(
             *[
                 self._execute_single_tool(
-                    tc, name2tool, config, tool_explains.get(tc.get("id", ""), "")
+                    tc,
+                    name2tool,
+                    config,
+                    tool_explains.get(tc.get("id", ""), ""),
+                    output_truncated=output_truncated,
                 )
                 for tc in tool_calls
             ]
@@ -1589,6 +1631,7 @@ class MultiAgent:
                     tools,
                     tool_explains,
                     loop_records=recent_tool_calls,
+                    output_truncated=_is_output_truncated(resp),
                 ):
                     break
                 content = await task.drain_user_queue(self, config)

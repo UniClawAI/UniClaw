@@ -722,6 +722,19 @@ class TestStreamChunk:
         chunk1 += chunk2
         assert chunk1.model_name == "gpt-4o"
 
+    def test_iadd_finish_reason(self):
+        """finish_reason 随 chunk 累积保留(截断检测依赖它)。"""
+        chunk1 = StreamChunk(content="partial")
+        chunk2 = StreamChunk(finish_reason="length")
+        chunk1 += chunk2
+        assert chunk1.finish_reason == "length"
+
+    def test_iadd_finish_reason_keep_last_nonempty(self):
+        """空 finish_reason 不覆盖已有值。"""
+        chunk1 = StreamChunk(finish_reason="length")
+        chunk1 += StreamChunk(content="tail")
+        assert chunk1.finish_reason == "length"
+
     def test_iadd_model_name_empty(self):
         """测试空模型名称不覆盖"""
         chunk1 = StreamChunk(model_name="gpt-4")

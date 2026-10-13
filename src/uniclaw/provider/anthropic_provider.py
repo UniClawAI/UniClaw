@@ -303,6 +303,7 @@ def _stream_inner(client: anthropic.Anthropic, kwargs: dict):
     """内部流式调用,处理 Anthropic SSE 事件流。"""
     tc_accum: dict[str, dict] = {}  # tool_use_id → tool_call dict
     current_tool_id = ""  # 当前流式累积中的 tool_use block id
+    finish_reason = ""
 
     with client.messages.stream(**kwargs) as stream:
         for event in stream:
@@ -346,6 +347,11 @@ def _stream_inner(client: anthropic.Anthropic, kwargs: dict):
                 usage = getattr(event, "usage", None)
                 if usage:
                     sc.usage = _usage_from_anthropic(usage)
+                # "max_tokens" = 输出被截断, 参数可能只生成一半
+                stop = getattr(getattr(event, "delta", None), "stop_reason", None)
+                if stop:
+                    finish_reason = stop
+                    sc.finish_reason = stop
 
             elif event.type == "message_start":
                 message = event.message
@@ -360,6 +366,7 @@ def _stream_inner(client: anthropic.Anthropic, kwargs: dict):
                 or sc.new_tool_call_args
                 or sc.usage
                 or sc.model_name
+                or sc.finish_reason
             ):
                 yield sc
 
@@ -367,6 +374,7 @@ def _stream_inner(client: anthropic.Anthropic, kwargs: dict):
     if tc_accum:
         final = StreamChunk()
         final.tool_calls = list(tc_accum.values())
+        final.finish_reason = finish_reason
         yield final
 
 
@@ -454,6 +462,7 @@ async def _astream_inner(client: anthropic.AsyncAnthropic, kwargs: dict):
     """内部异步流式调用,处理 Anthropic SSE 事件流。"""
     tc_accum: dict[str, dict] = {}
     current_tool_id = ""  # 当前流式累积中的 tool_use block id
+    finish_reason = ""
 
     async with client.messages.stream(**kwargs) as stream:
         async for event in stream:
@@ -496,6 +505,11 @@ async def _astream_inner(client: anthropic.AsyncAnthropic, kwargs: dict):
                 usage = getattr(event, "usage", None)
                 if usage:
                     sc.usage = _usage_from_anthropic(usage)
+                # "max_tokens" = 输出被截断, 参数可能只生成一半
+                stop = getattr(getattr(event, "delta", None), "stop_reason", None)
+                if stop:
+                    finish_reason = stop
+                    sc.finish_reason = stop
 
             elif event.type == "message_start":
                 message = event.message
@@ -509,12 +523,14 @@ async def _astream_inner(client: anthropic.AsyncAnthropic, kwargs: dict):
                 or sc.new_tool_call_args
                 or sc.usage
                 or sc.model_name
+                or sc.finish_reason
             ):
                 yield sc
 
     if tc_accum:
         final = StreamChunk()
         final.tool_calls = list(tc_accum.values())
+        final.finish_reason = finish_reason
         yield final
 
 

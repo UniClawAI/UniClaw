@@ -463,6 +463,9 @@ class StreamChunk(AIMessage):
 
     new_tool_call_name: str = ""
     new_tool_call_args: dict = field(default_factory=dict)
+    # 停止原因(OpenAI: finish_reason / Anthropic: stop_reason)。
+    # "length"/"max_tokens" 表示输出被截断 —— 内容与工具参数可能只生成了一半
+    finish_reason: str = ""
 
     def __iadd__(self, other: StreamChunk) -> StreamChunk:
         self.content += other.content
@@ -474,6 +477,8 @@ class StreamChunk(AIMessage):
             self.usage = other.usage
         if other.audio:
             self.audio = (self.audio or "") + other.audio
+        if other.finish_reason:
+            self.finish_reason = other.finish_reason
         return self
 
 
