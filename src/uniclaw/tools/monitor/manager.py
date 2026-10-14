@@ -1,5 +1,4 @@
 import asyncio
-import logging
 import os
 import re
 import shutil
@@ -9,8 +8,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-logger = logging.getLogger(__name__)
-
+from uniclaw.console.ui import err, warn
 from uniclaw.utils.constants import TOOL_ERROR
 from uniclaw.utils.format import sanitize_progress_line
 
@@ -160,7 +158,7 @@ class MonitorManager:
 
             if use_pty:
                 if visible:
-                    self._setup_visible_paths(monitor)
+                    await self._setup_visible_paths(monitor)
                     session.raw_log_path = monitor.log_path
                     session.exit_path = monitor.exit_path
                 self._monitors[monitor_id] = monitor
@@ -185,7 +183,7 @@ class MonitorManager:
 
                 monitor.process = process
                 if visible:
-                    self._setup_visible_paths(monitor)
+                    await self._setup_visible_paths(monitor)
                 self._monitors[monitor_id] = monitor
 
         if monitor.pty is not None:
@@ -238,10 +236,12 @@ class MonitorManager:
         notify_info = ""
         if pattern:
             notify_info = (
-                "(匹配时通知模型+桌面)" if notify_model else "(匹配时仅通知桌面)"
+                "(匹配时通知模型+桌面,结束时自动唤醒)"
+                if notify_model
+                else "(匹配时仅通知桌面,结束时自动唤醒)"
             )
         else:
-            notify_info = "(仅记录输出)"
+            notify_info = "(结束时自动唤醒)"
 
         desc_part = f" ({description})" if description else ""
         return (
@@ -326,7 +326,7 @@ class MonitorManager:
     # ---------- 可视模式 ----------
 
     @staticmethod
-    def _setup_visible_paths(monitor: Monitor):
+    async def _setup_visible_paths(monitor: Monitor):
         """初始化可视模式的镜像日志/输入/退出标记文件"""
         log_path, input_path, exit_path = viewer_paths(monitor.id)
         try:
@@ -335,7 +335,8 @@ class MonitorManager:
             input_path.write_bytes(b"")
             exit_path.unlink(missing_ok=True)
         except OSError as e:
-            logger.warning("初始化可视监控文件失败: %s", e)
+            # 非 bug: 磁盘/权限问题, 提示用户即可
+            await warn(f"初始化可视监控文件失败: {e}", monitor.config)
         monitor.log_path = log_path
         monitor.input_path = input_path
         monitor.exit_path = exit_path
@@ -540,6 +541,8 @@ class MonitorManager:
             # 大量 stopped 条目的清理由 start_monitor 的淘汰逻辑负责。
             if monitor.status == MonitorStatus.RUNNING:
                 monitor.status = MonitorStatus.STOPPED
+            # 覆盖 ConPTY 退出/查看器被关/ConPTY 超时等收尾路径, 自动唤醒 agent
+            await self._notify_exit(monitor)
         except asyncio.CancelledError:
             pass
 
@@ -657,6 +660,7 @@ class MonitorManager:
                         buf = b""
                     if deadline and asyncio.get_event_loop().time() > deadline:
                         monitor.status = MonitorStatus.TIMEOUT
+                        await self._notify_exit(monitor)
                         break
                     continue
                 if not chunk:
@@ -672,6 +676,7 @@ class MonitorManager:
                     await _emit(self._decode_output(raw_line))
                 if deadline and asyncio.get_event_loop().time() > deadline:
                     monitor.status = MonitorStatus.TIMEOUT
+                    await self._notify_exit(monitor)
                     break
 
             # 进程结束前刷出剩余缓冲
@@ -689,6 +694,7 @@ class MonitorManager:
                 monitor.status = MonitorStatus.STOPPED
                 if monitor.visible:
                     self._touch_exit(monitor)
+                await self._notify_exit(monitor)
             # 自然退出的条目保留在 _monitors(状态 STOPPED)供 monitor_output
             # 查询历史输出; 并发计数只统计 RUNNING, stopped 不会阻塞新启动,
             # 大量 stopped 由 start_monitor 的淘汰逻辑(MAX_ARCHIVED)清理
@@ -696,11 +702,14 @@ class MonitorManager:
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            logger.warning(
-                "读取进程 %s 输出失败: %s", "stderr" if is_stderr else "stdout", e
+            await err(
+                f"读取进程 {'stderr' if is_stderr else 'stdout'} 输出失败: {e}",
+                monitor.config,
+                e,
             )
             if monitor.status == MonitorStatus.RUNNING:
                 monitor.status = MonitorStatus.ERROR
+                await self._notify_exit(monitor)
 
     async def _notify_match(self, monitor: Monitor, line: str):
         """匹配成功时通知用户和模型(带节流, 防止高频匹配刷屏)"""
@@ -722,7 +731,7 @@ class MonitorManager:
             msg = f"监控{desc}匹配到: {line[:100]}"
             await push_notification(message=msg, title="UniClaw 监控")
         except Exception as e:
-            logger.warning("发送桌面通知失败: %s", e)
+            await warn(f"发送桌面通知失败: {e}", monitor.config)
 
         # 2. 通知模型(使用 wake_agent 统一唤醒逻辑)
         if monitor.notify_model and monitor.config:
@@ -744,7 +753,55 @@ class MonitorManager:
                 )
                 await wake_agent(message, monitor.config)
             except Exception as e:
-                logger.warning("唤醒模型失败: %s", e)
+                await err(f"唤醒模型失败: {e}", monitor.config, e)
+
+    async def _notify_exit(self, monitor: Monitor):
+        """进程结束时通知用户并唤醒 agent(退出/超时/异常均触发, 恰好一次)。
+
+        与 _notify_match 不同, 结束唤醒不受 notify_model 开关限制 ——
+        进程生命周期结束是 agent 必须感知的事件, 否则只能靠轮询或
+        watch_pattern 标记技巧兜底。agent 主动 monitor_stop 不触发
+        (stop_monitor 会预先置位 exit_notified)。
+        """
+        if monitor.exit_notified:
+            return
+        monitor.exit_notified = True
+
+        summary = monitor.exit_summary()
+
+        # 1. 发送桌面通知给用户
+        try:
+            from ..notify import push_notification
+
+            desc = f" [{monitor.description}]" if monitor.description else ""
+            await push_notification(
+                message=f"监控{desc}进程已结束({summary})", title="UniClaw 监控"
+            )
+        except Exception as e:
+            await warn(f"发送桌面通知失败: {e}", monitor.config)
+
+        # 2. 唤醒模型(使用 wake_agent 统一唤醒逻辑)
+        if monitor.config:
+            try:
+                from uniclaw.utils.constants import SYSTEM_PREFIX
+                from uniclaw.utils.wakeup import wake_agent
+
+                from .tools import monitor_output  # 循环导入例外: 取工具规范名
+
+                desc = (
+                    f"[{monitor.description}]"
+                    if monitor.description
+                    else f"[监控 {monitor.id}]"
+                )
+                message = (
+                    f"{SYSTEM_PREFIX}(monitor) {desc} 进程已结束({summary})\n"
+                    f"  命令: {monitor.command}\n"
+                    f"  监控 ID: {monitor.id}\n"
+                    f"请用 {monitor_output.name} 查看输出并继续处理。"
+                )
+                await wake_agent(message, monitor.config)
+            except Exception as e:
+                await err(f"唤醒模型失败: {e}", monitor.config, e)
 
     async def stop_monitor(self, monitor_id: str) -> str:
         """停止进程(杀掉整棵进程树)并清理注册记录。
@@ -773,6 +830,9 @@ class MonitorManager:
                     monitor.exit_code = monitor.process.returncode
             exit_summary = monitor.exit_summary()
 
+            # agent 主动停止: 抑制结束唤醒(返回值已带退出摘要, 不必再唤醒),
+            # 顺带挡住"进程恰在 stop 瞬间退出"竞态下的多余通知
+            monitor.exit_notified = True
             monitor.status = MonitorStatus.STOPPED
             process = monitor.process
             stdout_task = monitor.stdout_thread
@@ -810,7 +870,7 @@ class MonitorManager:
                 try:
                     await asyncio.wait_for(viewer_process.wait(), timeout=2)
                 except asyncio.TimeoutError:
-                    await self._kill_process_tree(viewer_process)
+                    await self._kill_process_tree(viewer_process, monitor.config)
             asyncio.create_task(self._cleanup_visible_files(visible_files))
 
         # 终止主进程: ConPTY 会话或管道进程树(已退出则跳过)
@@ -818,7 +878,7 @@ class MonitorManager:
             if not already_exited:
                 monitor.pty.terminate()
         elif process and process.returncode is None:
-            await self._kill_process_tree(process)
+            await self._kill_process_tree(process, monitor.config)
 
         if already_exited:
             # 自然退出记录: 说清退出码 + 清理动作, 不伪装成"刚停掉"
@@ -826,7 +886,7 @@ class MonitorManager:
         return f"进程已停止: {monitor_id}"
 
     @staticmethod
-    async def _kill_process_tree(process):
+    async def _kill_process_tree(process, config=None):
         """异步杀掉进程及其所有子进程"""
         try:
             if os.name == "nt":
@@ -845,11 +905,12 @@ class MonitorManager:
                 # Unix: 发 SIGKILL 给进程组
                 os.killpg(os.getpgid(process.pid), signal.SIGKILL)
         except Exception as e:
-            logger.warning("终止进程树失败,尝试直接 kill: %s", e)
+            # 非 bug: 进程已退出/权限不足等外部原因, 提示后直接 kill 兜底
+            await warn(f"终止进程树失败,尝试直接 kill: {e}", config)
             try:
                 process.kill()
             except Exception as e2:
-                logger.warning("直接 kill 进程失败: %s", e2)
+                await warn(f"直接 kill 进程失败: {e2}", config)
 
     async def clear_monitors(self) -> str:
         """批量清理所有已结束的监控条目(保留仍在运行的进程)。

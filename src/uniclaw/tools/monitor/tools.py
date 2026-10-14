@@ -34,6 +34,7 @@ async def monitor_start(
     启动后台进程。可选监控输出模式,匹配时自动通知。
     适用于:启动服务、运行命令、监控日志等场景。
     使用 monitor_output 可随时查看进程最新输出。
+    进程结束(自然退出/超时/异常)时会自动唤醒通知。
     运行结束后及时使用 monitor_stop 关闭进程,避免资源泄漏。
 
     Args:
@@ -42,11 +43,8 @@ async def monitor_start(
             (报"不是内部或外部命令"),需写成 `cmd /k ""带 空格路径" 参数"`
             (外层再包一对引号)或直接用 `bash -c '...'`。
         name: 进程描述名称,可选
-        watch_pattern: 匹配模式(正则表达式),匹配时通知,留空则不监控。
-            技巧: 如果不确定命令输出什么关键字,可以在命令末尾追加 echo 标记,
-            如 command="some_cmd; echo __DONE__", watch_pattern="__DONE__",
-            确保命令结束时一定触发通知,不会无限制等待。
-        notify_on_match: 匹配时是否通知模型(默认 True)
+        watch_pattern: 匹配模式(正则表达式),匹配到输出行时通知,留空则不监控匹配。
+        notify_on_match: 匹配时是否通知模型(默认 True);进程结束的自动唤醒不受此开关影响
         timeout: 超时时间(秒),0 表示不限制,默认 0
         visible: 可视模式(默认 False)。True 时弹出一个控制台窗口显示
             进程输出,用户可在窗口里键入内容与进程交互;

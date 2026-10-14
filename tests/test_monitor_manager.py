@@ -30,6 +30,23 @@ def _fake_create_task(coro):
     return MagicMock()
 
 
+@pytest.fixture(autouse=True)
+def notify_mocks():
+    """屏蔽桌面通知/模型唤醒/ui 输出副作用,单测只验证监控逻辑本身。"""
+    with patch(
+        "uniclaw.tools.notify.push_notification",
+        new_callable=AsyncMock,
+    ) as mock_push, patch(
+        "uniclaw.utils.wakeup.wake_agent",
+        new_callable=AsyncMock,
+    ) as mock_wake, patch(
+        "uniclaw.tools.monitor.manager.warn", new_callable=AsyncMock
+    ), patch(
+        "uniclaw.tools.monitor.manager.err", new_callable=AsyncMock
+    ):
+        yield mock_push, mock_wake
+
+
 class TestGetInstance:
     """get_instance 单例测试。"""
 
@@ -101,7 +118,7 @@ class TestStartMonitor:
         assert "进程已启动" in result
         assert "命令: echo hi" in result
         assert "匹配模式: 无" in result
-        assert "仅记录输出" in result
+        assert "结束时自动唤醒" in result
         assert len(mgr._monitors) == 1
         mid = next(iter(mgr._monitors))
         assert mgr._monitors[mid].command == "echo hi"
@@ -896,6 +913,20 @@ class TestReadOutput:
         mock_notify.assert_awaited_once_with(m, "ERROR: boom")
 
     @pytest.mark.asyncio
+    async def test_natural_exit_notifies(self):
+        """自然退出触发结束唤醒。"""
+        mgr = MonitorManager()
+        m = _make_monitor()
+        process = MagicMock()
+        process.stdout.read = AsyncMock(side_effect=[b"hi\n", b""])
+        process.returncode = 0
+        m.process = process
+        with patch.object(mgr, "_notify_exit", new=AsyncMock()) as mock_exit:
+            await mgr._read_output(m)
+        assert m.status == MonitorStatus.STOPPED
+        mock_exit.assert_awaited_once_with(m)
+
+    @pytest.mark.asyncio
     async def test_no_match_eof(self):
         """无匹配时进程结束转为 STOPPED。"""
         mgr = MonitorManager()
@@ -929,6 +960,25 @@ class TestReadOutput:
         assert list(m.output_lines) == ["x"]
 
     @pytest.mark.asyncio
+    async def test_timeout_notifies(self):
+        """超时同样触发结束唤醒。"""
+        mgr = MonitorManager()
+        m = _make_monitor(timeout=10)
+        process = MagicMock()
+        process.stdout.read = AsyncMock(side_effect=[b"x\n", b""])
+        process.returncode = 0
+        m.process = process
+        mock_loop = MagicMock()
+        mock_loop.time.side_effect = [100.0, 999.0]
+        with patch(
+            "uniclaw.tools.monitor.manager.asyncio.get_event_loop",
+            return_value=mock_loop,
+        ), patch.object(mgr, "_notify_exit", new=AsyncMock()) as mock_exit:
+            await mgr._read_output(m)
+        assert m.status == MonitorStatus.TIMEOUT
+        mock_exit.assert_awaited_once_with(m)
+
+    @pytest.mark.asyncio
     async def test_exception(self):
         """读取异常转为 ERROR 并杀进程树。"""
         mgr = MonitorManager()
@@ -939,6 +989,42 @@ class TestReadOutput:
         m.process = process
         await mgr._read_output(m)
         assert m.status == MonitorStatus.ERROR
+
+    @pytest.mark.asyncio
+    async def test_exception_notifies(self):
+        """读取异常同样触发结束唤醒。"""
+        mgr = MonitorManager()
+        m = _make_monitor()
+        process = MagicMock()
+        process.stdout.read = AsyncMock(side_effect=OSError("boom"))
+        process.returncode = None
+        m.process = process
+        with patch.object(mgr, "_notify_exit", new=AsyncMock()) as mock_exit:
+            await mgr._read_output(m)
+        assert m.status == MonitorStatus.ERROR
+        mock_exit.assert_awaited_once_with(m)
+
+    @pytest.mark.asyncio
+    async def test_cancelled_no_exit_notify(self):
+        """取消读取任务不算进程结束, 不触发结束唤醒。"""
+        mgr = MonitorManager()
+        m = _make_monitor()
+        gate = asyncio.Event()
+
+        async def hang_forever(*_):
+            await gate.wait()
+
+        process = MagicMock()
+        process.stdout.read = AsyncMock(side_effect=hang_forever)
+        process.returncode = None
+        m.process = process
+        with patch.object(mgr, "_notify_exit", new=AsyncMock()) as mock_exit:
+            task = asyncio.create_task(mgr._read_output(m))
+            await asyncio.sleep(0)
+            task.cancel()
+            await task
+        assert m.status == MonitorStatus.RUNNING
+        mock_exit.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_cancelled(self):
@@ -1205,6 +1291,81 @@ class TestNotifyMatch:
         ) as mock_wake:
             await mgr._notify_match(m, "ERROR: x")
         mock_push.assert_awaited_once()
+        mock_wake.assert_not_called()
+
+
+class TestNotifyExit:
+    """_notify_exit 测试: 进程结束自动唤醒(退出/超时/异常, 恰好一次)。"""
+
+    @pytest.mark.asyncio
+    async def test_notify_user_and_model(self, notify_mocks):
+        """有 config: 桌面通知 + 唤醒模型, 消息含退出摘要与监控 ID。"""
+        mock_push, mock_wake = notify_mocks
+        mgr = MonitorManager()
+        m = _make_monitor()
+        m.config = MagicMock()
+        m.status = MonitorStatus.STOPPED
+        m.exit_code = 0
+        await mgr._notify_exit(m)
+        mock_push.assert_awaited_once()
+        mock_wake.assert_awaited_once()
+        message = mock_wake.call_args[0][0]
+        assert "进程已结束" in message
+        assert "exit=0" in message
+        assert m.id in message
+
+    @pytest.mark.asyncio
+    async def test_notify_only_once(self, notify_mocks):
+        """多条收尾路径(读线程/轮询线程)竞争时只通知一次。"""
+        mock_push, mock_wake = notify_mocks
+        mgr = MonitorManager()
+        m = _make_monitor()
+        m.config = MagicMock()
+        m.status = MonitorStatus.STOPPED
+        await mgr._notify_exit(m)
+        await mgr._notify_exit(m)
+        mock_push.assert_awaited_once()
+        mock_wake.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_no_config_desktop_only(self, notify_mocks):
+        """无 config 时不唤醒模型,仅通知用户。"""
+        mock_push, mock_wake = notify_mocks
+        mgr = MonitorManager()
+        m = _make_monitor()
+        m.config = None
+        await mgr._notify_exit(m)
+        mock_push.assert_awaited_once()
+        mock_wake.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_wake_ignores_notify_model_switch(self, notify_mocks):
+        """notify_model=False 只静音匹配通知, 结束唤醒仍触发。"""
+        mock_push, mock_wake = notify_mocks
+        mgr = MonitorManager()
+        m = _make_monitor()
+        m.config = MagicMock()
+        m.notify_model = False
+        await mgr._notify_exit(m)
+        mock_wake.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_stop_monitor_suppresses_notify(self, notify_mocks):
+        """agent 主动 stop: 预置 exit_notified, 后续收尾路径不再唤醒。"""
+        mock_push, mock_wake = notify_mocks
+        mgr = MonitorManager()
+        m = _make_monitor("m1")
+        m.config = MagicMock()
+        process = MagicMock()
+        process.returncode = 0
+        m.process = process
+        mgr._monitors["m1"] = m
+        result = await mgr.stop_monitor("m1")
+        assert "进程已退出" in result
+        assert m.exit_notified is True
+        # 模拟收尾路径迟到的结束通知: 不得再打扰 agent
+        await mgr._notify_exit(m)
+        mock_push.assert_not_called()
         mock_wake.assert_not_called()
 
 

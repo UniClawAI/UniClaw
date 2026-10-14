@@ -56,6 +56,9 @@ class Monitor:
         self.match_time: datetime | None = None
         # 通知节流: 最近一次通知时间(配合 manager._notify_interval 限制通知频率)
         self.last_notify_time: datetime | None = None
+        # 结束唤醒恰好一次标记: 进程结束(退出/超时/异常)自动唤醒 agent,
+        # 多条收尾路径(读线程/轮询线程)竞争时只通知一次
+        self.exit_notified: bool = False
         # 输出缓冲满警告: 首次达到上限时插入警告(仅一次, 防止刷屏)
         self.buffer_full_warned: bool = False
         # ConPTY 会话(shell 类命令 + 可视模式时使用, 替代管道进程)
