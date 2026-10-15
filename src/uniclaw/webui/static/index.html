@@ -278,7 +278,24 @@
                         <input type="text" id="project-path" class="input" placeholder="输入路径..." />
                         <button id="browse-btn" class="btn btn-secondary">浏览</button>
                     </div>
-                    <div id="dir-list" class="dir-list"></div>
+                    <div id="dir-list" class="dir-list">
+                        <div class="dir-toolbar">
+                            <div class="dir-nav-btn" id="dir-up-btn" title="返回上一级" style="display:none">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5l7 7-7 7"/></svg>
+                                <span>返回上一级</span>
+                            </div>
+                            <div class="dir-create-btn" id="dir-create-btn" title="在当前目录下新建文件夹" style="display:none">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+                                <span>新建文件夹</span>
+                            </div>
+                        </div>
+                        <div class="dir-create-row" id="dir-create-row" style="display:none">
+                            <input type="text" id="dir-create-input" class="input" placeholder="输入文件夹名称..." />
+                            <button id="dir-create-submit" class="btn btn-primary">创建</button>
+                            <button id="dir-create-cancel" class="btn btn-secondary">取消</button>
+                        </div>
+                        <div id="dir-items"></div>
+                    </div>
                 </div>
                 <div class="modal-actions">
                     <button id="project-cancel" class="btn btn-secondary">取消</button>

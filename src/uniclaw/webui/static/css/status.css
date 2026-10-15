@@ -512,6 +512,56 @@ input[type="radio"]:checked ~ .perm-choice-deny-radio::after {
     height: 14px;
     color: var(--yellow);
 }
+.dir-toolbar {
+    display: flex;
+    border-bottom: 1px solid var(--border);
+}
+.dir-nav-btn,
+.dir-create-btn {
+    padding: 6px 12px;
+    cursor: pointer;
+    font-size: var(--text-sm);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    flex: 1;
+    transition: background var(--duration-fast) var(--ease);
+    user-select: none;
+}
+.dir-nav-btn {
+    color: var(--text-2);
+    border-right: 1px solid var(--border);
+}
+.dir-create-btn {
+    color: var(--accent-bright);
+}
+.dir-nav-btn:hover,
+.dir-create-btn:hover {
+    background: var(--accent-dim);
+}
+.dir-nav-btn svg,
+.dir-create-btn svg {
+    width: 14px;
+    height: 14px;
+}
+.dir-create-row {
+    display: flex;
+    gap: 6px;
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-inset);
+}
+.dir-create-row input {
+    flex: 1;
+    min-width: 0;
+    font-size: var(--text-sm);
+}
+.dir-create-row .btn {
+    flex-shrink: 0;
+    padding: 3px 10px;
+    font-size: var(--text-sm);
+}
 
 /* ---- 响应式: 平板+手机 (≤1024px) ---- */
 @media (max-width: 1024px) {

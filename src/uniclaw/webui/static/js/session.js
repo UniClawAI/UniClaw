@@ -960,24 +960,100 @@ const SessionPanel = {
         const modal = document.getElementById('new-project-modal');
         if (modal) modal.classList.remove('hidden');
         const inp = document.getElementById('project-path'); if (inp) inp.value = '';
-        const list = document.getElementById('dir-list'); if (list) list.innerHTML = '';
+        const items = document.getElementById('dir-items'); if (items) items.innerHTML = '';
+        this._browsePath = '';
+        this._hideDirCreate();
+        document.getElementById('dir-up-btn').style.display = 'none';
+        document.getElementById('dir-create-btn').style.display = 'none';
         document.getElementById('browse-btn').onclick = () => this._browseDir('');
         document.getElementById('project-confirm').onclick = () => {
             const p = document.getElementById('project-path').value.trim();
             if (p) { this.projects[p] = { sessions: [], expanded: true, created_at: this._now() }; this._saveProjects(); this._render(); modal.classList.add('hidden'); }
         };
         document.getElementById('project-cancel').onclick = () => modal.classList.add('hidden');
+        document.getElementById('dir-up-btn').onclick = () => {
+            const parent = this._parentPath(this._browsePath);
+            if (parent !== null) this._browseDir(parent);
+        };
+        document.getElementById('dir-create-btn').onclick = () => this._toggleDirCreate();
+        document.getElementById('dir-create-submit').onclick = () => this._createDir();
+        document.getElementById('dir-create-cancel').onclick = () => this._hideDirCreate();
+        document.getElementById('dir-create-input').onkeydown = (e) => { if (e.key === 'Enter') this._createDir(); };
     },
 
     async _browseDir(path) {
         try {
             const r = await fetch(`/api/dirs?path=${encodeURIComponent(path)}`);
             const dirs = await r.json();
+            this._browsePath = path;
             document.getElementById('project-path').value = path;
-            document.getElementById('dir-list').innerHTML = dirs.filter(d => d.is_dir).map(d =>
+            const subDirs = dirs.filter(d => d.is_dir);
+            document.getElementById('dir-items').innerHTML = subDirs.map(d =>
                 `<div class="dir-item" onclick="SessionPanel._browseDir('${this._esc(d.path)}')">${icon('folder')} ${Utils.escapeHtml(d.name)}</div>`
             ).join('');
+            const upBtn = document.getElementById('dir-up-btn');
+            upBtn.style.display = this._parentPath(path) !== null ? 'flex' : 'none';
+            const createBtn = document.getElementById('dir-create-btn');
+            createBtn.style.display = path ? 'flex' : 'none';
         } catch (e) { console.error('浏览目录失败:', e); }
+    },
+
+    /** 计算 path 的父目录: 无上级(盘符列表/根)返回 null, 盘符根返回 '' */
+    _parentPath(path) {
+        if (!path) return null;
+        const p = String(path).replace(/[\\/]+$/, '');
+        if (!p) return null;
+        if (/^[A-Za-z]:$/.test(p)) return ''; // C:\ / C:/ → 盘符列表
+        const idx = Math.max(p.lastIndexOf('\\'), p.lastIndexOf('/'));
+        if (idx < 0) return '';
+        const parent = p.slice(0, idx);
+        if (parent === '') return p[idx]; // /a → /
+        if (/^[A-Za-z]:$/.test(parent)) return parent + p[idx]; // C:\Users → C:\
+        return parent;
+    },
+
+    _toggleDirCreate() {
+        const row = document.getElementById('dir-create-row');
+        const input = document.getElementById('dir-create-input');
+        const showing = row.style.display !== 'none';
+        if (showing) { this._hideDirCreate(); return; }
+        row.style.display = 'flex';
+        input.value = '';
+        input.focus();
+    },
+
+    _hideDirCreate() {
+        const row = document.getElementById('dir-create-row');
+        if (row) row.style.display = 'none';
+        const input = document.getElementById('dir-create-input');
+        if (input) input.value = '';
+    },
+
+    async _createDir() {
+        const name = (document.getElementById('dir-create-input').value || '').trim();
+        if (!name) { Utils.showError('请输入文件夹名称'); return; }
+        if (!this._browsePath) { Utils.showError('请先进入目标目录'); return; }
+        const submitBtn = document.getElementById('dir-create-submit');
+        submitBtn.disabled = true;
+        try {
+            const r = await fetch('/api/dirs', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path: this._browsePath, name }),
+            });
+            if (!r.ok) {
+                const d = await r.json().catch(() => ({}));
+                Utils.showError(d.detail || `创建失败 (${r.status})`);
+                return;
+            }
+            Utils.showSuccess('文件夹已创建');
+            this._hideDirCreate();
+            await this._browseDir(this._browsePath);
+        } catch (e) {
+            Utils.showError(`创建失败: ${e.message}`);
+        } finally {
+            submitBtn.disabled = false;
+        }
     },
 
     _saveProjects() {
