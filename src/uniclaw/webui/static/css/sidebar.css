@@ -141,6 +141,12 @@
     will-change: opacity, transform;
 }
 
+/* ---- 删除项目按钮(仅空项目显示, hover 变红) ---- */
+.project-header .btn-icon.compact.danger:hover {
+    background: var(--red-dim);
+    color: var(--red);
+}
+
 /* ---- 注意力徽章(鼠标悬停会话行可在 tooltip 的"状态"中查看含义) ---- */
 .attention-badge {
     width: 8px;

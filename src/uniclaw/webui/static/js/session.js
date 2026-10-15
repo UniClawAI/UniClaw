@@ -500,6 +500,9 @@ const SessionPanel = {
         h += `<span class="project-count">${proj.sessions.length}</span>`;
         if (runCount) h += '<span class="running-indicator"></span>';
         h += `<button class="btn-icon compact" onclick="event.stopPropagation(); SessionPanel.createSession('${this._esc(rootDir)}')" title="新建会话">${icon('plus')}</button>`;
+        if (!proj.sessions.length) {
+            h += `<button class="btn-icon compact danger" onclick="event.stopPropagation(); SessionPanel._deleteProject('${this._esc(rootDir)}')" title="删除项目">${icon('trash')}</button>`;
+        }
         h += `</div><div class="project-sessions">`;
         h += this._renderSessionItems(proj.sessions, rootDir);
         h += `</div></div>`;
@@ -568,6 +571,14 @@ const SessionPanel = {
     },
 
     toggleProject(dir) { if (this.projects[dir]) { this.projects[dir].expanded = !this.projects[dir].expanded; this._render(); } },
+
+    async _deleteProject(dir) {
+        if (!await Utils.confirm(`确定删除项目「${dir.split(/[/\\]/).pop() || dir}」？仅移除前端分组,不会删除磁盘上的会话。`)) return;
+        delete this.projects[dir];
+        this._saveProjects();
+        this._render();
+        Utils.showSuccess('项目已删除');
+    },
 
     async selectSession(sessionId, rootDir) {
         this.activeSessionId = sessionId;
