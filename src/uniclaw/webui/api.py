@@ -12,6 +12,7 @@ from uniclaw.ilink_bot.manager import BotManager
 from uniclaw.webui.models import (
     AsrRequest,
     CheckpointCreate,
+    DirCreate,
     CheckpointRestore,
     ConfigUpdate,
     GitAiCommitMessage,
@@ -119,6 +120,45 @@ async def list_dirs(path: str = ""):
     except PermissionError:
         raise HTTPException(status_code=403, detail=f"无权限访问: {path}")
     return entries
+
+
+@router.post("/dirs")
+async def create_dir(body: DirCreate):
+    """创建目录(新建项目对话框用)。
+
+    两种用法:
+    - {"path": 父目录, "name": 文件夹名}: 在父目录下创建子文件夹
+    - {"path": 完整目标路径}: 直接创建该路径, 缺失的父目录自动递归创建
+    """
+    path = (body.path or "").strip()
+    name = (body.name or "").strip()
+    if not path:
+        raise HTTPException(status_code=400, detail="请提供路径")
+    if name:
+        if "/" in name or "\\" in name:
+            raise HTTPException(status_code=400, detail="文件夹名称不能包含路径分隔符")
+        for ch in '<>:"|?*':
+            if ch in name:
+                raise HTTPException(status_code=400, detail=f"文件夹名称不能包含字符: {ch}")
+        parent = Path(path)
+        if not parent.exists():
+            raise HTTPException(status_code=404, detail=f"父目录不存在: {path}")
+        if not parent.is_dir():
+            raise HTTPException(status_code=400, detail=f"不是目录: {path}")
+        target = parent / name
+    else:
+        target = Path(path)
+    try:
+        if target.exists():
+            if target.is_dir():
+                return {"ok": True, "path": str(target), "created": False}
+            raise HTTPException(status_code=400, detail=f"已存在同名文件: {target.name}")
+        target.mkdir(parents=True, exist_ok=True)
+    except PermissionError:
+        raise HTTPException(status_code=403, detail=f"无权限创建: {path}")
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"创建失败: {e}")
+    return {"ok": True, "path": str(target), "created": True}
 
 
 # === 会话管理 ===

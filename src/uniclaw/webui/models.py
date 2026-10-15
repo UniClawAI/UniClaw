@@ -43,6 +43,13 @@ class SessionMove(BaseModel):
     root_dir: str
 
 
+class DirCreate(BaseModel):
+    """创建目录(新建项目对话框)。path 为父目录 + name 文件夹名;或 path 直接为完整目标路径(name 留空自动递归创建)。"""
+
+    path: str = ""
+    name: str = ""
+
+
 class ConfigUpdate(BaseModel):
     """配置更新(模型切换请使用 /model 命令)。"""
 
