@@ -36,9 +36,10 @@
 - 📤 **文件发送**: AI 可将生成的文件发送给用户,WebUI 提供下载链接,微信直接发送
 - 📋 **任务清单**: 任务分解与跟踪,支持自动进度管理和状态流转
 - ⏰ **定时任务**: 支持创建和管理周期性或一次性定时任务,支持会话关联和 monitor 监控类型(命令退出码触发 agent)
-- 🔄 **后台进程**: 启动和管理后台进程(异步实现),支持输入/输出流控制
+- 🔄 **后台进程**: 启动和管理后台进程(异步实现),支持输入/输出流控制,进程结束(自然退出/超时/异常)时自动通知并唤醒 agent
 - 🎯 **Jev 结构化决策**: 集成 TypeSafe SDK 提供快速、低成本的 AI 结构化决策能力(select_one/select_many/yes_no/rate),应用于记忆语义搜索、安全快速筛选、RAG 文档重排序、技能智能推荐等场景,Jev 不可用时自动回退到 LLM
 - 🛡️ **死循环检测**: 自动检测 AI 连续相同工具调用(结合结果指纹比对,区分"原地打转"与"每步都有进展",避免误判),智能打破循环并引导换策略
+- ✂️ **输出截断检测**: 通过 `finish_reason`(length/max_tokens)判断 LLM 输出是否达到长度上限被截断,及时提示内容/工具参数可能不完整;工具参数解析失败时区分"生成被截断"与"参数损坏",分别给出分块重试或调大 max_tokens 的明确指引
 - 💾 **自动保存**: 会话在对话结束时自动持久化;记忆系统定期回顾会话并提取值得长期保存的信息
 - 🪝 **Hook 系统**: 事件驱动的 Shell 命令钩子,支持会话和工具调用生命周期事件
 - 🔔 **系统通知**: 支持 Windows/macOS/Linux 桌面通知,任务完成时自动提醒
@@ -71,7 +72,7 @@
 - 🔌 **MCP 集成**: 支持 Model Context Protocol(mcp 2.x),异步命令管理,支持持久会话连接复用和多模态结果,可连接多种外部工具服务
 - 🌉 **A2A 远程代理**: 支持 Agent2Agent 协议,可调用外部 A2A Agent 或将 UniClaw 暴露为 A2A 端点,实现多 Agent 协作
 - ⏱️ **异步等待**: sleep_timer 工具支持延时唤醒,不阻塞主线程
-- 📸 **Git 检查点**: 自动创建 git stash 检查点,支持一键回滚 AI 的文件编辑,智能处理 .gitignore,不污染 git 历史
+- 📸 **Git 检查点**: 自动创建 git stash 检查点,支持一键回滚 AI 的文件编辑,智能处理 .gitignore,不污染 git 历史;非 git 目录的文件快照模式完整支持中文/特殊文件名
 - 📝 **斜杠命令**: 丰富的内置命令系统,支持会话管理、模型切换、任务管理等
 - 📁 **文件补全**: 支持 `@` 命令自动补全文件名,支持多级子目录导航
 - 🔧 **子命令补全**: 斜杠命令支持子命令自动补全,输入空格后显示可用子命令
@@ -629,7 +630,7 @@ UniClaw 提供了丰富的斜杠命令(`/command`),用于管理系统功能和�
 | `/checkpoint <序号>` | 恢复指定检查点(保留) | `/checkpoint 3` |
 | `/undo` | 撤销 AI 的文件编辑,恢复到检查点(保留) | `/undo`、`/undo 2` |
 
-> 💡 检查点在每个 assistant turn 开始前自动创建,支持两种模式：git 仓库使用 `git stash` 实现,非 git 目录自动降级为文件快照模式。智能处理 .gitignore 规则,不污染 git 历史。
+> 💡 检查点在每个 assistant turn 开始前自动创建,支持两种模式：git 仓库使用 `git stash` 实现,非 git 目录自动降级为文件快照模式。智能处理 .gitignore 规则,不污染 git 历史。文件快照模式通过 `git ls-files -z` 按原始字节输出路径,中文/特殊文件名不会被转义而静默漏拷贝。
 
 #### 模型配置命令
 
@@ -966,6 +967,7 @@ UniClaw 提供了丰富的内置工具,AI 助手可以自动调用这些工具�
 
 工具基础设施：
 - **`base.py`** — 自定义 `@tool` 装饰器,自动生成 OpenAI function calling schema,自动排除 `tool_runtime` 注入参数;`ToolRuntime` 运行时上下文 dataclass(含 `config` / `tool_call_id` / `stream_writer`),工具函数声明 `tool_runtime: ToolRuntime = None` 形参即可获取配置、调用 ID 和流式输出能力(`await tool_runtime.stream(content)`)
+- **参数错误区分** — 区分"模型没传参数"与"arguments 被截断/损坏"两类失败:损坏时保留 `_raw_arguments` 现场,不伪装成缺参错误;参数绑定/类型检查失败返回错误说明字符串(带 `TOOL_ERROR` 前缀),与工具函数返回值约定一致。工具消息的 `args` 字段随会话保留完整调用参数,清洗仅在 API 发送边界执行,入库不销毁原始记录
 - **`registry.py`** — 工具注册表,BM25 搜索索引,核心/扩展工具分层管理
 - **异步工具取消** — 异步工具执行与任务的 `cancel_event` 竞争;用户按 ESC 或中断时,工具任务自动通过 `asyncio.wait` 取消,无需工具自身检查取消状态;同步工具不受影响
 
@@ -1355,8 +1357,10 @@ http_download(
 #### 监控工具 🔄
 
 - **monitor_start** - 启动后台进程(异步实现,支持可选的 watch_pattern 监控匹配)
+  - **结束自动唤醒**: 进程自然退出/超时/异常结束时自动通知用户并唤醒 agent(不受 `notify_on_match` 开关影响,确保恰好触发一次);agent 主动 `monitor_stop` 时不重复唤醒
+  - **watch_pattern**: 正则匹配输出行,匹配到时通知(留空则不监控匹配)
   - **可视模式**: `visible=True` 时弹出真实控制台窗口(基于 ConPTY 伪终端),进程输出实时显示,用户可直接在窗口内输入与进程交互,适合需要登录账号、输入验证码、确认交互式安装提示等 AI 无法独立完成的步骤
-- **monitor_stop** - 停止指定进程
+- **monitor_stop** - 停止指定进程(主动停止不会触发结束唤醒)
 - **monitor_list** - 列出所有后台进程(运行中的进程实时跟踪,已结束条目保留可查询)
 - **monitor_output** - 获取进程输出
 - **monitor_screen** - 获取控制台当前屏幕快照(类似 tmux capture-pane,含提示符同行、未回车键入内容、vim/htop 全屏界面;非可视模式退化为返回全部输出历史)
@@ -1692,7 +1696,7 @@ UniClaw/
 │
 └── src/uniclaw/            # 📦 包根目录
     ├── main.py             # 程序入口(argparse --mode → launcher,run_mode 枚举)
-    ├── agent/              # 核心代理(全异步消息循环、工具调用、事件流、死循环检测含结果指纹比对、asyncio.Queue)
+    ├── agent/              # 核心代理(全异步消息循环、工具调用、事件流、死循环检测含结果指纹比对、输出截断检测、asyncio.Queue)
     │   ├── __init__.py     # 向后兼容的 re-export(MultiAgent, AgentTask, 事件类)
     │   ├── multi_agent.py  # MultiAgent 单例,事件循环,子代理管理,权限检查
     │   └── types.py        # AgentStatus, AgentTask, 事件类定义
@@ -1708,7 +1712,7 @@ UniClaw/
     │   ├── anthropic_provider.py
     │   ├── thought_parser.py   # 流式解析 <thought>/<think> 标签
     │   ├── error_classifier.py  # 错误分类器:六类错误分类 + 差异化重试策略
-    │   ├── types.py        # Protocol/Effort 枚举,Usage 用量统计
+    │   ├── types.py        # Protocol/Effort 枚举,StreamChunk(含 finish_reason)/Usage 用量统计
     │   └── common.py       # get_provider(),compare_urls(),HTTP 客户端缓存
     │
     ├── commands/           # 斜杠命令系统 📝 (31 个命令 + 7 个别名,共38个注册项)
@@ -1923,6 +1927,7 @@ UniClaw/
 - **OpenAI SDK**: 流式 + 异步,支持 `reasoning_content` 和思考模型
 - **Anthropic SDK**: 等价接口,自动路由
 - **ThoughtParser**: 流式解析 `<thought>`/`<think>` 标签,分离思考过程和正文内容
+- **输出截断检测**: `StreamChunk` 携带 `finish_reason`(OpenAI `finish_reason` / Anthropic `stop_reason`)并透传到 agent 主循环;`length`/`max_tokens` 表示输出达到长度上限被截断,主循环发出 warn,工具参数解析失败时给出分块重试或调大 `max_tokens` 的明确指引
 - **Effort 枚举**: 控制推理深度(xhigh/high/medium/minimal/low/none),用于 OpenRouter 的 `reasoning.effort` 参数
 - **多模态降级**: 主模型不支持多模态时自动使用 `multimodal_model_name` 重试
 - **代理兼容**: 自动检测 Google API / OpenRouter API 并适配 `extra_body` 参数
@@ -2917,6 +2922,8 @@ A: 使用 `/task` 命令管理后台任务，后台任务由 AI 通过 `monitor_
 - 启动开发服务器：`monitor_start("npm run dev", name="开发服务器")`
 - 后台构建项目：`monitor_start("cargo build", watch_pattern="Finished")`
 - 下载大文件：`monitor_start("curl -O https://example.com/file.zip")`
+
+> 💡 进程结束(自然退出/超时/异常)时会自动通知并唤醒 agent,无需再靠 `watch_pattern` 加 echo 标记兜底;agent 主动 `/task stop` 或 `monitor_stop` 时不触发结束唤醒。
 
 ### Q: 如何使用语音模式？
 
