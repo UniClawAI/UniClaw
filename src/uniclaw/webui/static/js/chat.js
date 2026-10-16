@@ -153,6 +153,7 @@ const Chat = {
                 if (msg.reasoning_content && msg.reasoning_content.trim()) this._appendThinkingBlock(el, msg.reasoning_content, true, body);
                 if (body && msg.content) {
                     body.innerHTML = Utils.renderMarkdown(msg.content);
+                    if (typeof A2UI !== 'undefined') A2UI.enhance(body); // 回放路径: a2ui 代码块 → 声明式组件(仅主 agent)
                     Utils.addCopyButtons(body);
                     const btn = body.parentElement?.querySelector('.msg-copy-btn');
                     if (btn && btn.style.display === 'none' && msg.content.trim()) btn.style.display = '';
@@ -479,7 +480,7 @@ const Chat = {
         msgContent.className = 'msg-content';
         const body = document.createElement('div');
         body.className = 'markdown-body';
-        if (content) { body.innerHTML = Utils.renderMarkdown(content); Utils.addCopyButtons(body); }
+        if (content) { body.innerHTML = Utils.renderMarkdown(content); if (typeof A2UI !== 'undefined') A2UI.enhance(body); Utils.addCopyButtons(body); }
         msgContent.appendChild(body);
         // 消息整体复制按钮
         const copyBtn = document.createElement('button');
@@ -949,6 +950,7 @@ _showLightbox(url) {
                 }
                 st.streamingContent += msg.content;
                 st.streamingEl.innerHTML = Utils.renderMarkdown(st.streamingContent);
+                // A2UI 仅主 agent 可用:子代理的 a2ui 代码块保持代码块显示
                 Utils.addCopyButtons(st.streamingEl);
                 this._scrollToBottom();
             }
@@ -969,6 +971,7 @@ _showLightbox(url) {
         }
         this.streamingContent += msg.content;
         this.streamingBody.innerHTML = Utils.renderMarkdown(this.streamingContent);
+        if (typeof A2UI !== 'undefined') A2UI.enhance(this.streamingBody); // 主 agent 流式: a2ui 代码块 → 声明式组件
         Utils.addCopyButtons(this.streamingBody);
         const btn = this.streamingBody.parentElement?.querySelector('.msg-copy-btn');
         if (btn && btn.style.display === 'none' && this.streamingContent.trim()) btn.style.display = '';
@@ -992,6 +995,7 @@ _showLightbox(url) {
         }
         if (this.streamingBody && msg.content) {
             this.streamingBody.innerHTML = Utils.renderMarkdown(msg.content);
+            if (typeof A2UI !== 'undefined') A2UI.enhance(this.streamingBody); // assistant 最终消息: a2ui 代码块 → 声明式组件
             Utils.addCopyButtons(this.streamingBody);
             const btn = this.streamingBody.parentElement?.querySelector('.msg-copy-btn');
             if (btn && btn.style.display === 'none' && msg.content.trim()) btn.style.display = '';

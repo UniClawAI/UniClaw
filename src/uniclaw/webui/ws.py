@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 import base64
 import traceback
@@ -802,6 +803,47 @@ async def _start_bridge(session_id: str, config: AppConfig):
         t.add_done_callback(_log_task_error)
 
 
+_A2UI_MAX_PAYLOAD = 4096  # A2UI 动作 payload 序列化后最大长度
+
+
+def _serialize_a2ui_value(value) -> str | None:
+    """校验并序列化 A2UI 动作 payload/fields(仅允许 JSON 原生类型,限制长度)。
+
+    非法类型(如包含不可序列化对象)或超长返回 None,调用方应丢弃该动作。
+    """
+    if value is not None and not isinstance(value, (str, int, float, bool, list, dict)):
+        return None
+    try:
+        text = json.dumps(value, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return None
+    if len(text) > _A2UI_MAX_PAYLOAD:
+        return None
+    return text
+
+
+async def handle_a2ui_action(session_id: str, task, config: AppConfig, payload: str | None, fields: str | None) -> bool:
+    """处理前端 A2UI 组件动作:校验后以系统消息注入 agent。
+
+    运行中放入 user_queue;空闲则启动 agent 处理该动作。
+    """
+    if not payload:
+        return False
+    # 构造系统通知:payload 为组件声明的动作内容,fields 为表单控件收集值
+    content = f"{SYSTEM_PREFIX}[a2ui] 用户在界面组件上执行了操作:{payload}"
+    if fields:
+        content += f";表单字段:{fields}"
+    if task.status == AgentStatus.RUNNING:
+        task.user_queue.put_nowait(content)
+    else:
+        from uniclaw.agent import MultiAgent
+
+        multi_agent = MultiAgent.get_instance()
+        multi_agent.start_agent(content, config)
+        await _start_bridge(session_id, config)
+    return True
+
+
 async def handle_ws_message(ws: WebSocket, msg: dict):
     """处理客户端发来的 WS 消息。"""
     msg_type = msg.get("type", "")
@@ -991,6 +1033,18 @@ async def handle_ws_message(ws: WebSocket, msg: dict):
                 multi_agent = MultiAgent.get_instance()
                 multi_agent.start_agent(result, config)
                 await _start_bridge(session_id, config)
+
+    elif msg_type == "a2ui_action":
+        # A2UI 组件按钮动作回发:payload/fields 仅接受 JSON 原生类型,非法则丢弃
+        payload = _serialize_a2ui_value(msg.get("payload"))
+        fields = _serialize_a2ui_value(msg.get("fields"))
+        if payload is None:
+            await _safe_send(
+                ws,
+                {"event": "error", "session_id": session_id, "message": "a2ui_action payload 非法或超长,已忽略"},
+            )
+        else:
+            await handle_a2ui_action(session_id, task, config, payload, fields)
 
     elif msg_type == "permission_response":
         await handle_permission_response(

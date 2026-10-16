@@ -343,11 +343,18 @@ if ASSETS_DIR.exists():
 
 
 def _serve_html(file_path: Path) -> Response:
-    """返回 HTML 文件,若已加密则解密。"""
+    """返回 HTML 文件,若已加密则解密。
+
+    始终 no-cache:HTML 是前端资源版本入口(js/css 靠 ?v= 参数更新),
+    浏览器缓存旧 HTML 会导致新资源永不加载(如 A2UI 渲染器未引入)。
+    """
     data = file_path.read_bytes()
     if is_encrypted(data):
         data = decrypt_data(data)
-    return Response(content=data, media_type="text/html; charset=utf-8")
+    resp = Response(content=data, media_type="text/html; charset=utf-8")
+    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    resp.headers["Pragma"] = "no-cache"
+    return resp
 
 
 @app.get("/")
