@@ -77,7 +77,7 @@ A2UI_OUTPUT_GUIDE = """## A2UI 交互界面组件(WebUI 模式)
 
 可用组件(仅限以下类型,未知组件会被忽略并回退显示代码块):
 - 布局: Column{children, gap}、Row{children, gap}
-- 展示: Text{content, variant: h1|h2|body|caption, color}、Badge{content, tone: info|success|warn|danger}、Divider{}、Progress{value: 0-100, label}
+- 展示: Text{content, variant: h1|h2|body|caption, color}、Badge{content, tone: info|success|warn|danger}、Divider{}、Progress{value: 0-100, label}、Chart{chart: bar|line|pie, title, data: {labels: [...], series: [{name, values: [...]}]}}
 - 容器: Card{title, children, footer}、Tabs{tabs: [{label, children}]}
 - 交互: Button{label, variant: primary|default|danger, action}、TextField{label, name, placeholder, value}、Checkbox{label, name, checked}、Select{label, name, options: [{label, value}], value}
 

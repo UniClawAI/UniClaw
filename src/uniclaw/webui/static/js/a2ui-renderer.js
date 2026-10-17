@@ -35,6 +35,180 @@ const A2UI = (() => {
     }
 
     // ============================================================
+    //  图表辅助(SVG,纯 DOM API,无 innerHTML 拼接)
+    // ============================================================
+    const SVG_NS = 'http://www.w3.org/2000/svg';
+    const CHART_COLORS = ['#0078d4', '#07b364', '#fce100', '#d13438', '#f7630c', '#2899f5', '#adadad'];
+
+    function svgEl(tag, attrs) {
+        const n = document.createElementNS(SVG_NS, tag);
+        if (attrs) {
+            for (const k in attrs) n.setAttribute(k, String(attrs[k]));
+        }
+        return n;
+    }
+
+    function chartNumbers(values) {
+        return (Array.isArray(values) ? values : []).map(v => Number(v)).filter(v => Number.isFinite(v) && v >= 0);
+    }
+
+    function chartLegendItem(name, color) {
+        const item = el('span', 'a2ui-chart-legend-item');
+        const dot = el('i', 'a2ui-chart-legend-dot');
+        dot.style.background = color;
+        item.appendChild(dot);
+        item.appendChild(el('span', '', name));
+        return item;
+    }
+
+    /** 柱状图 / 折线图(共轴布局) */
+    function renderAxisChart(node, chartType, labels, series) {
+        const plot = {
+            width: 640, height: 220,
+            left: 12, right: 12, top: 12, bottom: 40,
+        };
+        const plotW = plot.width - plot.left - plot.right;
+        const plotH = plot.height - plot.top - plot.bottom;
+        // 收集所有有效值,计算最大值
+        const allValues = [];
+        series.forEach(s => allValues.push(...chartNumbers(s.values)));
+        const maxVal = Math.max(...allValues);
+        if (!Number.isFinite(maxVal) || maxVal <= 0) return chartEmpty(node);
+        const scale = (v) => v / maxVal;
+
+        const svg = svgEl('svg', { viewBox: `0 0 ${plot.width} ${plot.height}`, class: 'a2ui-chart-svg' });
+        // 横向网格线(每 25%)
+        for (let i = 0; i <= 4; i++) {
+            const y = plot.top + plotH - (plotH * i / 4);
+            svg.appendChild(svgEl('line', {
+                x1: plot.left, y1: y, x2: plot.left + plotW, y2: y,
+                stroke: 'rgba(255,255,255,0.07)', 'stroke-width': 1,
+            }));
+            const tick = svgEl('text', { x: plot.left + plotW + 4, y: y + 3, 'font-size': 9, fill: '#8a8a8a' });
+            tick.textContent = Math.round(maxVal * i / 4);
+            svg.appendChild(tick);
+        }
+        // 类目轴标签
+        const step = labels.length ? plotW / labels.length : 0;
+        labels.forEach((label, i) => {
+            const cx = plot.left + (i + 0.5) * step;
+            const t = svgEl('text', { x: cx, y: plot.top + plotH + 16, 'font-size': 10, fill: '#adadad', 'text-anchor': 'middle' });
+            t.textContent = label.length > 8 ? label.slice(0, 8) + '…' : label;
+            svg.appendChild(t);
+        });
+
+        if (chartType === 'line') {
+            series.forEach((s, si) => {
+                const color = CHART_COLORS[si % CHART_COLORS.length];
+                const nums = chartNumbers(s.values);
+                if (!nums.length) return;
+                const pts = nums.map((v, i) => {
+                    const x = plot.left + (i + 0.5) * step;
+                    const y = plot.top + plotH - scale(v) * plotH;
+                    return [x, y];
+                });
+                const poly = svgEl('polyline', {
+                    points: pts.map(p => p.map(n => n.toFixed(1)).join(',')).join(' '),
+                    fill: 'none', stroke: color, 'stroke-width': 2,
+                    'stroke-linejoin': 'round', 'stroke-linecap': 'round',
+                });
+                svg.appendChild(poly);
+                pts.forEach((p, i) => {
+                    const c = svgEl('circle', { cx: p[0], cy: p[1], r: 3, fill: color });
+                    svg.appendChild(c);
+                    if (nums.length <= 12) {
+                        const v = svgEl('text', { x: p[0], y: p[1] - 7, 'font-size': 9, fill: '#adadad', 'text-anchor': 'middle' });
+                        v.textContent = String(nums[i]);
+                        svg.appendChild(v);
+                    }
+                });
+            });
+        } else {
+            const groupW = labels.length ? plotW / labels.length : plotW;
+            const barCount = Math.max(1, series.length);
+            const barW = Math.max(2, Math.min(32, groupW * 0.8 / barCount));
+            series.forEach((s, si) => {
+                const color = CHART_COLORS[si % CHART_COLORS.length];
+                const nums = chartNumbers(s.values);
+                nums.forEach((v, i) => {
+                    const gx = plot.left + i * groupW + (groupW * 0.1) + si * (barW + 1);
+                    const h = Math.max(0, scale(v) * plotH);
+                    const y = plot.top + plotH - h;
+                    svg.appendChild(svgEl('rect', { x: gx, y: y, width: barW, height: h, fill: color, rx: 2 }));
+                    if (nums.length <= 12 && barW >= 10) {
+                        const vTxt = svgEl('text', { x: gx + barW / 2, y: y - 3, 'font-size': 9, fill: '#adadad', 'text-anchor': 'middle' });
+                        vTxt.textContent = String(v);
+                        svg.appendChild(vTxt);
+                    }
+                });
+            });
+        }
+
+        const wrap = el('div', 'a2ui-chart');
+        if (node.title) wrap.appendChild(el('div', 'a2ui-chart-title', String(node.title)));
+        wrap.appendChild(svg);
+        const legend = el('div', 'a2ui-chart-legend');
+        series.forEach((s, si) => {
+            const name = s && typeof s.name === 'string' && s.name ? s.name : ('系列' + (si + 1));
+            legend.appendChild(chartLegendItem(name, CHART_COLORS[si % CHART_COLORS.length]));
+        });
+        wrap.appendChild(legend);
+        return wrap;
+    }
+
+    /** 饼图(单系列) */
+    function renderPie(node, labels, values) {
+        const nums = chartNumbers(values);
+        const total = nums.reduce((a, b) => a + b, 0);
+        if (!total || !nums.length) return chartEmpty(node);
+        const size = 180, cx = size / 2, cy = size / 2, r = 62;
+        const svg = svgEl('svg', { viewBox: `0 0 ${size} ${size}`, class: 'a2ui-chart-svg' });
+        let angle = -Math.PI / 2;
+        nums.forEach((v, i) => {
+            const sweep = v / total * Math.PI * 2;
+            const x1 = cx + r * Math.cos(angle), y1 = cy + r * Math.sin(angle);
+            angle += sweep;
+            const x2 = cx + r * Math.cos(angle), y2 = cy + r * Math.sin(angle);
+            const large = sweep > Math.PI ? 1 : 0;
+            const color = CHART_COLORS[i % CHART_COLORS.length];
+            const path = svgEl('path', {
+                d: `M${cx},${cy} L${x1.toFixed(1)},${y1.toFixed(1)} A${r},${r} 0 ${large} 1 ${x2.toFixed(1)},${y2.toFixed(1)} Z`,
+                fill: color,
+            });
+            svg.appendChild(path);
+            // 百分比标签(扇区足够大时)
+            if (v / total >= 0.06) {
+                const mid = angle - sweep / 2;
+                const lx = cx + r * 0.62 * Math.cos(mid), ly = cy + r * 0.62 * Math.sin(mid);
+                const t = svgEl('text', { x: lx, y: ly + 3, 'font-size': 11, fill: '#141414', 'text-anchor': 'middle', 'font-weight': 600 });
+                t.textContent = Math.round(v / total * 100) + '%';
+                svg.appendChild(t);
+            }
+        });
+        const wrap = el('div', 'a2ui-chart');
+        if (node.title) wrap.appendChild(el('div', 'a2ui-chart-title', String(node.title)));
+        wrap.appendChild(svg);
+        const legend = el('div', 'a2ui-chart-legend');
+        nums.forEach((v, i) => {
+            const name = labels[i] && String(labels[i]) ? String(labels[i]) : ('项目' + (i + 1));
+            const pct = Math.round(v / total * 100);
+            legend.appendChild(chartLegendItem(`${name} ${pct}%`, CHART_COLORS[i % CHART_COLORS.length]));
+        });
+        wrap.appendChild(legend);
+        return wrap;
+    }
+
+    /** 图表无有效数据时的占位(不回退代码块,给出友好提示) */
+    function chartEmpty(node) {
+        const wrap = el('div', 'a2ui-chart');
+        if (node.title) wrap.appendChild(el('div', 'a2ui-chart-title', String(node.title)));
+        const hint = el('div', 'a2ui-chart-empty');
+        hint.textContent = '⚠️ 图表数据为空或无效';
+        wrap.appendChild(hint);
+        return wrap;
+    }
+
+    // ============================================================
     //  组件目录(对齐 A2UI 基元,UniClaw 子集)
     // ============================================================
     const COMPONENTS = {
@@ -84,6 +258,19 @@ const A2UI = (() => {
                 d.appendChild(label);
             }
             return d;
+        },
+        Chart(node) {
+            const data = node && typeof node.data === 'object' ? node.data : {};
+            const labels = Array.isArray(data.labels) ? data.labels.filter(l => l != null).map(String) : [];
+            const series = Array.isArray(data.series) ? data.series : [];
+            const chartType = node.chart === 'line' ? 'line' : node.chart === 'pie' ? 'pie' : 'bar';
+            if (chartType === 'pie') {
+                const values = series[0] && Array.isArray(series[0].values)
+                    ? series[0].values
+                    : (Array.isArray(data.values) ? data.values : []);
+                return renderPie(node, labels, values);
+            }
+            return renderAxisChart(node, chartType, labels, series);
         },
         // ---- 容器 ----
         Card(node) {

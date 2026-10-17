@@ -1801,3 +1801,51 @@ select.a2ui-field-input {
     height: 15px;
     accent-color: var(--accent);
 }
+
+/* ---- 图表(纯 SVG) ---- */
+.a2ui-chart {
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    background: var(--bg-elevated);
+    padding: 12px 14px;
+    margin: 4px 0;
+    max-width: 100%;
+}
+.a2ui-chart-title {
+    font-size: var(--text-sm);
+    font-weight: 600;
+    color: var(--text-1);
+    margin-bottom: 8px;
+}
+.a2ui-chart-svg {
+    display: block;
+    width: 100%;
+    height: auto;
+    max-height: 320px;
+}
+.a2ui-chart-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 16px;
+    margin-top: 10px;
+}
+.a2ui-chart-legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: var(--text-xs);
+    color: var(--text-2);
+}
+.a2ui-chart-legend-dot {
+    display: inline-block;
+    width: 9px;
+    height: 9px;
+    border-radius: 2px;
+    flex-shrink: 0;
+}
+.a2ui-chart-empty {
+    padding: 16px 0;
+    text-align: center;
+    color: var(--text-3);
+    font-size: var(--text-sm);
+}
