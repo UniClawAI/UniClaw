@@ -150,8 +150,8 @@ class TestUpdate:
         todo = TodoList()
         todo.add("任务")
         config = _make_config(todo)
-        # pending 不能直接改为 completed
-        result = await todolist_update(0, "completed", tool_runtime=ToolRuntime(config=config))
+        # 索引越界属于更新失败
+        result = await todolist_update(5, "completed", tool_runtime=ToolRuntime(config=config))
         assert TOOL_ERROR in result
         assert "已自动关闭" not in result
         assert len(todo.items) == 1

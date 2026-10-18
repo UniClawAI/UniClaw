@@ -50,12 +50,13 @@ class TestTodoList:
         assert tl.items[0].status == TodoStatus.COMPLETED
         assert "[✓]" in result
 
-    def test_cannot_complete_pending_item(self):
-        """pending 不能直接标记为 completed。"""
+    def test_can_complete_pending_item(self):
+        """pending 可直接标记为 completed,不强制经过 in_progress。"""
         tl = TodoList()
         tl.add("写测试")
         result = tl.update_status(0, "completed")
-        assert "错误" in result or "TOOL_ERROR" in result or "只有" in result
+        assert tl.items[0].status == TodoStatus.COMPLETED
+        assert "[✓]" in result
 
     def test_only_one_in_progress(self):
         """同一时间只能有一个 in_progress。"""
