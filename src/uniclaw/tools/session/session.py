@@ -770,6 +770,92 @@ def _build_summary_transcript(
     return "\n\n".join(parts)
 
 
+def _extract_summary_needs(text: str) -> str:
+    """从压缩摘要中取出「## 用户需求」段。
+
+    标题要覆盖用户诉求,而 `_messages` 压缩后开头只剩摘要 — 整条丢掉的话
+    摘录里就只剩末尾几条,标题退回"只看最后一段"。摘要是全程诉求的高密度
+    汇总,取这一段比翻 history 全量便宜得多。
+
+    Args:
+        text: 压缩摘要消息文本(以 SUMMARY_PREFIX 开头)。
+
+    Returns:
+        str: 用户需求段正文;找不到该段时返回摘要正文(去掉前缀)。
+    """
+    marker = "## 用户需求"
+    body = text[len(SUMMARY_PREFIX) :]
+    start = body.find(marker)
+    if start < 0:
+        return body.strip()
+    body = body[start + len(marker) :]
+    nxt = body.find("\n## ")
+    return (body[:nxt] if nxt >= 0 else body).strip()
+
+
+def _build_title_transcript(
+    messages: list,
+    *,
+    max_line_chars: int = 500,
+    max_total_chars: int = 10000,
+    head: int = 8,
+    tail: int = 4,
+) -> str:
+    """把对话整理为标题生成用的有界摘录。
+
+    标题要概括整个对话主题(以用户诉求为主线),因此:
+    - 只取用户/助手文本 — 工具结果是过程噪音,不参与定题
+    - 单条截断到 max_line_chars,总量有界(来源再长也不会撑爆上下文)
+    - 短对话全量保留;过长时保留开头 head 条(用户最初诉求)与结尾 tail 条
+      (话题落点),中间省略并标注条数 — 只把尾部交给模型,标题就只剩最后一段
+    - 压缩摘要取其「## 用户需求」段而非丢弃 — 压缩后原始诉求只剩摘要
+
+    Args:
+        messages: 消息列表(通常为 Session._messages)。
+        max_line_chars: 单条消息的最大字符数。
+        max_total_chars: 摘录总字符数上限。
+        head: 超限时保留的开头条数。
+        tail: 超限时保留的结尾条数。
+
+    Returns:
+        str: 有界的对话摘录。
+    """
+    lines: list[str] = []
+    for m in messages:
+        if isinstance(m, ToolCallMessage) or is_summary_ack(m):
+            continue
+        if isinstance(m, UserMessage):
+            label, text = "用户", m.to_content()
+        elif isinstance(m, AIMessage):
+            label, text = "助手", m.to_content()
+        else:
+            continue
+        text = (text or "").strip()
+        if not text:
+            continue
+        # 系统注入(时间提醒/Shell 通知)是元信息,不参与定题
+        if text.startswith(SYSTEM_PREFIX):
+            continue
+        # 压缩摘要:只留用户诉求段,标签点明这是全程诉求的汇总
+        if text.startswith(SUMMARY_PREFIX):
+            text = _extract_summary_needs(text)
+            if not text:
+                continue
+            label = "用户诉求(压缩摘要)"
+        if len(text) > max_line_chars:
+            text = text[:max_line_chars] + "...(已省略)"
+        lines.append(f"[{label}]: {text}")
+
+    if len(lines) > head + tail and sum(len(x) for x in lines) > max_total_chars:
+        omitted = len(lines) - head - tail
+        lines = lines[:head] + [f"...(中间省略 {omitted} 条消息)..."] + lines[-tail:]
+
+    text = "\n\n".join(lines)
+    if len(text) > max_total_chars:
+        text = text[:max_total_chars] + "\n...(已省略)"
+    return text
+
+
 class SessionType(StrEnum):
     CONSOLE = "console"
     WECHAT = "wechat"
@@ -1396,9 +1482,13 @@ class Session:
         self.history.append(tool_call_message)
 
     async def generate_title(self, config: AppConfig) -> str:
-        prompt = self.to_str()
+        prompt = _build_title_transcript(self._messages)
+        if not prompt:
+            return self._fallback_title()
         system_prompt = (
-            "你为对话生成标题。只输出一个简洁标题,不要解释,不要引号,10个中文字符以内。"
+            "你为对话生成标题。标题要概括整个对话的核心主题,以用户诉求为主线,"
+            "不要只根据最后一段内容下结论。"
+            "只输出一个简洁标题,不要解释,不要引号,10个中文字符以内。"
         )
         title_session = Session()
         title_session.add_user_message(content=prompt)
@@ -1413,7 +1503,7 @@ class Session:
                 enable_thinking=False,
                 thinking=False,
                 config=config,
-                temperature=0.3,
+                temperature=1.,
             )
             title = resp.content.strip()
         except Exception as e:
@@ -1425,10 +1515,22 @@ class Session:
         return title
 
     def _fallback_title(self) -> str:
+        """LLM 失败时的回退标题:取第一条用户诉求的开头。
+
+        跳过系统注入([system]);压缩摘要取其「## 用户需求」段 —
+        压缩后原始诉求只剩摘要,整条跳过就只剩末尾的只言片语。
+        """
         for message in self._messages:
-            if isinstance(message, UserMessage):
-                content = message.to_content()
-                return content[:20]
+            if not isinstance(message, UserMessage):
+                continue
+            content = message.to_content().strip()
+            if not content or content.startswith(SYSTEM_PREFIX):
+                continue
+            if content.startswith(SUMMARY_PREFIX):
+                content = _extract_summary_needs(content)
+                if not content:
+                    continue
+            return content[:20]
         return ""
 
     # ── 消息管理兼容方法 ─────────────────────────────────────
