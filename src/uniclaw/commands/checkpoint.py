@@ -92,7 +92,10 @@ async def cmd_checkpoint(args: str, config: AppConfig) -> bool:
 
     # /checkpoint pop <序号>
     if cmd == "pop":
-        idx = int(arg) if arg.isdigit() else 0
+        if arg and not arg.isdigit():
+            await err("用法: /checkpoint pop [<序号>]", config)
+            return True
+        idx = int(arg) if arg else 0
         success, message = await pop_checkpoint(root_dir, index=idx)
         if success:
             await ok(f"✓ {message}", config)
@@ -102,6 +105,9 @@ async def cmd_checkpoint(args: str, config: AppConfig) -> bool:
 
     # /checkpoint apply 或 /checkpoint <序号>
     if cmd == "apply" or cmd.isdigit():
+        if arg and not arg.isdigit():
+            await err("用法: /checkpoint apply [<序号>]", config)
+            return True
         idx = 0 if cmd == "apply" else int(cmd)
         if arg.isdigit():
             idx = int(arg)

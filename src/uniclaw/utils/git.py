@@ -1,10 +1,11 @@
+import json
 import logging
 import os
 from pathlib import Path
 import subprocess
 import tempfile
 import time
-from typing import Optional
+from typing import Optional, Any
 import uuid
 
 from uniclaw.utils.process import run_command
@@ -146,22 +147,89 @@ async def remove_worktree(wt_path: Path, branch: str, base_dir: Path) -> None:
 
 
 # ── Git Stash 检查点 ──────────────────────────────────────────────────────────
+# HEAD 锚点:工作区无改动时 git stash 无法创建条目,为保证"每个聊天 turn 都有
+# 检查点可恢复",在 .git/uniclaw-head-anchors.json 记录一条轻量锚点(HEAD hash +
+# 时间 + 消息)。恢复锚点 = 丢弃所有未提交改动,回到 HEAD 干净状态。
+
+
+def _checkpoint_anchor_path(git_root: str) -> Path:
+    """HEAD 锚点文件路径(.git 内:不进 commit、不受 git clean 影响)。"""
+    return Path(git_root) / ".git" / "uniclaw-head-anchors.json"
+
+
+def _load_head_anchors(git_root: str) -> list[dict]:
+    """读取 HEAD 锚点列表,文件缺失/损坏时返回空列表(不影响 stash 主流程)。"""
+    try:
+        data = json.loads(_checkpoint_anchor_path(git_root).read_text(encoding="utf-8"))
+        if isinstance(data, list):
+            return [a for a in data if isinstance(a, dict) and a.get("type") == "head"]
+    except (OSError, json.JSONDecodeError):
+        pass
+    return []
+
+
+def _save_head_anchors(git_root: str, anchors: list[dict]) -> None:
+    _checkpoint_anchor_path(git_root).write_text(
+        json.dumps(anchors, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
+async def _merged_checkpoint_items(git_root: str) -> list[dict]:
+    """合并 stash 条目与 HEAD 锚点,按时间倒序(新→旧)。
+
+    Returns:
+        条目列表,每个元素:
+        - stash: {"kind": "stash", "stash_index": k, "text": <stash list 行>, "time": ts}
+        - head:  {"kind": "head", "anchor_index": k, "text": "[HEAD] msg", "time": ts}
+    """
+    items: list[dict[str, Any]] = []
+    # stash 条目:默认输出提供序号与消息, --format=%ct 提供每行时间戳(顺序一致)
+    stash_result = await _run_git("git", "stash", "list", cwd=str(git_root))
+    ts_result = await _run_git("git", "stash", "list", "--format=%ct", cwd=str(git_root))
+    stash_lines = (stash_result.stdout or "").splitlines()
+    ts_lines = (ts_result.stdout or "").splitlines()
+    for i, line in enumerate(stash_lines):
+        ts = 0
+        if i < len(ts_lines) and ts_lines[i].strip().isdigit():
+            ts = int(ts_lines[i])
+        items.append({"kind": "stash", "stash_index": i, "text": line, "time": ts})
+    # HEAD 锚点(ts 损坏时按 0 处理,避免整个列表崩溃)
+    for i, a in enumerate(_load_head_anchors(git_root)):
+        msg = a.get("message", "") or f"anchor-{i}"
+        try:
+            ts = int(a.get("ts", 0))
+        except (TypeError, ValueError):
+            ts = 0
+        items.append(
+            {
+                "kind": "head",
+                "anchor_index": i,
+                "text": f"[HEAD] {msg}",
+                "time": ts,
+            }
+        )
+    # 新→旧;同秒时 stash 排前(保持 stash 栈的相对顺序)
+    # 注意 reverse=True 时 key 大者在前,故 stash(1) > head(0)
+    items.sort(key=lambda x: (x["time"], 0 if x["kind"] == "head" else 1), reverse=True)
+    return items
 
 
 async def git_create_checkpoint(root_dir: Path, message: str = "") -> bool:
-    """创建检查点:git stash push + apply
+    """创建检查点:git stash push + apply(有改动时);HEAD 锚点(无改动时)
 
     在 assistant turn 开始前调用,捕获当前工作目录状态。
-    创建后立即 apply 恢复,不影响工作区内容。
-    如果没有变更则静默返回 False(git stash 无变更时返回非 0)。
-    message 使用用户消息的前 50 个字符,便于在 stash list 中识别。
+    有未提交改动:stash push 捕获(含暂存区与未跟踪文件),随后立即 apply 恢复;
+    工作区无改动:git stash 无法创建条目,改记为 HEAD 锚点,
+    保证每个聊天 turn 都有检查点可恢复。
+    两者都在 list/pop/apply 中按时间统一排序呈现。
+    message 使用用户消息的前 50 个字符,便于在检查点列表中识别。
 
     Args:
         root_dir: 仓库根目录路径
         message: 检查点描述,默认使用时间戳
 
     Returns:
-        bool: 是否成功创建(无变更时返回 False)
+        bool: 是否成功创建(不在 git 仓库 / HEAD 不可解析时返回 False)
     """
     git_root = await get_git_root(root_dir)
     if not git_root:
@@ -171,6 +239,28 @@ async def git_create_checkpoint(root_dir: Path, message: str = "") -> bool:
         msg = message.replace("\n", " ")[:50]
     else:
         msg = f"checkpoint-{time.strftime('%Y%m%d-%H%M%S')}"
+    # 工作区无改动时 git stash 无法创建条目:记录 HEAD 锚点,
+    # 保证每个聊天 turn 都有检查点可恢复(恢复锚点 = 丢弃未提交改动回到 HEAD)
+    status_result = await _run_git(
+        "git", "status", "--porcelain", cwd=str(git_root)
+    )
+    if status_result.returncode != 0 or not status_result.stdout.strip():
+        head_result = await _run_git("git", "rev-parse", "HEAD", cwd=str(git_root))
+        if head_result.returncode != 0:
+            return False
+        now = int(time.time())
+        anchors = _load_head_anchors(git_root)
+        anchors.append(
+            {
+                "type": "head",
+                "message": msg,
+                "head": head_result.stdout.strip(),
+                "ts": now,
+                "time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now)),
+            }
+        )
+        _save_head_anchors(git_root, anchors)
+        return True
     # 第一步:stash push 保存当前状态
     result = await _run_git(
         "git",
@@ -183,30 +273,59 @@ async def git_create_checkpoint(root_dir: Path, message: str = "") -> bool:
     )
     if result.returncode != 0:
         return False
-    # 第二步:立即 apply 恢复工作区
-    await _run_git("git", "stash", "apply", cwd=str(git_root))
+    # 第二步:立即 apply 恢复工作区(--index 还原暂存区;索引无法精确还原时降级为裸 apply)
+    result = await _run_git(
+        "git",
+        "stash",
+        "apply",
+        "--index",
+        cwd=str(git_root),
+    )
+    if result.returncode != 0:
+        # --index 失败(stash 记录的索引无法与当前索引对齐),降级为裸 apply,
+        # 至少恢复工作区内容;此场景下暂存区状态可能无法还原。
+        result = await _run_git("git", "stash", "apply", cwd=str(git_root))
+    if result.returncode != 0:
+        logger.warning(
+            "检查点已创建,但工作区还原失败(改动全部保留在 stash): %s",
+            (result.stderr or "").strip(),
+        )
     return True
+
+
+async def _git_stash_restore(
+    git_root: str, cmd: str, index: int
+) -> subprocess.CompletedProcess:
+    """执行 stash pop/apply,优先带 --index 还原暂存区(检查点保存时含索引状态)。
+
+    带 --index 失败时(git 报 "conflicts in index. Try without --index."),
+    stash 记录仍保留且不产生部分应用,可安全降级为裸命令重试 ——
+    代价是暂存区状态无法还原,但工作区内容不丢。
+    """
+    result = await _run_git(
+        "git", "stash", cmd, "--index", f"stash@{{{index}}}", cwd=git_root
+    )
+    if result.returncode == 0:
+        return result
+    return await _run_git("git", "stash", cmd, f"stash@{{{index}}}", cwd=git_root)
 
 
 async def _git_restore_helper(
     root_dir: Path, index: int, use_pop: bool
 ) -> tuple[bool, str]:
-    """git stash 恢复的内部实现,供 git_pop_checkpoint 和 git_apply_checkpoint 调用。
+    """检查点恢复的内部实现,供 git_pop_checkpoint 和 git_apply_checkpoint 调用。
 
-    处理流程:
-    1. 校验当前目录是否在 git 仓库内
-    2. 根据 use_pop 决定执行 `git stash pop` 或 `git stash apply`
-    3. 若 stash 恢复时出现冲突(工作区有未提交的同名文件变更),
-       采用强制恢复策略:
-       a. `git checkout HEAD -- .` 丢弃当前工作区所有修改
-       b. `git clean -fd` 删除未跟踪的文件
-       c. 重新执行 stash pop/apply
+    检查点列表为 stash 条目与 HEAD 锚点的统一索引(按时间倒序):
+    - stash 条目:对应 stash@{k},执行 stash pop/apply(优先 --index 还原暂存区,
+      失败自动降级;冲突时 checkout + clean 强制恢复)
+    - HEAD 锚点:工作区无改动时的基线,恢复 = 丢弃所有未提交改动回到 HEAD
+      (git checkout HEAD -- . + git clean -fd)
 
     Args:
         root_dir: 仓库根目录路径,用于定位 git 仓库
-        index: stash 序号,对应 `stash@{index}`,0 表示最近一次
-        use_pop: True 使用 `git stash pop`(恢复并从 stash 列表中删除),
-                 False 使用 `git stash apply`(恢复但保留 stash 记录)
+        index: 统一检查点序号,0 表示最近一次
+        use_pop: True 使用 git stash pop(恢复并从 stash 列表中删除),
+                 False 使用 git stash apply(恢复但保留 stash 记录)
 
     Returns:
         (success, message) 元组:
@@ -217,19 +336,43 @@ async def _git_restore_helper(
     if not git_root:
         return False, "不在 git 仓库中"
 
+    items = await _merged_checkpoint_items(git_root)
+    if index < 0 or index >= len(items):
+        return False, f"检查点序号 {index} 不存在(共 {len(items)} 个)"
+    item = items[index]
+
+    # HEAD 锚点:丢弃所有未提交改动,回到 HEAD 干净状态
+    if item["kind"] == "head":
+        name = item["text"]
+        for cmd_args in (
+            ("git", "checkout", "HEAD", "--", "."),
+            ("git", "clean", "-fd"),
+        ):
+            r = await _run_git(*cmd_args, cwd=str(git_root))
+            if r.returncode != 0:
+                return False, f"恢复检查点失败({cmd_args[1]}): {(r.stderr or '').strip()}"
+        # 验证工作区确实回到干净态,避免"伪成功"
+        verify = await _run_git("git", "status", "--porcelain", cwd=str(git_root))
+        if verify.returncode != 0 or verify.stdout.strip():
+            return False, "恢复检查点失败: 工作区仍有未提交改动,请手动检查"
+        if use_pop:
+            anchors = _load_head_anchors(git_root)
+            ai = item["anchor_index"]
+            if 0 <= ai < len(anchors):
+                anchors.pop(ai)
+                _save_head_anchors(git_root, anchors)
+                return True, f"已恢复并删除检查点: {name}"
+        return True, f"已恢复检查点: {name}"
+
+    # stash 条目:记录在合并列表中的 stash 序号即 stash@{k}
+    stash_index = item["stash_index"]
     cmd = "pop" if use_pop else "apply"
     action = "恢复并删除" if use_pop else "恢复"
 
-    # 先尝试 stash pop/apply
-    result = await _run_git(
-        "git",
-        "stash",
-        cmd,
-        f"stash@{{{index}}}",
-        cwd=str(git_root),
-    )
+    # 先尝试 stash pop/apply(带 --index 还原暂存区,失败自动降级)
+    result = await _git_stash_restore(git_root, cmd, stash_index)
     if result.returncode == 0:
-        return True, f"已{action}检查点 stash@{{{index}}}"
+        return True, f"已{action}检查点 stash@{{{stash_index}}}"
 
     stderr = (result.stderr or "").strip()
     # 冲突时,使用 git checkout + git clean 强制恢复
@@ -242,16 +385,10 @@ async def _git_restore_helper(
         await _run_git("git", "checkout", "HEAD", "--", ".", cwd=str(git_root))
         # 2. 删除未跟踪的文件
         await _run_git("git", "clean", "-fd", cwd=str(git_root))
-        # 3. 从 stash 恢复
-        result = await _run_git(
-            "git",
-            "stash",
-            cmd,
-            f"stash@{{{index}}}",
-            cwd=str(git_root),
-        )
+        # 3. 从 stash 恢复(带 --index 还原暂存区,失败自动降级)
+        result = await _git_stash_restore(git_root, cmd, stash_index)
         if result.returncode == 0:
-            return True, f"已{action}检查点 stash@{{{index}}}"
+            return True, f"已{action}检查点 stash@{{{stash_index}}}"
         return False, f"{action}检查点失败: {(result.stderr or '').strip()}"
 
     return False, stderr or f"没有可{action}的检查点"
@@ -268,7 +405,7 @@ async def git_apply_checkpoint(root_dir: Path, index: int = 0) -> tuple[bool, st
 
 
 async def git_delete_checkpoint(root_dir: Path, index: int = 0) -> tuple[bool, str]:
-    """删除检查点:git stash drop stash@{index}
+    """删除检查点(统一索引):HEAD 锚点直接移除;stash 条目执行 git stash drop。
 
     Args:
         root_dir: 仓库根目录路径
@@ -280,22 +417,30 @@ async def git_delete_checkpoint(root_dir: Path, index: int = 0) -> tuple[bool, s
     git_root = await get_git_root(root_dir)
     if not git_root:
         return False, "不在 git 仓库中"
-    # 先获取 stash 信息用于提示
-    list_result = await _run_git("git", "stash", "list", cwd=str(git_root))
-    stash_lines = (list_result.stdout or "").strip().splitlines()
-    if index < 0 or index >= len(stash_lines):
-        return False, f"检查点序号 {index} 不存在(共 {len(stash_lines)} 个)"
-    stash_name = stash_lines[index]
-    # 删除
+    items = await _merged_checkpoint_items(git_root)
+    if index < 0 or index >= len(items):
+        return False, f"检查点序号 {index} 不存在(共 {len(items)} 个)"
+    item = items[index]
+    # HEAD 锚点:从锚点文件移除
+    if item["kind"] == "head":
+        anchors = _load_head_anchors(git_root)
+        ai = item["anchor_index"]
+        if 0 <= ai < len(anchors):
+            anchors.pop(ai)
+            _save_head_anchors(git_root, anchors)
+            return True, f"已删除检查点: {item['text']}"
+        return False, f"检查点序号 {index} 不存在"
+    # stash 条目:git stash drop
+    stash_index = item["stash_index"]
     result = await _run_git(
         "git",
         "stash",
         "drop",
-        f"stash@{{{index}}}",
+        f"stash@{{{stash_index}}}",
         cwd=str(git_root),
     )
     if result.returncode == 0:
-        return True, f"已删除检查点: {stash_name}"
+        return True, f"已删除检查点: {item['text']}"
     return False, (result.stderr or "").strip() or "删除检查点失败"
 
 
@@ -364,16 +509,22 @@ async def git_diff_checkpoint(root_dir: Path, index: int = 0) -> str:
     git_root = await get_git_root(root_dir)
     if not git_root:
         return "不在 git 仓库中"
+    items = await _merged_checkpoint_items(git_root)
+    if index < 0 or index >= len(items):
+        return f"检查点序号 {index} 不存在(共 {len(items)} 个)"
+    item = items[index]
+    if item["kind"] == "head":
+        return "HEAD 基线检查点(工作区无改动时记录),恢复将丢弃当前所有未提交改动"
     # 已跟踪文件的 diff
     result = await _run_git(
         "git",
         "diff",
-        f"stash@{{{index}}}",
+        f"stash@{{{item['stash_index']}}}",
         cwd=str(git_root),
     )
     tracked = (result.stdout or "").strip()
     # 未跟踪文件的 diff
-    untracked = await _diff_stash_untracked_vs_workdir(git_root, index)
+    untracked = await _diff_stash_untracked_vs_workdir(git_root, item["stash_index"])
     parts = [p for p in [tracked, untracked] if p]
     return "\n".join(parts) if parts else "检查点与当前文件没有差异"
 
@@ -408,23 +559,31 @@ async def git_diff_between(root_dir: Path, index_a: int, index_b: int) -> str:
     git_root = await get_git_root(root_dir)
     if not git_root:
         return "不在 git 仓库中"
+    items = await _merged_checkpoint_items(git_root)
+    if index_a < 0 or index_a >= len(items) or index_b < 0 or index_b >= len(items):
+        return f"检查点序号不存在(共 {len(items)} 个)"
+    item_a, item_b = items[index_a], items[index_b]
+    if item_a["kind"] == "head" or item_b["kind"] == "head":
+        return "暂不支持 HEAD 基线检查点与其他检查点直接比较"
     # 已跟踪文件的 diff
     result = await _run_git(
         "git",
         "diff",
-        f"stash@{{{index_a}}}",
-        f"stash@{{{index_b}}}",
+        f"stash@{{{item_a['stash_index']}}}",
+        f"stash@{{{item_b['stash_index']}}}",
         cwd=str(git_root),
     )
     tracked = (result.stdout or "").strip()
     # 未跟踪文件的 diff
-    untracked = await _diff_stash_untracked_between(git_root, index_a, index_b)
+    untracked = await _diff_stash_untracked_between(
+        git_root, item_a["stash_index"], item_b["stash_index"]
+    )
     parts = [p for p in [tracked, untracked] if p]
     return "\n".join(parts) if parts else "两个检查点没有差异"
 
 
 async def git_list_checkpoints(root_dir: Path) -> str:
-    """列出所有检查点:git stash list
+    """列出所有检查点(stash 条目 + HEAD 锚点,按时间倒序)。
 
     Args:
         root_dir: 仓库根目录路径
@@ -435,8 +594,19 @@ async def git_list_checkpoints(root_dir: Path) -> str:
     git_root = await get_git_root(root_dir)
     if not git_root:
         return "不在 git 仓库中"
-    result = await _run_git("git", "stash", "list", cwd=str(git_root))
-    return (result.stdout or "").strip() or "没有检查点"
+    items = await _merged_checkpoint_items(git_root)
+    if not items:
+        return "没有检查点"
+    lines = []
+    for i, it in enumerate(items):
+        ts = it.get("time", 0)
+        ts_str = (
+            time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts))
+            if ts
+            else "-"
+        )
+        lines.append(f"[{i}] {it['text']} ({ts_str})")
+    return "\n".join(lines)
 
 
 async def git_generate_commit_message(root_dir: Path, config) -> dict:
