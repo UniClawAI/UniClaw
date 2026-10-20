@@ -109,3 +109,4 @@ cov_annotate/
 skills-lock.json
 .agents/skills/
 .*
+*.md

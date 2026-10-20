@@ -34,6 +34,11 @@ def _result(returncode=0, stdout="", stderr=""):
     )
 
 
+def _stash_item(index, text="stash@{0}: WIP on master: 12345 消息", ts=1700000000):
+    """构造 `_merged_checkpoint_items` 返回的统一 stash 检查点条目。"""
+    return {"kind": "stash", "stash_index": index, "text": text, "time": ts}
+
+
 class TestRunGit:
     """_run_git 测试(mock run_command,验证结果适配与超时语义)。"""
 
@@ -212,21 +217,34 @@ class TestGitCreateCheckpoint:
 
     @pytest.mark.asyncio
     async def test_success(self):
-        """成功创建。"""
+        """成功创建(stash push + stash apply)。"""
+        async def mock_run(*args, **kwargs):
+            # 工作区有改动 → 走 stash 分支,不落 HEAD 锚点
+            if args[1] == "status":
+                return _result(stdout=" M file.txt\n")
+            return _result()
+
         with patch("uniclaw.utils.git.get_git_root", new_callable=AsyncMock, return_value="/repo"), patch(
-            "uniclaw.utils.git._run_git", new_callable=AsyncMock, return_value=_result()
+            "uniclaw.utils.git._run_git", new_callable=AsyncMock, side_effect=mock_run
         ) as m:
             assert await git_create_checkpoint(Path("/x")) is True
-        assert m.await_count == 2  # stash push + stash apply
+        # status --porcelain + stash push + stash apply --index
+        assert m.await_count == 3
 
     @pytest.mark.asyncio
     async def test_message_used(self):
-        """消息传入 stash。"""
+        """消息传入 stash push。"""
+        async def mock_run(*args, **kwargs):
+            if args[1] == "status":
+                return _result(stdout=" M file.txt\n")
+            return _result()
+
         with patch("uniclaw.utils.git.get_git_root", new_callable=AsyncMock, return_value="/repo"), patch(
-            "uniclaw.utils.git._run_git", new_callable=AsyncMock, return_value=_result()
+            "uniclaw.utils.git._run_git", new_callable=AsyncMock, side_effect=mock_run
         ) as m:
             await git_create_checkpoint(Path("/x"), message="检查点描述")
-        args = m.await_args_list[0].args
+        push_call = m.await_args_list[1]  # status 第0, stash push 第1
+        args = push_call.args
         assert args[0] == "git"
         assert args[1] == "stash"
         assert args[2] == "push"
@@ -235,20 +253,23 @@ class TestGitCreateCheckpoint:
     @pytest.mark.asyncio
     async def test_message_truncated(self):
         """消息截取前 50 字符。"""
+        async def mock_run(*args, **kwargs):
+            if args[1] == "status":
+                return _result(stdout=" M file.txt\n")
+            return _result()
+
         with patch("uniclaw.utils.git.get_git_root", new_callable=AsyncMock, return_value="/repo"), patch(
-            "uniclaw.utils.git._run_git", new_callable=AsyncMock, return_value=_result()
+            "uniclaw.utils.git._run_git", new_callable=AsyncMock, side_effect=mock_run
         ) as m:
             await git_create_checkpoint(Path("/x"), message="x" * 80)
-        args = m.await_args_list[0].args
+        push_call = m.await_args_list[1]  # status 第0, stash push 第1
+        args = push_call.args
         msg_idx = args.index("-m") + 1
         assert len(args[msg_idx]) == 50
 
 
 class TestRestoreHelper:
     """stash 恢复测试。"""
-
-    def _rev_result(self):
-        return _result(stdout="/repo\n")
 
     @pytest.mark.asyncio
     async def test_not_repo(self):
@@ -261,7 +282,12 @@ class TestRestoreHelper:
     @pytest.mark.asyncio
     async def test_pop_success(self):
         """pop 成功。"""
-        with patch("uniclaw.utils.git._run_git", new_callable=AsyncMock, side_effect=[self._rev_result(), _result()]):
+        with patch("uniclaw.utils.git.get_git_root", new_callable=AsyncMock, return_value="/repo"), patch(
+            "uniclaw.utils.git._merged_checkpoint_items", new_callable=AsyncMock,
+            return_value=[_stash_item(0)],
+        ), patch(
+            "uniclaw.utils.git._git_stash_restore", new_callable=AsyncMock, return_value=_result()
+        ):
             ok, msg = await git_pop_checkpoint(Path("/x"))
         assert ok is True
         assert "已恢复并删除" in msg
@@ -269,7 +295,12 @@ class TestRestoreHelper:
     @pytest.mark.asyncio
     async def test_apply_success(self):
         """apply 成功。"""
-        with patch("uniclaw.utils.git._run_git", new_callable=AsyncMock, side_effect=[self._rev_result(), _result()]):
+        with patch("uniclaw.utils.git.get_git_root", new_callable=AsyncMock, return_value="/repo"), patch(
+            "uniclaw.utils.git._merged_checkpoint_items", new_callable=AsyncMock,
+            return_value=[_stash_item(0)],
+        ), patch(
+            "uniclaw.utils.git._git_stash_restore", new_callable=AsyncMock, return_value=_result()
+        ):
             ok, msg = await git_apply_checkpoint(Path("/x"))
         assert ok is True
         assert "已恢复" in msg
@@ -278,14 +309,17 @@ class TestRestoreHelper:
     @pytest.mark.asyncio
     async def test_conflict_recovered(self):
         """冲突后强制恢复成功。"""
-        results = [
-            self._rev_result(),
-            _result(returncode=1, stderr="error: your local changes would be overwritten"),
-            _result(),  # checkout
-            _result(),  # clean
-            _result(),  # 第二次 stash
-        ]
-        with patch("uniclaw.utils.git._run_git", new_callable=AsyncMock, side_effect=results):
+        with patch("uniclaw.utils.git.get_git_root", new_callable=AsyncMock, return_value="/repo"), patch(
+            "uniclaw.utils.git._merged_checkpoint_items", new_callable=AsyncMock,
+            return_value=[_stash_item(0)],
+        ), patch(
+            "uniclaw.utils.git._git_stash_restore",
+            new_callable=AsyncMock,
+            side_effect=[
+                _result(returncode=1, stderr="error: your local changes would be overwritten"),
+                _result(),  # 冲突后强制恢复成功
+            ],
+        ), patch("uniclaw.utils.git._run_git", new_callable=AsyncMock, return_value=_result()):
             ok, msg = await git_pop_checkpoint(Path("/x"))
         assert ok is True
         assert "已恢复并删除" in msg
@@ -293,21 +327,31 @@ class TestRestoreHelper:
     @pytest.mark.asyncio
     async def test_conflict_recovery_fails(self):
         """冲突后强制恢复失败。"""
-        results = [
-            self._rev_result(),
-            _result(returncode=1, stderr="error: would be overwritten"),
-            _result(),
-            _result(),
-            _result(returncode=1, stderr="conflict persists"),
-        ]
-        with patch("uniclaw.utils.git._run_git", new_callable=AsyncMock, side_effect=results):
+        with patch("uniclaw.utils.git.get_git_root", new_callable=AsyncMock, return_value="/repo"), patch(
+            "uniclaw.utils.git._merged_checkpoint_items", new_callable=AsyncMock,
+            return_value=[_stash_item(0)],
+        ), patch(
+            "uniclaw.utils.git._git_stash_restore",
+            new_callable=AsyncMock,
+            side_effect=[
+                _result(returncode=1, stderr="error: would be overwritten"),
+                _result(returncode=1, stderr="conflict persists"),
+            ],
+        ), patch("uniclaw.utils.git._run_git", new_callable=AsyncMock, return_value=_result()):
             ok, msg = await git_pop_checkpoint(Path("/x"))
         assert ok is False
 
     @pytest.mark.asyncio
     async def test_other_error(self):
         """其他错误。"""
-        with patch("uniclaw.utils.git._run_git", new_callable=AsyncMock, side_effect=[self._rev_result(), _result(returncode=1, stderr="nothing to pop")]):
+        with patch("uniclaw.utils.git.get_git_root", new_callable=AsyncMock, return_value="/repo"), patch(
+            "uniclaw.utils.git._merged_checkpoint_items", new_callable=AsyncMock,
+            return_value=[_stash_item(0)],
+        ), patch(
+            "uniclaw.utils.git._git_stash_restore",
+            new_callable=AsyncMock,
+            return_value=_result(returncode=1, stderr="nothing to pop"),
+        ):
             ok, msg = await git_pop_checkpoint(Path("/x"))
         assert ok is False
         assert "nothing to pop" in msg
@@ -328,7 +372,7 @@ class TestGitDeleteCheckpoint:
     async def test_index_out_of_range(self):
         """序号越界。"""
         with patch("uniclaw.utils.git.get_git_root", new_callable=AsyncMock, return_value="/repo"), patch(
-            "uniclaw.utils.git._run_git", new_callable=AsyncMock, return_value=_result(stdout="")
+            "uniclaw.utils.git._merged_checkpoint_items", new_callable=AsyncMock, return_value=[]
         ):
             ok, msg = await git_delete_checkpoint(Path("/x"), index=0)
         assert ok is False
@@ -337,11 +381,12 @@ class TestGitDeleteCheckpoint:
     @pytest.mark.asyncio
     async def test_success(self):
         """删除成功。"""
-        stash_line = "stash@{0}: WIP on master: 12345 消息"
+        line = "stash@{0}: WIP on master: 12345 消息"
         with patch("uniclaw.utils.git.get_git_root", new_callable=AsyncMock, return_value="/repo"), patch(
-            "uniclaw.utils.git._run_git",
-            new_callable=AsyncMock,
-            side_effect=[_result(stdout=stash_line), _result()],
+            "uniclaw.utils.git._merged_checkpoint_items", new_callable=AsyncMock,
+            return_value=[_stash_item(0, line)],
+        ), patch(
+            "uniclaw.utils.git._run_git", new_callable=AsyncMock, return_value=_result()
         ):
             ok, msg = await git_delete_checkpoint(Path("/x"))
         assert ok is True
@@ -361,6 +406,9 @@ class TestGitDiff:
     async def test_diff_checkpoint(self):
         """有变更。"""
         with patch("uniclaw.utils.git.get_git_root", new_callable=AsyncMock, return_value="/repo"), patch(
+            "uniclaw.utils.git._merged_checkpoint_items", new_callable=AsyncMock,
+            return_value=[_stash_item(0)],
+        ), patch(
             "uniclaw.utils.git._run_git", new_callable=AsyncMock, return_value=_result(stdout="+change")
         ), patch("uniclaw.utils.git._diff_stash_untracked_vs_workdir", new_callable=AsyncMock, return_value=""):
             result = await git_diff_checkpoint(Path("/x"))
@@ -370,6 +418,9 @@ class TestGitDiff:
     async def test_diff_checkpoint_no_changes(self):
         """无变更。"""
         with patch("uniclaw.utils.git.get_git_root", new_callable=AsyncMock, return_value="/repo"), patch(
+            "uniclaw.utils.git._merged_checkpoint_items", new_callable=AsyncMock,
+            return_value=[_stash_item(0)],
+        ), patch(
             "uniclaw.utils.git._run_git", new_callable=AsyncMock, return_value=_result()
         ), patch("uniclaw.utils.git._diff_stash_untracked_vs_workdir", new_callable=AsyncMock, return_value=""):
             result = await git_diff_checkpoint(Path("/x"))
@@ -397,6 +448,9 @@ class TestGitDiff:
     async def test_diff_between(self):
         """比较两个检查点。"""
         with patch("uniclaw.utils.git.get_git_root", new_callable=AsyncMock, return_value="/repo"), patch(
+            "uniclaw.utils.git._merged_checkpoint_items", new_callable=AsyncMock,
+            return_value=[_stash_item(0), _stash_item(1, text="stash@{1}: WIP", ts=1700000001)],
+        ), patch(
             "uniclaw.utils.git._run_git", new_callable=AsyncMock, return_value=_result(stdout="between")
         ), patch("uniclaw.utils.git._diff_stash_untracked_between", new_callable=AsyncMock, return_value=""):
             result = await git_diff_between(Path("/x"), 0, 1)
