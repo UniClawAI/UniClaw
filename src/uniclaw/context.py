@@ -58,37 +58,6 @@ def get_env_system_prompt(config: AppConfig, is_a2a: bool = False) -> str:
     return f"## 环境\n{env_text}{extra_text}"
 
 
-# A2UI 输出规范:仅在 WebUI 模式注入(其他模式无渲染端,注入徒增 token 开销)。
-A2UI_OUTPUT_GUIDE = """## A2UI 交互界面组件(WebUI 模式)
-
-当回答适合用结构化交互界面呈现时(状态概览、操作按钮组、配置表单、多标签内容等),在正文中输出 ```a2ui 代码块声明组件,前端会渲染为可交互组件;纯文字回答不需要界面时不要输出。
-
-格式:```a2ui 后跟单个 JSON 对象,根节点为 {"root": {组件}}。示例:
-
-```a2ui
-{"root": {"type": "Card", "title": "部署状态", "children": [
-  {"type": "Row", "children": [
-    {"type": "Badge", "content": "运行中", "tone": "success"},
-    {"type": "Progress", "value": 72, "label": "进度"}
-  ]},
-  {"type": "Button", "label": "重启服务", "variant": "danger", "action": {"type": "agent", "payload": "重启服务"}}
-]}}
-```
-
-可用组件(仅限以下类型,未知组件会被忽略并回退显示代码块):
-- 布局: Column{children, gap}、Row{children, gap}
-- 展示: Text{content, variant: h1|h2|body|caption, color}、Badge{content, tone: info|success|warn|danger}、Divider{}、Progress{value: 0-100, label}、Chart{chart: bar|line|pie, title, data: {labels: [...], series: [{name, values: [...]}]}}
-- 容器: Card{title, children, footer}、Tabs{tabs: [{label, children}]}
-- 交互: Button{label, variant: primary|default|danger, action}、TextField{label, name, placeholder, value}、Checkbox{label, name, checked}、Select{label, name, options: [{label, value}], value}
-
-action 取值:
-- "copy" 或 {type: "copy", text: "..."}: 点击复制文本
-- {type: "link", url: "https://..."}: 点击打开链接
-- {type: "agent", payload: "..."}: 点击将 payload 作为系统消息回传给你;若界面上同时有 TextField/Checkbox/Select,其 name/value 会一并回传,可据此收集用户输入
-
-注意:组件树可与说明文本混合输出;JSON 必须合法,非法则回退为普通代码块显示。"""
-
-
 def get_base_system_prompt(config: AppConfig) -> str:
     from uniclaw.tools.fs import Write
     from uniclaw.tools.monitor.tools import monitor_start
@@ -119,10 +88,18 @@ def get_base_system_prompt(config: AppConfig) -> str:
 
 {get_platform_hints()}
 """
-    # WebUI 模式且为主 agent 时注入 A2UI 交互界面组件输出规范
+    # WebUI 模式且为主 agent 时注入一行 A2UI 触发语(仅提示能力的存在)
+    # 完整组件输出规范按需加载:调用 get_a2ui_guide 工具获取后再输出 ```a2ui 代码块。
     # (其他模式无渲染端不注入以省 token;子代理 config.is_sub=True,A2UI 仅主 agent 可用)
     if config.is_webui and not config.is_sub:
-        system_prompt += "\n\n" + A2UI_OUTPUT_GUIDE
+        from uniclaw.tools.webui.a2ui import get_a2ui_guide
+
+        system_prompt += (
+            f"\n\n## A2UI 交互界面(WebUI 模式)\n"
+            f"当回答适合用结构化交互界面呈现时(状态概览、操作按钮组、配置表单、"
+            f"多标签内容等),调用 {get_a2ui_guide.name} 工具获取 A2UI 组件输出规范的"
+            f"完整格式与用法,再按规范在正文中输出交互组件;纯文字回答不需要界面时无需使用。"
+        )
     return system_prompt
 
 

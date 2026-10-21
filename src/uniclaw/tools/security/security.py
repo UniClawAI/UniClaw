@@ -292,6 +292,7 @@ def is_safe_tool(name: str) -> bool:
     )
     from uniclaw.tools.notify import push_notification
     from uniclaw.tools.registry import search_tools
+    from uniclaw.tools.webui.a2ui import get_a2ui_guide
     from uniclaw.tools.knowledge.tools import (
         kg_add_entity,
         kg_add_relation,
@@ -452,6 +453,8 @@ def is_safe_tool(name: str) -> bool:
         # ── 帮助 ──
         list_slash_commands.name,
         get_command_help.name,
+        # ── A2UI(只读,返回说明文本) ──
+        get_a2ui_guide.name,
         # ── TTS ──
         text_to_speech.name,
         # ── 微信(全部安全) ──
