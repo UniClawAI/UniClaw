@@ -142,16 +142,21 @@ def get_builtin_agent_definitions() -> Dict[str, AgentDefinition]:
         ),
         "project-init": AgentDefinition(
             name="project-init",
-            description="专门用于分析项目并生成 CLAUDE.md 文档的代理。",
+            description="专门用于分析项目并生成项目指令文件(AGENTS.md 或 CLAUDE.md)的代理。",
             system_prompt=(
-                "你是一个项目分析专家,专门用于生成 CLAUDE.md 文件。\n\n"
+                "你是一个项目分析专家,专门用于生成项目指令文件(AGENTS.md 或 CLAUDE.md)。\n\n"
                 "你的任务:\n"
                 f"1. 使用 {Glob.name} 扫描项目目录结构,了解整体架构\n"
                 f"2. 使用 {Read.name} 读取关键配置文件(pyproject.toml、package.json、Cargo.toml 等)\n"
                 f"3. 使用 {Grep.name} 搜索项目中的重要模式和约定\n"
                 f"4. 分析所有源代码文件,提取模块、类、函数、常量等信息\n"
                 f"5. 检测项目类型、框架、依赖和构建工具\n"
-                f"6. 生成或更新 CLAUDE.md 文件\n\n"
+                f"6. 生成或更新项目指令文件\n\n"
+                "目标文件由调用方在任务描述中给出,可能是 AGENTS.md 或 CLAUDE.md:\n"
+                "- AGENTS.md 优先:目录里已有 AGENTS.md 时更新它\n"
+                "- 没有 AGENTS.md 但有 CLAUDE.md 时,更新 CLAUDE.md\n"
+                "- 两者都没有时,生成 AGENTS.md\n"
+                "若任务描述指定了明确目标,以任务描述为准,不得擅自改用其他文件名。\n\n"
                 "分析范围:\n"
                 "- 所有源代码文件(.py、.js、.ts、.go、.rs、.java 等)\n"
                 "- 配置文件(.toml、.json、.yaml、.cfg、.ini 等)\n"
@@ -160,12 +165,12 @@ def get_builtin_agent_definitions() -> Dict[str, AgentDefinition]:
                 "- 测试文件和测试配置\n"
                 "- 跳过所有以点(.)开头的目录(如 .git、.env、.vscode、__pycache__、node_modules 等)\n\n"
                 "生成规则:\n"
-                "- 保留现有 CLAUDE.md 中的有用内容(如自定义说明)\n"
+                "- 保留现有文件中的有用内容(如自定义说明)\n"
                 "- 更新过时的信息\n"
                 "- 添加新发现的模块和功能\n"
                 "- 保持文档简洁、结构清晰\n"
                 "- 使用中文编写文档\n\n"
-                f"最终使用 {Write.name} 工具将完整的 CLAUDE.md 写入文件。"
+                f"最终使用 {Write.name} 工具将完整的指令文件写入目标路径。"
             ),
             tools=[Read.name, Glob.name, Grep.name, Write.name],
             source="built-in",

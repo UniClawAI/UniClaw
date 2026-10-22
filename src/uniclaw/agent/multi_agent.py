@@ -15,7 +15,7 @@ from uniclaw.tools.registry import search_tools
 from uniclaw.utils.constants import SYSTEM_PREFIX, TOOL_ERROR
 from uniclaw.provider import astream
 from uniclaw.provider.error_classifier import is_network_or_provider_error
-from uniclaw.tools.session.session import StreamChunk, maybe_time_notice
+from uniclaw.tools.session.session import StreamChunk, UserMessage, maybe_time_notice
 from uniclaw.tools import get_core_tools, get_tools
 from uniclaw.utils.message import MessageRole, extract_text
 from dataclasses import dataclass, field
@@ -23,6 +23,12 @@ from uniclaw.context import (
     build_system_prompt,
     get_base_system_prompt,
     get_env_system_prompt,
+)
+from uniclaw.utils.project_instruction import (
+    SUBDIR_CLAUDE_MD_TAG,
+    _resolve_project_instruction,
+    get_subdir_project_instruction,
+    is_subdir_claude_md_msg,
 )
 from uniclaw.config import Permissions, AppConfig
 from uniclaw.tools.ask import AskUserQuestion
@@ -41,6 +47,167 @@ from uniclaw.tools.base import (
 
 # 死循环检测:连续相同工具调用次数阈值
 LOOP_DETECTION_THRESHOLD = 5
+
+# 触发子目录 CLAUDE.md 按需加载的工具 → 文件路径参数名
+_CLAUDE_MD_PATH_ARGS = {
+    "Read": "file_path",
+    "Write": "file_path",
+    "Edit": "file_path",
+    "ConvertToMarkdown": "file_path",
+    "Glob": "path",
+    "Grep": "path",
+}
+
+
+def _find_nearest_subdir_claude_md(
+    file_path: Path, roots: list[Path], exclude_self: set[Path] | None = None
+) -> Path | None:
+    """从文件父目录向上查找最近的含 CLAUDE.md 的目录。
+
+    exclusion(默认空)里的根不返回其自身 CLAUDE.md —— 用于
+    root_dir(它的 CLAUDE.md 已在 system prompt 中,不重复加载)。
+    外部工作空间根不在排除集中:文件落在该根本身时,返回该根自己的
+    CLAUDE.md(它没进任何 system prompt,应在此按需加载)。
+
+    Args:
+        file_path: 被操作的文件路径(已 resolve)。
+        roots: 可信根列表,按路径部件降序(具体优先),首个包含 file_path 者生效。
+        exclude_self: 不返回自身 CLAUDE.md 的根集合。
+
+    Returns:
+        Path | None: 最近的含 CLAUDE.md 的目录;无则 None。
+    """
+    exclude_self = exclude_self or set()
+    root = next((r for r in roots if file_path.is_relative_to(r)), None)
+    if root is None:
+        return None
+    # 起点:文件从父目录开始;目录(Glob/Grep 传目录本身)从自身开始,
+    # 否则 root 自身的项目指令会被起点跳过、永远加载不到。
+    cur = file_path if file_path.is_dir() else file_path.parent
+    while True:
+        if cur in exclude_self:
+            return None  # 碰到被排除的根(如 root_dir):不加载其自身
+        if _resolve_project_instruction(cur):
+            return cur  # AGENTS.md 优先,其次 CLAUDE.md
+        if cur == root:
+            return None  # 已到该根本身,不再向上爬出归属根
+        if cur.parent == cur:
+            return None  # 已到文件系统根,防止无限上溯
+        cur = cur.parent
+
+
+def _claude_md_trusted_roots(config: AppConfig) -> list[Path]:
+    """可信根列表 = session.root_dir + 额外工作空间目录(已 resolve)。
+
+    外部目录经 /add_dir 显式加入工作空间后才参与按需加载 — 对齐
+    Claude Code 的 --add-dir 语义:默认不加载外部项目 CLAUDE.md,
+    显式授权后才加载,避免不可信目录的指令注入。
+
+    Args:
+        config: AppConfig,取 current_agent.session.root_dir 与 workspace。
+
+    Returns:
+        list[Path]: 可信根列表,按路径部件数降序(具体优先)。
+    """
+    roots: list[Path] = []
+    # 与代码库一致:root_dir 走 config.root_dir 便捷属性, 底层再取 current_agent.session.root_dir
+    if config.current_agent and config.current_agent.session.root_dir:
+        roots.append(Path(config.current_agent.session.root_dir).resolve())
+    for d in (config.workspace or []):
+        if not d:
+            continue
+        try:
+            p = Path(d).resolve()
+        except Exception:
+            continue
+        if p not in roots:
+            roots.append(p)
+    # 长路径优先(更具体的根,如 /a/b 先于 /a),保证归属判定取最近的根
+    return sorted(roots, key=lambda p: len(p.parts), reverse=True)
+
+
+def _maybe_load_subdir_claude_md(
+    task: AgentTask,
+    results: list[tuple[dict[str, Any], Any]],
+    config: AppConfig,
+) -> list[str]:
+    """工具操作子目录文件后,按需加载该子目录最近的 CLAUDE.md 注入上下文。
+
+    只对 _CLAUDE_MD_PATH_ARGS 中声明的工具取路径参数;同一子目录在
+    当前消息流(_messages, 不含 history)中已加载过则跳过 —— compact
+    把注入消息压掉后,再次访问会自动重新加载(对齐 Claude Code)。
+
+    可信根 = session.root_dir + /add_dir 显式加入的额外工作空间目录;
+    可信根之外的路径(C: 根或未授权的目录)不加载。
+
+    Args:
+        task: 当前 AgentTask。
+        results: _execute_tool_calls 的 (tool_call, content) 结果列表。
+        config: AppConfig,用于取 session.root_dir 与 workspace。
+
+    Returns:
+        list[str]: 本次注入的消息文本列表(供调用方广播 UserEvent,
+            保持实时 WebSocket 与历史回放一致)。
+    """
+    roots = _claude_md_trusted_roots(config)
+    if not roots:
+        return []
+    # root_dir 自身 CLAUDE.md 已在 system prompt,不在此重复加载
+    exclude_self: set[Path] = set()
+    if task.session.root_dir:
+        exclude_self.add(Path(task.session.root_dir).resolve())
+
+    # 收集本轮访问到的子目录(去重,按文件路径升序保证注入顺序稳定)
+    dirs: set[Path] = set()
+    for tool_call, content in results:
+        name = _tc_name(tool_call)
+        arg_key = _CLAUDE_MD_PATH_ARGS.get(name)
+        if not arg_key:
+            continue
+        # 工具执行失败/被用户拒绝(结果以 TOOL_ERROR 开头)时不触发 —
+        # 否则会把用户拒绝访问或并不存在的目录的 CLAUDE.md 注入上下文。
+        text = extract_text(content) if content else ""
+        if text.startswith(TOOL_ERROR):
+            continue
+        args = _tc_args(tool_call)
+        raw = args.get(arg_key)
+        if not raw:
+            continue
+        try:
+            p = Path(str(raw)).resolve()
+        except Exception:
+            continue
+        subdir = _find_nearest_subdir_claude_md(p, roots, exclude_self)
+        if subdir:
+            dirs.add(subdir)
+
+    if not dirs:
+        return []
+
+    # 去重:跳过已在当前消息流中注入过的子目录
+    # 注入消息是我们 add_message(USER, ...) 产生的,只能是 UserMessage;
+    # 只对 UserMessage 识别,避免 AI 回复/工具结果恰好以注入前缀开头误判。
+    loaded: set[Path] = set()
+    for msg in task.session._messages:
+        if not isinstance(msg, UserMessage):
+            continue
+        p = is_subdir_claude_md_msg(msg.to_content())
+        # 消息必须带注入标记,且其目录属于本轮访问到的子目录
+        if p and p.resolve().parent in dirs:
+            loaded.add(p.resolve().parent)
+    pending = sorted(dirs - loaded)
+
+    # 全部工具结果追加完之后统一注入,保持 Anthropic tool_use/tool_result 紧邻配对
+    injected: list[str] = []
+    for subdir in pending:
+        resolved = get_subdir_project_instruction(subdir)
+        if not resolved:
+            continue
+        content, inst_path = resolved
+        msg = f"{SUBDIR_CLAUDE_MD_TAG} 已加载 {inst_path}\n{content}"
+        task.session.add_message(MessageRole.USER, msg)
+        injected.append(msg)
+    return injected
 
 # 输出被截断的停止原因(OpenAI "length" / Anthropic "max_tokens")
 _TRUNCATED_FINISH_REASONS = {"length", "max_tokens"}
@@ -1387,6 +1554,11 @@ class MultiAgent:
             task.status = AgentStatus.CANCELLED
             await self.send_event_to_user(InterruptedEvent(), config)
             return True
+        # 按需加载子目录 CLAUDE.md(所有工具结果之后统一注入,保持 tool 配对)
+        injected_msgs = _maybe_load_subdir_claude_md(task, results, config)
+        # 广播注入消息,保证实时 WebSocket 与历史回放显示一致
+        for msg in injected_msgs:
+            await self.send_event_to_user(UserEvent(msg), config)
         # 加载待发现工具,清理被淘汰的扩展工具
         if tools is not None:
             task.extended_mgr.apply(tools, name2tool)

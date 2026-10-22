@@ -132,7 +132,7 @@ async def cmd_help(_args: str, config: AppConfig) -> bool:
   /cost                  - 查看费用统计(按模型计费,价格来自 OpenRouter)
   /context               - 查看当前上下文 token 构成
   /skills                - 列出所有可用技能
-  /init                  - 扫描项目并生成/更新 CLAUDE.md
+  /init                  - 扫描项目并生成/更新 CLAUDE.md 或 AGENTS.md
   /doctor                - 环境诊断(检查依赖和配置状态)
   /help                  - 显示本帮助信息
   /exit, /quit           - 退出程序

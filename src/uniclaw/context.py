@@ -123,62 +123,7 @@ def _get_a2a_base_system_prompt(config: AppConfig) -> str:
 """
 
 
-def get_claude_md(session) -> str:
-    """加载 CLAUDE.md 项目指令,防止提示词注入"""
-    root_dir = session.root_dir
-    if not root_dir:
-        return ""
-    claude_md_path = root_dir / "CLAUDE.md"
-    if not claude_md_path.exists():
-        return ""
-
-    try:
-        content = claude_md_path.read_text(encoding="utf-8").strip()
-        if not content:
-            return ""
-
-        # 限制文件大小(最大 10KB)
-        max_size = 10 * 1024
-        if len(content.encode("utf-8")) > max_size:
-            content = content[:max_size] + "\n... (文件过大,已截断)"
-
-        # 防止提示词注入:移除可能的系统指令伪装
-        # 过滤掉试图模拟系统消息的行
-        lines = content.split("\n")
-        safe_lines = []
-        for line in lines:
-            # 跳过试图伪装成系统指令的行
-            stripped = line.strip().lower()
-            if stripped.startswith("ignore") and (
-                "previous" in stripped or "above" in stripped
-            ):
-                continue
-            if stripped.startswith("system:") or stripped.startswith("assistant:"):
-                continue
-            if "you are now" in stripped and (
-                "act as" in stripped or "pretend" in stripped
-            ):
-                continue
-            safe_lines.append(line)
-
-        safe_content = "\n".join(safe_lines)
-        if not safe_content:
-            return ""
-
-        # CLAUDE.md 说明
-        description = (
-            f"## CLAUDE.md\n"
-            f"项目根目录的指令文件(路径:{claude_md_path}),"
-            f"定义项目特定的规范和约束,每次对话自动加载。\n"
-            f'用户要求"记住项目规范"、"添加项目指令"时,写入此文件。\n'
-            f"建议内容:代码风格、架构规范、工作流程、技术栈、禁止事项。"
-        )
-        return f"{description}\n\n{safe_content}"
-    except Exception as e:
-        from uniclaw.utils.logger import get_logger
-
-        get_logger("context", session.root_dir).debug("读取 CLAUDE.md 失败: %s", e)
-        return ""
+from uniclaw.utils.project_instruction import get_claude_md
 
 
 def get_platform_hints() -> str:
@@ -324,11 +269,11 @@ async def build_system_prompt(config: AppConfig):
     if registry_ctx:
         system_prompt += f"\n\n{registry_ctx}"
 
-    # CLAUDE.md 项目指令 — 项目级稳定
+    # 项目指令(AGENTS.md 或 CLAUDE.md)— 项目级稳定
     task = config.current_agent
     claude_md = get_claude_md(task.session)
     if claude_md:
-        system_prompt += f"\n\n# CLAUDE.md 项目指令:\n\n{claude_md}\n"
+        system_prompt += f"\n\n# 项目指令:\n\n{claude_md}\n"
 
     # Skill — 低频变化
     from uniclaw.tools.skill.tools import get_skill_system_prompt
