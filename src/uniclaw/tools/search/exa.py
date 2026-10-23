@@ -157,7 +157,7 @@ async def _search_rest(
     sort: str = "",
     search_type: str = "",
     time_range: str = "",
-) -> str:
+) -> list[str]:
     """Exa REST API 快速路径 (单次 POST, 比 MCP 首次握手快数秒)。
 
     Args:
@@ -169,7 +169,7 @@ async def _search_rest(
         time_range: 时间范围过滤 (REST 原生支持日期参数, 无需 schema 门控)
 
     Returns:
-        str: 格式化的搜索结果文本
+        list[str]: 每条结果一个元素
 
     Raises:
         Exception: 网络/HTTP 错误时抛出, 由调用方决定是否回退 MCP
@@ -204,11 +204,11 @@ async def _search_rest(
     r.raise_for_status()
     results = r.json().get("results") or []
     if not results:
-        return f"Exa: 无搜索结果"
-    lines = [f"**Exa 搜索结果** ({len(results)} 条):\n"]
+        return ["Exa: 无搜索结果"]
+    result_list: list[str] = [f"**Exa 搜索结果** ({len(results)} 条):"]
     for item in results[:limit]:
         title = (item.get("title") or "").strip() or item.get("url", "")
-        lines.append(f"**{title}**")
+        lines = [f"**{title}**"]
         url = item.get("url") or ""
         if url:
             lines.append(f"  URL: {url}")
@@ -225,8 +225,8 @@ async def _search_rest(
             lines.append(f"  摘要: {' '.join(highlights)}")
         elif text:
             lines.append(f"  摘要: {text}")
-        lines.append("")
-    return "\n".join(lines).rstrip() + "\n"
+        result_list.append("\n".join(lines))
+    return result_list
 
 
 @safe_search
@@ -237,8 +237,12 @@ async def search(
     search_type: str,
     config: AppConfig | None,
     time_range: str = "",
-) -> str:
-    """Exa 搜索 (配置 key 时优先 REST 直连, 否则/失败回退内置 MCP 服务器)。"""
+) -> list[str]:
+    """Exa 搜索 (配置 key 时优先 REST 直连, 否则/失败回退内置 MCP 服务器)。
+
+    Returns:
+        list[str]: 每条结果一个元素。
+    """
     # 有 key 时优先 REST 直连: 单次 POST 比 MCP 握手快数秒;
     # 失败静默回退 MCP 免费端点 (mcp.exa.ai 匿名限流可用)
     api_key = (config.EXA_API_KEY if config else "") or ""
@@ -261,10 +265,10 @@ async def search(
     manager = MCPManager.get_instance()
     server = await manager.get_server(_MCP_SERVER, config)
     if server is None:
-        return (
+        return [
             f"{PLATFORM_ERROR}: Exa MCP 服务器不可用。"
             f"请确认已配置 EXA_API_KEY 且网络可访问 mcp.exa.ai"
-        )
+        ]
 
     connection = {k: v for k, v in server.items() if k not in ("name", "enabled")}
 
@@ -295,10 +299,10 @@ async def search(
 
             if not tool_name:
                 names = ", ".join(t.name for t in tools_result.tools)
-                return (
+                return [
                     f"{PLATFORM_ERROR}: Exa MCP 服务器上未找到搜索工具, "
                     f"可用工具: {names}"
-                )
+                ]
             _exa_cache["tool"] = tool_name
             # 记录远端工具 schema 支持的参数名 (小写), 供 time_range 门控
             schema = getattr(tool_obj, "input_schema", None) or {}
@@ -334,17 +338,18 @@ async def search(
         content = "\n".join(parts) if parts else "(无输出)"
     except asyncio.TimeoutError:
         await _close_exa_connection()
-        return (
+        return [
             f"{PLATFORM_ERROR}: Exa MCP 服务器连接超时。"
             f"请确认网络可访问 mcp.exa.ai, 或在 settings.json 中配置 proxy_url"
-        )
+        ]
     except Exception:
         await _close_exa_connection()
-        return (
+        return [
             f"{PLATFORM_ERROR}: Exa MCP 服务器不可用。"
             f"请确认已配置 EXA_API_KEY 且网络可访问 mcp.exa.ai"
-        )
+        ]
 
     if content.startswith(TOOL_ERROR):
-        return f"{PLATFORM_ERROR}: {content[len(TOOL_ERROR):].strip()}"
-    return f"**Exa 搜索结果** ({query}):\n\n{content}"
+        return [f"{PLATFORM_ERROR}: {content[len(TOOL_ERROR):].strip()}"]
+    # MCP 返回的是原始文本块, 作为单个结果元素返回 (保留原有格式)
+    return [f"**Exa 搜索结果** ({query}):", content]

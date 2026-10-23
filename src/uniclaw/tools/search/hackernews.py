@@ -45,8 +45,12 @@ async def search(
     search_type: str,
     config: AppConfig | None,
     time_range: str = "",
-) -> str:
-    """Hacker News 搜索 (Algolia API)。"""
+) -> list[str]:
+    """Hacker News 搜索 (Algolia API)。
+
+    Returns:
+        list[str]: 每条结果一个元素。
+    """
     endpoint = "search_by_date" if sort == "date" else "search"
     params = {"query": query, "hitsPerPage": limit}
     tr = parse_time_range(time_range)
@@ -67,8 +71,8 @@ async def search(
     data = r.json()
     hits = data.get("hits", [])
     if not hits:
-        return "Hacker News: 无搜索结果"
-    lines = [f"**Hacker News 搜索结果** ({len(hits)} 条):\n"]
+        return ["Hacker News: 无搜索结果"]
+    results: list[str] = [f"**Hacker News 搜索结果** ({len(hits)} 条):"]
     for hit in hits:
         title = _display_title(hit)
         url_val = hit.get("url", "")
@@ -78,7 +82,8 @@ async def search(
         created = hit.get("created_at", "")[:10]
         hn_link = f"https://news.ycombinator.com/item?id={hit.get('objectID', '')}"
         link = url_val or hn_link
-        lines.append(f"**{title}** 👍{points} 💬{comments}")
+        lines = [f"**{title}** 👍{points} 💬{comments}"]
         lines.append(f"  作者: {author} | 日期: {created}")
-        lines.append(f"  {link}\n")
-    return "\n".join(lines)
+        lines.append(f"  {link}")
+        results.append("\n".join(lines))
+    return results

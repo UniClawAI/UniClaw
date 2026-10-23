@@ -22,8 +22,12 @@ async def search(
     search_type: str,
     config: AppConfig | None,
     time_range: str = "",
-) -> str:
-    """B站搜索 (API)。"""
+) -> list[str]:
+    """B站搜索 (API)。
+
+    Returns:
+        list[str]: 每条结果一个元素。
+    """
     st = search_type if search_type in _VALID_TYPES else "video"
     url = "https://api.bilibili.com/x/web-interface/search/type"
     headers = {
@@ -48,11 +52,11 @@ async def search(
     r.raise_for_status()
     data = r.json()
     if data.get("code") != 0:
-        return f"{PLATFORM_ERROR}: {data.get('message', '未知错误')}"
+        return [f"{PLATFORM_ERROR}: {data.get('message', '未知错误')}"]
     results = data.get("data", {}).get("result", [])
     if not results:
-        return "B站: 无搜索结果"
-    lines = [f"**B站搜索结果** ({st}, {len(results)} 条):\n"]
+        return ["B站: 无搜索结果"]
+    result_list: list[str] = [f"**B站搜索结果** ({st}, {len(results)} 条):"]
     for item in results[:limit]:
         title = re.sub(r"<[^>]+>", "", item.get("title", "")).strip()
         author = item.get("author", "") or item.get("uname", "")
@@ -61,9 +65,11 @@ async def search(
         desc = (item.get("description", "") or "")[:80]
         bvid = item.get("bvid", "")
         link = f"https://www.bilibili.com/video/{bvid}" if bvid else ""
-        lines.append(f"**{title}**")
+        lines = [f"**{title}**"]
         lines.append(f"  UP主: {author} | 播放: {play} | 弹幕: {danmaku}")
         if desc:
             lines.append(f"  简介: {desc}")
-        lines.append(f"  {link}\n")
-    return "\n".join(lines)
+        if link:
+            lines.append(f"  {link}")
+        result_list.append("\n".join(lines))
+    return result_list

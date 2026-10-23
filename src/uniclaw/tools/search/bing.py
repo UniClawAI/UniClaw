@@ -180,10 +180,19 @@ async def search(
     search_type: str,
     config: AppConfig | None,
     time_range: str = "",
-) -> str:
-    """Bing 网页搜索 (国内直连, 无需代理)。"""
+) -> list[str]:
+    """Bing 网页搜索 (国内直连, 无需代理)。
+
+    Returns:
+        list[str]: 每条结果一个元素。
+    """
     headers = {"User-Agent": DEFAULT_UA}
     params = {"q": query, "count": str(limit)}
+    # 中文查询: 给 Bing 传 locale/region 参数, 提高真实中文结果命中率
+    # (RSS 端点可能忽略 setlang, 但 HTML 回退路径会生效; 无副作用)
+    if re.search(r"[\u4e00-\u9fff]", query):
+        params["setlang"] = "zh-CN"
+        params["cc"] = "CN"
     # time_range -> freshness 参数: 预设映射到 Bing 支持的档位,
     # ISO 区间映射为 "起始..结束" 格式 (仅支持日期部分)
     tr = parse_time_range(time_range)
@@ -247,12 +256,13 @@ async def search(
     results = results[:limit]
 
     if not results:
-        return f"Bing: {NO_RESULTS}"
+        return [f"Bing: {NO_RESULTS}"]
 
-    lines = [f"**Bing 搜索结果** ({len(results)} 条):\n"]
+    result_list: list[str] = [f"**Bing 搜索结果** ({len(results)} 条):"]
     for item in results:
-        lines.append(f"**{item['title']}**")
+        lines = [f"**{item['title']}**"]
         if item["snippet"]:
             lines.append(f"  {item['snippet']}")
-        lines.append(f"  {item['link']}\n")
-    return "\n".join(lines)
+        lines.append(f"  {item['link']}")
+        result_list.append("\n".join(lines))
+    return result_list

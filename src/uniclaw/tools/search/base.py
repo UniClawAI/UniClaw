@@ -140,7 +140,10 @@ async def http_get_with_retry(
 
 
 def safe_search(func):
-    """将平台搜索函数包装为异常安全: 任何失败都返回 PLATFORM_ERROR 信息, 而非抛异常或假装无结果。"""
+    """将平台搜索函数包装为异常安全: 任何失败都返回 [错误信息], 而非抛异常或假装无结果。
+
+    返回 list[str] —— 每条结果/说明一个元素, 统一平台层的返回类型。
+    """
 
     @functools.wraps(func)
     async def wrapper(
@@ -150,38 +153,49 @@ def safe_search(func):
         search_type: str,
         config: AppConfig | None,
         time_range: str = "",
-    ) -> str:
-        try:
-            return await func(query, limit, sort, search_type, config, time_range)
-        except asyncio.TimeoutError:
-            return (
-                f"{PLATFORM_ERROR}: 搜索超时, 可能被网络限制, 请检查代理设置(proxy_url)"
-            )
-        except httpx.ConnectError:
-            return f"{PLATFORM_ERROR}: 连接失败, 无法访问该平台。请在 settings.json 中配置 proxy_url 代理"
-        except httpx.ConnectTimeout:
-            return (
-                f"{PLATFORM_ERROR}: 连接超时, 可能被网络限制, 请检查代理设置(proxy_url)"
-            )
-        except httpx.HTTPStatusError as e:
-            return f"{PLATFORM_ERROR}: HTTP {e.response.status_code}"
-        except Exception as e:
-            return f"{PLATFORM_ERROR}: {e}"
+    ) -> list[str]:
+        # ConnectError 偶发(如代理瞬时抖动)时重试 1 次, 避免瞬时故障误报失败;
+        # 持续不可达时第二次仍失败, 按原路径报错; 其余异常一次即报
+        for _ in range(2):
+            try:
+                result = await func(query, limit, sort, search_type, config, time_range)
+            except httpx.ConnectError:
+                await asyncio.sleep(0.5)
+                continue  # 仅 ConnectError 重试
+            except asyncio.TimeoutError:
+                return [
+                    f"{PLATFORM_ERROR}: 搜索超时, 可能被网络限制, 请检查代理设置(proxy_url)"
+                ]
+            except httpx.ConnectTimeout:
+                return [
+                    f"{PLATFORM_ERROR}: 连接超时, 可能被网络限制, 请检查代理设置(proxy_url)"
+                ]
+            except httpx.HTTPStatusError as e:
+                return [f"{PLATFORM_ERROR}: HTTP {e.response.status_code}"]
+            except Exception as e:
+                return [f"{PLATFORM_ERROR}: {e}"]
+            return result
+        return [
+            f"{PLATFORM_ERROR}: 连接失败, 无法访问该平台。请在 settings.json 中配置 proxy_url 代理"
+        ]
 
     return wrapper
 
 
-async def search_with_timeout(searcher, *args, timeout: int = 15, **kwargs) -> str:
-    """带超时的搜索包装(在 safe_search 之外的兜底, 主要处理整体超时)。"""
+async def search_with_timeout(searcher, *args, timeout: int = 15, **kwargs) -> list[str]:
+    """带超时的搜索包装(在 safe_search 之外的兜底, 主要处理整体超时)。
+
+    返回 list[str], 与 safe_search 一致。
+    """
     try:
         return await asyncio.wait_for(searcher(*args, **kwargs), timeout=timeout)
     except asyncio.TimeoutError:
-        return f"{PLATFORM_ERROR}: 搜索超时({timeout}秒),可能被网络限制,请检查代理设置(proxy_url)"
+        return [f"{PLATFORM_ERROR}: 搜索超时({timeout}秒),可能被网络限制,请检查代理设置(proxy_url)"]
     except httpx.ConnectError:
-        return f"{PLATFORM_ERROR}: 连接超时,无法访问该平台。请在 settings.json 中配置 proxy_url 代理"
+        return [f"{PLATFORM_ERROR}: 连接超时,无法访问该平台。请在 settings.json 中配置 proxy_url 代理"]
     except httpx.ConnectTimeout:
-        return f"{PLATFORM_ERROR}: 连接超时({timeout}秒),可能被网络限制,请检查代理设置(proxy_url)"
+        return [f"{PLATFORM_ERROR}: 连接超时({timeout}秒),可能被网络限制,请检查代理设置(proxy_url)"]
     except httpx.HTTPStatusError as e:
-        return f"{PLATFORM_ERROR}: HTTP {e.response.status_code}"
+        return [f"{PLATFORM_ERROR}: HTTP {e.response.status_code}"]
     except Exception as e:
-        return f"{PLATFORM_ERROR}: {e}"
+        return [f"{PLATFORM_ERROR}: {e}"]

@@ -7,7 +7,6 @@ import httpx
 from uniclaw.config import AppConfig
 
 from .base import (
-    DEFAULT_UA,
     PLATFORM_ERROR,
     http_get_with_retry,
     safe_search,
@@ -28,8 +27,12 @@ async def search(
     search_type: str,
     config: AppConfig | None,
     time_range: str = "",
-) -> str:
-    """OpenAlex 学术搜索 (250M+ 论文, 开放免费, 无需认证)。"""
+) -> list[str]:
+    """OpenAlex 学术搜索 (250M+ 论文, 开放免费, 无需认证)。
+
+    Returns:
+        list[str]: 每条结果一个元素。
+    """
     params = {
         "search": query,
         "per-page": min(limit, 50),
@@ -48,12 +51,12 @@ async def search(
     )
     if email:
         params["mailto"] = email
-    # OpenAlex 匿名请求偶发 429, 内部指数退避重试 (2s → 4s)
+    # OpenAlex 对浏览器 UA 的匿名请求会持续 429 限流 (实测 0/5),
+    # 不传 headers 让 httpx 用默认 UA 则稳定 200 (实测 5/5), 故此处不带 UA。
     try:
         r = await http_get_with_retry(
             _ENDPOINT,
             params=params,
-            headers={"User-Agent": DEFAULT_UA},
             config=config,
             use_proxy=False,
             retries=2,
@@ -61,17 +64,18 @@ async def search(
         )
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 429:
-            return (
+            return [
                 f"{PLATFORM_ERROR}: OpenAlex 请求限流 (429)。"
                 f"匿名配额当前拥挤, 已自动重试仍失败, 可稍后重试; "
                 f"配置 research_email 或 OPENALEX_EMAIL 可提升配额"
-            )
+            ]
         raise
     data = r.json()
     works = data.get("results") or []
     if not works:
-        return "OpenAlex: 无搜索结果"
-    lines = [f"**OpenAlex 搜索结果** ({len(works)} 篇):\n"]
+        return ["OpenAlex: 无搜索结果"]
+    results: list[str] = []
+    seen = 0
     for work in works:
         title = (work.get("title") or work.get("display_name") or "").strip()
         if not title:
@@ -99,15 +103,20 @@ async def search(
         venue = ((work.get("primary_location") or {}).get("source") or {}).get(
             "display_name", ""
         )
-        lines.append(f"**{title}**")
+        lines = [f"**{title}**"]
         lines.append(f"  作者: {author_str} | 年份: {published}")
         lines.append(f"  📚{citations} 引用")
         if venue:
             lines.append(f"  期刊: {venue}")
         if abstract:
             lines.append(f"  {abstract[:200]}...")
-        lines.append(f"  {url}\n")
-    return "\n".join(lines)
+        lines.append(f"  {url}")
+        results.append("\n".join(lines))
+        seen += 1
+    if not results:
+        return ["OpenAlex: 无搜索结果"]
+    results.insert(0, f"**OpenAlex 搜索结果** ({seen} 篇):")
+    return results
 
 
 def _reconstruct_abstract(idx: dict) -> str:

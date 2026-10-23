@@ -52,7 +52,8 @@ class TestExtractText:
     def test_none_input(self):
         assert extract_text(None) == "None"
 
-    def test_list_with_non_dict_items(self):
+    def test_list_non_dict_items_ignored(self):
+        """多模态 list 中只有 dict text 块计入; 裸 str 等非 dict 元素忽略。"""
         content = [{"type": "text", "text": "a"}, "not a dict", {"type": "text", "text": "b"}]
         assert extract_text(content) == "a b"
 

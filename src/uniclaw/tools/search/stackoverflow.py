@@ -19,8 +19,12 @@ async def search(
     search_type: str,
     config: AppConfig | None,
     time_range: str = "",
-) -> str:
-    """Stack Overflow 搜索。"""
+) -> list[str]:
+    """Stack Overflow 搜索。
+
+    Returns:
+        list[str]: 每条结果一个元素。
+    """
     s = sort if sort in _VALID_SORTS else "relevance"
     # 用 /search/advanced 的 q (全文搜索, 匹配标题+正文) 而非 /search 的
     # intitle (仅标题且要求全部词命中): intitle 对多词查询过于严格,
@@ -48,8 +52,8 @@ async def search(
     data = r.json()
     items = data.get("items", [])
     if not items:
-        return "Stack Overflow: 无搜索结果"
-    lines = [f"**Stack Overflow 搜索结果** ({len(items)} 条):\n"]
+        return ["Stack Overflow: 无搜索结果"]
+    results: list[str] = [f"**Stack Overflow 搜索结果** ({len(items)} 条):"]
     for item in items:
         title = item.get("title", "")
         link = item.get("link", "")
@@ -59,7 +63,8 @@ async def search(
         is_answered = item.get("is_answered", False)
         score = item.get("score", 0)
         status = "✅已解决" if is_answered else "❌未解决"
-        lines.append(f"**{title}** [{status}] 👍{score}")
+        lines = [f"**{title}** [{status}] 👍{score}"]
         lines.append(f"  回答: {answers} | 浏览: {views} | 标签: {', '.join(tags[:4])}")
-        lines.append(f"  {link}\n")
-    return "\n".join(lines)
+        lines.append(f"  {link}")
+        results.append("\n".join(lines))
+    return results

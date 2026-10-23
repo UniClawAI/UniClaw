@@ -22,8 +22,12 @@ async def search(
     search_type: str,
     config: AppConfig | None,
     time_range: str = "",
-) -> str:
-    """SEC EDGAR 全文搜索 (美国上市公司文件, 无需 API key, 需标识 User-Agent)。"""
+) -> list[str]:
+    """SEC EDGAR 全文搜索 (美国上市公司文件, 无需 API key, 需标识 User-Agent)。
+
+    Returns:
+        list[str]: 每条结果一个元素。
+    """
     contact = (
         (config.research_email if config else "")
         or os.environ.get("SEC_CONTACT_EMAIL")
@@ -60,7 +64,7 @@ async def search(
     data = r.json()
     all_hits = (data.get("hits") or {}).get("hits") or []
     if not all_hits:
-        return "SEC EDGAR: 无搜索结果"
+        return ["SEC EDGAR: 无搜索结果"]
     # 轻量重排: 公司名/ticker 命中查询词的文件优先。
     # EDGAR FTS 的相关度会把提到公司名的第三方文件(如 13F 持仓)
     # 排在公司自身文件前面; stable sort 只提升实体匹配项, 其余保持原序。
@@ -93,7 +97,7 @@ async def search(
         return sum(1 for t in q_tokens if t and t in names)
 
     hits = sorted(all_hits, key=entity_match, reverse=True)[:limit]
-    lines = [f"**SEC EDGAR 搜索结果** ({len(hits)} 条):\n"]
+    results: list[str] = [f"**SEC EDGAR 搜索结果** ({len(hits)} 条):"]
     for hit in hits:
         source = hit.get("_source") or {}
         adsh = (hit.get("_id") or "").split(":")[0]
@@ -125,7 +129,8 @@ async def search(
             meta += f" · 报告期 {period}"
         if loc:
             meta += f" · {loc}"
-        lines.append(f"**{company} — {form}**")
+        lines = [f"**{company} — {form}**"]
         lines.append(f"  {meta}")
-        lines.append(f"  {url}\n")
-    return "\n".join(lines)
+        lines.append(f"  {url}")
+        results.append("\n".join(lines))
+    return results

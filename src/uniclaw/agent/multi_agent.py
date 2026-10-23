@@ -1450,7 +1450,7 @@ class MultiAgent:
         display_content = (
             tool_resp_content
             if isinstance(tool_resp_content, str)
-            else extract_text(tool_resp_content)
+            else extract_text(tool_resp_content, separator="\n")
         )
         await self.send_event_to_user(
             ToolEvent(
@@ -1503,7 +1503,7 @@ class MultiAgent:
                 (
                     content
                     if isinstance(content, str)
-                    else extract_text(content)
+                    else extract_text(content, separator="\n")
                 )[:120]
                 for _, content in results
             )
@@ -1536,11 +1536,13 @@ class MultiAgent:
                 # 广播给前端,让流式输出期间也能显示图片
                 await self.send_event_to_user(UserEvent(tool_resp_content), config)
             else:
-                # TOOL 消息 content 必须是 str,非 str 内容需转换
+                # TOOL 消息 content 必须是 str,非 str 内容需转换。
+                # 走到这里的 list 是未知/兜底类型(不含 image/audio/video 块),
+                # 用换行连接各 text 块, 避免被默认空格黏成一行。
                 final_content = (
                     tool_resp_content
                     if isinstance(tool_resp_content, str)
-                    else extract_text(tool_resp_content)
+                    else extract_text(tool_resp_content, separator="\n")
                 )
                 task.session.add_message(
                     MessageRole.TOOL,

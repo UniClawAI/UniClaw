@@ -35,8 +35,12 @@ async def search(
     search_type: str,
     config: AppConfig | None,
     time_range: str = "",
-) -> str:
-    """DuckDuckGo 网页搜索 (海外平台, 配置了代理则使用代理)。"""
+) -> list[str]:
+    """DuckDuckGo 网页搜索 (海外平台, 配置了代理则使用代理)。
+
+    Returns:
+        list[str]: 每条结果一个元素。
+    """
     r = await http_get(
         "https://html.duckduckgo.com/html/",
         params={"q": query},
@@ -70,11 +74,12 @@ async def search(
         results.append({"title": t, "link": _decode_ddg_link(link), "snippet": s})
 
     if not results:
-        return f"DuckDuckGo: {NO_RESULTS}"
-    lines = [f"**DuckDuckGo 搜索结果** ({len(results)} 条):\n"]
+        return [f"DuckDuckGo: {NO_RESULTS}"]
+    result_list: list[str] = [f"**DuckDuckGo 搜索结果** ({len(results)} 条):"]
     for item in results:
-        lines.append(f"**{item['title']}**")
+        lines = [f"**{item['title']}**"]
         if item["snippet"]:
             lines.append(f"  {item['snippet']}")
-        lines.append(f"  {item['link']}\n")
-    return "\n".join(lines)
+        lines.append(f"  {item['link']}")
+        result_list.append("\n".join(lines))
+    return result_list

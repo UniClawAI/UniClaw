@@ -22,8 +22,12 @@ async def search(
     search_type: str,
     config: AppConfig | None,
     time_range: str = "",
-) -> str:
-    """Google News 搜索 (公开 RSS, 支持多语言, 无需认证)。"""
+) -> list[str]:
+    """Google News 搜索 (公开 RSS, 支持多语言, 无需认证)。
+
+    Returns:
+        list[str]: 每条结果一个元素。
+    """
     # hl/gl/ceid: 语言/地区, 可通过 config 覆盖
     hl = config.google_news_hl if config else ""
     gl = config.google_news_gl if config else ""
@@ -48,11 +52,11 @@ async def search(
     root = ET.fromstring(r.text)
     channel = root.find("channel")
     if channel is None:
-        return "Google News: 无搜索结果"
+        return ["Google News: 无搜索结果"]
     items = channel.findall("item")[:limit]
     if not items:
-        return "Google News: 无搜索结果"
-    lines = [f"**Google News 搜索结果** ({len(items)} 条):\n"]
+        return ["Google News: 无搜索结果"]
+    results: list[str] = [f"**Google News 搜索结果** ({len(items)} 条):"]
     for item in items:
         title = _text(item, "title")
         link = _text(item, "link")
@@ -62,12 +66,14 @@ async def search(
         source_name = source_el.text if source_el is not None and source_el.text else ""
         desc_plain = re.sub(r"<[^>]+>", " ", desc)
         desc_plain = re.sub(r"\s+", " ", desc_plain).strip()[:400]
-        lines.append(f"**{title}**")
+        lines = [f"**{title}**"]
         lines.append(f"  来源: {source_name} | 日期: {pub}")
         if desc_plain:
             lines.append(f"  {desc_plain}")
-        lines.append(f"  {link}\n")
-    return "\n".join(lines)
+        if link:
+            lines.append(f"  {link}")
+        results.append("\n".join(lines))
+    return results
 
 
 def _text(node, path: str) -> str:

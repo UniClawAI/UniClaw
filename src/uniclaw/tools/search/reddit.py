@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 
 from uniclaw.config import AppConfig
 
-from .base import DEFAULT_UA, http_get, safe_search
+from .base import DEFAULT_UA, http_get_with_retry, safe_search
 from .time_range import parse_time_range, reddit_t
 
 NAME = "reddit"
@@ -43,13 +43,19 @@ async def search(
     search_type: str,
     config: AppConfig | None,
     time_range: str = "",
-) -> str:
-    """Reddit 站内搜索 (公开 RSS 端点, 无需认证)。"""
+) -> list[str]:
+    """Reddit 站内搜索 (公开 RSS 端点, 无需认证)。
+
+    Returns:
+        list[str]: 每条结果一个元素。
+    """
     # 未传 time_range 时维持历史默认 month; 传入时映射到最近的 t= 桶
     t_val = reddit_t(parse_time_range(time_range)) if time_range.strip() else "month"
     # 使用用户传入的 sort, 无效值回退 relevance (此前硬编码为 relevance 导致用户传入的 sort 被忽略)
     s = sort if sort in _VALID_SORTS else "relevance"
-    r = await http_get(
+    # 用带 429 指数退避重试的 GET: reddit 对匿名请求间歇性 429 (实测),
+    # 短等待后重试即可恢复, 不应直接判为失败
+    r = await http_get_with_retry(
         "https://www.reddit.com/search.rss",
         params={
             "q": query,
@@ -60,14 +66,16 @@ async def search(
         headers={"User-Agent": DEFAULT_UA},
         config=config,
         use_proxy=True,
+        retries=2,
+        backoff=1.5,
     )
     root = ET.fromstring(r.text)
     entries = root.findall(f"{_ATOM}entry")
     # 只保留真实帖子 (id 形如 t3_xxx); 版块信息卡为 t5_xxx
     posts = [e for e in entries if (e.findtext(f"{_ATOM}id") or "").startswith("t3_")]
     if not posts:
-        return "Reddit: 无搜索结果"
-    lines = [f"**Reddit 搜索结果** ({len(posts)} 条):\n"]
+        return ["Reddit: 无搜索结果"]
+    results: list[str] = [f"**Reddit 搜索结果** ({len(posts)} 条):"]
     for e in posts:
         title = (e.findtext(f"{_ATOM}title") or "").strip()
         link_el = e.find(f"{_ATOM}link")
@@ -89,7 +97,7 @@ async def search(
             except ValueError:
                 pass
         snippet = _strip_html(e.findtext(f"{_ATOM}content") or "")[:400]
-        lines.append(f"**r/{subreddit}: {title}**")
+        lines = [f"**r/{subreddit}: {title}**"]
         meta = f"  作者: {author}" if author else ""
         if published:
             meta = f"{meta} | 日期: {published}" if meta else f"  日期: {published}"
@@ -97,5 +105,7 @@ async def search(
             lines.append(meta)
         if snippet:
             lines.append(f"  {snippet}")
-        lines.append(f"  {link}\n")
-    return "\n".join(lines)
+        if link:
+            lines.append(f"  {link}")
+        results.append("\n".join(lines))
+    return results

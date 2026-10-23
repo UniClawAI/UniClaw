@@ -1376,6 +1376,8 @@ class TestMiscLowFixes:
 
         rt = ToolRuntime(config=MagicMock())
         result = await webSearch(query="q", limit=0, tool_runtime=rt)
+        # webSearch 返回拼接好的 str
+        assert isinstance(result, str)
         assert "TOOL_ERROR" in result
         assert "limit" in result
 

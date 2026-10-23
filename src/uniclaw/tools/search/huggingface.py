@@ -1,6 +1,7 @@
 """HuggingFace 搜索实现: 支持每日论文(papers/默认)、模型(models)、数据集(datasets)搜索。"""
 
 import os
+import re
 from datetime import date
 
 from uniclaw.config import AppConfig
@@ -33,13 +34,16 @@ async def search(
     search_type: str,
     config: AppConfig | None,
     time_range: str = "",
-) -> str:
+) -> list[str]:
     """HuggingFace 搜索调度: 支持 papers(默认)/models/datasets。
 
     search_type 参数:
       - "papers" 或空: 每日论文搜索 (原有逻辑)
       - "models": 模型搜索
       - "datasets": 数据集搜索
+
+    Returns:
+        list[str]: 每条结果一个元素。
     """
     st = (search_type or "").strip().lower()
     if st == "models":
@@ -55,13 +59,16 @@ async def _search_models(
     limit: int,
     sort: str,
     config: AppConfig | None,
-) -> str:
+) -> list[str]:
     """HuggingFace 模型搜索 (公开 API, 无需认证)。
 
     支持 sort: downloads(默认), likes, trendingScore, createdAt, lastModified, name
+
+    Returns:
+        list[str]: 每条结果一个元素。
     """
     if not query or not query.strip():
-        return "HuggingFace: 无搜索结果"
+        return ["HuggingFace: 无搜索结果"]
 
     sort_val = (sort or "downloads").strip().lower()
     valid_sorts = {"downloads", "likes", "trendingscore", "createdat", "lastmodified", "name"}
@@ -74,9 +81,9 @@ async def _search_models(
     r = await http_get(_ENDPOINT_MODELS, params=params, headers=headers, config=config, use_proxy=True)
     data = r.json()
     if not isinstance(data, list) or not data:
-        return "HuggingFace: 无搜索结果"
+        return ["HuggingFace: 无搜索结果"]
 
-    lines = []
+    results: list[str] = []
     count = 0
     for item in data[:limit]:
         model_id = item.get("id") or ""
@@ -91,6 +98,7 @@ async def _search_models(
         tags = [t for t in (item.get("tags") or []) if not t.startswith("_")]
         tag_str = ", ".join(tags[:5]) if tags else ""
 
+        lines = []
         line = f"**{model_id}**"
         if author:
             line += f" (by {author})"
@@ -109,11 +117,13 @@ async def _search_models(
             lines.append(f"  📚 {library_name}")
         if tag_str:
             lines.append(f"  标签: {tag_str}")
-        lines.append(f"  https://huggingface.co/{model_id}\n")
+        lines.append(f"  https://huggingface.co/{model_id}")
+        results.append("\n".join(lines))
 
     if count == 0:
-        return "HuggingFace: 无搜索结果"
-    return f"**HuggingFace 模型搜索结果** ({count} 个):\n\n" + "\n".join(lines)
+        return ["HuggingFace: 无搜索结果"]
+    results.insert(0, f"**HuggingFace 模型搜索结果** ({count} 个):")
+    return results
 
 
 async def _search_datasets(
@@ -121,13 +131,16 @@ async def _search_datasets(
     limit: int,
     sort: str,
     config: AppConfig | None,
-) -> str:
+) -> list[str]:
     """HuggingFace 数据集搜索 (公开 API, 无需认证)。
 
     支持 sort: downloads(默认), likes, trendingScore, createdAt, lastModified, name
+
+    Returns:
+        list[str]: 每条结果一个元素。
     """
     if not query or not query.strip():
-        return "HuggingFace: 无搜索结果"
+        return ["HuggingFace: 无搜索结果"]
 
     sort_val = (sort or "downloads").strip().lower()
     valid_sorts = {"downloads", "likes", "trendingscore", "createdat", "lastmodified", "name"}
@@ -140,9 +153,9 @@ async def _search_datasets(
     r = await http_get(_ENDPOINT_DATASETS, params=params, headers=headers, config=config, use_proxy=True)
     data = r.json()
     if not isinstance(data, list) or not data:
-        return "HuggingFace: 无搜索结果"
+        return ["HuggingFace: 无搜索结果"]
 
-    lines = []
+    results: list[str] = []
     count = 0
     for item in data[:limit]:
         dataset_id = item.get("id") or ""
@@ -156,6 +169,7 @@ async def _search_datasets(
         tags = [t for t in (item.get("tags") or []) if not t.startswith("_")]
         tag_str = ", ".join(tags[:5]) if tags else ""
 
+        lines = []
         line = f"**{dataset_id}**"
         if author:
             line += f" (by {author})"
@@ -172,11 +186,13 @@ async def _search_datasets(
             lines.append(f"  {' | '.join(meta_parts)}")
         if tag_str:
             lines.append(f"  标签: {tag_str}")
-        lines.append(f"  https://huggingface.co/datasets/{dataset_id}\n")
+        lines.append(f"  https://huggingface.co/datasets/{dataset_id}")
+        results.append("\n".join(lines))
 
     if count == 0:
-        return "HuggingFace: 无搜索结果"
-    return f"**HuggingFace 数据集搜索结果** ({count} 个):\n\n" + "\n".join(lines)
+        return ["HuggingFace: 无搜索结果"]
+    results.insert(0, f"**HuggingFace 数据集搜索结果** ({count} 个):")
+    return results
 
 
 async def _search_papers(
@@ -185,8 +201,12 @@ async def _search_papers(
     sort: str,
     config: AppConfig | None,
     time_range: str = "",
-) -> str:
-    """HuggingFace 每日论文搜索 (公开 API, 无需认证, 客户端按主题过滤)。"""
+) -> list[str]:
+    """HuggingFace 每日论文搜索 (公开 API, 无需认证, 客户端按主题过滤)。
+
+    Returns:
+        list[str]: 每条结果一个元素。
+    """
     headers = {"User-Agent": DEFAULT_UA}
     token = (
         (config.hf_token if config else "")
@@ -198,16 +218,30 @@ async def _search_papers(
     r = await http_get(_ENDPOINT_DAILY_PAPERS, headers=headers, config=config, use_proxy=True)
     data = r.json()
     if not isinstance(data, list):
-        return "HuggingFace: 无搜索结果"
+        return ["HuggingFace: 无搜索结果"]
 
-    q_terms = [t.lower() for t in query.split() if len(t) > 2]
-    if not q_terms:
-        q_terms = [query.lower().strip()]
+    # 词边界匹配: 短词 (如 "AI") 若用子串匹配会命中 main/chain/again 等
+    # 任意含该字母组合的无关论文, 误匹配率极高。ASCII 词用词边界 (前后非
+    # [a-z0-9] 即视为独立词), 中文连续段退化子串匹配 (中文无自然词边界)。
+    # 多词查询 (如 "large language model") 要求所有词都命中 (AND):
+    # 任一命中 (OR) 会因 "model"/"language" 这类高频词误收大量无关论文。
+    # 例: "AI" -> 只匹配独立 AI 单词; "qwen" -> 只匹配 qwen 词。
+    ascii_terms = [t for t in query.split() if re.search(r"[A-Za-z0-9]", t)]
+    cjk_terms = [seg for seg in re.findall(r"[\u4e00-\u9fff]+", query)]
+    patterns: list[re.Pattern] = []
+    for t in ascii_terms:
+        word = re.escape(t.lower().strip(".,;:!?"))
+        if word:
+            patterns.append(re.compile(rf"(?<![a-z0-9]){word}(?:s|es|ing|ed)?(?![a-z0-9])"))
+    for seg in cjk_terms:
+        patterns.append(re.compile(re.escape(seg)))
+    if not patterns:
+        patterns = [re.compile(rf"(?<![a-z0-9]){re.escape(query.lower())}(?:s|es|ing|ed)?(?![a-z0-9])")]
 
     # API 不支持服务端时间过滤, 客户端按发布日期过滤
     tr = parse_time_range(time_range)
 
-    lines = []
+    results: list[str] = []
     count = 0
     for item in data:
         paper = item.get("paper") or {}
@@ -216,7 +250,7 @@ async def _search_papers(
             continue
         summary = paper.get("summary") or item.get("summary") or ""
         hay = (title + " " + summary).lower()
-        if not any(t in hay for t in q_terms):
+        if not all(p.search(hay) for p in patterns):
             continue
         if tr.start or tr.end:
             raw_date = (
@@ -250,17 +284,19 @@ async def _search_papers(
             or item.get("publishedAt")
             or ""
         )[:10]
-        lines.append(f"**{title}**")
+        lines = [f"**{title}**"]
         lines.append(
             f"  作者: {author_str} | 日期: {published} | 👍{upvotes} 💬{num_comments}"
         )
         if summary:
             lines.append(f"  {summary.strip().replace(chr(10), ' ')[:200]}...")
-        lines.append(f"  {url}\n")
+        lines.append(f"  {url}")
+        results.append("\n".join(lines))
         count += 1
         if count >= limit:
             break
 
-    if not lines:
-        return "HuggingFace: 无搜索结果"
-    return f"**HuggingFace 搜索结果** ({count} 篇):\n\n" + "\n".join(lines)
+    if not results:
+        return ["HuggingFace: 无搜索结果"]
+    results.insert(0, f"**HuggingFace 搜索结果** ({count} 篇):")
+    return results

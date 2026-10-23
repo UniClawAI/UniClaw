@@ -25,8 +25,12 @@ async def search(
     search_type: str,
     config: AppConfig | None,
     time_range: str = "",
-) -> str:
-    """arXiv 搜索。"""
+) -> list[str]:
+    """arXiv 搜索。
+
+    Returns:
+        list[str]: 每条结果一个元素。
+    """
     s = sort if sort in _VALID_SORTS else "relevance"
     sq = f"all:{query}"
     tr = parse_time_range(time_range)
@@ -37,6 +41,7 @@ async def search(
         # arXiv API 的日期范围过滤仅在按提交/更新日期排序时才严格生效,
         # relevance 排序下会被忽略而混入窗口外的旧论文 (实测验证), 故强制切换
         s = "submittedDate"
+    http_timeout = 60 if (tr.start or tr.end) else 15
     r = await http_get(
         "https://export.arxiv.org/api/query",
         params={
@@ -47,16 +52,17 @@ async def search(
         },
         headers={"User-Agent": DEFAULT_UA},
         config=config,
-        use_proxy=False,
+        use_proxy=True,
+        timeout=http_timeout,
     )
     root = ET.fromstring(r.text)
     ns = {"atom": "http://www.w3.org/2005/Atom"}
     entries = root.findall("atom:entry", ns)
     if not entries:
-        return "arXiv: 无搜索结果"
-    lines = [f"**arXiv 搜索结果** ({len(entries)} 篇):\n"]
+        return ["arXiv: 无搜索结果"]
+    results: list[str] = [f"**arXiv 搜索结果** ({len(entries)} 篇):"]
     if tr.start or tr.end:
-        lines.append("  [提示: 因时间范围过滤, 排序已切换为按提交日期, 相关度可能不如 relevance 排序]\n")
+        results.append("[提示: 因时间范围过滤, 排序已切换为按提交日期, 相关度可能不如 relevance 排序]")
     for entry in entries:
         title = entry.find("atom:title", ns).text.strip().replace("\n", " ")
         authors = [
@@ -65,9 +71,12 @@ async def search(
         summary = entry.find("atom:summary", ns).text.strip().replace("\n", " ")[:200]
         link = entry.find("atom:id", ns).text.strip()
         published = entry.find("atom:published", ns).text[:10]
-        lines.append(f"**{title}**")
-        lines.append(f"  作者: {', '.join(authors[:3])}")
+        lines = [f"**{title}**"]
+        author_str = ", ".join(authors[:3])
+        if author_str:
+            lines.append(f"  作者: {author_str}")
         lines.append(f"  日期: {published}")
         lines.append(f"  摘要: {summary}...")
-        lines.append(f"  {link}\n")
-    return "\n".join(lines)
+        lines.append(f"  {link}")
+        results.append("\n".join(lines))
+    return results

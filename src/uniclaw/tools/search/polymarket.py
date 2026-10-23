@@ -23,8 +23,12 @@ async def search(
     search_type: str,
     config: AppConfig | None,
     time_range: str = "",
-) -> str:
-    """Polymarket 预测市场搜索 (公开 Gamma API, 无需认证)。"""
+) -> list[str]:
+    """Polymarket 预测市场搜索 (公开 Gamma API, 无需认证)。
+
+    Returns:
+        list[str]: 每条结果一个元素。
+    """
     r = await http_get(
         _ENDPOINT,
         params={"q": query, "limit_per_type": max(limit * 3, 10)},
@@ -44,7 +48,7 @@ async def search(
         e for e in events if not _is_open(e)
     ]
 
-    lines = []
+    results: list[str] = []
     count = 0
     for e in ordered:
         closed = not _is_open(e)
@@ -69,20 +73,22 @@ async def search(
                     desc = m_desc
             if odds_str:
                 break
-        lines.append(f"**{title}{' (已收盘)' if closed else ''}**")
+        lines = [f"**{title}{' (已收盘)' if closed else ''}**"]
         lines.append(f"  💰 ${volume:,.0f} 成交量 | ${liquidity:,.0f} 流动性")
         if odds_str:
             lines.append(f"  概率: {odds_str}")
         if desc:
             lines.append(f"  {desc[:400]}")
-        lines.append(f"  https://polymarket.com/event/{slug}\n")
+        lines.append(f"  https://polymarket.com/event/{slug}")
+        results.append("\n".join(lines))
         count += 1
         if count >= limit:
             break
 
-    if not lines:
-        return "Polymarket: 无搜索结果"
-    return f"**Polymarket 搜索结果** ({count} 条):\n\n" + "\n".join(lines)
+    if not results:
+        return ["Polymarket: 无搜索结果"]
+    results.insert(0, f"**Polymarket 搜索结果** ({count} 条):")
+    return results
 
 
 def _extract_odds(m: dict) -> str:

@@ -214,10 +214,15 @@ def _patch_exa_capture(captured, props=None):
 async def _platform(
     platform_name, query, config, limit=10, sort="", search_type="", time_range=""
 ):
-    """直接调用单个平台的搜索函数 (绕过 webSearch 工具层)。"""
+    """直接调用单个平台的搜索函数 (绕过 webSearch 工具层), 返回 list[str]。"""
     return await PLATFORM_SEARCHERS[platform_name](
         query, limit, sort, search_type, config, time_range=time_range
     )
+
+
+def _joined(result) -> str:
+    """把平台搜索结果 (str 或 list[str]) 拼接成单条文本, 便于断言渲染内容。"""
+    return "\n".join(result) if isinstance(result, list) else result
 
 
 # ── Fixtures ─────────────────────────────────────────────────
@@ -386,8 +391,8 @@ class TestPlatformSearchGitHub:
         with _patch_base(mock_response):
             result = await _platform("github", "test", mock_config)
 
-        assert "GitHub" in result
-        assert "user/repo" in result
+        assert "GitHub" in _joined(result)
+        assert "user/repo" in _joined(result)
 
     @pytest.mark.asyncio
     async def test_with_token(self, mock_config_with_proxy):
@@ -430,9 +435,34 @@ class TestPlatformSearchArxiv:
         with _patch_base(mock_response):
             result = await _platform("arxiv", "test", mock_config)
 
-        assert "arXiv" in result
-        assert "Test Paper" in result
-        assert "John Doe" in result
+        assert "arXiv" in _joined(result)
+        assert "Test Paper" in _joined(result)
+        assert "John Doe" in _joined(result)
+
+    @pytest.mark.asyncio
+    async def test_uses_proxy(self, mock_config_with_proxy):
+        """arXiv 配置了代理时走代理 (use_proxy=True)。
+
+        当前实现 use_proxy=True: 有代理则走代理, 无代理则直连。
+        """
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.text = "<feed xmlns='http://www.w3.org/2005/Atom'/>"
+        mock_response.raise_for_status = MagicMock()
+
+        with _patch_base(mock_response) as mock_client:
+            await _platform("arxiv", "test", mock_config_with_proxy)
+            # AsyncClient 构造调用应携带 proxy (client_kwargs(use_proxy=True))
+            construct_call = mock_client.call_args
+            assert construct_call is not None
+            kwargs = (
+                construct_call.kwargs
+                if construct_call.kwargs
+                else (construct_call.args[0] if construct_call.args else {})
+            )
+            assert kwargs.get("proxy") == "http://127.0.0.1:7890", (
+                "arXiv 应携带代理配置 (use_proxy=True)"
+            )
 
 
 class TestPlatformSearchStackOverflow:
@@ -460,9 +490,9 @@ class TestPlatformSearchStackOverflow:
         with _patch_base(mock_response):
             result = await _platform("stackoverflow", "test", mock_config)
 
-        assert "Stack Overflow" in result
-        assert "How to test?" in result
-        assert "已解决" in result
+        assert "Stack Overflow" in _joined(result)
+        assert "How to test?" in _joined(result)
+        assert "已解决" in _joined(result)
 
 
 class TestPlatformSearchHackerNews:
@@ -490,9 +520,9 @@ class TestPlatformSearchHackerNews:
         with _patch_base(mock_response):
             result = await _platform("hackernews", "test", mock_config)
 
-        assert "Hacker News" in result
-        assert "Show HN: Test Project" in result
-        assert "testuser" in result
+        assert "Hacker News" in _joined(result)
+        assert "Show HN: Test Project" in _joined(result)
+        assert "testuser" in _joined(result)
 
 
 class TestPlatformSearchBilibili:
@@ -522,9 +552,9 @@ class TestPlatformSearchBilibili:
         with _patch_bilibili(mock_response) as mock_client:
             result = await _platform("bilibili", "test", mock_config)
 
-        assert "B站" in result
-        assert "测试视频" in result
-        assert "UP主" in result
+        assert "B站" in _joined(result)
+        assert "测试视频" in _joined(result)
+        assert "UP主" in _joined(result)
 
     @pytest.mark.asyncio
     async def test_china_direct_no_proxy(self):
@@ -547,6 +577,37 @@ class TestPlatformSearchBilibili:
         assert call is not None
         kwargs = call.kwargs if call.kwargs else (call.args[0] if call.args else {})
         assert "proxy" not in kwargs
+
+    @pytest.mark.asyncio
+    async def test_missing_bvid_no_blank_link_line(self, mock_config):
+        """bvid 缺失时结果不应产生空白链接行。"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "code": 0,
+            "data": {
+                "result": [
+                    {
+                        "title": "无链接视频",
+                        "author": "UP主",
+                        "play": 100,
+                        "video_review": 5,
+                        "description": "desc",
+                        "bvid": "",  # 缺 bvid → 无链接
+                    }
+                ]
+            },
+        }
+        mock_response.raise_for_status = MagicMock()
+
+        with _patch_bilibili(mock_response):
+            result = await _platform("bilibili", "test", mock_config)
+
+        # 结果不含空白链接行 (末尾不应是 "  " 空行)
+        item = result[-1]
+        assert "无链接视频" in item
+        assert not item.endswith("  "), "不应以空白链接行结尾"
+        assert "https://www.bilibili.com" not in item
 
 
 # ── 新增平台搜索函数测试  ─────────
@@ -577,9 +638,9 @@ class TestPlatformSearchReddit:
         with _patch_base(mock_response):
             result = await _platform("reddit", "test", mock_config)
 
-        assert "Reddit" in result
-        assert "Test Post" in result
-        assert "r/python" in result
+        assert "Reddit" in _joined(result)
+        assert "Test Post" in _joined(result)
+        assert "r/python" in _joined(result)
 
     @pytest.mark.asyncio
     async def test_skips_subreddit_info_card(self, mock_config):
@@ -608,8 +669,8 @@ class TestPlatformSearchReddit:
         with _patch_base(mock_response):
             result = await _platform("reddit", "test", mock_config)
 
-        assert "Real Post" in result
-        assert "community description" not in result
+        assert "Real Post" in _joined(result)
+        assert "community description" not in _joined(result)
 
 
 class TestPlatformSearchGoogleNews:
@@ -635,9 +696,9 @@ class TestPlatformSearchGoogleNews:
         with _patch_base(mock_response):
             result = await _platform("google_news", "test", mock_config)
 
-        assert "Google News" in result
-        assert "News Headline" in result
-        assert "Example News" in result
+        assert "Google News" in _joined(result)
+        assert "News Headline" in _joined(result)
+        assert "Example News" in _joined(result)
 
 
 class TestPlatformSearchOpenAlex:
@@ -664,9 +725,9 @@ class TestPlatformSearchOpenAlex:
         with _patch_base(mock_response):
             result = await _platform("openalex", "test", mock_config)
 
-        assert "OpenAlex" in result
-        assert "OpenAlex Paper" in result
-        assert "引用" in result
+        assert "OpenAlex" in _joined(result)
+        assert "OpenAlex Paper" in _joined(result)
+        assert "引用" in _joined(result)
 
     @pytest.mark.asyncio
     async def test_429_retry_then_success(self, mock_config):
@@ -703,8 +764,8 @@ class TestPlatformSearchOpenAlex:
         ):
             result = await _platform("openalex", "test", mock_config)
 
-        assert "Retry OpenAlex" in result
-        assert PLATFORM_ERROR not in result
+        assert "Retry OpenAlex" in _joined(result)
+        assert PLATFORM_ERROR not in _joined(result)
         assert mock_sleep.await_count == 1
 
 
@@ -742,10 +803,10 @@ class TestPlatformSearchPolymarket:
         with _patch_base(mock_response):
             result = await _platform("polymarket", "test", mock_config)
 
-        assert "Polymarket" in result
-        assert "test event" in result.lower()
-        assert "成交量" in result
-        assert "Yes 65%" in result
+        assert "Polymarket" in _joined(result)
+        assert "test event" in _joined(result).lower()
+        assert "成交量" in _joined(result)
+        assert "Yes 65%" in _joined(result)
 
     @pytest.mark.asyncio
     async def test_short_query(self, mock_config):
@@ -777,8 +838,8 @@ class TestPlatformSearchPolymarket:
         with _patch_base(mock_response):
             result = await _platform("polymarket", "AI", mock_config)
 
-        assert "Polymarket" in result
-        assert "AI" in result
+        assert "Polymarket" in _joined(result)
+        assert "AI" in _joined(result)
 
 
 class TestPlatformSearchSecEdgar:
@@ -810,9 +871,9 @@ class TestPlatformSearchSecEdgar:
         with _patch_base(mock_response):
             result = await _platform("sec_edgar", "test", mock_config)
 
-        assert "SEC EDGAR" in result
-        assert "Acme Corp" in result
-        assert "10-K" in result
+        assert "SEC EDGAR" in _joined(result)
+        assert "Acme Corp" in _joined(result)
+        assert "10-K" in _joined(result)
 
 
 class TestPlatformSearchHuggingFace:
@@ -840,9 +901,9 @@ class TestPlatformSearchHuggingFace:
         with _patch_base(mock_response):
             result = await _platform("huggingface", "transformer", mock_config)
 
-        assert "HuggingFace" in result
-        assert "Transformer" in result
-        assert "15" in result
+        assert "HuggingFace" in _joined(result)
+        assert "Transformer" in _joined(result)
+        assert "15" in _joined(result)
 
     @pytest.mark.asyncio
     async def test_models_search(self, mock_config):
@@ -867,16 +928,16 @@ class TestPlatformSearchHuggingFace:
                 "huggingface", "gemma", mock_config, search_type="models"
             )
 
-        assert "模型搜索结果" in result
-        assert "google/gemma-2b" in result
-        assert "by google" in result
-        assert "1.2M downloads" in result
-        assert "890 likes" in result
-        assert "text-generation" in result
-        assert "transformers" in result
+        assert "模型搜索结果" in _joined(result)
+        assert "google/gemma-2b" in _joined(result)
+        assert "by google" in _joined(result)
+        assert "1.2M downloads" in _joined(result)
+        assert "890 likes" in _joined(result)
+        assert "text-generation" in _joined(result)
+        assert "transformers" in _joined(result)
         # 下划线开头的内部标签被过滤
-        assert "_private" not in result
-        assert "https://huggingface.co/google/gemma-2b" in result
+        assert "_private" not in _joined(result)
+        assert "https://huggingface.co/google/gemma-2b" in _joined(result)
 
     @pytest.mark.asyncio
     async def test_datasets_search(self, mock_config):
@@ -900,11 +961,11 @@ class TestPlatformSearchHuggingFace:
                 "huggingface", "squad", mock_config, search_type="datasets"
             )
 
-        assert "数据集搜索结果" in result
-        assert "squad" in result
-        assert "200.0K downloads" in result
-        assert "https://huggingface.co/datasets/squad" in result
-        assert "https://huggingface.co/squad" not in result
+        assert "数据集搜索结果" in _joined(result)
+        assert "squad" in _joined(result)
+        assert "200.0K downloads" in _joined(result)
+        assert "https://huggingface.co/datasets/squad" in _joined(result)
+        assert "https://huggingface.co/squad" not in _joined(result)
 
     @pytest.mark.asyncio
     async def test_models_no_query_skips_request(self, mock_config):
@@ -916,7 +977,7 @@ class TestPlatformSearchHuggingFace:
                 "huggingface", "   ", mock_config, search_type="models"
             )
 
-        assert result == "HuggingFace: 无搜索结果"
+        assert _joined(result) == "HuggingFace: 无搜索结果"
         mock_get.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -931,7 +992,7 @@ class TestPlatformSearchHuggingFace:
             result = await _platform(
                 "huggingface", "gemma", mock_config, search_type="models"
             )
-        assert "HuggingFace: 无搜索结果" in result
+        assert "HuggingFace: 无搜索结果" in _joined(result)
 
     @pytest.mark.asyncio
     async def test_datasets_empty_list(self, mock_config):
@@ -945,7 +1006,7 @@ class TestPlatformSearchHuggingFace:
             result = await _platform(
                 "huggingface", "squad", mock_config, search_type="datasets"
             )
-        assert "HuggingFace: 无搜索结果" in result
+        assert "HuggingFace: 无搜索结果" in _joined(result)
 
     @pytest.mark.asyncio
     async def test_models_invalid_sort_falls_back(self, mock_config):
@@ -981,9 +1042,9 @@ class TestPlatformSearchHuggingFace:
                 "huggingface", "gemma", mock_config, search_type="models"
             )
 
-        assert "valid/model" in result
-        assert "📥 5 downloads" in result
-        assert "1 downloads" not in result
+        assert "valid/model" in _joined(result)
+        assert "📥 5 downloads" in _joined(result)
+        assert "1 downloads" not in _joined(result)
 
     @pytest.mark.asyncio
     async def test_papers_filtered_by_query(self, mock_config):
@@ -1019,10 +1080,10 @@ class TestPlatformSearchHuggingFace:
         with _patch_base(mock_response):
             result = await _platform("huggingface", "transformer", mock_config)
 
-        assert "Transformers for Vision" in result
-        assert "Diffusion Models" not in result
-        assert "Alice" in result
-        assert "huggingface.co/papers/2401.00001" in result
+        assert "Transformers for Vision" in _joined(result)
+        assert "Diffusion Models" not in _joined(result)
+        assert "Alice" in _joined(result)
+        assert "huggingface.co/papers/2401.00001" in _joined(result)
 
     @pytest.mark.asyncio
     async def test_papers_author_ellipsis(self, mock_config):
@@ -1048,8 +1109,8 @@ class TestPlatformSearchHuggingFace:
         with _patch_base(mock_response):
             result = await _platform("huggingface", "author", mock_config)
 
-        assert "Author0, Author1, Author2" in result
-        assert "+2 more" in result
+        assert "Author0, Author1, Author2" in _joined(result)
+        assert "+2 more" in _joined(result)
 
     @pytest.mark.asyncio
     async def test_papers_no_matching_query(self, mock_config):
@@ -1064,7 +1125,7 @@ class TestPlatformSearchHuggingFace:
         with _patch_base(mock_response):
             result = await _platform("huggingface", "zzzz", mock_config)
 
-        assert "HuggingFace: 无搜索结果" in result
+        assert "HuggingFace: 无搜索结果" in _joined(result)
 
     @pytest.mark.asyncio
     async def test_papers_limit_applied(self, mock_config):
@@ -1092,9 +1153,9 @@ class TestPlatformSearchHuggingFace:
                 "huggingface", "transformer", mock_config, limit=3
             )
 
-        assert "(3 篇)" in result
-        assert "Matching Paper 1" in result
-        assert "Matching Paper 5" not in result
+        assert "(3 篇)" in _joined(result)
+        assert "Matching Paper 1" in _joined(result)
+        assert "Matching Paper 5" not in _joined(result)
 
     @pytest.mark.asyncio
     async def test_papers_uses_hf_token(self, mock_config_with_proxy):
@@ -1155,9 +1216,38 @@ class TestPlatformSearchAlphaXiv:
         with _patch_base(mock_response):
             result = await _platform("alphaxiv", "test", mock_config)
 
-        assert "alphaXiv" in result
-        assert "Discussion Paper" in result
-        assert "alphaxiv.org" in result
+        assert "alphaXiv" in _joined(result)
+        assert "Discussion Paper" in _joined(result)
+        assert "alphaxiv.org" in _joined(result)
+
+    @pytest.mark.asyncio
+    async def test_no_results_uses_own_wording(self, mock_config):
+        """arXiv 无结果时, alphaXiv 返回自己的文案而非透传 arXiv。"""
+        from uniclaw.tools.search import alphaxiv
+
+        with patch(
+            "uniclaw.tools.search.alphaxiv.arxiv.search",
+            new=AsyncMock(return_value=["arXiv: 无搜索结果"]),
+        ):
+            result = await alphaxiv.search("q", 5, "", "", mock_config, "")
+
+        assert result == ["alphaXiv: 无搜索结果"]
+        assert "arXiv:" not in result[0]
+
+    @pytest.mark.asyncio
+    async def test_error_passthrough_keeps_prefix(self, mock_config):
+        """arXiv 平台失败时透传 PLATFORM_ERROR, 供 _split_results 识别。"""
+        from uniclaw.tools.search import alphaxiv
+        from uniclaw.tools.search.base import PLATFORM_ERROR
+
+        with patch(
+            "uniclaw.tools.search.alphaxiv.arxiv.search",
+            new=AsyncMock(return_value=["[PLATFORM_ERROR]: 连接失败"]),
+        ):
+            result = await alphaxiv.search("q", 5, "", "", mock_config, "")
+
+        assert result[0].startswith(PLATFORM_ERROR)
+        assert "连接失败" in result[0]
 
 
 class TestPlatformSearchBing:
@@ -1184,10 +1274,10 @@ class TestPlatformSearchBing:
         with _patch_base(mock_response):
             result = await _platform("bing", "test", mock_config)
 
-        assert "Bing" in result
-        assert "Bing Result 1" in result
-        assert "Bing Result 2" in result
-        assert "example.com" in result
+        assert "Bing" in _joined(result)
+        assert "Bing Result 1" in _joined(result)
+        assert "Bing Result 2" in _joined(result)
+        assert "example.com" in _joined(result)
 
     @pytest.mark.asyncio
     async def test_china_direct_no_proxy(self):
@@ -1220,7 +1310,7 @@ class TestPlatformSearchBing:
         with _patch_base(mock_response):
             result = await _platform("bing", "test", mock_config)
 
-        assert "Bing: 无搜索结果" in result
+        assert "Bing: 无搜索结果" in _joined(result)
 
 
 class TestPlatformSearchDuckDuckGo:
@@ -1250,10 +1340,10 @@ class TestPlatformSearchDuckDuckGo:
         with _patch_base(mock_response):
             result = await _platform("duckduckgo", "test", mock_config)
 
-        assert "DuckDuckGo" in result
-        assert "DDG Result 1" in result
-        assert "DDG Result 2" in result
-        assert "example.com" in result
+        assert "DuckDuckGo" in _joined(result)
+        assert "DDG Result 1" in _joined(result)
+        assert "DDG Result 2" in _joined(result)
+        assert "example.com" in _joined(result)
 
     @pytest.mark.asyncio
     async def test_no_results(self, mock_config):
@@ -1265,7 +1355,7 @@ class TestPlatformSearchDuckDuckGo:
         with _patch_base(mock_response):
             result = await _platform("duckduckgo", "test", mock_config)
 
-        assert "DuckDuckGo: 无搜索结果" in result
+        assert "DuckDuckGo: 无搜索结果" in _joined(result)
 
 
 class TestPlatformSearchExa:
@@ -1277,8 +1367,8 @@ class TestPlatformSearchExa:
         with _patch_mcp(call_result='[{"title": "Exa Result"}]'):
             result = await _platform("exa", "test", mock_config)
 
-        assert "Exa" in result
-        assert "Exa Result" in result
+        assert "Exa" in _joined(result)
+        assert "Exa Result" in _joined(result)
 
     @pytest.mark.asyncio
     async def test_connection_reused_across_calls(self, mock_config):
@@ -1361,7 +1451,7 @@ class TestPlatformSearchExa:
         with _patch_mcp(tools=[]):
             result = await _platform("exa", "test", mock_config)
 
-        assert PLATFORM_ERROR in result
+        assert PLATFORM_ERROR in _joined(result)
 
     @pytest.mark.asyncio
     async def test_tool_call_fails(self, mock_config):
@@ -1369,8 +1459,8 @@ class TestPlatformSearchExa:
         with _patch_mcp(call_result=f"{TOOL_ERROR}: boom"):
             result = await _platform("exa", "test", mock_config)
 
-        assert PLATFORM_ERROR in result
-        assert "boom" in result
+        assert PLATFORM_ERROR in _joined(result)
+        assert "boom" in _joined(result)
 
     @pytest.mark.asyncio
     async def test_proxy_not_used_even_when_set(self):
@@ -1387,7 +1477,7 @@ class TestPlatformSearchExa:
         with _patch_mcp(connection_hook=_hook):
             result = await _platform("exa", "test", config)
 
-        assert "Exa" in result
+        assert "Exa" in _joined(result)
         assert "proxy" not in captured["connection"]
 
     @pytest.mark.asyncio
@@ -1401,7 +1491,7 @@ class TestPlatformSearchExa:
         with _patch_mcp(connection_hook=_hook):
             result = await _platform("exa", "test", mock_config)
 
-        assert "Exa" in result
+        assert "Exa" in _joined(result)
         assert "proxy" not in captured["connection"]
 
     @pytest.mark.asyncio
@@ -1484,8 +1574,8 @@ class TestExaRestFastPath:
             mock_cls.return_value.__aenter__.return_value = client
             result = await _platform("exa", "rest-query", mock_config)
 
-        assert "Rest Hit" in result
-        assert "https://example.com/a" in result
+        assert "Rest Hit" in _joined(result)
+        assert "https://example.com/a" in _joined(result)
         payload = client.post.await_args.kwargs["json"]
         assert payload["query"] == "rest-query"
         assert payload["numResults"] == 10
@@ -1528,7 +1618,7 @@ class TestExaRestFastPath:
             mock_cls.return_value.__aenter__.return_value = client
             result = await _platform("exa", "q", mock_config)
 
-        assert "mcp fallback" in result
+        assert "mcp fallback" in _joined(result)
 
     @pytest.mark.asyncio
     async def test_no_api_key_goes_straight_to_mcp(self, mock_config):
@@ -1540,7 +1630,7 @@ class TestExaRestFastPath:
             result = await _platform("exa", "q", mock_config)
 
         mock_cls.assert_not_called()
-        assert "mock exa result" in result
+        assert "mock exa result" in _joined(result)
 
 
 # ── time_range 时间范围过滤测试 ──────────────────────────────
@@ -1588,12 +1678,13 @@ class TestTimeRangeInjection:
         assert "pushed:" not in q
 
     @pytest.mark.asyncio
-    async def test_github_code_type_ignores_range(self, mock_config):
+    async def test_github_code_type_ignores_range(self, mock_config_with_proxy):
+        # code 类型搜索要求 GITHUB_TOKEN, 用带 token 的 config 才能触发请求
         with _patch_base(_empty_mock()) as mock_client:
             await _platform(
                 "github",
                 "llm",
-                mock_config,
+                mock_config_with_proxy,
                 search_type="code",
                 time_range="7d",
             )
@@ -1725,7 +1816,7 @@ class TestTimeRangeInjection:
         }
         with _patch_exa_capture(captured, props=props):
             result = await _platform("exa", "ai agents", mock_config, time_range="7d")
-        assert PLATFORM_ERROR not in result
+        assert PLATFORM_ERROR not in _joined(result)
         args = captured["arguments"]
         assert args["startPublishedDate"].endswith("T00:00:00Z")
         # 预设区间无上界, 不传 endPublishedDate
@@ -1739,7 +1830,7 @@ class TestTimeRangeInjection:
         with _patch_exa_capture(captured, props=props):
             result = await _platform("exa", "ai agents", mock_config, time_range="7d")
         assert "startPublishedDate" not in captured["arguments"]
-        assert PLATFORM_ERROR not in result
+        assert PLATFORM_ERROR not in _joined(result)
 
     @pytest.mark.asyncio
     async def test_alphaxiv_forwards_to_arxiv(self, mock_config):
@@ -1785,8 +1876,8 @@ class TestTimeRangeInjection:
                 "huggingface", "transformer", mock_config, time_range="1y"
             )
 
-        assert "Fresh Transformer Paper" in result
-        assert "Old Transformer Paper" not in result
+        assert "Fresh Transformer Paper" in _joined(result)
+        assert "Old Transformer Paper" not in _joined(result)
 
 
 class TestTimeRangeMulti:
@@ -1823,8 +1914,8 @@ class TestTimeRangeMulti:
                 tool_runtime=ToolRuntime(config=mock_config),
                 time_range="7d",
             )
-        assert result.count("[提示]") == 1
-        assert "[提示] duckduckgo 平台不支持时间范围过滤" in result
+        assert _joined(result).count("[提示]") == 1
+        assert "[提示] duckduckgo 平台不支持时间范围过滤" in _joined(result)
 
     @pytest.mark.asyncio
     async def test_no_hint_when_time_range_empty(self, mock_config):
@@ -1835,7 +1926,7 @@ class TestTimeRangeMulti:
                 platforms="bing,duckduckgo",
                 tool_runtime=ToolRuntime(config=mock_config),
             )
-        assert "[提示]" not in result
+        assert "[提示]" not in _joined(result)
 
     @pytest.mark.asyncio
     async def test_each_platform_accepts_time_range(self, mock_config):
@@ -1849,11 +1940,10 @@ class TestTimeRangeMulti:
                 result = await searcher(
                     "test", 10, "", "", mock_config, time_range="7d"
                 )
-            assert isinstance(result, str), f"{platform_name} 未返回字符串"
-            assert len(result) > 0, f"{platform_name} 返回空字符串"
-            assert not result.startswith(
+            assert isinstance(result, list) and result, f"{platform_name} 未返回非空列表"
+            assert not result[0].startswith(
                 PLATFORM_ERROR
-            ), f"{platform_name} 不接受 time_range 参数: {result}"
+            ), f"{platform_name} 不接受 time_range 参数: {result[0]}"
 
 
 # ── 多平台搜索测试 ───────────────────────────────────────────
@@ -1870,8 +1960,8 @@ class TestMultiPlatformSearch:
                 query="!!!@@@###$$$%%%",
                 tool_runtime=ToolRuntime(config=mock_config),
             )
-        assert "未找到" in result
-        assert "!!!@@@###$$$%%%" in result
+        assert "未找到" in _joined(result)
+        assert "!!!@@@###$$$%%%" in _joined(result)
 
     @pytest.mark.asyncio
     async def test_zero_overlap_returns_not_found(self, mock_config):
@@ -1903,10 +1993,10 @@ class TestMultiPlatformSearch:
                 platforms="github",
                 tool_runtime=ToolRuntime(config=mock_config),
             )
-        assert "未找到与" in result
-        assert "zzzqqqxxx" in result
-        assert "相关度可能较低" not in result
-        assert "random-generator" not in result
+        assert "未找到与" in _joined(result)
+        assert "zzzqqqxxx" in _joined(result)
+        assert "相关度可能较低" not in _joined(result)
+        assert "random-generator" not in _joined(result)
 
     @pytest.mark.asyncio
     async def test_default_platforms_is_exa(self, mock_config):
@@ -1915,9 +2005,9 @@ class TestMultiPlatformSearch:
             result = await _search(query="test", tool_runtime=ToolRuntime(config=mock_config))
 
         assert len(search_cache) == 1
-        assert "EXA" in result.upper()
-        assert "GITHUB" not in result.upper()
-        assert "ARXIV" not in result.upper()
+        assert "EXA" in _joined(result).upper()
+        assert "GITHUB" not in _joined(result).upper()
+        assert "ARXIV" not in _joined(result).upper()
 
     @pytest.mark.asyncio
     async def test_searches_all_platforms(self, mock_config):
@@ -1927,7 +2017,7 @@ class TestMultiPlatformSearch:
 
         # 全部平台都应出现在结果中(多平台分隔线含平台名)
         for platform in PLATFORM_SEARCHERS:
-            assert platform.upper() in result.upper(), f"缺少平台 {platform}"
+            assert platform.upper() in _joined(result).upper(), f"缺少平台 {platform}"
 
     @pytest.mark.asyncio
     async def test_platforms_filter_selected_only(self, mock_config):
@@ -1938,13 +2028,13 @@ class TestMultiPlatformSearch:
             )
 
         # 只应出现 github 和 arxiv (分隔线含平台名)
-        assert "GITHUB" in result.upper()
-        assert "ARXIV" in result.upper()
+        assert "GITHUB" in _joined(result).upper()
+        assert "ARXIV" in _joined(result).upper()
         # 不应出现其他平台
         for platform in PLATFORM_SEARCHERS:
             if platform not in ("github", "arxiv"):
                 assert (
-                    platform.upper() not in result.upper()
+                    platform.upper() not in _joined(result).upper()
                 ), f"不应包含平台 {platform}"
 
     @pytest.mark.asyncio
@@ -1953,8 +2043,8 @@ class TestMultiPlatformSearch:
         with _patch_all_platforms(_empty_mock()):
             result = await _search(query="test", platforms="github", tool_runtime=ToolRuntime(config=mock_config))
 
-        assert "GITHUB" in result.upper()
-        assert "ARXIV" not in result.upper()
+        assert "GITHUB" in _joined(result).upper()
+        assert "ARXIV" not in _joined(result).upper()
 
     @pytest.mark.asyncio
     async def test_platforms_filter_case_and_space_insensitive(self, mock_config):
@@ -1964,9 +2054,9 @@ class TestMultiPlatformSearch:
                 query="test", platforms=" GitHub , BING ", tool_runtime=ToolRuntime(config=mock_config)
             )
 
-        assert "GITHUB" in result.upper()
-        assert "BING" in result.upper()
-        assert "ARXIV" not in result.upper()
+        assert "GITHUB" in _joined(result).upper()
+        assert "BING" in _joined(result).upper()
+        assert "ARXIV" not in _joined(result).upper()
 
     @pytest.mark.asyncio
     async def test_platforms_all_covers_everything(self, mock_config):
@@ -1991,8 +2081,8 @@ class TestMultiPlatformSearch:
                 query="test", platforms="github,notexist", tool_runtime=ToolRuntime(config=mock_config)
             )
 
-        assert "GITHUB" in result.upper()
-        assert "ARXIV" not in result.upper()
+        assert "GITHUB" in _joined(result).upper()
+        assert "ARXIV" not in _joined(result).upper()
 
 
 # ── 错误处理测试 ─────────────────────────────────────────────
@@ -2018,9 +2108,9 @@ class TestErrorHandling:
             )
 
         # safe_search 捕获连接错误, 返回平台失败信息(非 TOOL_ERROR)而非抛异常
-        assert PLATFORM_ERROR in result
-        assert "连接失败" in result
-        assert "proxy_url" in result
+        assert PLATFORM_ERROR in _joined(result)
+        assert "连接失败" in _joined(result)
+        assert "proxy_url" in _joined(result)
 
     @pytest.mark.asyncio
     async def test_timeout(self, mock_config):
@@ -2037,8 +2127,8 @@ class TestErrorHandling:
                 query="test", platforms="github", timeout=1, tool_runtime=ToolRuntime(config=mock_config)
             )
 
-        assert "超时" in result
-        assert "proxy_url" in result
+        assert "超时" in _joined(result)
+        assert "proxy_url" in _joined(result)
 
     @pytest.mark.asyncio
     async def test_http_error(self, mock_config):
@@ -2056,8 +2146,8 @@ class TestErrorHandling:
             result = await _search(query="test", platforms="github", tool_runtime=ToolRuntime(config=mock_config))
 
         # 平台 HTTP 错误返回 PLATFORM_ERROR(单平台失败), 而非 TOOL_ERROR
-        assert PLATFORM_ERROR in result
-        assert "403" in result
+        assert PLATFORM_ERROR in _joined(result)
+        assert "403" in _joined(result)
 
 
 # ── 缓存测试 ─────────────────────────────────────────────────
@@ -2068,24 +2158,26 @@ class TestCache:
 
     @pytest.mark.asyncio
     async def test_cache_hit(self, mock_config):
-        """相同查询应命中缓存; 缓存只存干净结果, 耗时标注仅在首次真实搜索时附加"""
+        """相同查询应命中缓存; 耗时标注只走流式推送, 不进返回列表,
+        缓存命中与真实搜索的返回结构完全一致"""
         with _patch_all_platforms(_empty_mock()):
-            # 第一次调用: 真实搜索, 结果带耗时标注
+            # 第一次调用: 真实搜索
             result1 = await _search(
                 query="cache_test", platforms="all", tool_runtime=ToolRuntime(config=mock_config)
             )
-            # 第二次调用: 命中缓存, 返回干净结果 (无耗时标注)
+            # 第二次调用: 命中缓存
             result2 = await _search(
                 query="cache_test", platforms="all", tool_runtime=ToolRuntime(config=mock_config)
             )
 
-        assert "[搜索用时" in result1
-        assert "[搜索用时" not in result2
-        # 首次搜索=干净结果+各平台耗时标注行; 去掉这些行后应与缓存命中结果一致
-        import re
+        # 耗时标注不进返回列表 — 每条结果都是纯内容
+        def _has_elapsed(r: list[str]) -> bool:
+            return any(s.startswith("[搜索用时") for s in r)
 
-        stripped = re.sub(r"\n\[搜索用时 [\d.]+秒\]", "", result1)
-        assert stripped == result2
+        assert not _has_elapsed(result1)
+        assert not _has_elapsed(result2)
+        # 缓存命中与真实搜索结构完全一致
+        assert result1 == result2
         assert len(search_cache) > 0
 
     @pytest.mark.asyncio
@@ -2109,14 +2201,14 @@ class TestCache:
         with _patch_all_platforms(_empty_mock()):
             # 第一次: 全部平台搜索成功(含 bing), 写入缓存
             result1 = await _search(query="reuse", platforms="all", tool_runtime=ToolRuntime(config=mock_config))
-            assert "bing" in result1.lower()
+            assert "bing" in _joined(result1).lower()
 
             # 第二次: bing.http_get 被替换为抛错, 但 bing 命中缓存, 不会调用它
             with patch("uniclaw.tools.search.bing.http_get", new=bing_get):
                 result2 = await _search(
                     query="reuse", platforms="all", tool_runtime=ToolRuntime(config=mock_config)
                 )
-                assert "bing" in result2.lower()
+                assert "bing" in _joined(result2).lower()
                 assert bing_get.await_count == 0
 
     @pytest.mark.asyncio
@@ -2133,7 +2225,7 @@ class TestCache:
             patch("uniclaw.tools.search.bing.http_get", failing_get),
         ):
             result1 = await _search(query="retry", platforms="all", tool_runtime=ToolRuntime(config=mock_config))
-            assert PLATFORM_ERROR in result1
+            assert PLATFORM_ERROR in _joined(result1)
             # 失败结果不写入缓存 (平台级缓存无该 key, 与生产 key 格式一致)
             p_ck = cache_key("retry", "bing", limit=10)
             assert p_ck not in search_cache
@@ -2144,10 +2236,12 @@ class TestCache:
             patch("uniclaw.tools.search.bing.http_get", failing_get),
         ):
             result2 = await _search(query="retry", platforms="all", tool_runtime=ToolRuntime(config=mock_config))
-            assert PLATFORM_ERROR in result2
+            assert PLATFORM_ERROR in _joined(result2)
 
-        # bing 每轮搜索最多请求 2 次 (RSS 失败后回退 HTML), 两轮共 4 次
-        assert failing_get.await_count == 4
+        # bing 每轮: safe_search 对 ConnectError 重试 1 次 (共 2 次尝试),
+        # 每次尝试内部 RSS→HTML 各请求 1 次 (失败时), 故单轮 4 次请求;
+        # 两轮共 8 次, 且两轮都失败 (失败的 bing 结果不缓存, 每次重新请求)
+        assert failing_get.await_count == 8
 
 
 # ── 平台路由完整性测试 ───────────────────────────────────────
@@ -2189,8 +2283,11 @@ class TestPlatformRouting:
             with _patch_all_platforms(_empty_mock()):
                 # 直接调用单平台搜索函数, 不应抛出异常
                 result = await searcher("test", 10, "", "", mock_config)
-                assert isinstance(result, str), f"{platform_name} 未返回字符串"
-                assert len(result) > 0, f"{platform_name} 返回空字符串"
+                assert isinstance(result, list), f"{platform_name} 未返回列表"
+                assert len(result) > 0, f"{platform_name} 返回空列表"
+                assert all(
+                    isinstance(item, str) and item for item in result
+                ), f"{platform_name} 含非字符串/空元素"
 
 
 # ── LLM 重排测试 ────────────────────────────────────────────
@@ -2234,7 +2331,7 @@ class TestRerankResults:
             result = await _search(query="test", platforms="all", tool_runtime=ToolRuntime(config=mock_config))
 
         mock_achat.assert_awaited_once()
-        assert result == reranked_text
+        assert _joined(result) == reranked_text
 
     @pytest.mark.asyncio
     async def test_no_rerank_below_threshold(self, mock_config):
@@ -2249,7 +2346,7 @@ class TestRerankResults:
             result = await _search(query="test", platforms="all", tool_runtime=ToolRuntime(config=mock_config))
 
         mock_achat.assert_not_awaited()
-        assert "GitHub" in result
+        assert "GitHub" in _joined(result)
 
     @pytest.mark.asyncio
     async def test_rerank_failure_falls_back(self, mock_config):
@@ -2263,8 +2360,8 @@ class TestRerankResults:
         ):
             result = await _search(query="test", platforms="all", tool_runtime=ToolRuntime(config=mock_config))
 
-        assert "GitHub" in result
-        assert "user/repo" in result
+        assert "GitHub" in _joined(result)
+        assert "user/repo" in _joined(result)
 
     @pytest.mark.asyncio
     async def test_rerank_parse_bug_propagates(self, mock_config):
@@ -2307,9 +2404,9 @@ class TestRerankResults:
             result = await _search(query="test", platforms="all", tool_runtime=ToolRuntime(config=mock_config))
 
         # 重排文本 + 失败平台错误信息
-        assert "精选结果" in result
-        assert PLATFORM_ERROR in result
-        assert "bing" in result.lower()
+        assert "精选结果" in _joined(result)
+        assert PLATFORM_ERROR in _joined(result)
+        assert "bing" in _joined(result).lower()
 
     @pytest.mark.asyncio
     async def test_intent_passed_to_rerank(self, mock_config):
@@ -2335,7 +2432,7 @@ class TestRerankResults:
                 tool_runtime=ToolRuntime(config=mock_config),
             )
 
-        assert result == reranked_text
+        assert _joined(result) == reranked_text
         session = captured["session"]
         assert session is not None
         # user message 文本应包含搜索意图 (含 query 与 intent 的拼接)
@@ -2370,6 +2467,195 @@ class TestRerankResults:
         )
         assert "搜索关键词: python" in user_content
         assert "搜索意图" not in user_content
+
+    # ── JEV 重排 (优先于 LLM) ─────────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_jev_preferred_over_llm(self, mock_config):
+        """JEV 可用时走 JEV 逐条重排, 不调用 LLM achat。"""
+        from uniclaw.utils.jev import NoulResult
+
+        jev_scores = {
+            str(i): NoulResult(noul=0.1 if i == 0 else 0.05 + 0.9 * (i / 11))
+            for i in range(12)
+        }
+        with (
+            _patch_all_with_github(self._github_mock(12)),
+            patch("uniclaw.utils.jev.is_available", return_value=True),
+            patch(
+                "uniclaw.utils.jev.select_many",
+                new=AsyncMock(return_value=jev_scores),
+            ) as mock_sm,
+            patch(
+                "uniclaw.provider.fallback.achat",
+                new=AsyncMock(return_value=MagicMock(content="不应被调用")),
+            ) as mock_achat,
+        ):
+            result = await _search(query="python", platforms="all", tool_runtime=ToolRuntime(config=mock_config))
+
+        mock_sm.assert_awaited_once()
+        mock_achat.assert_not_awaited()
+        # webSearch 返回拼接好的 str
+        assert isinstance(result, str)
+        # repo0 (0.1) 被剔除, repo11 (最高分) 排第一
+        assert "user/repo0" not in result
+        assert result.index("user/repo11") < result.index("user/repo10")
+
+    @pytest.mark.asyncio
+    async def test_jev_failure_falls_back_to_llm(self, mock_config):
+        """JEV 调用失败(非 bug)时回退 LLM 重排。"""
+        reranked_text = "**精选结果**\n  https://github.com/user/repo_best"
+        mock_response = MagicMock()
+        mock_response.content = reranked_text
+
+        with (
+            _patch_all_with_github(self._github_mock(12)),
+            patch("uniclaw.utils.jev.is_available", return_value=True),
+            patch(
+                "uniclaw.utils.jev.select_many",
+                new=AsyncMock(side_effect=RuntimeError("JEV 不可用")),
+            ),
+            patch(
+                "uniclaw.provider.fallback.achat",
+                new=AsyncMock(return_value=mock_response),
+            ) as mock_achat,
+        ):
+            result = await _search(query="python", platforms="all", tool_runtime=ToolRuntime(config=mock_config))
+
+        mock_achat.assert_awaited_once()
+        assert _joined(result) == reranked_text
+
+    @pytest.mark.asyncio
+    async def test_jev_unavailable_falls_back_to_llm(self, mock_config):
+        """JEV 未配置(TYPESAFE_API_KEY 缺失)时直接回退 LLM。"""
+        reranked_text = "**精选结果**\n  https://github.com/user/repo_best"
+        mock_response = MagicMock()
+        mock_response.content = reranked_text
+
+        with (
+            _patch_all_with_github(self._github_mock(12)),
+            patch("uniclaw.utils.jev.is_available", return_value=False),
+            patch(
+                "uniclaw.provider.fallback.achat",
+                new=AsyncMock(return_value=mock_response),
+            ) as mock_achat,
+        ):
+            result = await _search(query="python", platforms="all", tool_runtime=ToolRuntime(config=mock_config))
+
+        mock_achat.assert_awaited_once()
+        assert _joined(result) == reranked_text
+
+    @pytest.mark.asyncio
+    async def test_jev_all_filtered_falls_back_to_llm(self, mock_config):
+        """JEV 全部判为无关(返回 None)时回退 LLM。"""
+        from uniclaw.utils.jev import NoulResult
+
+        reranked_text = "**精选结果**\n  https://github.com/user/repo_best"
+        mock_response = MagicMock()
+        mock_response.content = reranked_text
+
+        with (
+            _patch_all_with_github(self._github_mock(12)),
+            patch("uniclaw.utils.jev.is_available", return_value=True),
+            patch(
+                "uniclaw.utils.jev.select_many",
+                new=AsyncMock(
+                    return_value={str(i): NoulResult(noul=0.1) for i in range(12)}
+                ),
+            ),
+            patch(
+                "uniclaw.provider.fallback.achat",
+                new=AsyncMock(return_value=mock_response),
+            ) as mock_achat,
+        ):
+            result = await _search(query="python", platforms="all", tool_runtime=ToolRuntime(config=mock_config))
+
+        mock_achat.assert_awaited_once()
+        assert _joined(result) == reranked_text
+
+    @pytest.mark.asyncio
+    async def test_jev_item_truncated_to_limit(self, mock_config):
+        """送入 JEV 的条目超长时截断到 _RERANK_JEV_ITEM_MAX_CHARS。"""
+        from uniclaw.tools.search.tools import _RERANK_JEV_ITEM_MAX_CHARS
+        from uniclaw.utils.jev import NoulResult
+
+        with (
+            _patch_all_with_github(self._github_mock(12)),
+            patch("uniclaw.utils.jev.is_available", return_value=True),
+            patch(
+                "uniclaw.utils.jev.select_many",
+                new=AsyncMock(return_value={"0": NoulResult(noul=0.9)}),
+            ) as mock_sm,
+            patch(
+                "uniclaw.provider.fallback.achat",
+                new=AsyncMock(return_value=MagicMock(content="不应被调用")),
+            ),
+        ):
+            await _search(query="python", platforms="all", tool_runtime=ToolRuntime(config=mock_config))
+
+        options = mock_sm.call_args.kwargs.get("options", {})
+        assert options, "select_many 应收到 options"
+        for key, snippet in options.items():
+            assert len(snippet) <= _RERANK_JEV_ITEM_MAX_CHARS + 1  # +1 为省略号
+
+    @pytest.mark.asyncio
+    async def test_jev_keeps_no_result_platforms(self, mock_config):
+        """webSearch 层在 JEV 重排后补回无结果平台的状态文本。
+
+        回归: 曾有 bug 导致 JEV 重排丢弃不含 URL 的元素(无结果平台),
+        用户会误以为该平台未被搜索。现在由 _platform_status_texts
+        在 webSearch 层提取并在 JEV 成功后补回。
+        """
+        from uniclaw.tools.search.tools import _non_ranked_items
+        from uniclaw.utils.jev import NoulResult
+        from uniclaw.tools.search.tools import _rerank_with_jev
+
+        # _non_ranked_items 提取无结果平台状态与无 URL 残缺条目
+        success = {
+            "github": [
+                "**GitHub 搜索结果** (2 条):",
+                "**user/repo1**\n  https://github.com/user/repo1",
+                "**user/repo2**\n  https://github.com/user/repo2",
+            ],
+            "arxiv": ["arXiv: 无搜索结果"],
+            "exa": ["**Exa 搜索结果** (q):", "(无输出)"],
+            "bilibili": [
+                "**B站搜索结果** (video, 2 条):",
+                "**有链接视频**\n  https://www.bilibili.com/video/BV1xx",
+                "**无链接视频**\n  UP主: B\n  简介: xxx",   # bvid 缺失 → 无 URL
+            ],
+        }
+        texts = _non_ranked_items(success)
+        assert "arXiv: 无搜索结果" in texts
+        assert "(无输出)" in texts, "exa 的 (无输出) 状态也应被提取"
+        assert "**无链接视频**\n  UP主: B\n  简介: xxx" in texts, "无 URL 的残缺条目应被提取"
+        # 有结果平台的标题行是格式噪音, 不提取
+        assert not any(item.startswith("**B站搜索结果") for item in texts)
+
+        # _rerank_with_jev 回归纯粹: 只返回排序结果, 不含无结果文本
+        content = [
+            "==================== GITHUB ====================",
+            "**GitHub 搜索结果** (2 条):",
+            "**user/repo1**\n  https://github.com/user/repo1",
+            "**user/repo2**\n  https://github.com/user/repo2",
+        ]
+        jev_scores = {"0": NoulResult(noul=0.9), "1": NoulResult(noul=0.8)}
+        with (
+            patch("uniclaw.utils.jev.is_available", return_value=True),
+            patch(
+                "uniclaw.utils.jev.select_many",
+                new=AsyncMock(return_value=jev_scores),
+            ),
+        ):
+            result = await _rerank_with_jev("python", content, mock_config, "")
+
+        assert result is not None
+        assert "user/repo1" in result[0]
+        assert "user/repo2" in result[1]
+        assert not any("==== " in item for item in result)
+        assert not any(item.startswith("**GitHub 搜索结果") for item in result)
+        # JEV 结果本身不含无结果文本(由 webSearch 层补回)
+        assert not any("无搜索结果" in item for item in result)
 
 
 # ── 流式输出测试 ─────────────────────────────────────────────
@@ -2477,8 +2763,8 @@ class TestNoiseQueryShortCircuit:
                 platforms="github",
                 tool_runtime=ToolRuntime(config=mock_config),
             )
-        assert "未找到" in result
-        assert "user/repo" not in result  # 垃圾结果不透传
+        assert "未找到" in _joined(result)
+        assert "user/repo" not in _joined(result)  # 垃圾结果不透传
 
     @pytest.mark.asyncio
     async def test_overlapping_query_keeps_results(self, mock_config):
@@ -2489,7 +2775,7 @@ class TestNoiseQueryShortCircuit:
                 platforms="github",
                 tool_runtime=ToolRuntime(config=mock_config),
             )
-        assert "user/repo" in result
+        assert "user/repo" in _joined(result)
 
     def test_has_items_requires_url(self):
         """纯平台分隔头(多平台空结果拼接)不算结果条目。"""
@@ -2497,6 +2783,20 @@ class TestNoiseQueryShortCircuit:
 
         assert _has_items("\n==== GITHUB ====\n\n==== BING ====\n") is False
         assert _has_items("  https://example.com/x\n") is True
+
+    def test_split_results_empty_list_guard(self):
+        """空列表平台(理论边界)归入失败并给明确文案, 避免孤岛分隔行。"""
+        from uniclaw.tools.search.tools import _split_results
+        from uniclaw.tools.search.base import PLATFORM_ERROR
+
+        success, errors = _split_results(
+            ["github", "bing"],
+            [["**GitHub 搜索结果** (1 条):", "结果"], []],
+        )
+        assert "github" in success
+        assert "bing" in errors
+        assert "平台返回空结果" in errors["bing"][0]
+        assert errors["bing"][0].startswith(PLATFORM_ERROR)
 
     def test_overlap_uses_four_char_ngram(self):
         """重合按 4 字符连续子串判定, 整词匹配对随机串形同虚设。"""

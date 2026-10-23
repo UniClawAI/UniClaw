@@ -99,68 +99,96 @@ _RERANK_SYSTEM_PROMPT = (
 )
 
 
-def _split_results(platforms: list[str], results: list[str]) -> tuple[dict, dict]:
+def _split_results(
+    platforms: list[str], results: list[list[str]]
+) -> tuple[dict, dict]:
     """把各平台原始结果分离为成功与失败两组。
 
     Args:
         platforms: 平台名列表 (与 results 一一对应)
-        results: 各平台原始返回 (可能含 PLATFORM_ERROR 前缀的失败信息)
+        results: 各平台原始返回 (list[str]; 失败时首元素带 PLATFORM_ERROR 前缀)
 
     Returns:
-        (success, errors): success[平台] = 成功文本; errors[平台] = 失败文本
+        (success, errors): success[平台] = 成功结果列表; errors[平台] = 失败文本列表
     """
     success, errors = {}, {}
     for p, r in zip(platforms, results):
-        if r.startswith(PLATFORM_ERROR):
+        if not r:
+            # 防御: 平台返回空列表(理论边界, 正常路径不会发生)。
+            # 归入失败并给出明确文案, 避免产生"只有分隔行"的孤岛。
+            errors[p] = ["[PLATFORM_ERROR]: 平台返回空结果"]
+        elif r[0].startswith(PLATFORM_ERROR):
             errors[p] = r
         else:
             success[p] = r
     return success, errors
 
 
-def _join_results(success: dict) -> str:
-    """把成功平台结果拼成整体文本 (多平台时加分隔线)。"""
+def _join_results(success: dict) -> list[str]:
+    """把成功平台结果拼成整体列表 (多平台时插入平台分隔行)。
+
+    单平台时直接返回该平台列表(首元素为平台标题行);
+    多平台时在每平台结果前插入 `===== PLATFORM =====` 分隔行。
+    """
     if not success:
-        return ""
+        return []
     if len(success) == 1:
         return next(iter(success.values()))
-    parts = []
+    parts: list[str] = []
     for p, r in success.items():
-        parts.append(f"\n{'='*20} {p.upper()} {'='*20}\n{r}")
-    return "\n".join(parts)
+        parts.append(f"{'='*20} {p.upper()} {'='*20}")
+        parts.extend(r)
+    return parts
 
 
-def _count_results(text: str) -> int:
-    """从结果文本中粗略统计条目数: 每个条目包含一行缩进的链接行。"""
-    if not text:
-        return 0
-    return len(re.findall(r"(?m)^\s+https?://", text))
+def _count_results(text: str | list[str]) -> int:
+    """粗略统计结果条目数: 含 URL 的元素/行计为一条。"""
+    if isinstance(text, str):
+        return len(re.findall(r"(?m)^\s+https?://", text)) if text else 0
+    return sum(1 for item in text if re.search(r"https?://", item))
 
 
-def _has_items(text: str) -> bool:
-    """文本里是否含实际结果条目(而非只有平台分隔头/空壳)。
+def _has_items(text: str | list[str]) -> bool:
+    """内容里是否含实际结果条目(而非只有平台分隔头/空壳)。
 
     判定标准是出现 URL —— 各平台条目都带链接, 而多平台空结果只拼出
     `==== PLATFORM ====` 分隔头。不能用 _count_results(按"缩进链接行"启发式
     统计, 部分平台格式不含这种行时恒为 0)。
     """
-    return bool(text) and bool(re.search(r"https?://", text))
+    if isinstance(text, str):
+        return bool(text) and bool(re.search(r"https?://", text))
+    return any(re.search(r"https?://", item) for item in text)
 
 
-def _has_literal_overlap(query: str, text: str) -> bool:
-    """查询词与结果文本是否有字面重合(4 字符连续子串)。
+def _has_literal_overlap(query: str, text: str | list[str]) -> bool:
+    """查询词与结果内容是否有字面重合(4 字符连续子串)。
 
     用 n-gram 而不是整词当子串: 整词匹配对随机串几乎不可能命中(分支形同虚设),
     而平台兜底页常含查询碎片 —— 4 字符连续子串是"真有关系"的合理下限。
     短于 4 字符的词元退化为整词匹配。
+
+    短查询(<=2 token)与含中文的查询跳过字面重合检查、直接视为相关:
+    - 短查询(如 "AI")结果标题常用同义/展开写法(人工智能), 字面判定误杀率极高;
+    - 中文同义表达是常态(新特性/新变化), 与查询词字面不一致很常见。
     """
-    low = text.lower()
-    for tok in _query_tokens(query):
+    tokens = _query_tokens(query)
+    if any("一" <= ch <= "鿿" for t in tokens for ch in t):
+        # 中文查询: 中文同义表达是常态, 字面判定误杀率高, 不过滤 (语义由 JEV/LLM 重排把关)
+        return True
+    if tokens and all(len(t) <= 3 for t in tokens):
+        # 全为极短词 (<=3 字符, 如 AI/MCP): 短词字面重合判定无意义, 不过滤
+        return True
+    if not tokens:
+        return True
+    items = [text] if isinstance(text, str) else text
+    for tok in tokens:
         n = 4 if len(tok) >= 4 else len(tok)
         if n <= 0:
             continue
-        if any(tok[i : i + n] in low for i in range(len(tok) - n + 1)):
-            return True
+        for item in items:
+            low = item.lower()
+            if any(tok[i : i + n] in low for i in range(len(tok) - n + 1)):
+                return True
     return False
 
 
@@ -182,7 +210,9 @@ def _query_tokens(query: str) -> list[str]:
     return list(dict.fromkeys(tokens))
 
 
-def _with_unsupported_hint(platform: str, result: str, *, has_range: bool) -> str:
+def _with_unsupported_hint(
+    platform: str, result: list[str], *, has_range: bool
+) -> list[str]:
     """显式传入 time_range 时, 给不支持时间过滤的平台结果附加提示。
 
     仅在 webSearch 层调用 (平台函数自身不感知), 提示不进缓存;
@@ -190,20 +220,22 @@ def _with_unsupported_hint(platform: str, result: str, *, has_range: bool) -> st
     """
     if not has_range or platform not in TIME_RANGE_UNSUPPORTED:
         return result
-    return f"[提示] {platform} 平台不支持时间范围过滤, 已忽略该参数\n{result}"
+    return [f"[提示] {platform} 平台不支持时间范围过滤, 已忽略该参数", *result]
 
 
 async def _rerank_with_llm(
     query: str,
-    content: str,
+    content: str | list[str],
     config: AppConfig | None,
     intent: str = "",
 ) -> str | None:
     """用 LLM 对超过阈值的结果重排, 剔除低价值项目。失败时返回 None (回退原文本)。
 
+    输入拼接成整体文本交给 LLM; 输出是 LLM 精炼后的整体文本 (收敛为单条)。
+
     Args:
         query: 搜索关键词
-        content: 各平台成功结果拼接后的整体文本 (由 _join_results 生成)
+        content: 各平台成功结果拼接后的整体内容 (str 或 list[str])
         config: 应用配置 (用于获取 mini_model_name)
         intent: 搜索意图 (用户要找什么内容), 供 LLM 判断相关度参考, 可为空
 
@@ -213,12 +245,17 @@ async def _rerank_with_llm(
     from uniclaw.provider.fallback import achat
     from uniclaw.tools.session.session import Session
 
+    combined = (
+        content
+        if isinstance(content, str)
+        else "\n\n".join(content)
+    )
     model_name = config.mini_model_name if config else ""
     session = Session()
     msg = [f"搜索关键词: {query}"]
     if intent:
         msg.append(f"搜索意图: {intent}")
-    msg.append(f"各平台返回的搜索结果:\n\n{content}")
+    msg.append(f"各平台返回的搜索结果:\n\n{combined}")
     session.add_user_message(content="\n\n".join(msg))
 
     try:
@@ -240,6 +277,133 @@ async def _rerank_with_llm(
     return text or None
 
 
+# JEV 相关性判断阈值: noul >= 该值视为"与查询相关", 保留条目
+_RERANK_JEV_KEEP_THRESHOLD = 0.5
+
+# 单个结果条目送入 JEV state 的最大字符数(截断过长条目, 控预算与信息密度)
+_RERANK_JEV_ITEM_MAX_CHARS = 500
+
+
+async def _rerank_with_jev(
+    query: str,
+    content: str | list[str],
+    config: AppConfig | None,
+    intent: str = "",
+) -> list[str] | None:
+    """用 JEV 对结果逐条判断相关性并按分排序。失败/不可用时返回 None (回退 LLM)。
+
+    与 LLM 版(整块精炼)不同: JEV 用 select_many 对**每条结果条目**单独做
+    相关性判断(noul), 然后剔除低于阈值的条目、按分数降序重排 ——
+    保持"每条结果一个 str"的结构化形态, 而不是收敛为整块文本。
+
+    只对含 URL 的结果条目打分(分隔行/平台标题行/提示行/无结果文本不参与);
+    结果列表由排序后的条目组成(丢弃分隔行 —— 顺序已代表相关度);
+    无结果平台的占位信息(如 "GitHub: 无搜索结果")保留在结果末尾。
+
+    Args:
+        query: 搜索关键词
+        content: 各平台成功结果拼接后的整体内容 (str 或 list[str])
+        config: 应用配置 (用于获取 proxy_url)
+        intent: 搜索意图 (用户要找什么内容), 供 JEV 判断相关度参考, 可为空
+
+    Returns:
+        list[str] | None: 重排后的结果列表 (每条一个 str); JEV 不可用或失败时返回 None
+    """
+    from uniclaw.utils.jev import is_available, select_many
+
+    if not is_available():
+        return None
+
+    # 兼容 str 输入 (与 _rerank_with_llm 签名一致)
+    if isinstance(content, str):
+        content = [content]
+
+    # 提取含 URL 的结果条目; 分隔行/标题行/提示行/无结果文本不含 URL, 不参与打分
+    items = [item for item in content if re.search(r"https?://", item)]
+    if not items:
+        return None
+
+    # 每条结果截断后作为选项; 键用序号字符串, select_many 返回按键索引的 noul
+    options = {}
+    for i, item in enumerate(items):
+        # 截断: 保留标题与链接等关键信息; 超长摘要截掉
+        snippet = item if len(item) <= _RERANK_JEV_ITEM_MAX_CHARS else (
+            item[: _RERANK_JEV_ITEM_MAX_CHARS] + "…"
+        )
+        options[str(i)] = snippet
+
+    state = f"搜索关键词: {query}"
+    if intent:
+        state += f"\n搜索意图: {intent}"
+
+    try:
+        results = await select_many(
+            state=state,
+            instruction="这条搜索结果是否与查询相关、是用户需要的内容。"
+            "关注标题、摘要与链接是否包含查询所需信息。",
+            options=options,
+            proxy_url=config.proxy_url if config else None,
+        )
+    except Exception as e:
+        # 非 bug: JEV 调用失败(网络/限流/超预算/未配置)或不可用。
+        # 重排是纯增强, 失败回退 LLM 即可 —— 但必须留痕, 否则静默失效难排查
+        await warn(f"JEV 重排失败, 回退 LLM: {type(e).__name__}: {e}", config)
+        return None
+
+    # 按 noul 分数: 低于阈值剔除, 其余按分数降序重排 (分数相同保持原序)
+    # select_many 返回 dict[str, NoulResult] (键为选项名)
+    scored = []
+    for key, noul_result in results.items():
+        try:
+            idx = int(key)
+        except (TypeError, ValueError):
+            continue  # bug 级: select_many 返回意外键, 跳过不影响主体
+        if 0 <= idx < len(items):
+            scored.append((noul_result.noul, items[idx]))
+
+    # 过滤后按分数降序重排; Python sort 稳定, 同分保持原序
+    ranked = [item for _, item in sorted(
+        ((s, it) for s, it in scored if s >= _RERANK_JEV_KEEP_THRESHOLD),
+        key=lambda pair: pair[0],
+        reverse=True,
+    )]
+
+    # 全部被剔除时返回 None, 让调用方回退 LLM 版 (LLM 能输出"全部无关"的明确文案)
+    if not ranked:
+        return None
+
+    return ranked
+
+
+def _non_ranked_items(success: dict) -> list[str]:
+    """提取 JEV 重排无法打分、但必须保留的非结果元素。
+
+    两类内容不含 URL, 不参与 JEV 逐条打分, 重排后需补回, 否则会静默丢失:
+    1. 无结果平台的状态文本(平台整体无任何 URL 条目):
+       如 "arXiv: 无搜索结果" / "(无输出)" —— 平台被搜索过但无结果。
+    2. 有结果平台中的个别无 URL 条目(如 bilibili 缺 bvid 导致链接为空):
+       平台有其它含 URL 条目, 但这一条缺 URL —— 内容仍有价值, 不应丢弃。
+
+    判断: 对每个平台, 先看整体是否无 URL(→ 整个平台是"无结果"状态);
+    否则逐个元素挑出不含 URL 的成员(→ 有结果平台中的残缺条目)。
+    """
+    texts: list[str] = []
+    for r in success.values():
+        if not any(re.search(r"https?://", item) for item in r):
+            # 整个平台无 URL: 提取全部非 URL 元素(状态文本 + 平台标题行)
+            texts.extend(item for item in r if not re.search(r"https?://", item))
+        else:
+            # 平台有 URL 条目: 只挑不含 URL 的残缺结果条目。
+            # 排除平台标题行(形如 "**X 搜索结果** (N 条):", 含"搜索结果"字样),
+            # 保留残缺条目(形如 "**具体标题**\n  UP主:...", 不含"搜索结果"字样)。
+            texts.extend(
+                item for item in r
+                if not re.search(r"https?://", item)
+                and "搜索结果" not in item
+            )
+    return texts
+
+
 @tool
 async def webSearch(
     query: str,
@@ -253,8 +417,9 @@ async def webSearch(
     tool_runtime: ToolRuntime = None,
 ) -> str:
     """并发搜索多个平台并合并结果。
-    结果超过 10 条时自动用 LLM 重新排序并剔除低价值项目,
-    失败平台的错误信息会附在末尾。
+    结果超过 10 条时自动重排并剔除低价值项目 (优先用 JEV 逐条判断相关性,
+    不可用或失败时回退 LLM 整块精炼), 失败平台的错误信息会附在末尾。
+    返回拼接好的搜索结果文本 (各结果条目之间空行分隔)。
 
     Args:
         query: 搜索关键词
@@ -279,6 +444,9 @@ async def webSearch(
             映射到各平台原生过滤器(github pushed:, arxiv submittedDate,
             google_news after:, openalex publication_date 等);
             bilibili/polymarket/bing/duckduckgo 不支持, 结果中会附提示
+
+    Returns:
+        str: 拼接好的搜索结果文本 (各结果条目之间空行分隔)
     """
     if limit < 1:
         return (
@@ -308,7 +476,14 @@ async def webSearch(
     # 并发搜索各平台 (平台级缓存: 命中直接返回, 成功写缓存, 失败不缓存)
     has_range = bool(time_range.strip())
 
-    async def _run(p: str) -> str:
+    async def _run(p: str) -> tuple[list[str], float]:
+        """搜索单平台, 返回 (结果列表, 耗时秒数)。
+
+        结果列表只含真实内容 (平台标题/结果条目/无结果提示/PLATFORM_ERROR;
+        耗时标注不进入列表 —— 它只在流式推送中展示, 保证"每条结果一个 str"
+        的纯粹性, 也让缓存命中与真实搜索的返回结构完全一致。
+        耗时秒数供流式推送展示, 缓存命中时为 0.0。
+        """
         p_ck = cache_key(
             query,
             p,
@@ -319,10 +494,16 @@ async def webSearch(
         )
         hit = search_cache.get(p_ck)
         if hit is not None:
-            return _with_unsupported_hint(p, hit, has_range=has_range)
+            return _with_unsupported_hint(p, hit, has_range=has_range), 0.0
 
         start = time.monotonic()
         searcher = PLATFORM_SEARCHERS[p]
+        # 个别平台对特定参数组合需要更长的等待:
+        # arxiv + time_range 的日期范围查询实测极慢 (15s 几乎必超时),
+        # 内部 http 超时已放大到 60s, 外层 wait_for 不能先把它杀了
+        eff_timeout = timeout
+        if p == "arxiv" and has_range:
+            eff_timeout = max(timeout, 75)
         result = await search_with_timeout(
             searcher,
             query=query,
@@ -331,47 +512,62 @@ async def webSearch(
             search_type=search_type,
             config=config,
             time_range=time_range,
-            timeout=timeout,
+            timeout=eff_timeout,
         )
         elapsed = time.monotonic() - start
-        # 缓存只存干净的搜索结果; 耗时标注在每次真实搜索的返回结果中都附加
-        # (成功失败都要算时间)。失败信息保持以 PLATFORM_ERROR 开头, 不缓存,
+        # 缓存只存干净的搜索结果; 失败信息保持以 PLATFORM_ERROR 开头, 不缓存,
         # 供 _split_results 识别。
-        is_error = result.startswith(PLATFORM_ERROR)
+        is_error = bool(result) and result[0].startswith(PLATFORM_ERROR)
         if not is_error:
             search_cache[p_ck] = result
             # 不支持时间过滤的平台提示每次现拼, 不进缓存
             result = _with_unsupported_hint(p, result, has_range=has_range)
-        return f"{result}\n[搜索用时 {elapsed:.1f}秒]"
+        return result, elapsed
 
     # as_completed: 谁先完成先处理, 立即推送该平台结果到 UI, 不等最慢的平台
-    async def _run_named(p: str) -> tuple[str, str]:
-        return p, await _run(p)
+    async def _run_named(p: str) -> tuple[str, list[str], float]:
+        r, elapsed = await _run(p)
+        return p, r, elapsed
 
-    result_map: dict[str, str] = {}
+    result_map: dict[str, list[str]] = {}
     done_count = 0
     for done in asyncio.as_completed([_run_named(p) for p in selected_platforms]):
-        p, result = await done
+        p, result, elapsed = await done
         done_count += 1
         result_map[p] = result
-        # 耗时标注已在 result 末尾, 此处只推送进度 (放在最后一行)
-        await tool_runtime.stream(f"[{p}]\n{result}\n搜索完成 ({done_count}/{total})\n")
+        # 结果与耗时都推送到 UI (耗时只作进度展示, 不进返回列表)
+        await tool_runtime.stream(
+            f"[{p}]\n{'\n'.join(result)}\n"
+            f"[搜索用时 {elapsed:.1f}秒] 搜索完成 ({done_count}/{total})\n"
+        )
     results = [result_map[p] for p in selected_platforms]
     success, errors = _split_results(selected_platforms, results)
 
     combined = _join_results(success)
 
-    # 超过阈值时用 LLM 重排、剔除低价值项目 (失败则回退原文本)
+    # 超过阈值时重排、剔除低价值项目:
+    # 优先 JEV 逐条判断相关性 (保持"每条结果一个 str"的结构化形态);
+    # JEV 不可用或失败时回退 LLM 版 (整块精炼, 收敛为单条文本)。
+    # 重排前提取 JEV 无法打分的非结果元素(无结果平台状态/无 URL 残缺条目),
+    # JEV 版重排只保留排序结果会丢弃它们, 需在成功后补回;
+    # LLM 版会自行处理这些内容, 无需补回。
     reranked = None
     if _count_results(combined) > RERANK_THRESHOLD:
-        reranked = await _rerank_with_llm(query, combined, config, intent)
+        non_ranked = _non_ranked_items(success)
+        reranked = await _rerank_with_jev(query, combined, config, intent)
         if reranked:
-            combined = reranked
+            # JEV 版: 排序后的结果列表, 每条一个 str; 补回非结果元素
+            combined = [*reranked, *non_ranked]
+        else:
+            reranked = await _rerank_with_llm(query, combined, config, intent)
+            if reranked:
+                # LLM 版: 精炼后的整体文本, 收敛为单条结果
+                combined = [reranked]
 
     # 平台对无匹配查询会返回兜底/近邻结果(如"随机生成器"类推荐页、whois/主页)。
     # 查询词与结果零字面重合 = 无语义价值, 直接报未找到, 不透传垃圾结果。
     # 两个要点:
-    #   1. 保留 `reranked is None` 逃生口 —— LLM 重排是语义筛过的结果, 信任它;
+    #   1. 保留 `reranked is None` 逃生口 —— JEV/LLM 重排是语义筛过的结果, 信任它;
     #   2. 只在**确实有结果条目**时才判, 且判定用 _has_items 而非 _count_results
     #      —— 后者按"缩进链接行"启发式统计, 部分平台格式不含这种行时恒为 0,
     #      判定整条被跳过(实测噪声串因此全部漏过)。
@@ -385,14 +581,18 @@ async def webSearch(
 
     # 最终返回必须包含失败平台的错误信息
     if errors:
-        error_block = "\n".join(f"[{p}]\n{e}" for p, e in errors.items())
-        combined = (
-            f"{combined}\n\n以下平台搜索失败:\n{error_block}"
-            if combined
-            else error_block
+        # errors[p] 是 list[str]: 每条错误信息一个元素
+        error_block = "\n\n".join(
+            f"[{p}]\n" + "\n".join(e) for p, e in errors.items()
         )
+        combined = [
+            *combined,
+            "以下平台搜索失败:",
+            error_block,
+        ] if combined else [error_block]
 
-    return combined
+    # 拼接为文本返回: 各结果条目/平台块之间空行分隔
+    return "\n\n".join(combined)
 
 
 def get_tools() -> list:
