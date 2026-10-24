@@ -26,6 +26,7 @@ PLUGIN_CATEGORY = "插件"
 def _build_core_tools() -> list:
     """从核心工具对象动态构建核心工具列表(避免硬编码字符串)。"""
     from .fs import Read, Write, Edit, Glob
+    from .apply_patch import apply_patch
     from .shell import Bash, Grep
     from .web import webFetch
     from .search import webSearch
@@ -38,6 +39,7 @@ def _build_core_tools() -> list:
         Write,
         Edit,
         Glob,
+        apply_patch,
         Bash,
         Grep,
         webFetch,

@@ -1,4 +1,8 @@
 from .fs import get_tools as fs_get_tools, get_all_tools as fs_get_all_tools
+from .apply_patch import (
+    get_tools as apply_patch_get_tools,
+    get_all_tools as apply_patch_get_all_tools,
+)
 from .multi_agent.tools import (
     get_tools as multi_agent_get_tools,
     get_all_tools as multi_agent_get_all_tools,
@@ -166,6 +170,7 @@ async def get_tools(config) -> list:
     mcp_tools = await mcp_manager.get_mcp_tools()
     tools = [
         *fs_get_tools(),
+        *apply_patch_get_tools(),
         *multi_agent_get_tools(),
         *await shell_get_tools(config),
         *skill_get_tools(),
@@ -230,6 +235,7 @@ async def get_all_tools() -> list:
     plugin_tools = await PluginManager.get_instance().refresh()
     return [
         *fs_get_all_tools(),
+        *apply_patch_get_all_tools(),
         *multi_agent_get_all_tools(),
         *plan_get_all_tools(),
         *shell_get_all_tools(),
