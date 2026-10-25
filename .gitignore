@@ -110,3 +110,7 @@ skills-lock.json
 .agents/skills/
 .*
 *.md
+
+# README files (re-include despite the *.md rule above)
+!README.md
+!README.en.md

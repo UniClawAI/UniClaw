@@ -1,5 +1,7 @@
 # UniClaw 🦞
 
+[English](README.en.md) · **简体中文**
+
 [![Python Version](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
@@ -23,7 +25,7 @@
 - 🔍 **工具注册表**: BM25 智能工具搜索,核心工具常驻加载 + 扩展工具按需发现(search_tools 元工具),LRU + 能量机制(每工具 30 点能量,每轮-1,调用/搜索恢复满,归零淘汰)自动管理已加载工具,优化 prompt 缓存
 - 📡 **工具可用性跟踪**: 环境检测自动记录不可用工具及原因(如 Docker 未安装、未配置 embedding_model),search_tools 搜索时自动提示不可用原因,避免无用调用;直接调用未启用工具时返回"未启用 + 原因",而非误导性的"工具不存在"
 - 🌐 **WebUI 界面**: 基于 WebSocket 的 Web 用户界面,支持浏览器中与 AI 对话,可局域网共享,支持移动端响应式设计和触摸手势,支持 HTTPS 和 IPv6
-- 🎨 **A2UI 交互界面**: Agent 在 WebUI 中输出 `a2ui` 代码块声明 JSON 组件树(卡片/表单/按钮组/标签页/图表等),前端白名单渲染为可交互界面;按钮、表单等操作结果回传 Agent,实现双向交互闭环
+- 🎨 **A2UI 交互界面**: Agent 在 WebUI 中输出 `a2ui` 代码块声明 JSON 组件树(卡片/表单/按钮组/标签页/图表等),前端白名单渲染为可交互界面;按钮、表单等操作结果回传 Agent,实现双向交互闭环;组件输出规范按需加载(`get_a2ui_guide` 工具),不占常驻 prompt
 - ⚡ **工具流式输出**: 工具执行过程中实时推送输出到前端,无需等待完成即可看到进度
 - 🔐 **可信 IP 免登录**: 配置 `trusted_ips` 后,指定 IP 地址的客户端可跳过 WebUI 登录认证,适合家庭/办公网络环境
 - 💬 **微信集成**: 支持通过 iLink Bot 协议接入微信,实现移动端交互
@@ -48,6 +50,7 @@
 - 🔧 **工具解释模式**: 通过 `/explain` 命令开启,AI 调用工具前会解释原因,便于理解和调试工具调用逻辑
 - 🐍 **IPython 内核**: 持久化 Python 交互式执行环境,变量跨调用保持,支持魔术命令和富文本输出
 - 🔤 **LSP 语言智能**: 基于 Language Server Protocol 的代码智能分析,支持类型诊断、跳转定义、悬停信息、查找引用和符号大纲,内置 pyright/TypeScript/HTML/CSS 语言服务器,懒启动、崩溃自动重启
+- 📝 **批量文件修改**: `apply_patch` 工具一次调用完成多个文件的读、增、改、删、移动,使用标准 patch 文本协议(Add/Update/Delete/Move),上下文行匹配三级宽松降级,契合 CRLF 文件,拒绝二进制文件与逃逸工作区的路径,支持 `dry_run` 预演
 - 🛠️ **丰富的工具集**: 内置文件系统操作、Shell 命令、网络搜索、技能系统等工具
 - 🔒 **权限管理**: 支持多种权限模式(自动/手动/全部接受),保障操作安全
 - 📋 **持久化规则**: 自定义权限规则,记住您的权限偏好,避免重复确认
@@ -503,9 +506,9 @@ UniClaw 支持自定义持久化权限规则,可以记住您的权限偏好：
 
 > 💡 **提示**: 持久化规则在安全检查流程中具有较高优先级,但仍会被危险操作符检测(如 `;`、`&&`、`||`)拦截,确保安全。
 
-### CLAUDE.md 项目指令
+### 项目指令文件 (AGENTS.md / CLAUDE.md)
 
-在项目根目录创建 `CLAUDE.md` 文件,可以为 AI 提供项目特定的指令和规范。该文件会在每次对话时自动加载到系统提示词中。
+在项目根目录创建 `AGENTS.md`(优先)或 `CLAUDE.md`(后备)文件,可以为 AI 提供项目特定的指令和规范。该文件会在每次对话时自动加载到系统提示词中。
 
 **示例 CLAUDE.md：**
 
@@ -530,9 +533,12 @@ UniClaw 支持自定义持久化权限规则,可以记住您的权限偏好：
 ```
 
 **特性：**
-- 自动加载当前工作目录下的 CLAUDE.md
-- 文件大小限制 10KB
-- 内置提示词注入防护
+- **优先级**: 同一目录下 `AGENTS.md` 优先,`CLAUDE.md` 作为后备
+- **根目录指令**: 会话根目录的指令文件每次对话自动加载到系统提示词
+- **子目录按需加载**: 工具操作子目录文件时,自动向上查找最近的 `AGENTS.md`/`CLAUDE.md` 并注入上下文,同一子目录在当前消息流中去重;仅加载可信根(会话 `root_dir` + `/add_dir` 添加的工作空间目录)内的指令,可信根外路径不加载
+- 文件大小限制 10KB(超出自动截断标注)
+- 内置提示词注入防护(过滤"忽略先前指令"、"伪装系统消息"等危险模式)
+- `/init` 命令生成项目指令文件时遵循 AGENTS.md 优先策略
 
 ## 📖 使用指南
 
@@ -633,6 +639,8 @@ UniClaw 提供了丰富的斜杠命令(`/command`),用于管理系统功能和�
 | `/undo` | 撤销 AI 的文件编辑,恢复到检查点(保留) | `/undo`、`/undo 2` |
 
 > 💡 检查点在每个 assistant turn 开始前自动创建,支持两种模式：git 仓库使用 `git stash` 实现,非 git 目录自动降级为文件快照模式。智能处理 .gitignore 规则,不污染 git 历史。文件快照模式通过 `git ls-files -z` 按原始字节输出路径,中文/特殊文件名不会被转义而静默漏拷贝。
+>
+> 💡 **HEAD 锚点机制**: 工作区无改动时 `git stash` 无法创建条目,改为在 `.git/uniclaw-head-anchors.json` 记录一条轻量锚点(HEAD hash + 时间),保证每个聊天 turn 都有检查点可恢复。stash 条目与 HEAD 锚点统一按时间倒序合并索引(list/pop/apply/diff/delete 均使用同一序号),恢复锚点 = 丢弃所有未提交改动回到 HEAD 干净状态。`stash apply` 带 `--index` 参数还原暂存区状态,失败时自动降级为裸 apply。
 
 #### 模型配置命令
 
@@ -740,7 +748,7 @@ monitor_start("npm run dev", name="开发服务器")
 
 | 命令 | 说明 | 示例 |
 |------|------|------|
-| `/init` | 扫描当前项目并自动生成/更新 CLAUDE.md | `/init` |
+| `/init` | 扫描当前项目并自动生成/更新项目指令文件(AGENTS.md 优先,其次 CLAUDE.md) | `/init` |
 
 #### 上下文分析命令
 
@@ -876,7 +884,9 @@ uniclaw --mode webui
 
 Agent 在 WebUI 模式下可输出**声明式交互界面**:在回答中插入标注为 `a2ui` 的代码块声明 JSON 组件树(围栏语言为 `a2ui`,见下方示例),前端白名单渲染器将其渲染为可交互界面(卡片、表单、按钮组、标签页、图表等)。用户在界面上的操作结果通过 WebSocket 回传 Agent,形成**双向交互闭环**。
 
-> 💡 **适用范围**: 仅 WebUI 模式且仅主 Agent 注入该输出规范 — 控制台/微信模式没有渲染端,子代理也不注入,避免徒增 token 开销。纯文字回答不需要界面时 Agent 不会输出组件。
+> 💡 **适用范围**: 仅 WebUI 模式且仅主 Agent — 控制台/微信模式没有渲染端,子代理也不调用,避免徒增 token 开销。纯文字回答不需要界面时 Agent 不会输出组件。
+
+> 💡 **按需加载规范**: A2UI 组件输出规范已从常驻 system prompt 移出,改为按需加载 — WebUI 模式下 system prompt 仅保留一行触发语,Agent 判断回答适合用交互界面呈现时,先调用 `get_a2ui_guide` 工具获取完整格式规范,再按规范输出 `a2ui` 代码块,节省 token。
 
 ### 格式
 
@@ -1057,6 +1067,13 @@ UniClaw 提供了丰富的内置工具,AI 助手可以自动调用这些工具�
 - **Edit** - 精确替换文件中的字符串(支持统一差异格式)
 - **Glob** - 根据通配符模式搜索文件(如 `*.py`, `**/*.txt`)
   - 单次最多返回 500 条结果,超出时截断并标注总匹配数(不静默丢弃)
+- **apply_patch** - 批量修改多个文件,一次调用完成多个文件的读、增、改、删、移动
+  - 使用标准 patch 文本协议:`*** Begin Patch` / `*** Add File:` / `*** Update File:` / `*** Delete File:` / `*** Move to:` / `*** End of File` / `*** End Patch`
+  - 支持上下文匹配的精确修改,匹配三级宽松降级(精确 → 忽略行尾空白 → 忽略首尾空白),未命中会返回带行号的报错供自纠
+  - 契合 CRLF 文件(自动保持原换行与 BOM),拒绝二进制文件与非 UTF-8 编码,明确报错而非误导性"上下文未匹配"
+  - 路径安全校验: 仅相对路径、禁止 `..`、拒绝 Windows 保留设备名、symlink 逐级检查防逃逸
+  - 同路径多操作冲突检测(仅"先删后建"合法),一次调用内失败停止后续应用并列出已应用/失败文件
+  - `dry_run=True` 只解析校验不落盘,返回将应用的差异报告;每轮修改自动建立检查点,可用 `/undo` 撤销
 - **ConvertToMarkdown** - 将文档转换为 Markdown 格式并保存为 .md 文件(支持 PDF、DOCX、PPTX、XLSX 等,基于 markitdown)
 
 #### Shell 工具
@@ -1392,6 +1409,7 @@ http_download(
 - **a2a_get_task** - 查询异步任务状态和结果
 - **a2a_cancel_task** - 取消正在执行的远程任务
 - **a2a_add_agent** - 添加或更新外部 A2A Agent 配置
+- **a2a_remove_agent** - 删除已配置的外部 A2A Agent
 - **a2a_list_agents** - 列出已配置的外部 A2A Agent
 
 **服务端（暴露 UniClaw 为 A2A 端点）：**
@@ -1776,7 +1794,7 @@ UniClaw/
     ├── main.py             # 程序入口(argparse --mode → launcher,run_mode 枚举)
     ├── agent/              # 核心代理(全异步消息循环、工具调用、事件流、死循环检测含结果指纹比对、输出截断检测、asyncio.Queue)
     │   ├── __init__.py     # 向后兼容的 re-export(MultiAgent, AgentTask, 事件类)
-    │   ├── multi_agent.py  # MultiAgent 单例,事件循环,子代理管理,权限检查
+    │   ├── multi_agent.py  # MultiAgent 单例,事件循环,子代理管理,权限检查,子目录项目指令按需注入
     │   └── types.py        # AgentStatus, AgentTask, 事件类定义
     ├── config.py           # 配置管理(AppConfig + settings.json + 首次启动向导 + 多模型 fallback)
     ├── context.py          # 上下文管理和提示词构建(root_dir 驱动 + 长任务进展汇报)
@@ -1804,7 +1822,7 @@ UniClaw/
     │   ├── schedule.py     # 定时任务 ⏰(支持会话关联)
     │   ├── permissions.py  # 权限规则管理
     │   ├── context_usage.py # 上下文使用分析
-    │   ├── init.py         # 项目初始化(生成 CLAUDE.md)
+    │   ├── init.py         # 项目初始化(生成 AGENTS.md/CLAUDE.md 指令文件)
     │   ├── add_dir.py      # 工作空间目录管理
     │   ├── cost.py         # 费用统计 💰
     │   ├── doctor.py       # 环境诊断 🩺
@@ -1832,7 +1850,7 @@ UniClaw/
     ├── webui/              # WebUI 界面(WebSocket)
     │   ├── launcher.py     # WebUI 启动器
     │   ├── app.py          # FastAPI 应用
-    │   ├── api.py          # REST API 路由(含子代理创建 API)
+    │   ├── api.py          # REST API 路由(含子代理创建 API、目录创建接口)
     │   ├── ws.py           # WebSocket 处理(会话任务管理)
     │   ├── models.py       # 数据模型
     │   ├── auth.py         # 认证层(登录/可信 IP/IP 限流)
@@ -1846,6 +1864,7 @@ UniClaw/
     │   ├── base.py         # @tool 装饰器(自动生成 OpenAI schema)+ ToolRuntime 运行时上下文
     │   ├── registry.py     # 工具注册表(BM25 搜索,核心/扩展分层,LRU + 能量淘汰,可用性跟踪)
     │   ├── fs.py           # 文件系统(Read/Write/Edit/Glob/ConvertToMarkdown)
+    │   ├── apply_patch.py  # 批量文件修改(标准 patch 协议:Add/Update/Delete/Move)
     │   ├── shell.py        # Shell(Bash/Grep/Everything,含纯 Python grep 回退)
     │   ├── web.py          # Web(webFetch/webSearch)
     │   ├── search/         # 多平台搜索(GitHub/arXiv/Stack Overflow/B站等)
@@ -1912,6 +1931,8 @@ UniClaw/
     │   │   ├── manager.py  # 重启编排(保存会话/关闭服务)
     │   │   ├── relauncher.py # 重启执行与进程拉起
     │   │   └── resumer.py  # 新进程侧会话恢复
+    │   ├── webui/          # WebUI 专用工具(按需加载) 🎨
+    │   │   └── a2ui.py     # get_a2ui_guide(A2UI 组件输出规范,仅 WebUI 主 agent 暴露)
     │   ├── session/        # 会话持久化 + 历史消息检索 + 自动保存 💬
     │   │   ├── session.py  # Session(双列表存储 + 内容哈希去重)
     │   │   ├── session_manager.py # SessionManager(持久化到 .UniClaw/sessions/)
@@ -1950,6 +1971,7 @@ UniClaw/
     │
     ├── utils/              # 实用工具
     │   ├── checkpoint.py   # 文件快照检查点系统
+    │   ├── project_instruction.py # 项目指令文件(AGENTS.md 优先/CLAUDE.md 后备)解析与净化
     │   ├── downloader.py   # 下载器抽象基类(BaseDownloader 接口,DownloadManager 统一管理)
     │   ├── http_download.py # HTTP 下载引擎(多协程并发 + 断点续传,支持 chunked 编码)
     │   ├── usage.py        # Token 用量统计 + OpenRouter 定价
@@ -1975,19 +1997,19 @@ UniClaw/
 
 采用核心/扩展工具分层架构,对齐 Anthropic 的 `defer_loading` 模式：
 
-- **核心工具** (16 个 + 1 个元工具 `search_tools`): 始终加载完整 schema,是 prompt 缓存的稳定前缀
-  - 文件系统: `Read`, `Write`, `Edit`, `Glob`
+- **核心工具** (17 个 + 1 个元工具 `search_tools`): 始终加载完整 schema,是 prompt 缓存的稳定前缀
+  - 文件系统: `Read`, `Write`, `Edit`, `Glob`, `apply_patch`
   - Shell: `Bash`, `Grep`
   - Web: `webFetch`(抓取网页), `webSearch`(多平台搜索, 默认 Exa)
   - 记忆: `memory_save/delete/list/search`
   - 计划: `enter/exit_plan_mode`
   - 技能: `skill_suggest/read`
   - 元工具: `search_tools`（按需发现和加载扩展工具）
-- **扩展工具** (185 个): 初始不加载,通过 `search_tools` 元工具按需发现
+- **扩展工具** (188 个): 初始不加载,通过 `search_tools` 元工具按需发现
   - 基于 BM25 算法搜索,支持中英文关键词 + 语义同义词
   - **LRU + 能量机制**: 每个扩展工具初始 30 点能量,每轮对话 -1,被调用或搜索命中恢复满能量,归零自动卸载;最多同时加载 25 个扩展工具,超出时按 LRU 顺序淘汰能量最低者
   - 搜索结果自动注入到当前任务的可用工具集
-  - 按类别组织: 系统管理、计算机操作、多智能体、任务清单、进程监控、会话管理、定时任务、MCP 管理、安全管理、Hook 管理、Docker、浏览器、知识图谱、顾问、下载、RAG、IPython、LSP、微信、文件、帮助、通知等
+  - 按类别组织: 系统管理、WebUI、计算机操作、多智能体、任务清单、进程监控、会话管理、定时任务、MCP 管理、安全管理、Hook 管理、Docker、浏览器、知识图谱、顾问、下载、RAG、IPython、LSP、微信、文件、帮助、通知等
   - **可用性跟踪**: 各模块 `get_tools()` 检测依赖(Docker/Everything/embedding_model 等),不可用的工具记录到 `config.unavailable_tool_reasons` 并附带原因;`search_tools` 搜索到不可用工具时自动提示"当前不可用(未启用或无权限)"及原因,避免 AI 做无效调用。直接调用未启用工具时返回"未启用 + 原因",而工具名不在全量清单中才报"工具不存在",两者措辞区分避免误导调用方去改工具名。Jev 相关功能检测 `TYPESAFE_API_KEY` 环境变量
 
 **工作流程**: AI 需要使用非常用工具时 → 调用 `search_tools(query)` → BM25 匹配 → 工具自动加载(若超过上限则淘汰 LRU 端能量最低的工具) → 下一轮即可调用。已加载工具每轮能量-1,被调用/搜索命中恢复满,归零自动卸载。
