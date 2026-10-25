@@ -64,7 +64,8 @@ def session_list(
             f"(默认 20;不要用 0 表示不限量)"
         )
 
-    sessions = SessionManager.list_sessions(limit=limit)
+    # 默认不含已归档会话 —— 归档是"移出视野"的动作,不应出现在常规工具列表
+    sessions = SessionManager.list_sessions(limit=limit, archived=False)
 
     if not sessions:
         return "没有找到任何会话历史"

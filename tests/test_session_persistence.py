@@ -141,3 +141,112 @@ async def test_fork_session_normalizes_serialized_created_at(tmp_path):
     assert data is not None
     assert len(data["messages"]) == 2
     datetime.fromisoformat(data["messages"][0]["created_at"])
+
+
+# ── 会话归档 ──────────────────────────────────────────────────
+
+
+def _make_saved_session(tmp_path) -> Session:
+    """保存一个会话并返回其 Session 对象。"""
+    task = _make_task(root_dir=tmp_path)
+    task.session.add_user_message(content="归档前的问题")
+    task.session.add_assistant_message(
+        content="归档前的回答", model_name="test-model", usage={}
+    )
+    return task.session
+
+
+@pytest.mark.asyncio
+async def test_archive_session_marks_metadata(tmp_path):
+    """归档后 metadata 带 archived=true,文件本身保留。"""
+    task = _make_task(root_dir=tmp_path)
+    task.session.add_user_message(content="hello")
+    config = _make_config(tmp_path, task)
+    await SessionManager.save_session(config)
+    sid = task.session.id
+
+    ok = SessionManager.archive_session(sid)
+    assert ok
+    meta = SessionManager._load_metadata()[sid]
+    assert meta["archived"] is True
+    # 会话文件没有被删除
+    assert SessionManager.load_session(sid) is not None
+
+
+@pytest.mark.asyncio
+async def test_unarchive_session_restores(tmp_path):
+    """取消归档后 archived=false,会话回到常规列表。"""
+    task = _make_task(root_dir=tmp_path)
+    task.session.add_user_message(content="hello")
+    config = _make_config(tmp_path, task)
+    await SessionManager.save_session(config)
+    sid = task.session.id
+    SessionManager.archive_session(sid)
+
+    ok = SessionManager.unarchive_session(sid)
+    assert ok
+    assert SessionManager._load_metadata()[sid]["archived"] is False
+
+
+def test_archive_unknown_session_returns_false(tmp_path):
+    """归档不存在的会话返回 False。"""
+    assert SessionManager.archive_session("no-such-session") is False
+
+
+@pytest.mark.asyncio
+async def test_list_sessions_filters_archived(tmp_path):
+    """list_sessions 按 archived 参数过滤,默认不含归档。"""
+    # 两个会话:一个归档,一个不归档
+    t1 = _make_task(root_dir=tmp_path)
+    t1.session.add_user_message(content="session one")
+    c1 = _make_config(tmp_path, t1)
+    await SessionManager.save_session(c1)
+    t2 = _make_task(root_dir=tmp_path)
+    t2.session.add_user_message(content="session two")
+    c2 = _make_config(tmp_path, t2)
+    await SessionManager.save_session(c2)
+    SessionManager.archive_session(t1.session.id)
+
+    ids = {s["session_id"] for s in SessionManager.list_sessions(limit=0)}
+    assert t1.session.id not in ids
+    assert t2.session.id in ids
+
+    archived_ids = {
+        s["session_id"]
+        for s in SessionManager.list_sessions(limit=0, archived=True)
+    }
+    assert archived_ids == {t1.session.id}
+
+    # 归档 + 未归档全部
+    all_ids = set(SessionManager._load_metadata().keys())
+    assert all_ids == {t1.session.id, t2.session.id}
+
+
+@pytest.mark.asyncio
+async def test_search_sessions_excludes_archived(tmp_path):
+    """搜索会话默认跳过归档会话。"""
+    task = _make_task(root_dir=tmp_path)
+    task.session.add_user_message(content="unique-archive-keyword")
+    config = _make_config(tmp_path, task)
+    await SessionManager.save_session(config)
+    sid = task.session.id
+    SessionManager.archive_session(sid)
+
+    results = SessionManager.search_sessions("unique-archive-keyword")
+    assert results == []
+
+
+@pytest.mark.asyncio
+async def test_resave_session_keeps_archived_flag(tmp_path):
+    """已归档会话再次保存时不丢 archived 标记。"""
+    task = _make_task(root_dir=tmp_path)
+    task.session.add_user_message(content="before")
+    config = _make_config(tmp_path, task)
+    await SessionManager.save_session(config)
+    sid = task.session.id
+    SessionManager.archive_session(sid)
+
+    # 会话继续有新消息并再次保存
+    task.session.add_user_message(content="after")
+    await SessionManager.save_session(config)
+    assert SessionManager._load_metadata()[sid]["archived"] is True

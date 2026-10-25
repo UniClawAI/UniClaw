@@ -8,11 +8,13 @@ const SessionPanel = {
     // session_id → reason: 'permission_request' | 'input_request' | 'multi_input_request' | 'new_message'
     attentionSessions: new Map(),
     wechatBots: [],
-    categoryExpanded: { projects: true, sessions: true, wechat: true },
+    archivedSessions: [],
+    categoryExpanded: { projects: true, sessions: true, wechat: true, archived: false },
 
     init() {
         this._bindEvents();
         this._loadProjects().catch(e => console.error('[SessionPanel] 初始化失败:', e));
+        this._loadArchivedSessions().catch(e => console.error('[SessionPanel] 加载归档会话失败:', e));
         this._loadWechatBots().catch(e => console.error('[SessionPanel] 加载微信 Bot 失败:', e));
         WS.on('status', msg => this._onStatus(msg));
         WS.on('wechat_login_status', msg => this._onWechatLoginStatus(msg));
@@ -25,6 +27,7 @@ const SessionPanel = {
         WS.on('session_deleted', msg => this._onSessionDeleted(msg));
         WS.on('session_switched', msg => this._onSessionSwitched(msg));
         WS.on('session_created', msg => this._onSessionCreated(msg));
+        WS.on('session_archived', msg => this._refreshSessions());
     },
 
     _bindEvents() {
@@ -376,6 +379,9 @@ const SessionPanel = {
             const s = proj.sessions.find(s => s.session_id === sessionId);
             if (s) return { rootDir, session: s };
         }
+        // 归档会话不在任何项目分组里,查找归档列表(URL 恢复用)
+        const arch = this.archivedSessions.find(s => s.session_id === sessionId);
+        if (arch) return { rootDir: arch.root_dir || '__free__', session: arch };
         return null;
     },
 
@@ -391,6 +397,15 @@ const SessionPanel = {
         const url = new URL(window.location);
         url.searchParams.delete('session_id');
         history.replaceState(null, '', url);
+    },
+
+    async _loadArchivedSessions() {
+        try {
+            const resp = await fetch('/api/sessions?archived=true');
+            if (!resp.ok) return;
+            this.archivedSessions = await resp.json();
+            this._render();
+        } catch (e) { console.error('加载归档会话失败:', e); }
     },
 
     async _refreshSessions() {
@@ -438,6 +453,10 @@ const SessionPanel = {
             savedDirs.forEach(dir => { if (!this.projects[dir]) this.projects[dir] = { sessions: [], expanded: true }; });
             this._render();
         } catch (e) { console.error('刷新会话失败:', e); }
+        // 归档列表与常规列表同步刷新,归档/恢复后两边保持一致。
+        // 必须 await: _loadProjects 在 _refreshSessions 后立即用 _findSession 恢复 URL 中的会话,
+        // 若归档列表仍在途,归档会话会被误判为"无效 URL"而清除。
+        await this._loadArchivedSessions();
     },
 
     _render() {
@@ -463,10 +482,14 @@ const SessionPanel = {
         // 微信会话
         const wechatHtml = this._renderWechatSection();
 
+        // 归档会话
+        const archivedHtml = this._renderArchivedGroup();
+
         // 计算各分类的计数
         const projectCount = normalProjects.length;
         const sessionCount = freeProj.sessions.length;
         const wechatCount = this.wechatBots.length;
+        const archivedCount = this.archivedSessions.length;
 
         let html = '';
 
@@ -482,8 +505,31 @@ const SessionPanel = {
         const wechatAction = `<button class="btn-icon compact" onclick="event.stopPropagation(); SessionPanel.showCreateWechatDialog()" title="创建微信会话">${icon('plus')}</button>`;
         html += this._renderTopCategory('wechat', '📱', 'wechat', wechatCount, wechatHtml, wechatAction);
 
-        if (!projectCount && !wechatCount && !sessionCount) html += '<div class="no-results">暂无会话</div>';
+        // 顶级分类: 归档
+        if (archivedCount > 0 || this.categoryExpanded.archived) {
+            html += this._renderTopCategory('archived', '🗄️', '归档', archivedCount, archivedHtml, '');
+        }
+
+        if (!projectCount && !wechatCount && !sessionCount && !archivedCount) html += '<div class="no-results">暂无会话</div>';
         tree.innerHTML = html;
+    },
+
+    _renderArchivedGroup() {
+        if (!this.archivedSessions.length) return '<div class="no-results">暂无归档</div>';
+        let h = '';
+        this.archivedSessions.forEach(s => {
+            const isActive = s.session_id === this.activeSessionId;
+            const title = s.title || s.session_id;
+            const time = Utils.formatRelativeTime(s.end_time || s.start_time);
+            const dirKey = s.root_dir || '__free__';
+            const tipData = JSON.stringify({ id: s.session_id, title: title, start: s.start_time || '', end: s.end_time || '', dir: s.root_dir || '', msg: s.message_count || 0 }).replace(/"/g, '&quot;');
+            h += `<div class="session-item ${isActive ? 'active' : ''}" data-sid="${s.session_id}" data-tip="${tipData}" onclick="SessionPanel.selectSession('${s.session_id}', '${this._esc(dirKey)}')" onmouseenter="SessionPanel._showTip(this, event)" onmousemove="SessionPanel._moveTip(event)" onmouseleave="SessionPanel._hideTip()" ontouchstart="SessionPanel._showTip(this, event)">`;
+            h += `<span class="session-icon archived">${icon('archive')}</span>`;
+            h += `<div class="session-info"><div class="session-title">${Utils.escapeHtml(title)}</div><div class="session-meta">${time}</div></div>`;
+            h += `<button class="btn-icon compact" onclick="event.stopPropagation(); SessionPanel.showMenu('${s.session_id}', '${this._esc(dirKey)}')" style="opacity:0.5">${icon('moreVertical')}</button>`;
+            h += `</div>`;
+        });
+        return h;
     },
 
     _renderProjectGroup(rootDir, proj) {
@@ -864,6 +910,12 @@ const SessionPanel = {
             menuHtml += `<div class="context-menu-sep"></div>`;
             menuHtml += `<div class="context-menu-item" onclick="SessionPanel._generateTitleQuick('${sessionId}')"><span class="ctx-icon">${icon('sparkles')}</span>生成标题</div>`;
             menuHtml += `<div class="context-menu-sep"></div>`;
+            if (this.archivedSessions.some(s => s.session_id === sessionId)) {
+                menuHtml += `<div class="context-menu-item" onclick="SessionPanel._unarchiveSession('${sessionId}')"><span class="ctx-icon">${icon('archiveRestore')}</span>恢复</div>`;
+            } else {
+                menuHtml += `<div class="context-menu-item" onclick="SessionPanel._archiveSession('${sessionId}')"><span class="ctx-icon">${icon('archive')}</span>归档</div>`;
+            }
+            menuHtml += `<div class="context-menu-sep"></div>`;
             menuHtml += `<div class="context-menu-item danger" onclick="SessionPanel._deleteSession('${sessionId}')"><span class="ctx-icon">${icon('trash')}</span>删除</div>`;
         } else {
             // 微信会话只显示删除
@@ -873,10 +925,34 @@ const SessionPanel = {
 
         menu.innerHTML = menuHtml;
         document.body.appendChild(menu);
-        const rect = el.getBoundingClientRect();
-        menu.style.top = rect.bottom + 4 + 'px';
-        menu.style.left = (rect.right - 140) + 'px';
+        this._positionMenu(menu, el.getBoundingClientRect());
         setTimeout(() => document.addEventListener('click', this._hideMenu, { once: true }), 0);
+    },
+
+    /** 定位会话右键菜单,视口底部空间不足时自动改为向上弹出,避免菜单被浏览器截断 */
+    _positionMenu(menu, rect) {
+        const MENU_WIDTH = 140; // 与菜单 min-width 对齐,供左侧越界计算
+        const GAP = 4;
+        // 强制同步 reflow,拿到含子项后的真实菜单高度(刚 appendChild 时可能是初始高度)
+        void menu.offsetHeight;
+        const menuH = menu.offsetHeight || 150; // 兜底:重命名+生成标题+归档/恢复+删除 ≈ 150
+        const viewH = window.innerHeight;
+        const viewW = window.innerWidth;
+
+        // 垂直:优先放下方;下方放不下且上方空间更足时向上弹
+        let top = rect.bottom + GAP;
+        if (top + menuH > viewH && rect.top - menuH - GAP >= 0) {
+            top = rect.top - menuH - GAP;
+        }
+        top = Math.max(GAP, Math.min(top, viewH - menuH - GAP));
+
+        // 水平:右对齐菜单,左侧越界时改左对齐
+        let left = rect.right - MENU_WIDTH;
+        if (left < GAP) left = rect.left;
+        left = Math.max(GAP, Math.min(left, viewW - MENU_WIDTH - GAP));
+
+        menu.style.top = top + 'px';
+        menu.style.left = left + 'px';
     },
     _hideMenu() { const m = document.getElementById('session-context-menu'); if (m) m.remove(); },
 
@@ -921,6 +997,27 @@ const SessionPanel = {
                 this._refreshSessions();
             } else Utils.showToast('生成失败');
         } catch (_) { Utils.showToast('生成失败'); }
+    },
+
+    async _archiveSession(sid) {
+        this._hideMenu();
+        try {
+            const r = await fetch(`/api/sessions/${sid}/archive`, { method: 'POST' });
+            if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.detail || ''); }
+            Utils.showSuccess('会话已归档');
+            // 正在显示的会话被归档:保持显示但不切换,仅刷新列表
+            await this._refreshSessions();
+        } catch (e) { Utils.showError(e.message ? `归档失败: ${e.message}` : '归档失败'); }
+    },
+
+    async _unarchiveSession(sid) {
+        this._hideMenu();
+        try {
+            const r = await fetch(`/api/sessions/${sid}/unarchive`, { method: 'POST' });
+            if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.detail || ''); }
+            Utils.showSuccess('会话已恢复');
+            await this._refreshSessions();
+        } catch (e) { Utils.showError(e.message ? `恢复失败: ${e.message}` : '恢复失败'); }
     },
 
     async _deleteSession(sid) {

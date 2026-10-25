@@ -49,8 +49,24 @@ class SessionManager:
 
     @classmethod
     def list_sessions(
-        cls, limit: int = 0, root_dir: str | None = None, include_wechat: bool = False
+        cls,
+        limit: int = 0,
+        root_dir: str | None = None,
+        include_wechat: bool = False,
+        archived: bool = False,
     ) -> list[dict]:
+        """列出会话,默认排除已归档的会话(归档 = 移出视野)。
+
+        Args:
+            limit: 返回条数上限,0 表示不限。
+            root_dir: 按会话工作目录过滤。
+            include_wechat: 是否包含微信会话。
+            archived: True 只列归档会话,False 只列未归档会话。
+                需要全部时无法用此参数表达,直接读 _load_metadata()。
+
+        Returns:
+            list[dict]: 排序后的会话 metadata 列表。
+        """
         items = list(cls._load_metadata().values())
         if not include_wechat:
             items = [
@@ -60,6 +76,11 @@ class SessionManager:
             ]
         if root_dir:
             items = [item for item in items if item.get("root_dir") == root_dir]
+        items = [
+            item
+            for item in items
+            if bool(item.get("archived", False)) == archived
+        ]
         items.sort(
             key=lambda item: item.get("end_time") or item.get("start_time") or "",
             reverse=True,
@@ -116,7 +137,7 @@ class SessionManager:
     def search_sessions(cls, keyword: str) -> list:
         pattern = re.compile(keyword, re.IGNORECASE)
         results = []
-        for meta in cls.list_sessions(limit=0):
+        for meta in cls.list_sessions(limit=0, archived=False):
             session = cls.load_session(meta["session_id"])
             if not session:
                 continue
@@ -175,6 +196,42 @@ class SessionManager:
         metadata[session_id] = meta
         cls._save_metadata(metadata)
         return True
+
+    @classmethod
+    def _set_archived(cls, session_id: str, archived: bool) -> bool:
+        """设置会话的归档标记。会话文件本身不动,仅改 metadata。"""
+        metadata = cls._load_metadata()
+        meta = metadata.get(session_id)
+        if not meta:
+            return False
+        meta["archived"] = archived
+        metadata[session_id] = meta
+        cls._save_metadata(metadata)
+        return True
+
+    @classmethod
+    def archive_session(cls, session_id: str) -> bool:
+        """归档会话:从常规列表隐藏,进归档区。
+
+        Args:
+            session_id: 要归档的会话 ID。
+
+        Returns:
+            bool: 会话存在且归档成功时为 True。
+        """
+        return cls._set_archived(session_id, True)
+
+    @classmethod
+    def unarchive_session(cls, session_id: str) -> bool:
+        """取消归档会话:从归档区恢复到常规列表。
+
+        Args:
+            session_id: 要恢复的会话 ID。
+
+        Returns:
+            bool: 会话存在且恢复成功时为 True。
+        """
+        return cls._set_archived(session_id, False)
 
     @classmethod
     async def fork_session(
@@ -289,6 +346,9 @@ class SessionManager:
             # 不在 sessions 目录下的路径 (理论上不会发生), 降级为绝对路径
             rel = str(resolved)
         metadata = cls._load_metadata()
+        existing = metadata.get(data["session_id"], {})
+        # 保留归档标记:会话归档后若仍在运行并保存,不应被覆盖回未归档状态
+        archived = existing.get("archived", False)
         metadata[data["session_id"]] = {
             "session_id": data["session_id"],
             "title": data.get("title"),
@@ -298,5 +358,6 @@ class SessionManager:
             "root_dir": data.get("root_dir") or None,
             "session_type": data.get("session_type", SessionType.CONSOLE),
             "file_path": rel,
+            "archived": archived,
         }
         cls._save_metadata(metadata)

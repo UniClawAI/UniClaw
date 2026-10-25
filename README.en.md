@@ -44,6 +44,7 @@
 - 🛡️ **Infinite-loop detection**: Detects consecutive identical tool calls (using result fingerprints to tell "spinning in place" from "making progress every step"), breaks the loop, and steers toward a different strategy
 - ✂️ **Output truncation detection**: Uses `finish_reason` (length/max_tokens) to detect when LLM output hit the length cap and got truncated, and warns that content/tool args may be incomplete; when tool arg parsing fails it distinguishes "truncated generation" from "corrupted args", with clear guidance to retry in chunks or raise `max_tokens`
 - 💾 **Auto-save**: Sessions persist automatically at conversation end; the memory system periodically reviews sessions and extracts long-term knowledge
+- 🗄️ **Session archive**: Archive a session with one click from its context menu to the archive section, keeping the sidebar tidy without losing history; archived sessions can be restored or opened anytime
 - 🪝 **Hook system**: Event-driven shell command hooks for session and tool lifecycle events
 - 🔔 **Desktop notifications**: Windows/macOS/Linux notifications when tasks finish
 - 📝 **Plan mode**: Enter plan mode to design a solution first, then execute after you confirm it

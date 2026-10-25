@@ -156,10 +156,10 @@ class TestSessionList:
     @pytest.mark.asyncio
     @patch("uniclaw.tools.session.tools.SessionManager.list_sessions")
     async def test_limit_passed_through(self, mock_list):
-        """合法 limit 照常透传。"""
+        """合法 limit 照常透传,且默认排除归档会话。"""
         mock_list.return_value = []
         await session_list(limit=5)
-        mock_list.assert_called_once_with(limit=5)
+        mock_list.assert_called_once_with(limit=5, archived=False)
 
 
 class TestSessionDetail:

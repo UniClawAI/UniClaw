@@ -1541,6 +1541,17 @@ async def notify_session_deleted(session_id: str, root_dir=None):
     )
 
 
+async def notify_session_archived(session_id: str, archived: bool):
+    """通知前端会话归档状态变更(所有标签页同步刷新列表)。"""
+    await _broadcast(
+        {
+            "event": "session_archived",
+            "session_id": session_id,
+            "archived": archived,
+        }
+    )
+
+
 async def web_input(prompt: str, title: str = "输入", config=None) -> str:
     """WebUI 模式的输入便捷函数,注册到会话级注册表并等待回答。"""
     session_id = config.current_agent.session.id

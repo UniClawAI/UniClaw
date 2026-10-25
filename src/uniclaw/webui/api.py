@@ -64,8 +64,8 @@ def _validate_path(base_dir: str, relative_path: str) -> Path:
 
 @router.get("/projects")
 async def list_projects():
-    """列出已有项目(从 session metadata 提取去重的 root_dir)。"""
-    sessions = SessionManager.list_sessions(limit=10000)
+    """列出已有项目(从 session metadata 提取去重的 root_dir,不含归档会话)。"""
+    sessions = SessionManager.list_sessions(limit=10000, archived=False)
     projects = {}
     for s in sessions:
         root_dir = s.get("root_dir", "")
@@ -165,20 +165,27 @@ async def create_dir(body: DirCreate):
 
 
 @router.get("/sessions")
-async def list_sessions(root_dir: str = ""):
-    """列出会话(文件 + 内存缓存中的活跃会话)。"""
+async def list_sessions(root_dir: str = "", archived: bool = False):
+    """列出会话(文件 + 内存缓存中的活跃会话)。archived=true 只列归档会话。"""
     limit = 10000
     if root_dir:
-        sessions = SessionManager.list_sessions(limit=limit, root_dir=root_dir)
+        sessions = SessionManager.list_sessions(
+            limit=limit, root_dir=root_dir, archived=archived
+        )
     else:
-        sessions = SessionManager.list_sessions(limit=limit)
+        sessions = SessionManager.list_sessions(limit=limit, archived=archived)
 
     # 合并内存缓存中的活跃会话(缓存版本优先,因为可能有未保存的新消息)
     saved_map = {s["session_id"]: s for s in sessions}
+    # 会话的归档标记只存在磁盘 metadata 中(缓存不持久化该状态),一次读出复用
+    _disk_meta = SessionManager._load_metadata()
     for sid, config in session_cache.items():
         session = config.current_agent.session
         item_root_dir = str(session.root_dir) if session.root_dir else ""
         if root_dir and item_root_dir != root_dir:
+            continue
+        meta_archived = bool(_disk_meta.get(sid, {}).get("archived", False))
+        if meta_archived != archived:
             continue
         cache_item = {
             "session_id": session.id,
@@ -189,6 +196,7 @@ async def list_sessions(root_dir: str = ""):
             "root_dir": item_root_dir,
             "session_type": session.session_type,
             "file_path": "",
+            "archived": meta_archived,
         }
         existing = saved_map.get(sid)
         if existing:
@@ -302,6 +310,45 @@ async def generate_title(session_id: str):
         return {"title": title}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/sessions/{session_id}/archive")
+async def archive_session(session_id: str):
+    """归档会话:从侧栏常规列表移入归档区。
+
+    内存缓存中尚未落盘的会话(新建未发消息 / 运行中)先保存到磁盘再打标记,
+    否则 metadata 里没有该条目,归档会误报"会话不存在"。
+    """
+    try:
+        config = await get_or_load_session(session_id)
+        await SessionManager.save_session(config)
+    except ValueError:
+        # 缓存中没有,直接查磁盘 metadata
+        pass
+    ok = SessionManager.archive_session(session_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail=f"会话不存在: {session_id}")
+    from uniclaw.webui.ws import notify_session_archived
+
+    await notify_session_archived(session_id, archived=True)
+    return {"ok": True}
+
+
+@router.post("/sessions/{session_id}/unarchive")
+async def unarchive_session(session_id: str):
+    """恢复归档会话:从归档区移回常规列表。"""
+    try:
+        config = await get_or_load_session(session_id)
+        await SessionManager.save_session(config)
+    except ValueError:
+        pass
+    ok = SessionManager.unarchive_session(session_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail=f"会话不存在: {session_id}")
+    from uniclaw.webui.ws import notify_session_archived
+
+    await notify_session_archived(session_id, archived=False)
+    return {"ok": True}
 
 
 @router.delete("/sessions/{session_id}/messages")

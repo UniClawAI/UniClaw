@@ -8,7 +8,7 @@ from uniclaw.tools.session.session_manager import SessionManager
 from uniclaw.utils.message import MessageRole
 
 # 子命令列表
-SUBCOMMANDS = ["list", "del", "search", "fork"]
+SUBCOMMANDS = ["list", "del", "search", "fork", "archive", "archived"]
 
 
 def _format_item(index: int, item: dict) -> str:
@@ -30,6 +30,8 @@ async def cmd_resume(args: str, config: AppConfig) -> bool:
         /resume                        — 无参数,列出最近 10 个会话供交互式选择
         /resume <session_id>           — 恢复指定 ID 的会话,回放历史消息
         /resume list                   — 列出所有已保存的会话 (最多 50 个)
+        /resume archived               — 列出归档的会话
+        /resume archived <session_id>  — 恢复指定归档会话
         /resume del <session_id>       — 删除指定会话 (需二次确认)
         /resume search <keyword>       — 按关键词搜索会话内容,显示匹配位置
         /resume fork [session_id] [idx]— 从指定会话的某条消息处创建分叉
@@ -59,10 +61,10 @@ async def cmd_resume(args: str, config: AppConfig) -> bool:
     rest = parts[1] if len(parts) > 1 else ""
 
     # ── 子命令: list ──────────────────────────────────────────────
-    # 列出所有已保存的会话 (上限 50 个),按时间倒序排列。
+    # 列出所有已保存的会话 (上限 50 个),按时间倒序排列。不包含已归档会话。
     # 每行显示序号、标题、时间、消息数和 session_id,方便用户选择恢复。
     if subcmd == "list":
-        items = SessionManager.list_sessions(limit=50)
+        items = SessionManager.list_sessions(limit=50, archived=False)
         if not items:
             await warn("没有可恢复的会话", config)
             return True
@@ -70,6 +72,34 @@ async def cmd_resume(args: str, config: AppConfig) -> bool:
         for idx, item in enumerate(items, 1):
             lines.append(_format_item(idx, item))
         lines.append("\n用法: /resume <session_id>")
+        await info("\n".join(lines), config)
+        return True
+
+        # ── 子命令: archive / archived ─────────────────────────────
+    # 归档会话管理:列出所有归档会话;`/resume archived <session_id>` 恢复指定归档会话。
+    if subcmd in ("archive", "archived"):
+        if rest.strip():
+            # 带参数:恢复指定归档会话
+            session_id = rest.strip()
+            session = SessionManager.load_session(session_id)
+            if not session:
+                await err(f"未找到会话: {session_id}", config)
+                return True
+            if not SessionManager.unarchive_session(session_id):
+                await err(f"取消归档失败或会话不存在: {session_id}", config)
+                return True
+            await _restore_session(session, task, config)
+            await info(f"已恢复并切换到会话: {session_id}", config)
+            return True
+        # 无参数:列出归档会话
+        items = SessionManager.list_sessions(limit=0, archived=True)
+        if not items:
+            await warn("没有归档的会话", config)
+            return True
+        lines = [f"\n归档的会话 (共 {len(items)} 个):\n"]
+        for idx, item in enumerate(items, 1):
+            lines.append(_format_item(idx, item))
+        lines.append("\n用法: /resume archived <session_id> 恢复指定会话")
         await info("\n".join(lines), config)
         return True
 
@@ -153,10 +183,10 @@ async def cmd_resume(args: str, config: AppConfig) -> bool:
         return True
 
     # ── 无参数:交互式选择 ─────────────────────────────────────────
-    # 最友好的入口:列出最近 10 个会话,用户输入序号或 session_id 即可恢复。
+    # 最友好的入口:列出最近 10 个会话 (不含归档),用户输入序号或 session_id 即可恢复。
     # 支持两种选择方式:数字序号 (1/2/3...) 或直接输入完整 session_id。
     # 直接回车取消,不进行任何操作。
-    items = SessionManager.list_sessions(limit=10)
+    items = SessionManager.list_sessions(limit=10, archived=False)
     if not items:
         await warn("没有可恢复的会话", config)
         return True

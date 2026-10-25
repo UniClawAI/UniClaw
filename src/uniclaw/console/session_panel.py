@@ -31,7 +31,7 @@ class SessionPanel:
 
             current_root_dir = str(Path.cwd())
             self.items = SessionManager.list_sessions(
-                limit=10000, root_dir=current_root_dir
+                limit=10000, root_dir=current_root_dir, archived=False
             )
             if self.selected_index >= len(self.items):
                 self.selected_index = max(0, len(self.items) - 1)
