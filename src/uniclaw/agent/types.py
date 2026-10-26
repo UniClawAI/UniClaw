@@ -92,8 +92,10 @@ class AgentTask:
         """从 user_queue 取出所有待处理消息,分类处理:
         - !cmd → 执行 shell 命令,结果追加到 messages 让 LLM 可见
         - /command → 交由 UI 处理斜杠命令(不追加到 messages)
+        - [system] 注入消息 → 单独成条追加到 messages(不与用户文本合并)
         - 其他 → 合并为一条用户消息追加到 messages
-        返回合并后的普通用户文本。"""
+        返回需要 LLM 继续处理的消息文本:普通路径返回合并后的用户文本;
+        仅系统注入消息时返回其内容,调用方据此让 LLM 在当前循环内看到它。"""
         from uniclaw.agent.multi_agent import (
             ShellCommandEvent,
             SlashCommandEvent,
@@ -114,6 +116,9 @@ class AgentTask:
 
         self.cancel_event.clear()
         text_parts = []
+        # [system] 注入消息(压缩预警/goal 续工/overseer 续工/wakeup 等)是元信息,
+        # 不与普通用户文本合并,单独成条注入 session,避免污染"用户说了什么"
+        system_parts = []
         for msg in messages:
             # 多模态消息(list): 提取文本部分参与合并
             if isinstance(msg, list):
@@ -145,12 +150,20 @@ class AgentTask:
                 slash_output = await multi_agent.send_event_to_user(event, config)
                 if isinstance(slash_output, str) and slash_output:
                     self.session.add_message(MessageRole.USER, slash_output)
+            elif stripped.startswith(SYSTEM_PREFIX):
+                system_parts.append(msg)
             else:
                 text_parts.append(msg)
+
+        # [system] 消息:每条单独注入(不互相合并,也不与普通文本合并)
+        for sys_msg in system_parts:
+            self.session.add_message(MessageRole.USER, sys_msg)
+            await multi_agent.send_event_to_user(UserEvent(sys_msg), config)
 
         if text_parts:
             content = "\n\n".join(text_parts)
             self.session.add_message(MessageRole.USER, content)
             await multi_agent.send_event_to_user(UserEvent(content), config)
             return content
-        return ""
+        # 只有系统注入消息时,返回其内容让调用方继续循环,确保 LLM 本轮能看到
+        return "\n\n".join(system_parts)
