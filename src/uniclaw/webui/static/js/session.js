@@ -415,12 +415,14 @@ const SessionPanel = {
             const sessions = await resp.json();
             const grouped = {};
             sessions.forEach(s => {
-                if (s.session_type === 'free_chat') {
+                // free_chat 会话,或无 root_dir 的会话(控制台/恢复类,没有项目目录)
+                // 都归入 __free__ 组 —— 否则这些会话在后端 /api/sessions 返回后
+                // 被前端静默丢弃,用户在侧栏永远看不到它们。
+                if (s.session_type === 'free_chat' || !s.root_dir) {
                     if (!grouped['__free__']) grouped['__free__'] = [];
                     grouped['__free__'].push(s);
                 } else {
-                    const d = s.root_dir || '';
-                    if (!d) return;
+                    const d = s.root_dir;
                     if (!grouped[d]) grouped[d] = [];
                     grouped[d].push(s);
                 }

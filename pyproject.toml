@@ -87,6 +87,7 @@ pythonpath = ["src"]
 asyncio_mode = "auto"
 markers = [
     "slow: 耗时较长的测试,可用 -m 'not slow' 排除",
+    "e2e: 前端 Playwright E2E 测试(需要本机 Chromium),需 -m e2e 显式运行",
 ]
 
 [[tool.uv.index]]
