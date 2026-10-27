@@ -10,6 +10,8 @@ const Settings = {
 
     async open() {
         const modal = document.getElementById('settings-modal');
+        // 首次打开时初始化标题栏拖拽(幂等)
+        this._initDrag();
         modal.classList.remove('hidden');
         // 隐藏 banner(如果是正常打开设置,不需要显示提示)
         const banner = document.getElementById('settings-banner');
@@ -70,6 +72,58 @@ const Settings = {
         if (banner) banner.style.display = 'none';
     },
 
+    // ── 弹窗拖拽(标题栏)──────────────────────────────────
+
+    _initDrag() {
+        const modal = document.getElementById('settings-modal');
+        if (!modal || modal.dataset.dragInitialized) return;
+        modal.dataset.dragInitialized = '1';
+
+        const content = modal.querySelector('.settings-modal-content');
+        const title = modal.querySelector('.modal-title');
+        if (!content || !title) return;
+
+        let isDragging = false, offsetX = 0, offsetY = 0;
+
+        title.addEventListener('mousedown', (e) => {
+            // 标题栏的按钮(如收藏等可交互元素)不触发拖拽
+            if (e.target.closest('button')) return;
+            isDragging = true;
+            const rect = content.getBoundingClientRect();
+            offsetX = e.clientX - rect.left;
+            offsetY = e.clientY - rect.top;
+            document.body.style.userSelect = 'none';
+            document.body.style.webkitUserSelect = 'none';
+            e.preventDefault();
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (!isDragging) return;
+            let left = e.clientX - offsetX;
+            let top = e.clientY - offsetY;
+            // 限制在视口内,避免拖出屏幕找不到
+            const maxLeft = window.innerWidth - 100;
+            const maxTop = window.innerHeight - 50;
+            left = Math.max(-content.offsetWidth + 100, Math.min(maxLeft, left));
+            top = Math.max(0, Math.min(maxTop, top));
+            // 脱离 flex 居中,转为 fixed 自由定位
+            content.style.position = 'fixed';
+            content.style.left = left + 'px';
+            content.style.top = top + 'px';
+            content.style.right = 'auto';
+            content.style.bottom = 'auto';
+            content.style.margin = '0';
+            content.style.transform = 'none';
+        });
+
+        document.addEventListener('mouseup', () => {
+            if (!isDragging) return;
+            isDragging = false;
+            document.body.style.userSelect = '';
+            document.body.style.webkitUserSelect = '';
+        });
+    },
+
     // ── 渲染表单 ─────────────────────────────────────────
 
     _render() {
@@ -127,7 +181,10 @@ const Settings = {
         const dropdown = container.querySelector('.combo-dropdown');
         const selectedEl = container.querySelector('.combo-selected');
 
-        // 清空
+        // 清空(先清理旧标签绑定的 document 级拖拽监听,防止闭包残留)
+        selectedEl.querySelectorAll('.combo-tag').forEach(t => {
+            if (t._ptrCleanup) { t._ptrCleanup(); t._ptrCleanup = null; }
+        });
         selectedEl.innerHTML = '';
         input.value = '';
         dropdown.innerHTML = '';
@@ -215,8 +272,8 @@ const Settings = {
             ? availableModels.filter(m => {
                 const fullId = m.provider + '/' + m.id;
                 return m.id.toLowerCase().includes(filterLower) ||
-                       m.provider.toLowerCase().includes(filterLower) ||
-                       fullId.toLowerCase().includes(filterLower);
+                    m.provider.toLowerCase().includes(filterLower) ||
+                    fullId.toLowerCase().includes(filterLower);
             })
             : availableModels;
 
@@ -237,13 +294,13 @@ const Settings = {
                 const isSelected = selectedSet.has(fullId);
                 // 三种状态: true=支持, false=不支持, null/undefined=未知(不显示)
                 const visionIcon = m.supports_vision === true ? '<span class="capability-icon vision" title="支持视觉">👁</span>'
-                                 : m.supports_vision === false ? '<span class="capability-icon no-vision" title="不支持视觉">👁</span>' : '';
+                    : m.supports_vision === false ? '<span class="capability-icon no-vision" title="不支持视觉">👁</span>' : '';
                 const videoIcon = m.supports_video === true ? '<span class="capability-icon video" title="支持视频">🎬</span>'
-                                : m.supports_video === false ? '<span class="capability-icon no-video" title="不支持视频">🎬</span>' : '';
+                    : m.supports_video === false ? '<span class="capability-icon no-video" title="不支持视频">🎬</span>' : '';
                 const audioIcon = m.supports_audio === true ? '<span class="capability-icon audio" title="支持音频">🎵</span>'
-                                : m.supports_audio === false ? '<span class="capability-icon no-audio" title="不支持音频">🎵</span>' : '';
+                    : m.supports_audio === false ? '<span class="capability-icon no-audio" title="不支持音频">🎵</span>' : '';
                 const toolsIcon = m.supports_tools === true ? '<span class="capability-icon tools" title="支持工具调用">🔧</span>'
-                                : m.supports_tools === false ? '<span class="capability-icon no-tools" title="不支持工具调用">🔧</span>' : '';
+                    : m.supports_tools === false ? '<span class="capability-icon no-tools" title="不支持工具调用">🔧</span>' : '';
                 const icons = [visionIcon, videoIcon, audioIcon, toolsIcon].filter(Boolean).join('');
                 // 价格信息 (转换为每百万token,保留3位有效数字)
                 const formatPrice3 = (v) => {
@@ -332,6 +389,8 @@ const Settings = {
             // TTS/ASR/图片生成/Embedding:仅 OpenAI 协议,不允许自定义输入
             return false;
         }
+        // 模型列表整体加载失败时,允许手动输入自定义模型(否则用户完全无法配置)
+        if (!this._models.length) return true;
         // 主模型/轻量/多模态:只要有任一 provider 是 allow_custom(Anthropic)就允许
         for (const info of Object.values(this._providersInfo)) {
             if (info.allow_custom) return true;
@@ -349,25 +408,30 @@ const Settings = {
 
         // 验证:非自定义输入必须存在于模型列表中
         if (!this._isValidModel(value, container)) {
+            // 静默失败会导致用户以为"点不动、改不了",给出明确原因
+            const short = value.includes('/') ? value.split('/').slice(1).join('/') : value;
+            Utils.showError(`模型 "${short}" 不在该 Provider 的可用列表或未配置对应模型`);
             return false;
         }
 
-        // 单选模式:替换
+        // 单选模式:替换旧标签
         if (!isMulti) {
             selectedEl.innerHTML = '';
-        }
-
-        // 检查重复
-        const existing = selectedEl.querySelectorAll('.combo-tag');
-        for (const tag of existing) {
-            if (tag.dataset.value === value) return false;
+        } else {
+            // 多选模式:重复点击不加,给个轻提示
+            const existing = selectedEl.querySelectorAll('.combo-tag');
+            for (const tag of existing) {
+                if (tag.dataset.value === value) {
+                    Utils.showToast('该模型已在列表中');
+                    return false;
+                }
+            }
         }
 
         // 创建标签
         const tag = document.createElement('div');
         tag.className = 'combo-tag';
         tag.dataset.value = value;
-        tag.draggable = isMulti;
 
         let tagHtml = '';
         if (isMulti) {
@@ -385,26 +449,7 @@ const Settings = {
 
         // 拖拽排序(多选模式)
         if (isMulti) {
-            tag.addEventListener('dragstart', (e) => {
-                tag.classList.add('dragging');
-                e.dataTransfer.effectAllowed = 'move';
-                e.dataTransfer.setData('text/plain', value);
-            });
-            tag.addEventListener('dragend', () => tag.classList.remove('dragging'));
-            tag.addEventListener('dragover', (e) => {
-                e.preventDefault();
-                e.dataTransfer.dropEffect = 'move';
-                tag.classList.add('drag-over');
-            });
-            tag.addEventListener('dragleave', () => tag.classList.remove('drag-over'));
-            tag.addEventListener('drop', (e) => {
-                e.preventDefault();
-                tag.classList.remove('drag-over');
-                const fromValue = e.dataTransfer.getData('text/plain');
-                if (fromValue && fromValue !== value) {
-                    this._reorderTag(container, fromValue, value);
-                }
-            });
+            this._bindTagPointerDrag(tag, container, value);
         }
 
         selectedEl.appendChild(tag);
@@ -423,15 +468,169 @@ const Settings = {
         }
     },
 
-    /** 拖拽排序:将 fromValue 移动到 toValue 前面 */
-    _reorderTag(container, fromValue, toValue) {
-        const selectedEl = container.querySelector('.combo-selected');
-        const tags = Array.from(selectedEl.querySelectorAll('.combo-tag'));
-        const fromTag = tags.find(t => t.dataset.value === fromValue);
-        const toTag = tags.find(t => t.dataset.value === toValue);
-        if (fromTag && toTag) {
-            selectedEl.insertBefore(fromTag, toTag);
+    /**
+     * 指针拖拽排序:标签"浮起跟手"式拖拽(兼容 Chrome/Edge 全浏览器)。
+     * mousedown 时标签转为 fixed 跟手浮起(加阴影),原位置由后续元素让位;
+     * mousemove 时实时按其他标签位置换序;mouseup 时复位为普通流落位。
+     * 不依赖 HTML5 DnD(draggable/dataTransfer)
+     * 拖拽不会退化为文本拖选。
+     */
+    /**
+     * 查找最近的 transform 祖先。position:fixed 的元素若祖先带 transform
+     * (即使是 scale(1)),会相对该祖先定位而不是视口,导致 fixed 坐标整体偏移。
+     * 拖拽期间临时清除它的 transform,让 fixed 回归视口定位,坐标天然精确。
+     */
+    _findTransformAncestor(el) {
+        let cur = el.parentElement;
+        while (cur) {
+            const cs = window.getComputedStyle(cur);
+            if (cs && cs.transform && cs.transform !== 'none') return cur;
+            cur = cur.parentElement;
         }
+        return null;
+    },
+
+    _bindTagPointerDrag(tag, container, value) {
+        const selectedEl = container.querySelector('.combo-selected');
+        let isDragging = false;
+        let suppressClick = false;
+        let grabX = 0, grabY = 0;   // 鼠标按下点相对标签左上角的偏移
+        let startRect = null;       // 按下时标签的原始位置(用于限制移动范围)
+        let anchor = null;          // 最近的 transform 祖先(拖拽期间临时清 transform)
+        let anchorStyle = '';       // 锚点原有 transform 样式(结束后恢复)
+        let indicator = null;       // 拖拽插入位置指示线
+
+        // 阻止点击标签时冒泡到 combo-container,避免误聚焦输入框打开下拉
+        tag.addEventListener('click', (e) => {
+            if (e.target.closest('.combo-tag-remove')) return;  // 删除按钮自己的处理器已 stop
+            if (suppressClick) { suppressClick = false; return; }  // 拖拽结束的那次 click
+            e.stopPropagation();
+            e.preventDefault();
+        });
+
+        const onMouseDown = (e) => {
+            // 排除删除按钮和输入框
+            if (e.target.closest('.combo-tag-remove')) return;
+            if (e.target.closest('.combo-input')) return;
+            // 只响应鼠标主键
+            if (e.button !== 0) return;
+            startRect = tag.getBoundingClientRect();
+            // 找到 transform 祖先并临时清掉 transform:fixed 从此相对视口定位,
+            // 鼠标视口坐标可直接用,不再有换算偏差
+            anchor = this._findTransformAncestor(tag);
+            anchorStyle = '';
+            if (anchor) {
+                anchorStyle = anchor.style.transform;
+                anchor.style.transform = 'none';
+            }
+            grabX = e.clientX - startRect.left;
+            grabY = e.clientY - startRect.top;
+            isDragging = true;
+            tag.classList.add('dragging');
+            // fixed + 不设 width:标签自动收缩到内容宽度(普通流里被 flex 拉伸成全宽,
+            // 拖起来会是一条大宽条,不设 width 才紧凑,和之前 HTML5 DnD 镜像一致)
+            tag.style.position = 'fixed';
+            tag.style.left = startRect.left + 'px';
+            tag.style.top = startRect.top + 'px';
+            tag.style.margin = '0';
+            tag.style.zIndex = '999';
+            tag.style.pointerEvents = 'none';  // 浮起后不拦截鼠标,保证 mousemove 持续生效
+            document.body.style.userSelect = 'none';
+            document.body.style.webkitUserSelect = 'none';
+
+            tag.onselectstart = () => false;
+            // 创建插入位置指示线(告诉用户松手后标签会落在这里)。
+            // 作为普通流元素插入 selectedEl,由 mousemove 的 insertBefore 定位。
+            indicator = document.createElement('div');
+            indicator.className = 'combo-drop-indicator';
+            indicator.classList.add('hidden-indicator');
+            selectedEl.appendChild(indicator);
+            e.preventDefault();
+            e.stopPropagation();  // 防止随后的 click 触发 combo-container → input.focus()
+        };
+
+        const onMouseMove = (e) => {
+            if (!isDragging) return;
+            // 锚点 transform 已临时清除,fixed 相对视口,鼠标坐标直接用。
+            // 不做任何范围限制:标签必须完全跟随鼠标,否则拖到边缘时鼠标"脱钩"。
+            tag.style.left = (e.clientX - grabX) + 'px';
+            tag.style.top = (e.clientY - grabY) + 'px';
+
+            // 实时让位: 找出鼠标当前"插到哪"——垂直中线最近的标签作为目标
+            const tags = Array.from(selectedEl.querySelectorAll('.combo-tag'));
+            let best = null;
+            let bestDist = 1e9;
+            for (const other of tags) {
+                if (other === tag) continue;
+                const rect = other.getBoundingClientRect();
+                // 横向: 鼠标必须落在该标签水平范围内(含容差)
+                if (e.clientX < rect.left - 8 || e.clientX > rect.right + 8) continue;
+                const midY = rect.top + rect.height / 2;
+                const dist = Math.abs(e.clientY - midY);
+                if (dist < bestDist) { bestDist = dist; best = other; }
+            }
+            // 找不到落点(鼠标移出标签横向范围)时隐藏指示线,不再停在原地
+            if (!best) {
+                if (indicator) indicator.classList.add('hidden-indicator');
+                return;
+            }
+            const rect = best.getBoundingClientRect();
+            const midY = rect.top + rect.height / 2;
+            if (e.clientY < midY) {
+                // 插到 best 前: 标签放 best 前,指示线显示在 best 顶部(=标签也前,
+                // 先插标签再插指示线,让指示线位于最佳位置)
+                selectedEl.insertBefore(tag, best);
+                selectedEl.insertBefore(indicator, best);
+            } else {
+                // 插到 best 后: 锚点不能用 best.nextSibling(拖拽标签 fixed 可能占位),
+                // 向后找第一个非拖拽标签作为插入参照
+                let ref = best.nextSibling;
+                while (ref && ref === tag) ref = ref.nextSibling;
+                ref = ref || null;  // null 时插到末尾
+                selectedEl.insertBefore(tag, ref);
+                // 指示线紧跟标签之前 → 显示在 best 底部(落点线压着 best 下缘)
+                selectedEl.insertBefore(indicator, tag);
+            }
+            if (indicator) indicator.classList.remove('hidden-indicator');
+            // 换位后重新记录抓取点,保持浮起标签视觉上不跳
+            // (insertBefore 会移动 DOM,但 tag 是 fixed 不受布局影响,无需调整)
+        };
+
+        const onMouseUp = () => {
+            if (!isDragging) return;
+            isDragging = false;
+            // 复位为普通流,落位
+            tag.classList.remove('dragging');
+            tag.style.position = '';
+            tag.style.left = '';
+            tag.style.top = '';
+            tag.style.width = '';
+            tag.style.margin = '';
+            tag.style.zIndex = '';
+            tag.style.pointerEvents = '';
+            // 恢复锚点的 transform(拖拽期间清掉它以让 fixed 回归视口定位)
+            if (anchor) anchor.style.transform = anchorStyle;
+            anchor = null;
+            anchorStyle = '';
+            // 移除插入位置指示线
+            if (indicator) { indicator.remove(); indicator = null; }
+            document.body.style.userSelect = '';
+            document.body.style.webkitUserSelect = '';
+            tag.onselectstart = null;
+            // 拖拽刚结束,抑制随后触发的那次 click
+            suppressClick = true;
+            setTimeout(() => { suppressClick = false; }, 0);
+        };
+
+        tag.addEventListener('mousedown', onMouseDown);
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
+        // 存储清理函数(弹窗重建时可主动清理,防止闭包残留)
+        tag._ptrCleanup = () => {
+            tag.removeEventListener('mousedown', onMouseDown);
+            document.removeEventListener('mousemove', onMouseMove);
+            document.removeEventListener('mouseup', onMouseUp);
+        };
     },
 
     /** 验证模型名是否有效 */
@@ -453,12 +652,18 @@ const Settings = {
         // allow_custom 的 provider:自由输入
         if (info && info.allow_custom) return true;
 
-        // 非 allow_custom 的 provider:必须在模型列表中
+        // 非 allow_custom 的 provider:必须在模型列表中。
+        // 模型列表整体加载失败时(网络/超时),放行手动输入,避免"改不了模型"。
         const modelId = value.split('/').slice(1).join('/');
-        if (container.id === 'settings-embedding-model' && this._embeddingModels) {
+        if (container.id === 'settings-embedding-model' && this._embeddingModels && this._embeddingModels.length) {
             return this._embeddingModels.some(m => m.provider === providerName && m.id === modelId);
         }
-        return this._models.some(m => m.provider === providerName && m.id === modelId);
+        if (this._models.length || this._embeddingModels?.length) {
+            return this._models.some(m => m.provider === providerName && m.id === modelId);
+        }
+        // 列表整体为空(加载失败):仅校验 provider 前缀,放行手动输入,
+        // 否则模型列表拉不到时用户完全无法配置模型
+        return !isTtsAsr;
     },
 
     /** 格式化模型显示名 */
