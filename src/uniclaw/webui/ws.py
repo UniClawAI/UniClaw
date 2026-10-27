@@ -533,6 +533,7 @@ async def bridge_events(session_id: str, config: AppConfig):
                     "agent_name": agent_name,
                     "creator_tool_call_id": creator_tool_call_id,
                     "created_at": event.created_at,
+                    "finish_reason": event.finish_reason,
                 }
             )
             # 语音模式: flush 剩余文本到 TTS 队列

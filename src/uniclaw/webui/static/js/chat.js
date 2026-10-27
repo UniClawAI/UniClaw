@@ -170,7 +170,7 @@ const Chat = {
                         this._appendToolBlock(el, name, args, resultContent, success, tcId, explain);
                     });
                 }
-                this._appendUsageInfo(el, msg.usage?.input_tokens, msg.usage?.output_tokens, msg.model_name, msg.usage?.cached_tokens, msg.usage?.cache_write_tokens, msg.created_at);
+                this._appendUsageInfo(el, msg.usage?.input_tokens, msg.usage?.output_tokens, msg.model_name, msg.usage?.cached_tokens, msg.usage?.cache_write_tokens, msg.created_at, msg.finish_reason);
             }
         });
     },
@@ -597,9 +597,9 @@ const Chat = {
         body.innerHTML = Utils.renderDiff(ctrl.dataset.diffOld || '', ctrl.dataset.diffNew || '', mode);
     },
 
-    _appendUsageInfo(parentEl, inTokens, outTokens, modelName, cachedTokens, cacheWriteTokens, createdAt) {
-        if (!inTokens && !outTokens && !modelName && !cachedTokens && !cacheWriteTokens && !createdAt) return;
-        if (inTokens || outTokens || modelName || cachedTokens || cacheWriteTokens) {
+    _appendUsageInfo(parentEl, inTokens, outTokens, modelName, cachedTokens, cacheWriteTokens, createdAt, finishReason) {
+        if (!inTokens && !outTokens && !modelName && !cachedTokens && !cacheWriteTokens && !createdAt && !finishReason) return;
+        if (inTokens || outTokens || modelName || cachedTokens || cacheWriteTokens || finishReason) {
             const el = document.createElement('div');
             el.className = 'msg-tokens';
             const parts = [];
@@ -608,6 +608,8 @@ const Chat = {
             // 缓存字段仅 OpenRouter 等提供商返回;缺失或为 0 时不展示,保持原显示
             if (cachedTokens > 0) parts.push(`缓存 ${this._fmtTk(cachedTokens)}`);
             if (cacheWriteTokens > 0) parts.push(`写 ${this._fmtTk(cacheWriteTokens)}`);
+            // 停止原因,便于观察模型是正常结束还是被截断
+            if (finishReason) parts.push(`finish:${finishReason}`);
             el.textContent = parts.join(' · ');
             parentEl.appendChild(el);
         }
@@ -1007,7 +1009,7 @@ _showLightbox(url) {
                 this._appendToolBlock(this.streamingEl, name, args, null, null, tc.id || '');
             });
         }
-        if (this.streamingEl) this._appendUsageInfo(this.streamingEl, msg.in_tokens, msg.out_tokens, msg.model_name, msg.cached_tokens, msg.cache_write_tokens, msg.created_at);
+        if (this.streamingEl) this._appendUsageInfo(this.streamingEl, msg.in_tokens, msg.out_tokens, msg.model_name, msg.cached_tokens, msg.cache_write_tokens, msg.created_at, msg.finish_reason);
         this.streamingEl = null; this.streamingContent = ''; this.streamingBody = null;
     },
 

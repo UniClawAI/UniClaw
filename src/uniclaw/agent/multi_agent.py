@@ -298,6 +298,8 @@ class AssistantEvent:
     cache_write_tokens: int = 0
     cache_discount: float = 0.0
     created_at: float = 0.0
+    # 停止原因(OpenAI: finish_reason / Anthropic: stop_reason),用于前端展示与截断检测
+    finish_reason: str = ""
 
 
 @dataclass
@@ -1125,6 +1127,7 @@ class MultiAgent:
             usage=usage_dict,
             tool_calls=tool_calls,
             reasoning_content=reasoning or None,
+            finish_reason=resp.finish_reason,
         )
 
         await run_hooks(
@@ -1150,6 +1153,7 @@ class MultiAgent:
                 cache_write_tokens=cache_write_tokens,
                 cache_discount=cache_discount,
                 created_at=time.time(),
+                finish_reason=resp.finish_reason,
             ),
             config,
         )

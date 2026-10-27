@@ -308,6 +308,9 @@ class AIMessage(BaseMessage):
     reasoning_content: str = ""
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
     audio: str | None = None
+    # 停止原因(OpenAI: finish_reason / Anthropic: stop_reason)。
+    # "length"/"max_tokens" 表示输出被截断 —— 内容与工具参数可能只生成了一半
+    finish_reason: str = ""
 
     def audio_to_pcm(self) -> tuple[np.ndarray, int]:
         """将 base64 音频转换为归一化的 float32 PCM 数组。
@@ -388,6 +391,7 @@ class AIMessage(BaseMessage):
             reasoning_content=data.get("reasoning_content"),
             tool_calls=data.get("tool_calls"),
             created_at=cls._parse_created_at(data),
+            finish_reason=data.get("finish_reason", ""),
         )
 
     def to_openai_message(self) -> dict[str, Any]:
@@ -445,6 +449,8 @@ class AIMessage(BaseMessage):
         data["model_name"] = self.model_name
         if self.created_at is not None:
             data["created_at"] = self.created_at.isoformat()
+        if self.finish_reason:
+            data["finish_reason"] = self.finish_reason
         return data
 
     def to_content(self) -> str:
@@ -1252,6 +1258,7 @@ class Session:
                     reasoning_content=message.get("reasoning_content"),
                     tool_calls=message.get("tool_calls"),
                     created_at=ca,
+                    finish_reason=message.get("finish_reason", ""),
                 )
             elif role == MessageRole.TOOL:
                 session.add_tool_call_message(
@@ -1450,6 +1457,7 @@ class Session:
         reasoning_content: str | None = None,
         tool_calls: list[dict[str, Any]] | None = None,
         created_at: datetime | None = _UNSET,
+        finish_reason: str = "",
     ) -> None:
         # 原样保存 tool_calls(含畸形 arguments)—— 完整调用参数记录不能在
         # 入库时被销毁;API 发送边界(to_openai_messages)再做清洗
@@ -1460,6 +1468,7 @@ class Session:
             reasoning_content=reasoning_content,
             tool_calls=tool_calls,
             created_at=created_at if created_at is not _UNSET else datetime.now(),
+            finish_reason=finish_reason,
         )
         self._messages.append(assistant_message)
         self.history.append(assistant_message)
@@ -1557,6 +1566,7 @@ class Session:
                 reasoning_content=kwargs.get("reasoning_content"),
                 tool_calls=kwargs.get("tool_calls"),
                 created_at=ca,
+                finish_reason=kwargs.get("finish_reason", ""),
             )
         elif role == MessageRole.TOOL:
             self.add_tool_call_message(
