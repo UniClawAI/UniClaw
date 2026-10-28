@@ -52,18 +52,24 @@ def get_download(file_id: str) -> dict | None:
 
 
 def _is_text_file(p: Path) -> bool:
-    """判断文件是否为可预览的文本文件(UTF-8 可解码且无 NUL 字节)。"""
-    if p.stat().st_size > MAX_PREVIEW_SIZE:
-        return False
+    """判断文件是否为可预览的文本文件(UTF-8 可解码且无 NUL 字节)。
+
+    文件不存在或 stat 失败(OSError 等)时返回 False —— 不是可预览文本。
+    """
     try:
+        if p.stat().st_size > MAX_PREVIEW_SIZE:
+            return False
         with p.open("rb") as f:
             head = f.read(MAX_PREVIEW_SIZE)
-        if b"\x00" in head:
-            return False
-        head.decode("utf-8")
-        return True
-    except (UnicodeDecodeError, OSError):
+    except OSError:
         return False
+    if b"\x00" in head:
+        return False
+    try:
+        head.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    return True
 
 
 @tool
