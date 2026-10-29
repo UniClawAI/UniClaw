@@ -48,6 +48,14 @@ from uniclaw.tools.base import (
 # 死循环检测:连续相同工具调用次数阈值
 LOOP_DETECTION_THRESHOLD = 5
 
+
+def _ends_with_colon(content: str) -> bool:
+    """正文结尾是否是冒号(中文或英文)。
+    """
+    if not content:
+        return False
+    return content.rstrip().endswith(":") or content.rstrip().endswith("：")
+
 # 触发子目录 CLAUDE.md 按需加载的工具 → 文件路径参数名
 _CLAUDE_MD_PATH_ARGS = {
     "Read": "file_path",
@@ -1789,6 +1797,9 @@ class MultiAgent:
                 if not tool_calls:
                     content = await task.drain_user_queue(self, config)
                     if content:
+                        continue
+                    # 正文以冒号结尾却没发 tool_calls 不当作回答结束,让模型基于对话历史继续。
+                    if _ends_with_colon(resp.content or ""):
                         continue
                     break
 
