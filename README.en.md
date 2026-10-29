@@ -206,6 +206,8 @@ uv add --dev <package-name>
 # Run tests
 uv run pytest tests/ -v -m 'not slow' -n auto   # daily tests (parallel, skips slow Docker tests)
 uv run pytest tests/ -v                          # full test suite (serial)
+uv run pytest tests/e2e/ -m e2e                  # frontend E2E tests (local Chromium + Playwright required)
+uv run pytest tests/e2e/ -m e2e -k consistency   # dual-path consistency (WebSocket live vs history replay rendering)
 
 # Update dependencies
 uv lock --upgrade
@@ -319,7 +321,7 @@ Slash commands autocomplete subcommands — type the command and press space to 
 | `/schedule` | `list`, `add`, `remove`, `enable`, `disable` |
 | `/mcp` | `list`, `add`, `remove`, `show`, `edit`, `enable`, `disable`, `tools`, `refresh` |
 | `/permissions` | `list`, `remove` |
-| `/resume` | `list`, `del`, `search`, `fork` |
+| `/resume` | `list`, `del`, `search`, `fork`, `archive`, `archived` |
 | `/task` | `list`, `output`, `stop`, `matched` |
 | `/overseer` | `start`, `stop` |
 | `/checkpoint` | `create`, `pop`, `apply`, `delete`, `diff` |
@@ -586,6 +588,7 @@ The left side of the TUI shows a conversation history sidebar for managing and s
 
 **Features:**
 - 📋 **Auto-save**: every conversation is saved to history at the end
+- 🗄️ **One-click archive**: the right-click menu archives a conversation to a separate "Archive" section with one click, keeping the list tidy without losing history; archived conversations can be restored or opened anytime
 - 🔄 **Quick load**: select and load a history conversation from the sidebar (press Enter)
 - 🔍 **Status markers**:
   - `>` marks the currently selected conversation
@@ -602,7 +605,7 @@ The left side of the TUI shows a conversation history sidebar for managing and s
 3. Press `Enter` to load its history
 4. Keep chatting on top of it
 
-> 💡 **Tip**: Use `/resume` for more fine-grained conversation management, including search and delete.
+> 💡 **Tip**: Use `/resume` for more fine-grained conversation management, including archive (`/resume archive`), search, and delete.
 
 ### Slash command system
 
@@ -617,11 +620,14 @@ UniClaw ships a rich set of slash commands (`/command`) for managing system feat
 | `/clear` or `/cls` | Clear the current conversation history | `/clear` |
 | `/compact` | Compact the context to optimize token usage | `/compact` |
 | `/export` | Export the current session | `/export session.md` |
-| `/resume` | Resume/manage sessions (list/del/search/fork) | `/resume list` |
-| `/resume list` | List all history sessions | `/resume list` |
+| `/resume` | Resume/manage sessions (list/del/search/fork/archive/archived) | `/resume list` |
+| `/resume list` | List all history sessions (not archived) | `/resume list` |
 | `/resume del <id>` | Delete a session | `/resume del abc123` |
 | `/resume search <keyword>` | Search session content | `/resume search python` |
 | `/resume fork [id] [idx]` | Fork a session (start a new session from a message) | `/resume fork abc123 5` |
+| `/resume archive <id>` | Archive a session to the archive section (right-click menu in the sidebar also works) | `/resume archive abc123` |
+| `/resume archived` | List all archived sessions | `/resume archived` |
+| `/resume archived <id>` | Restore an archived session | `/resume archived abc123` |
 
 #### Git checkpoint commands
 
@@ -859,6 +865,7 @@ uniclaw --mode webui
 - ✅ **Checkpoint management** — view checkpoints and diffs (untracked files included) in the sidebar Git panel
 - ✅ **Session forking** — fork a new session from a history message, keeping the context
 - ✅ **History search** — search and view full history; switch active/archived views in TUI/WebUI
+- ✅ **Session archive** — one-click archive from the sidebar context menu to a separate "Archive" section (collapsed by default), synced across tabs; archived sessions can be restored anytime
 - ✅ **Message nav bar** — right-side quick jump to any message
 - ✅ **Token display** — per-message token cost and processing time
 - ✅ **TodoList sync** — tasks sync to the WebUI in real time
@@ -1764,7 +1771,7 @@ UniClaw/
 ├── Dockerfile              # containerized deployment (python:3.14-slim + uv + Playwright)
 ├── .dockerignore           # Docker build ignore rules
 ├── LICENSE                 # MIT license
-├── tests/                  # tests (repo root)
+├── tests/                  # tests (repo root; e2e/ holds the Playwright WebUI frontend tests)
 │
 └── src/uniclaw/            # 📦 package root
     ├── main.py             # entry (argparse --mode → launcher, run_mode enum)
@@ -1790,7 +1797,7 @@ UniClaw/
     ├── commands/           # slash commands 📝 (31 commands + 7 aliases, 38 registered)
     │   ├── __init__.py     # command registry (COMMANDS dict)
     │   ├── session.py      # session management (clear/compact/export)
-    │   ├── resume.py       # session resume (list/del/search/fork) 💬
+    │   ├── resume.py       # session resume (list/del/search/fork/archive/archived) 💬
     │   ├── model.py        # model switching (image-gen model included)
     │   ├── system.py       # system commands (cwd/skills/exit/help/usage)
     │   ├── memory.py       # memory management
@@ -1981,7 +1988,7 @@ The core/extended tool layering aligns with Anthropic's `defer_loading` pattern:
   - Plan: `enter/exit_plan_mode`
   - Skill: `skill_suggest/read`
   - Meta-tool: `search_tools` (on-demand extended tool discovery)
-- **Extended tools** (188): not loaded initially; discovered on demand via `search_tools`
+- **Extended tools** (186): not loaded initially; discovered on demand via `search_tools`
   - BM25 search with Chinese/English keywords + semantic synonyms
   - **LRU + energy mechanism**: each extended tool starts with 30 energy points, -1 per dialogue round, restored to full on call/search-hit, evicted at zero; at most 25 extended tools loaded at once — beyond that, the lowest-energy LRU end is evicted
   - Search results auto-inject into the current task's available tools
@@ -2859,7 +2866,7 @@ A: Type a slash command and press space:
 - `/schedule` — `list`, `add`, `remove`, `enable`, `disable`
 - `/mcp` — `list`, `add`, `remove`, `show`, `edit`, `enable`, `disable`, `tools`, `refresh`
 - `/permissions` — `list`, `remove`
-- `/resume` — `list`, `del`, `search`, `fork`
+- `/resume` — `list`, `del`, `search`, `fork`, `archive`, `archived`
 - `/task` — `list`, `output`, `stop`, `matched`
 - `/overseer` — `start`, `stop`
 - `/checkpoint` — `create`, `pop`, `apply`, `delete`, `diff`

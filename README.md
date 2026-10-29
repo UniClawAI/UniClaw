@@ -206,6 +206,8 @@ uv add --dev <package-name>
 # 运行测试
 uv run pytest tests/ -v -m 'not slow' -n auto   # 日常测试(并行,排除 Docker 测试等耗时任务)
 uv run pytest tests/ -v                          # 全量测试(串行)
+uv run pytest tests/e2e/ -m e2e                  # 前端 E2E 测试(需本机 Chromium,Playwright)
+uv run pytest tests/e2e/ -m e2e -k consistency   # 双路径一致性(WebSocket live 与历史回放渲染对比)
 
 # 更新依赖
 uv lock --upgrade
@@ -319,7 +321,7 @@ UniClaw 的斜杠命令支持子命令自动补全,输入命令后按空格会�
 | `/schedule` | `list`, `add`, `remove`, `enable`, `disable` |
 | `/mcp` | `list`, `add`, `remove`, `show`, `edit`, `enable`, `disable`, `tools`, `refresh` |
 | `/permissions` | `list`, `remove` |
-| `/resume` | `list`, `del`, `search`, `fork` |
+| `/resume` | `list`, `del`, `search`, `fork`, `archive`, `archived` |
 | `/task` | `list`, `output`, `stop`, `matched` |
 | `/overseer` | `start`, `stop` |
 | `/checkpoint` | `create`, `pop`, `apply`, `delete`, `diff` |
@@ -586,6 +588,7 @@ TUI 界面左侧提供对话历史侧边栏,方便管理和切换会话：
 
 **功能特性：**
 - 📋 **自动保存**: 每次对话结束后自动保存到历史记录
+- 🗄️ **一键归档**: 会话右键菜单可一键归档到独立的"归档"分区,保持列表整洁不丢历史;归档会话可随时恢复或点击打开查看
 - 🔄 **快速加载**: 通过侧边栏选择并加载历史对话(按 Enter)
 - 🔍 **状态标识**: 
   - `>` 表示当前选中的对话
@@ -602,7 +605,7 @@ TUI 界面左侧提供对话历史侧边栏,方便管理和切换会话：
 3. 按 `Enter` 加载该对话的历史记录
 4. 继续在该对话基础上进行交流
 
-> 💡 **提示**: 也可以通过 `/resume` 命令进行更精细的对话管理,包括搜索和删除等操作。
+> 💡 **提示**: 也可以通过 `/resume` 命令进行更精细的对话管理,包括归档(`/resume archive`)、搜索和删除等操作。
 
 ### 斜杠命令系统
 
@@ -617,11 +620,14 @@ UniClaw 提供了丰富的斜杠命令(`/command`),用于管理系统功能和�
 | `/clear` 或 `/cls` | 清空当前对话历史 | `/clear` |
 | `/compact` | 压缩上下文,优化 Token 使用 | `/compact` |
 | `/export` | 导出当前会话记录 | `/export session.md` |
-| `/resume` | 恢复/管理会话(list/del/search/fork) | `/resume list` |
-| `/resume list` | 列出所有历史会话 | `/resume list` |
+| `/resume` | 恢复/管理会话(list/del/search/fork/archive/archived) | `/resume list` |
+| `/resume list` | 列出所有历史会话(不含归档) | `/resume list` |
 | `/resume del <id>` | 删除指定会话 | `/resume del abc123` |
 | `/resume search <关键词>` | 搜索历史会话内容 | `/resume search python` |
 | `/resume fork [id] [idx]` | 分叉会话(从指定消息处创建新会话) | `/resume fork abc123 5` |
+| `/resume archive <id>` | 将会话归档到归档区(侧栏右键菜单也可一键归档) | `/resume archive abc123` |
+| `/resume archived` | 列出所有归档会话 | `/resume archived` |
+| `/resume archived <id>` | 恢复指定归档会话 | `/resume archived abc123` |
 
 #### Git 检查点命令
 
@@ -859,6 +865,7 @@ uniclaw --mode webui
 - ✅ **检查点管理** — 侧边栏 Git 面板中查看检查点列表、diff 对比(支持未跟踪文件)
 - ✅ **会话分叉** — 从历史消息处分叉创建新会话,保留上下文继续对话
 - ✅ **历史消息检索** — 搜索和查看完整历史消息,支持在 TUI/WebUI 中切换活跃/归档视图
+- ✅ **会话归档** — 侧栏右键菜单一键归档会话到独立的"归档"分区(默认折叠),多标签页同步刷新;归档会话可随时恢复
 - ✅ **消息导航条** — 右侧消息导航条快速跳转到指定消息
 - ✅ **Token 用量显示** — 每条消息显示 Token 消耗量和处理时长
 - ✅ **TodoList 同步** — 任务清单实时同步到 WebUI 界面
@@ -1789,7 +1796,7 @@ UniClaw/
 ├── Dockerfile              # Docker 容器化部署(python:3.14-slim + uv + Playwright)
 ├── .dockerignore           # Docker 构建忽略规则
 ├── LICENSE                 # MIT 许可证
-├── tests/                  # 测试用例(位于仓库根目录)
+├── tests/                  # 测试用例(位于仓库根目录,e2e/ 为 WebUI Playwright 前端测试)
 │
 └── src/uniclaw/            # 📦 包根目录
     ├── main.py             # 程序入口(argparse --mode → launcher,run_mode 枚举)
@@ -1815,7 +1822,7 @@ UniClaw/
     ├── commands/           # 斜杠命令系统 📝 (31 个命令 + 7 个别名,共38个注册项)
     │   ├── __init__.py     # 命令注册中心(COMMANDS dict)
     │   ├── session.py      # 会话管理(clear/compact/export)
-    │   ├── resume.py       # 会话恢复(list/del/search/fork) 💬
+    │   ├── resume.py       # 会话恢复(list/del/search/fork/archive/archived) 💬
     │   ├── model.py        # 模型切换(含图片生成模型)
     │   ├── system.py       # 系统命令(cwd/skills/exit/help/usage)
     │   ├── memory.py       # 记忆管理
@@ -2006,7 +2013,7 @@ UniClaw/
   - 计划: `enter/exit_plan_mode`
   - 技能: `skill_suggest/read`
   - 元工具: `search_tools`（按需发现和加载扩展工具）
-- **扩展工具** (188 个): 初始不加载,通过 `search_tools` 元工具按需发现
+- **扩展工具** (186 个): 初始不加载,通过 `search_tools` 元工具按需发现
   - 基于 BM25 算法搜索,支持中英文关键词 + 语义同义词
   - **LRU + 能量机制**: 每个扩展工具初始 30 点能量,每轮对话 -1,被调用或搜索命中恢复满能量,归零自动卸载;最多同时加载 25 个扩展工具,超出时按 LRU 顺序淘汰能量最低者
   - 搜索结果自动注入到当前任务的可用工具集
@@ -2900,7 +2907,7 @@ A: 在 REPL 中输入斜杠命令后按空格,会自动显示该命令的子命�
 - `/schedule` - `list`, `add`, `remove`, `enable`, `disable`
 - `/mcp` - `list`, `add`, `remove`, `show`, `edit`, `enable`, `disable`, `tools`, `refresh`
 - `/permissions` - `list`, `remove`
-- `/resume` - `list`, `del`, `search`, `fork`
+- `/resume` - `list`, `del`, `search`, `fork`, `archive`, `archived`
 - `/task` - `list`, `output`, `stop`, `matched`
 - `/overseer` - `start`, `stop`
 - `/checkpoint` - `create`, `pop`, `apply`, `delete`, `diff`
