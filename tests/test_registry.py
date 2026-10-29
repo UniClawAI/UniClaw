@@ -301,10 +301,10 @@ class TestNameMatchRanking:
         assert any(n.startswith("schedule_") for n in names)
 
     def test_prefix_family_grouping(self):
-        """前缀查询聚合同族工具: hook → hook_* 系列。"""
+        """前缀查询聚合同族工具: hook → hook_* 系列(hook_docs 已迁为内置 skill,不再是工具)。"""
         r = _make_realistic_registry()
         names = [e.tool.name for e in r.search("hook")]
-        assert set(names) == {"hook_docs", "hook_read", "hook_add", "hook_remove"}
+        assert set(names) == {"hook_read", "hook_add", "hook_remove"}
 
     def test_exact_match_wins_over_prefix(self):
         """精确匹配排在前缀/子串匹配之前。"""

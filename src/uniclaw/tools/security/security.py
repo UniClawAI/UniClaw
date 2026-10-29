@@ -279,7 +279,7 @@ def is_safe_tool(name: str) -> bool:
         session_note_list,
         session_note_get,
     )
-    from uniclaw.tools.hooks.tools import hook_docs, hook_read
+    from uniclaw.tools.hooks.tools import hook_read
     from uniclaw.tools.multi_agent.tools import (
         subagent_list_tasks,
         subagent_check_result,
@@ -437,7 +437,6 @@ def is_safe_tool(name: str) -> bool:
         session_note_list.name,
         session_note_get.name,
         # ── Hooks ──
-        hook_docs.name,
         hook_read.name,
         hook_remove.name,
         # ── MCP ──

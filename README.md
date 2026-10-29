@@ -1371,6 +1371,7 @@ http_download(
 - `skill-forge` (`/skill-forge`, `/forge-skill`, `技能锻造`) — 技能锻造:创建新 Skill 和优化已有的自定义 Skill(只操作自建 Skill)
 - `tool-plugin-forge` (`/tool-plugin-forge`, `/forge-tool-plugin`, `+tool-plugin`) — 工具插件锻造:按用户需求自动生成 UniClaw 外部工具插件,写入 `~/.UniClaw/plugins/tools/`,支持多文件拆分、生命周期钩子、耗时任务 async + wake_agent 唤醒,生成后即时验证可加载
 - `uniclaw-theme` (`/uniclaw-theme`, `/theme`) — 主题定制:自定义 WebUI 主题颜色、字体和样式
+- `hooks` (`/hooks`) — Hook 机制完整文档(事件列表、配置格式、作用域、matcher 规则、阻塞机制、编码注意事项),使用 hook_add/hook_read/hook_remove 前的必读文档
 
 **技能文件搜索路径**:
 技能系统支持从多个常见目录中自动加载技能文件：
@@ -1475,7 +1476,8 @@ http_download(
 
 #### Hook 系统工具 🪝
 
-- **hook_docs** - 查看 Hook 系统的详细文档和使用说明
+Hook 完整文档已改为内置 `hooks` 技能,可随时通过 `/hooks` 或让 AI 调用 `skill_read("hooks")` 查看。
+
 - **hook_read** - 读取当前 Hook 配置
 - **hook_add** - 添加事件 Hook(执行 Shell 命令)
 - **hook_remove** - 移除指定 Hook

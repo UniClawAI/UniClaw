@@ -1076,7 +1076,7 @@ class Session:
     from uniclaw.tools.mcp.tools import mcp_list_servers
     from uniclaw.tools.advisor import advisor_list
     from uniclaw.tools.a2a.tools import a2a_list_agents
-    from uniclaw.tools.hooks.tools import hook_docs, hook_read
+    from uniclaw.tools.hooks.tools import hook_read
     from uniclaw.tools.session.recall import recall_history
     from uniclaw.tools.ipython.tools import ipython_vars, ipython_list_kernels
     from uniclaw.tools.registry import search_tools
@@ -1135,7 +1135,6 @@ class Session:
             # a2a
             a2a_list_agents.name,
             # hooks (只读)
-            hook_docs.name,
             hook_read.name,
             # session recall
             recall_history.name,

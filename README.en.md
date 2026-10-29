@@ -1358,6 +1358,7 @@ Playwright-based browser control with multi-tab management and persistent contex
 - `skill-forge` (`/skill-forge`, `/forge-skill`, `skill forging`) — skill forge: create new skills and optimize existing custom skills (self-built skills only)
 - `tool-plugin-forge` (`/tool-plugin-forge`, `/forge-tool-plugin`, `+tool-plugin`) — tool-plugin forge: auto-generate UniClaw external tool plugins per your needs, written to `~/.UniClaw/plugins/tools/`; multi-file split, lifecycle hooks, long-running tasks with async + wake_agent, verified loadable after generation
 - `uniclaw-theme` (`/uniclaw-theme`, `/theme`) — theme customization: WebUI colors, fonts, and styles
+- `hooks` (`/hooks`) — full Hook-mechanism documentation (event list, config format, scopes, matcher rules, blocking behavior, encoding notes); required reading before using hook_add/hook_read/hook_remove
 
 **Skill search paths:**
 Skills auto-load from common directories:
@@ -1454,7 +1455,8 @@ Agent2Agent protocol tools for remote agent collaboration — calling external A
 
 #### Hook tools 🪝
 
-- **hook_docs** — Hook system documentation and usage
+The full Hook documentation is now a builtin `hooks` skill — view it anytime via `/hooks` or ask the AI to call `skill_read("hooks")`.
+
 - **hook_read** — read current hook config
 - **hook_add** — add an event hook (runs a shell command)
 - **hook_remove** — remove a hook
