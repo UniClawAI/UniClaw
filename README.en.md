@@ -25,7 +25,7 @@
 - 🔍 **Tool registry**: BM25-powered smart tool search — always-loaded core tools plus on-demand discovery of extended tools (via the `search_tools` meta-tool). An LRU + energy mechanism (30 energy points per tool, -1 per round, restored to full on call/search, evicted at zero) manages loaded tools to optimize the prompt cache
 - 📡 **Tool availability tracking**: Environment detection records unvailable tools and why (e.g. Docker not installed, `embedding_model` not configured); `search_tools` surfaces the reason to avoid useless calls; calling a disabled tool directly returns "not enabled + reason" rather than a misleading "tool does not exist"
 - 🌐 **WebUI**: A WebSocket-based web interface to chat with the AI from a browser — LAN-shareable, mobile-responsive with touch gestures, HTTPS and IPv6 support
-- 🎨 **A2UI interactive UI**: The agent emits `a2ui` code blocks declaring JSON component trees (cards/forms/button groups/tabs/charts), which a frontend whitelist renders into interactive UIs; button and form results flow back to the agent, closing a two-way interaction loop. The component spec is now loaded on demand via the `get_a2ui_guide` tool instead of occupying the resident prompt
+- 🎨 **A2UI interactive UI**: The agent emits `a2ui` code blocks declaring JSON component trees (cards/forms/button groups/tabs/charts), which a frontend whitelist renders into interactive UIs; button and form results flow back to the agent, closing a two-way interaction loop. The component spec is now loaded on demand via the builtin `a2ui` skill instead of occupying the resident prompt
 - ⚡ **Streaming tool output**: Tool execution pushes progress to the frontend in real time — no need to wait for completion
 - 🔐 **Trusted IP auto-login**: Configure `trusted_ips` and clients from those addresses skip WebUI login — perfect for home/office LANs
 - 💬 **WeChat integration**: Connect WeChat through the iLink Bot protocol for mobile interaction
@@ -894,7 +894,7 @@ In WebUI mode, the agent can output **declarative interactive interfaces**: a co
 
 > 💡 **Scope**: WebUI mode, main agent only — console/WeChat modes have no renderer and subagents don't call it, so no wasted tokens. When a plain-text answer is enough the agent won't emit components.
 >
-> 💡 **On-demand spec loading**: the A2UI component spec was moved out of the resident system prompt. In WebUI mode only a one-line trigger remains in the system prompt; when the agent decides an answer is better presented as an interactive UI, it first calls the `get_a2ui_guide` tool for the full spec, then emits the `a2ui` block per that spec — saving tokens.
+> 💡 **On-demand spec loading**: the A2UI component spec is a builtin `a2ui` skill loaded on demand. In WebUI mode only a one-line trigger remains in the system prompt; when the agent decides an answer is better presented as an interactive UI, it first loads the `a2ui` skill via `skill_read` for the full spec, then emits the `a2ui` block per that spec — saving tokens.
 
 ### Format
 
@@ -1359,6 +1359,7 @@ Playwright-based browser control with multi-tab management and persistent contex
 - `tool-plugin-forge` (`/tool-plugin-forge`, `/forge-tool-plugin`, `+tool-plugin`) — tool-plugin forge: auto-generate UniClaw external tool plugins per your needs, written to `~/.UniClaw/plugins/tools/`; multi-file split, lifecycle hooks, long-running tasks with async + wake_agent, verified loadable after generation
 - `uniclaw-theme` (`/uniclaw-theme`, `/theme`) — theme customization: WebUI colors, fonts, and styles
 - `hooks` (`/hooks`) — full Hook-mechanism documentation (event list, config format, scopes, matcher rules, blocking behavior, encoding notes); required reading before using hook_add/hook_read/hook_remove
+- `a2ui` (`/a2ui`) — A2UI component output spec (available component types, JSON structure examples, action values); load it before emitting an ```a2ui block in WebUI mode
 
 **Skill search paths:**
 Skills auto-load from common directories:
@@ -1916,8 +1917,6 @@ UniClaw/
     │   │   ├── manager.py  # restart orchestration (save session / shutdown server)
     │   │   ├── relauncher.py # restart execution and process launch
     │   │   └── resumer.py  # new-process session resume
-    │   ├── webui/          # WebUI-specific tools (on-demand) 🎨
-    │   │   └── a2ui.py     # get_a2ui_guide (A2UI component spec, WebUI main agent only)
     │   ├── session/        # session persistence + history search + auto-save 💬
     │   │   ├── session.py  # Session (dual-list storage + content-hash dedup)
     │   │   ├── session_manager.py # SessionManager (persists to .UniClaw/sessions/)

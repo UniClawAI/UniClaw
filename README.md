@@ -25,7 +25,7 @@
 - 🔍 **工具注册表**: BM25 智能工具搜索,核心工具常驻加载 + 扩展工具按需发现(search_tools 元工具),LRU + 能量机制(每工具 30 点能量,每轮-1,调用/搜索恢复满,归零淘汰)自动管理已加载工具,优化 prompt 缓存
 - 📡 **工具可用性跟踪**: 环境检测自动记录不可用工具及原因(如 Docker 未安装、未配置 embedding_model),search_tools 搜索时自动提示不可用原因,避免无用调用;直接调用未启用工具时返回"未启用 + 原因",而非误导性的"工具不存在"
 - 🌐 **WebUI 界面**: 基于 WebSocket 的 Web 用户界面,支持浏览器中与 AI 对话,可局域网共享,支持移动端响应式设计和触摸手势,支持 HTTPS 和 IPv6
-- 🎨 **A2UI 交互界面**: Agent 在 WebUI 中输出 `a2ui` 代码块声明 JSON 组件树(卡片/表单/按钮组/标签页/图表等),前端白名单渲染为可交互界面;按钮、表单等操作结果回传 Agent,实现双向交互闭环;组件输出规范按需加载(`get_a2ui_guide` 工具),不占常驻 prompt
+- 🎨 **A2UI 交互界面**: Agent 在 WebUI 中输出 `a2ui` 代码块声明 JSON 组件树(卡片/表单/按钮组/标签页/图表等),前端白名单渲染为可交互界面;按钮、表单等操作结果回传 Agent,实现双向交互闭环;组件输出规范按需加载(`a2ui` 内置skill),不占常驻 prompt
 - ⚡ **工具流式输出**: 工具执行过程中实时推送输出到前端,无需等待完成即可看到进度
 - 🔐 **可信 IP 免登录**: 配置 `trusted_ips` 后,指定 IP 地址的客户端可跳过 WebUI 登录认证,适合家庭/办公网络环境
 - 💬 **微信集成**: 支持通过 iLink Bot 协议接入微信,实现移动端交互
@@ -894,7 +894,7 @@ Agent 在 WebUI 模式下可输出**声明式交互界面**:在回答中插入�
 
 > 💡 **适用范围**: 仅 WebUI 模式且仅主 Agent — 控制台/微信模式没有渲染端,子代理也不调用,避免徒增 token 开销。纯文字回答不需要界面时 Agent 不会输出组件。
 
-> 💡 **按需加载规范**: A2UI 组件输出规范已从常驻 system prompt 移出,改为按需加载 — WebUI 模式下 system prompt 仅保留一行触发语,Agent 判断回答适合用交互界面呈现时,先调用 `get_a2ui_guide` 工具获取完整格式规范,再按规范输出 `a2ui` 代码块,节省 token。
+> 💡 **按需加载规范**: A2UI 组件输出规范已从常驻 system prompt 移出,改为内置 `a2ui` 技能 — WebUI 模式下 system prompt 仅保留一行触发语,Agent 判断回答适合用交互界面呈现时,先通过 `skill_read` 加载 `a2ui` 技能获取完整格式规范,再按规范输出 `a2ui` 代码块,节省 token。
 
 ### 格式
 
@@ -1372,6 +1372,7 @@ http_download(
 - `tool-plugin-forge` (`/tool-plugin-forge`, `/forge-tool-plugin`, `+tool-plugin`) — 工具插件锻造:按用户需求自动生成 UniClaw 外部工具插件,写入 `~/.UniClaw/plugins/tools/`,支持多文件拆分、生命周期钩子、耗时任务 async + wake_agent 唤醒,生成后即时验证可加载
 - `uniclaw-theme` (`/uniclaw-theme`, `/theme`) — 主题定制:自定义 WebUI 主题颜色、字体和样式
 - `hooks` (`/hooks`) — Hook 机制完整文档(事件列表、配置格式、作用域、matcher 规则、阻塞机制、编码注意事项),使用 hook_add/hook_read/hook_remove 前的必读文档
+- `a2ui` (`/a2ui`) — A2UI 交互界面组件输出规范(可用组件类型、JSON 结构示例、action 取值),WebUI 模式下输出 ```a2ui 代码块前先加载本文档
 
 **技能文件搜索路径**:
 技能系统支持从多个常见目录中自动加载技能文件：
@@ -1941,8 +1942,6 @@ UniClaw/
     │   │   ├── manager.py  # 重启编排(保存会话/关闭服务)
     │   │   ├── relauncher.py # 重启执行与进程拉起
     │   │   └── resumer.py  # 新进程侧会话恢复
-    │   ├── webui/          # WebUI 专用工具(按需加载) 🎨
-    │   │   └── a2ui.py     # get_a2ui_guide(A2UI 组件输出规范,仅 WebUI 主 agent 暴露)
     │   ├── session/        # 会话持久化 + 历史消息检索 + 自动保存 💬
     │   │   ├── session.py  # Session(双列表存储 + 内容哈希去重)
     │   │   ├── session_manager.py # SessionManager(持久化到 .UniClaw/sessions/)

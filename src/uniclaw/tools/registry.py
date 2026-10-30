@@ -314,7 +314,6 @@ def _build_extended_keywords() -> dict[str, list[str]]:
         ipython_list_kernels,
     )
     from .restart.tools import restart_agent
-    from .webui.a2ui import get_a2ui_guide
     from .lsp.tools import (
         lsp_status,
         lsp_start,
@@ -339,20 +338,6 @@ def _build_extended_keywords() -> dict[str, list[str]]:
             "热重载",
             "应用配置生效",
             "进程管理",
-        ],
-        get_a2ui_guide.name: [
-            "a2ui",
-            "交互界面",
-            "界面组件",
-            "组件",
-            "可视化",
-            "按钮",
-            "表单",
-            "按钮组",
-            "卡片",
-            "面板",
-            "webui",
-            "渲染",
         ],
         # ── LSP 语言智能 ──
         lsp_status.name: [
@@ -1813,7 +1798,6 @@ def _build_tool_categories() -> dict[str, str]:
         ipython_list_kernels,
     )
     from .restart.tools import restart_agent
-    from .webui.a2ui import get_a2ui_guide
     from .lsp.tools import (
         lsp_status,
         lsp_start,
@@ -1829,7 +1813,6 @@ def _build_tool_categories() -> dict[str, str]:
     return {
         # ── 系统管理 ──
         restart_agent.name: "系统管理",
-        get_a2ui_guide.name: "WebUI",
         # ── IPython ──
         ipython_start.name: "IPython",
         ipython_execute.name: "IPython",

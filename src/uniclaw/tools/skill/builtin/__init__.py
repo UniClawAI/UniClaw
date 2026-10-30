@@ -12,6 +12,7 @@ from . import (
     theme,
     plugin_forge,
     hooks,
+    a2ui,
 )
 
 
@@ -25,6 +26,7 @@ def register_all():
     theme.register()
     plugin_forge.register()
     hooks.register()
+    a2ui.register()
 
 
 # 模块加载时自动注册

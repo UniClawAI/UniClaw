@@ -99,10 +99,6 @@ from .restart import (
     get_tools as restart_get_tools,
     get_all_tools as restart_get_all_tools,
 )
-from .webui.a2ui import (
-    get_tools as webui_get_tools,
-    get_all_tools as webui_get_all_tools,
-)
 from .lsp.tools import (
     get_tools as lsp_get_tools,
     get_all_tools as lsp_get_all_tools,
@@ -215,9 +211,6 @@ async def get_tools(config) -> list:
                 *restart_get_tools(
                     config
                 ),  # restart_agent 仅 WebUI 模式的主 agent 可用
-                *webui_get_tools(
-                    config
-                ),  # get_a2ui_guide 仅 WebUI 模式的主 agent 可用
             ]
         )
         from uniclaw.tools.plugins import PluginManager
@@ -271,7 +264,6 @@ async def get_all_tools() -> list:
         *ipython_get_all_tools(),
         *lsp_get_all_tools(),
         *restart_get_all_tools(),
-        *webui_get_all_tools(),
         *mcp_tools,
         *plugin_tools,
     ]
