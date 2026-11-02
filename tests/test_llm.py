@@ -1105,5 +1105,157 @@ class TestSafeParseArgs:
         assert safe_parse_args("[1, 2, 3]") == {}
 
 
+class TestThoughtSignaturePreservation:
+    """Gemini thought_signature(extra_content)在各出口的保留测试。
+
+    Google 的 OpenAI 兼容端点在 functionCall 响应上注入
+    `extra_content.google.thought_signature`,多轮回放历史时必须原样带回,
+    否则上游 400: "Function call is missing a thought_signature in
+    functionCall parts"。
+    """
+
+    SIG = {"google": {"thought_signature": "SIG=="}}
+
+    def _make_delta_tool_call(self, with_extra: bool = True):
+        """构造带 extra_content 的 SDK 流式 tool_call delta。"""
+        from openai.types.chat.chat_completion_chunk import ChoiceDeltaToolCall
+
+        kwargs = {
+            "index": 0,
+            "id": "call_1",
+            "function": {"name": "Bash", "arguments": '{"command": "echo hi"}'},
+        }
+        if with_extra:
+            kwargs["extra_content"] = dict(self.SIG)
+        return ChoiceDeltaToolCall(**kwargs)
+
+    def _make_tool_call_chunk(self, with_extra: bool = True):
+        """构造流式 tool_call chunk(字段形状与真实流一致)。"""
+        tool_call_chunk = MagicMock()
+        tool_call_chunk.choices = [MagicMock()]
+        tool_call_chunk.choices[0].delta.content = ""
+        tool_call_chunk.choices[0].delta.tool_calls = [
+            self._make_delta_tool_call(with_extra)
+        ]
+        return tool_call_chunk
+
+    def test_stream_accumulates_extra_content(self):
+        """同步流式:tool_call delta 上的 extra_content 必须累积进最终 chunk。"""
+        with patch("uniclaw.provider.openai_provider.OpenAI") as mock_openai:
+            mock_client = MagicMock()
+            mock_openai.return_value = mock_client
+            mock_client.chat.completions.create.return_value = iter(
+                [self._make_tool_call_chunk()]
+            )
+
+            _s = Session(root_dir=Path.cwd())
+            _s.add_user_message(content="echo hi")
+            config = _make_config()
+
+            chunks = list(
+                stream("", _s, model_name="test/gpt-4", config=config)
+            )
+
+            final = chunks[-1]
+            assert len(final.tool_calls) == 1
+            assert final.tool_calls[0]["extra_content"] == self.SIG
+
+    async def test_astream_accumulates_extra_content(self):
+        """异步流式:与同步路径同样保留 extra_content。"""
+        from uniclaw.provider import astream
+
+        with patch("uniclaw.provider.openai_provider.AsyncOpenAI") as mock_openai:
+            mock_client = MagicMock()
+            mock_openai.return_value = mock_client
+
+            async def mock_create(**kwargs):
+                async def _agen():
+                    for chunk in [self._make_tool_call_chunk()]:
+                        yield chunk
+
+                return _agen()
+
+            mock_client.chat.completions.create = mock_create
+
+            _s = Session(root_dir=Path.cwd())
+            _s.add_user_message(content="echo hi")
+            config = _make_config()
+
+            chunks = [
+                c
+                async for c in astream(
+                    "", _s, model_name="test/gpt-4", config=config
+                )
+            ]
+
+            final = chunks[-1]
+            assert len(final.tool_calls) == 1
+            assert final.tool_calls[0]["extra_content"] == self.SIG
+
+    def test_chat_preserves_extra_content(self):
+        """非流式:响应 tool_call 上的 extra_content 必须进入 AIMessage。"""
+        from openai.types.chat.chat_completion_message_tool_call import (
+            ChatCompletionMessageToolCall,
+        )
+
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = ""
+        mock_response.choices[0].message.tool_calls = [
+            ChatCompletionMessageToolCall(
+                id="call_9",
+                type="function",
+                function={"name": "Bash", "arguments": "{}"},
+                extra_content=dict(self.SIG),
+            )
+        ]
+        mock_response.choices[0].message.reasoning_content = None
+        mock_response.choices[0].message.reasoning = None
+        mock_response.usage = MagicMock()
+        mock_response.usage.prompt_tokens = 1
+        mock_response.usage.completion_tokens = 1
+        mock_response.model = "gemini-pro"
+
+        with patch("uniclaw.provider.openai_provider.OpenAI") as mock_openai:
+            mock_client = MagicMock()
+            mock_openai.return_value = mock_client
+            mock_client.chat.completions.create.return_value = mock_response
+
+            _s = Session(root_dir=Path.cwd())
+            _s.add_user_message(content="echo hi")
+            config = _make_config()
+
+            result = chat("", _s, model_name="test/gemini-pro", config=config)
+
+        assert isinstance(result, AIMessage)
+        assert len(result.tool_calls) == 1
+        assert result.tool_calls[0]["extra_content"] == self.SIG
+
+    def test_session_replay_preserves_extra_content(self):
+        """会话回放:tool_calls 入库、落盘再加载、发往 API 全程保留签名。"""
+        tc = {
+            "id": "c1",
+            "type": "function",
+            "function": {"name": "Bash", "arguments": "{}"},
+            "extra_content": dict(self.SIG),
+        }
+        _s = Session(root_dir=Path.cwd())
+        _s.add_assistant_message(
+            content="",
+            model_name="gemini-pro",
+            usage={},
+            reasoning_content=" ",
+            tool_calls=[tc],
+        )
+
+        # 发往 API 的消息保留签名
+        msgs = _s.to_openai_messages()
+        assert msgs[-1]["tool_calls"][0]["extra_content"] == self.SIG
+
+        # 落盘再加载(会话恢复)后仍保留
+        restored = AIMessage.from_dict(_s._messages[-1].to_dict())
+        assert restored.tool_calls[0]["extra_content"] == self.SIG
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -208,6 +208,30 @@ def _build_async_openai_client(
     )
 
 
+# ── 响应解析辅助 ──────────────────────────────────────────────
+
+
+def _merge_extra_fields(target_tc: dict, delta_tc) -> None:
+    """把 delta 上 provider 注入的除 id/type/function/index 外的扩展字段合并进累积的 tool_call。
+
+    Gemini 的 OpenAI 兼容端点在 functionCall 上注入 `extra_content.google.thought_signature`
+    (思考模型的推理签名),不带上会因 "missing a thought_signature in functionCall parts" 被上游
+    400 拒绝。OpenAI SDK 的 model_config 是 extra="allow",这些字段可从 model_dump 导出,
+    但不会出现在常规属性上 —— 只能通过逐字段对比模型声明的字段来捕获。
+
+    Args:
+        target_tc: 累积中的 tool_call dict,原地合并。
+        delta_tc: SDK 的 ChoiceDeltaToolCall / ChatCompletionMessageToolCall 对象。
+    """
+    raw = {
+        k: v
+        for k, v in delta_tc.model_dump(exclude_none=True).items()
+        if k not in ("id", "type", "function", "index")
+    }
+    for key, value in raw.items():
+        target_tc.setdefault(key, value)
+
+
 # ── 核心调用函数 ───────────────────────────────────────────────
 
 
@@ -356,6 +380,9 @@ def _stream_inner(client: OpenAI, kwargs: dict):
                             tc["function"]["name"] = tc_delta.function.name
                         if tc_delta.function.arguments:
                             tc["function"]["arguments"] += tc_delta.function.arguments
+                    # Gemini 等响应在 tool_call 上注入 thought_signature(extra_content),
+                    # 必须原样保留,多轮回放时上游会校验
+                    _merge_extra_fields(tc, tc_delta)
                     if tc["function"]["name"] and (
                         is_new or (tc_delta.function and tc_delta.function.arguments)
                     ):
@@ -527,6 +554,9 @@ async def _astream_inner(client: AsyncOpenAI, kwargs: dict):
                             tc["function"]["name"] = tc_delta.function.name
                         if tc_delta.function.arguments:
                             tc["function"]["arguments"] += tc_delta.function.arguments
+                    # Gemini 等响应在 tool_call 上注入 thought_signature(extra_content),
+                    # 必须原样保留,多轮回放时上游会校验
+                    _merge_extra_fields(tc, tc_delta)
                     if tc["function"]["name"] and (
                         is_new or (tc_delta.function and tc_delta.function.arguments)
                     ):
@@ -766,16 +796,18 @@ def _response_to_ai_message(response) -> AIMessage:
     tool_calls = []
     if msg.tool_calls:
         for tc in msg.tool_calls:
-            tool_calls.append(
-                {
-                    "id": tc.id,
-                    "type": "function",
-                    "function": {
-                        "name": tc.function.name,
-                        "arguments": tc.function.arguments or "",
-                    },
-                }
-            )
+            tc_dict = {
+                "id": tc.id,
+                "type": "function",
+                "function": {
+                    "name": tc.function.name,
+                    "arguments": tc.function.arguments or "",
+                },
+            }
+            # Gemini 等响应在 tool_call 上注入 thought_signature(extra_content),
+            # 必须原样保留,多轮回放时上游会校验
+            _merge_extra_fields(tc_dict, tc)
+            tool_calls.append(tc_dict)
 
     # reasoning_content
     reasoning = (
