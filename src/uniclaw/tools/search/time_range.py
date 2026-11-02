@@ -16,40 +16,70 @@ class TimeRange(NamedTuple):
     end: datetime | None
 
 
-# 预设别名 -> 回溯时长 (strip + lower 后查表)
-_PRESETS: dict[str, timedelta] = {
-    "1d": timedelta(days=1),
-    "24h": timedelta(days=1),
-    "7d": timedelta(weeks=1),
-    "1w": timedelta(weeks=1),
-    "30d": timedelta(days=30),
-    "1m": timedelta(days=30),
-    "90d": timedelta(days=90),
-    "3m": timedelta(days=90),
-    "180d": timedelta(days=180),
-    "6m": timedelta(days=180),
-    "365d": timedelta(days=365),
-    "1y": timedelta(days=365),
+# 时长单位 -> 单份时长, 任意 "数字+单位" 组合均按此换算
+# (如 3d = 3 天); m/y 为近似换算, 与搜索过滤的粗粒度需求匹配
+_UNIT_FACTOR: dict[str, timedelta] = {
+    "h": timedelta(hours=1),
+    "d": timedelta(days=1),
+    "w": timedelta(weeks=1),
+    "m": timedelta(days=30),
+    "y": timedelta(days=365),
 }
+_DURATION_RE = re.compile(r"(\d+)([hdwmy])")
 
 # ISO 区间: 两侧均可省略, 但至少要有一个日期 (单独日期不算区间)
 _DAY = r"\d{4}-\d{2}-\d{2}"
 _RANGE_RE = re.compile(rf"^({_DAY})?\.\.({_DAY})?$")
 
 _USAGE = (
-    "支持的格式: 预设 (1d/7d/30d/90d/180d/1y/all)"
+    "支持的格式: 时长 (3d/12h/2w/6m/1y, 可组合如 1w2d;"
+    " 单位 h=小时 d=天 w=周 m=月(30天) y=年(365天))、all"
     " 或 ISO 区间 (2024-01-01..2024-06-30, 单边可省略)"
 )
+
+
+def _parse_duration(v: str) -> timedelta | None:
+    """解析 "3d"/"24h"/"1w2d" 这类时长串为回溯时长。
+
+    任意正整数 + 单位的组合均接受, 不依赖预设枚举; 含无法识别的
+    字符、数量为 0、数值超出 timedelta 上限时返回 None (由调用方
+    继续尝试 ISO 区间解析或按非法报错)。
+
+    Args:
+        v: 已 strip + lower 的时长串, 如 "3d"、"1w2d"。
+
+    Returns:
+        timedelta | None: 解析出的总时长; 非法输入返回 None。
+    """
+    total = timedelta()
+    pos = 0
+    for m in _DURATION_RE.finditer(v):
+        # 中间夹了无法识别的字符 (如 "-7d" 的负号、"3d-x" 的分隔符)
+        if m.start() != pos:
+            return None
+        n = int(m.group(1))
+        if n == 0:
+            return None
+        try:
+            total += _UNIT_FACTOR[m.group(2)] * n
+        except OverflowError:
+            # 超大数值是垃圾输入 (非 bug), 按非法处理
+            return None
+        pos = m.end()
+    if pos != len(v) or total == timedelta():
+        return None
+    return total
 
 
 def parse_time_range(value: str, *, now: datetime | None = None) -> TimeRange:
     """解析 time_range 参数, 产物均为 tz-aware UTC datetime。
 
     Args:
-        value: 预设 ("1d"/"7d"/"30d"/"90d"/"180d"/"1y"/"all", 大小写不敏感,
-            前后空白容忍) 或 ISO 区间 ("2024-01-01..2024-06-30",
-            单边可省略); 空值等价于 "all"
-        now: 预设回溯的基准时刻, 默认当前 UTC 时间 (测试注入用)
+        value: 时长 (如 "3d"/"12h"/"2w"/"1y", 单位 h/d/w/m/y,
+            可组合如 "1w2d"; m 按 30 天、y 按 365 天近似,
+            大小写不敏感, 前后空白容忍)、"all" 或 ISO 区间
+            ("2024-01-01..2024-06-30", 单边可省略); 空值等价于 "all"
+        now: 时长回溯的基准时刻, 默认当前 UTC 时间 (测试注入用)
 
     Returns:
         TimeRange: 解析产物, 不过滤时两侧均为 None;
@@ -62,7 +92,7 @@ def parse_time_range(value: str, *, now: datetime | None = None) -> TimeRange:
     if not v or v == "all":
         return TimeRange(None, None)
 
-    delta = _PRESETS.get(v)
+    delta = _parse_duration(v)
     if delta is not None:
         base = now or datetime.now(timezone.utc)
         return TimeRange(base - delta, None)

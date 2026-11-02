@@ -438,8 +438,9 @@ async def webSearch(
             查论文选 arxiv/openalex, 找视频选 bilibili,
             搜模型/数据集选 huggingface + search_type=models/datasets),
             全部平台太耗时, 仅确需全面调研时传 "all"
-        time_range: 时间范围过滤, 查询近期内容时使用。支持预设
-            ("1d"/"7d"/"30d"/"90d"/"180d"/"1y"/"all") 或 ISO 区间
+        time_range: 时间范围过滤, 查询近期内容时使用。支持任意时长
+            ("3d"/"12h"/"2w"/"1y", 单位 h=小时 d=天 w=周 m=月(30天)
+            y=年(365天), 可组合如 "1w2d")、"all" 或 ISO 区间
             ("2024-01-01..2024-06-30", 单边可省略, 如 "2024-01-01.."),
             映射到各平台原生过滤器(github pushed:, arxiv submittedDate,
             google_news after:, openalex publication_date 等);
@@ -469,9 +470,14 @@ async def webSearch(
     if not re.search(r"\w", query):
         return f"未找到与 {query!r} 相关的结果(查询词不含有效关键词)"
 
-    # 入口统一校验: 非法 time_range 快速失败, 避免每个平台重复报错
+    # 入口统一校验: 非法 time_range 快速失败, 避免每个平台重复报错。
+    # 非法值是 LLM 传参问题(非 bug), 带 TOOL_ERROR 前缀返回, 不往外抛
+    # ValueError —— 否则会冒泡到 Tool.__call__ 被当成 bug 写错误堆栈日志
     if time_range.strip():
-        parse_time_range(time_range)
+        try:
+            parse_time_range(time_range)
+        except ValueError as e:
+            return f"{TOOL_ERROR}: {e}"
 
     # 并发搜索各平台 (平台级缓存: 命中直接返回, 成功写缓存, 失败不缓存)
     has_range = bool(time_range.strip())

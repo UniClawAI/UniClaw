@@ -1885,14 +1885,16 @@ class TestTimeRangeMulti:
 
     @pytest.mark.asyncio
     async def test_invalid_time_range_fails_fast(self, mock_config):
-        """非法 time_range 在入口快速失败, 不发起任何请求"""
-        with pytest.raises(ValueError), _patch_all_platforms(_empty_mock()):
-            await _search(
+        """非法 time_range 在入口快速失败, 返回 TOOL_ERROR 且不发起任何请求"""
+        with _patch_all_platforms(_empty_mock()):
+            result = await _search(
                 query="x",
                 platforms="github",
                 tool_runtime=ToolRuntime(config=mock_config),
                 time_range="not-a-range",
             )
+        assert result.startswith(TOOL_ERROR)
+        assert "time_range" in result
 
     @pytest.mark.asyncio
     async def test_cache_key_distinguishes_time_range(self, mock_config):

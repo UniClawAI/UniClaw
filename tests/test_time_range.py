@@ -45,11 +45,22 @@ class TestParsePresets:
             ("90d", NOW - timedelta(days=90)),
             ("180d", NOW - timedelta(days=180)),
             ("365d", NOW - timedelta(days=365)),
+            # 通用解析: 任意数值均可, 不限于预设枚举
+            ("3d", NOW - timedelta(days=3)),
+            ("10d", NOW - timedelta(days=10)),
+            ("14d", NOW - timedelta(days=14)),
+            ("60d", NOW - timedelta(days=60)),
+            ("12h", NOW - timedelta(hours=12)),
+            ("2w", NOW - timedelta(weeks=2)),
+            ("2y", NOW - timedelta(days=730)),
+            ("1m", NOW - timedelta(days=30)),
+            ("1y", NOW - timedelta(days=365)),
+            ("1w2d", NOW - timedelta(days=9)),
         ],
     )
-    def test_preset_backtrack(self, value, expected_start):
+    def test_duration_backtrack(self, value, expected_start):
         tr = parse_time_range(value, now=NOW)
-        # 预设只有下界, 上界开放
+        # 时长只有下界, 上界开放
         assert tr.start == expected_start
         assert tr.end is None
 
@@ -96,8 +107,11 @@ class TestParseInvalid:
             "2024-01-01",  # 单独日期不是区间
             "2024-13-01..",  # 越界月份
             "2024-01-01..2024-02-30",  # 越界日期
-            "1w2d",
-            "-7d",
+            "-7d",  # 负数
+            "3d7",  # 数字缺少单位
+            "1x",  # 未知单位
+            "0d",  # 零时长
+            "99999999999999999999d",  # 超出 timedelta 上限
         ],
     )
     def test_invalid_valueerror(self, value):

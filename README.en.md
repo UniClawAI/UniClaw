@@ -1210,7 +1210,7 @@ lsp_symbols(file="src/uniclaw/agent/multi_agent.py")
   - Platforms search independently and concurrently; per-platform errors are appended at the end without affecting other results
   - Exa needs `EXA_API_KEY`; Bing works directly from China (no proxy); DuckDuckGo needs a proxy
   - Results over a threshold are auto-reranked by LLM
-  - `time_range` filtering (presets like "7d"/"1y" or ISO ranges)
+  - `time_range` filtering (any duration like "3d"/"2w"/"1y"/"1w2d" or ISO ranges)
   - `intent` description for the reranker to judge relevance
   - Result caching (128 entries, 10-min expiry)
   - GitHub: repositories/code/issues/users types and stars/forks/updated sorting

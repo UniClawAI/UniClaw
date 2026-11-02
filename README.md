@@ -1213,7 +1213,7 @@ lsp_symbols(file="src/uniclaw/agent/multi_agent.py")
   - 各平台独立并发搜索,失败平台的错误信息附在末尾,不影响其他平台结果
   - Exa 需配置 `EXA_API_KEY`,Bing 国内直连(无需代理),DuckDuckGo 需代理
   - 结果超过阈值自动用 LLM 重排,失败平台的错误信息会附在末尾
-  - 支持 `time_range` 时间范围过滤(预设如 "7d"/"1y" 或 ISO 区间)
+  - 支持 `time_range` 时间范围过滤(任意时长如 "3d"/"2w"/"1y"/"1w2d" 或 ISO 区间)
   - 支持 `intent` 搜索意图描述,供 LLM 重排时判断相关度参考
   - 自动缓存搜索结果(128条,10分钟过期)
   - GitHub 支持 repositories/code/issues/users 类型和 stars/forks/updated 排序
