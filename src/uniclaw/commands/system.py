@@ -123,6 +123,13 @@ async def cmd_help(_args: str, config: AppConfig) -> bool:
   /overseer stop         - 退出监工模式
   /overseer              - 查看监工模式状态
 
+【子智能体】
+  /subagent              - 查看用法并列出当前子智能体
+  /subagent list         - 列出当前子智能体
+  /subagent send <名称或ID> <消息> - 向子智能体发送消息
+  /subagent close <名称或ID> - 关闭子智能体
+  /subagent check <名称或ID> - 查看子智能体结果
+
 【模型与系统】
   /model [名称]          - 查看或切换当前使用的模型
   /config [get|set|reset] - 运行时配置管理

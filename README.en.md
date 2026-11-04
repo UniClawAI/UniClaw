@@ -328,6 +328,7 @@ Slash commands autocomplete subcommands — type the command and press space to 
 | `/goal` | `clear`, `status` |
 | `/kg` | `stats`, `search`, `list`, `export`, `clear` |
 | `/a2a` | `start`, `stop`, `status`, `list`, `add`, `remove`, `test` |
+| `/subagent` | `list`, `send`, `close`, `check` |
 
 #### Examples
 
@@ -787,6 +788,18 @@ monitor_start("npm run dev", name="Dev server")
 
 > 💡 The A2A service reuses the WebUI HTTP port, so start with `--mode webui` first. A Bearer Token is generated on startup; other UniClaw instances can connect via the `a2a_add_agent` tool.
 
+#### Subagent commands 👥
+
+| Command | Description | Example |
+|------|------|------|
+| `/subagent` | Show usage and list current subagents | `/subagent` |
+| `/subagent list` | List subagents created in this session | `/subagent list` |
+| `/subagent send <name-or-id> <message>` | Send a message to a subagent | `/subagent send worker more details` |
+| `/subagent close <name-or-id>` | Close a subagent | `/subagent close worker` |
+| `/subagent check <name-or-id>` | View a subagent's result | `/subagent check worker` |
+
+> 💡 `/subagent` lets you **bypass the LLM** to manage subagents directly (equivalent to calling `subagent_list_tasks`/`subagent_send_to_child`/`subagent_close`/`subagent_check_result` tools yourself). Subagents are created by the AI via the `subagent_create` tool.
+
 #### Other commands
 
 | Command | Description | Example |
@@ -807,6 +820,7 @@ monitor_start("npm run dev", name="Dev server")
 | `/btw` | Add side information without affecting the conversation flow | `/btw this code is good` |
 | `/name` | Name the current session | `/name refactor discussion` |
 | `/overseer` | Overseer mode, auto-reviews task execution quality | `/overseer` |
+| `/subagent` | Manage subagents directly (list/send/close/check) | `/subagent list` |
 | `/voice` | Toggle voice mode (requires TTS config) | `/voice on`、`/voice off` |
 | `/cu` | Toggle Computer Use mode | `/cu on`、`/cu off` |
 | `/explain` | Tool explanation mode; the AI explains before calling tools | `/explain on`、`/explain off`、`/explain Bash Read` |
@@ -1797,7 +1811,7 @@ UniClaw/
     │   ├── types.py        # Protocol/Effort enums, StreamChunk (finish_reason)/Usage
     │   └── common.py       # get_provider(), compare_urls(), HTTP client cache
     │
-    ├── commands/           # slash commands 📝 (31 commands + 7 aliases, 38 registered)
+    ├── commands/           # slash commands 📝 (32 commands + 7 aliases, 39 registered)
     │   ├── __init__.py     # command registry (COMMANDS dict)
     │   ├── session.py      # session management (clear/compact/export)
     │   ├── resume.py       # session resume (list/del/search/fork/archive/archived) 💬
@@ -1823,7 +1837,8 @@ UniClaw/
     │   ├── cu.py           # Computer Use mode toggle 🖥️
     │   ├── explain.py      # tool explanation mode toggle 🔧
     │   ├── knowledge.py    # knowledge graph management 🗺️
-    │   └── a2a.py          # A2A remote agent management 🌉
+    │   ├── a2a.py          # A2A remote agent management 🌉
+    │   └── subagent.py     # subagent management 👥
     │
     ├── console/            # console UI (prompt_toolkit REPL)
     │   ├── launcher.py     # console launcher

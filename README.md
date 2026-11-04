@@ -328,6 +328,7 @@ UniClaw 的斜杠命令支持子命令自动补全,输入命令后按空格会�
 | `/goal` | `clear`, `status` |
 | `/kg` | `stats`, `search`, `list`, `export`, `clear` |
 | `/a2a` | `start`, `stop`, `status`, `list`, `add`, `remove`, `test` |
+| `/subagent` | `list`, `send`, `close`, `check` |
 
 #### 使用示例
 
@@ -787,6 +788,18 @@ monitor_start("npm run dev", name="开发服务器")
 
 > 💡 A2A 服务复用 WebUI 的 HTTP 端口,需要先以 `--mode webui` 启动。启动后会自动生成 Bearer Token,其他 UniClaw 实例可通过 `a2a_add_agent` 工具连接。
 
+#### 子智能体命令 👥
+
+| 命令 | 说明 | 示例 |
+|------|------|------|
+| `/subagent` | 查看用法并列出当前子智能体 | `/subagent` |
+| `/subagent list` | 列出当前创建的子智能体 | `/subagent list` |
+| `/subagent send <名称或ID> <消息>` | 向指定子智能体发送消息 | `/subagent send worker 补充要求` |
+| `/subagent close <名称或ID>` | 关闭指定子智能体 | `/subagent close worker` |
+| `/subagent check <名称或ID>` | 查看指定子智能体结果 | `/subagent check worker` |
+
+> 💡 `/subagent` 让用户**绕过 LLM** 直接管理本会话的子智能体(等价于手动调用 `subagent_list_tasks`/`subagent_send_to_child`/`subagent_close`/`subagent_check_result` 等工具)。子智能体的创建由 AI 通过 `subagent_create` 工具完成。
+
 #### 其他命令
 
 | 命令 | 说明 | 示例 |
@@ -807,6 +820,7 @@ monitor_start("npm run dev", name="开发服务器")
 | `/btw` | 附带信息,不影响当前对话流程 | `/btw 这段代码很好` |
 | `/name` | 为当前会话命名 | `/name 重构讨论` |
 | `/overseer` | 监工模式,自动审核任务执行质量 | `/overseer` |
+| `/subagent` | 直接管理子智能体(list/send/close/check) | `/subagent list` |
 | `/voice` | 切换语音模式(需配置 TTS) | `/voice on`、`/voice off` |
 | `/cu` | 切换 Computer Use 模式 | `/cu on`、`/cu off` |
 | `/explain` | 工具解释模式,AI 调用工具前解释原因 | `/explain on`、`/explain off`、`/explain Bash Read` |
@@ -1822,7 +1836,7 @@ UniClaw/
     │   ├── types.py        # Protocol/Effort 枚举,StreamChunk(含 finish_reason)/Usage 用量统计
     │   └── common.py       # get_provider(),compare_urls(),HTTP 客户端缓存
     │
-    ├── commands/           # 斜杠命令系统 📝 (31 个命令 + 7 个别名,共38个注册项)
+    ├── commands/           # 斜杠命令系统 📝 (32 个命令 + 7 个别名,共39个注册项)
     │   ├── __init__.py     # 命令注册中心(COMMANDS dict)
     │   ├── session.py      # 会话管理(clear/compact/export)
     │   ├── resume.py       # 会话恢复(list/del/search/fork/archive/archived) 💬
@@ -1848,7 +1862,8 @@ UniClaw/
     │   ├── cu.py           # Computer Use 模式切换 🖥️
     │   ├── explain.py      # 工具解释模式切换 🔧
     │   ├── knowledge.py    # 知识图谱管理 🗺️
-    │   └── a2a.py          # A2A 远程代理管理 🌉
+    │   ├── a2a.py          # A2A 远程代理管理 🌉
+    │   └── subagent.py     # 子智能体管理 👥
     │
     ├── console/            # 控制台交互界面(prompt_toolkit REPL)
     │   ├── launcher.py     # 控制台启动器
