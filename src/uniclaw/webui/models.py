@@ -43,6 +43,14 @@ class SessionMove(BaseModel):
     root_dir: str
 
 
+class SessionFork(BaseModel):
+    """分叉会话:从指定消息处截断创建新会话。"""
+
+    message_idx: int = Field(
+        ge=0, description="分叉点消息索引(0-based),该消息及之前保留到新会话"
+    )
+
+
 class DirCreate(BaseModel):
     """创建目录(新建项目对话框)。path 为父目录 + name 文件夹名;或 path 直接为完整目标路径(name 留空自动递归创建)。"""
 

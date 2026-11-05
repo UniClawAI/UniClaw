@@ -625,7 +625,7 @@ UniClaw 提供了丰富的斜杠命令(`/command`),用于管理系统功能和�
 | `/resume list` | 列出所有历史会话(不含归档) | `/resume list` |
 | `/resume del <id>` | 删除指定会话 | `/resume del abc123` |
 | `/resume search <关键词>` | 搜索历史会话内容 | `/resume search python` |
-| `/resume fork [id] [idx]` | 分叉会话(从指定消息处创建新会话) | `/resume fork abc123 5` |
+| `/resume fork [id] [idx]` | 分叉会话(从指定消息处创建新会话;WebUI 侧栏会话菜单也可分叉) | `/resume fork abc123 5` |
 | `/resume archive <id>` | 将会话归档到归档区(侧栏右键菜单也可一键归档) | `/resume archive abc123` |
 | `/resume archived` | 列出所有归档会话 | `/resume archived` |
 | `/resume archived <id>` | 恢复指定归档会话 | `/resume archived abc123` |
@@ -877,7 +877,7 @@ uniclaw --mode webui
 - ✅ **工具解释模式** — 开启后工具调用前显示 AI 的调用原因说明
 - ✅ **Git 侧边栏** — 文件状态查看、暂存/取消暂存、提交操作,支持 AI 自动生成 commit message
 - ✅ **检查点管理** — 侧边栏 Git 面板中查看检查点列表、diff 对比(支持未跟踪文件)
-- ✅ **会话分叉** — 从历史消息处分叉创建新会话,保留上下文继续对话
+- ✅ **会话分叉** — 从历史消息处分叉创建新会话,保留上下文继续对话;WebUI 侧栏会话菜单一键分叉(选择分叉点),多标签页同步刷新
 - ✅ **历史消息检索** — 搜索和查看完整历史消息,支持在 TUI/WebUI 中切换活跃/归档视图
 - ✅ **会话归档** — 侧栏右键菜单一键归档会话到独立的"归档"分区(默认折叠),多标签页同步刷新;归档会话可随时恢复
 - ✅ **消息导航条** — 右侧消息导航条快速跳转到指定消息

@@ -625,7 +625,7 @@ UniClaw ships a rich set of slash commands (`/command`) for managing system feat
 | `/resume list` | List all history sessions (not archived) | `/resume list` |
 | `/resume del <id>` | Delete a session | `/resume del abc123` |
 | `/resume search <keyword>` | Search session content | `/resume search python` |
-| `/resume fork [id] [idx]` | Fork a session (start a new session from a message) | `/resume fork abc123 5` |
+| `/resume fork [id] [idx]` | Fork a session (start a new session from a message; the WebUI sidebar session menu also supports forking) | `/resume fork abc123 5` |
 | `/resume archive <id>` | Archive a session to the archive section (right-click menu in the sidebar also works) | `/resume archive abc123` |
 | `/resume archived` | List all archived sessions | `/resume archived` |
 | `/resume archived <id>` | Restore an archived session | `/resume archived abc123` |
@@ -877,7 +877,7 @@ uniclaw --mode webui
 - ✅ **Tool explanation mode** — shows the AI's reason before each tool call
 - ✅ **Git sidebar** — file status, stage/unstage, and commits, with AI-generated commit messages
 - ✅ **Checkpoint management** — view checkpoints and diffs (untracked files included) in the sidebar Git panel
-- ✅ **Session forking** — fork a new session from a history message, keeping the context
+- ✅ **Session forking** — fork a new session from a history message, keeping the context; one-click fork from the WebUI sidebar session menu (pick a fork point), synced across tabs
 - ✅ **History search** — search and view full history; switch active/archived views in TUI/WebUI
 - ✅ **Session archive** — one-click archive from the sidebar context menu to a separate "Archive" section (collapsed by default), synced across tabs; archived sessions can be restored anytime
 - ✅ **Message nav bar** — right-side quick jump to any message

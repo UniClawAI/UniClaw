@@ -666,6 +666,80 @@ textarea.input {
 }
 
 /* ============================================================
+   Session Fork Dialog (会话分叉)
+   ============================================================ */
+.fork-msg-list {
+    max-height: 50vh;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    background: var(--bg-1);
+}
+
+.fork-msg-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    font-size: 13px;
+    color: var(--text-1);
+    cursor: pointer;
+    border-bottom: 1px solid var(--border);
+    transition: background var(--duration-fast) var(--ease);
+}
+
+.fork-msg-item:last-child {
+    border-bottom: none;
+}
+
+.fork-msg-item:hover {
+    background: var(--accent-subtle);
+}
+
+.fork-msg-item.selected {
+    background: var(--accent-dim);
+}
+
+.fork-msg-idx {
+    flex-shrink: 0;
+    width: 22px;
+    text-align: center;
+    font-size: 12px;
+    color: var(--text-3);
+    font-variant-numeric: tabular-nums;
+}
+
+.fork-msg-role {
+    flex-shrink: 0;
+    padding: 1px 6px;
+    font-size: 11px;
+    line-height: 1.5;
+    border-radius: var(--r-xs);
+    background: var(--bg-3);
+    color: var(--text-2);
+}
+
+.fork-msg-role.role-user {
+    color: var(--text-accent);
+}
+
+.fork-msg-role.role-assistant {
+    color: var(--neon-green);
+}
+
+.fork-msg-role.role-tool {
+    color: var(--neon-orange);
+}
+
+.fork-msg-text {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-2);
+}
+
+/* ============================================================
    Completion Popup
    ============================================================ */
 .completion-popup {

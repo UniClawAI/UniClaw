@@ -50,11 +50,11 @@ LOOP_DETECTION_THRESHOLD = 5
 
 
 def _ends_with_colon(content: str) -> bool:
-    """正文结尾是否是冒号(中文或英文)。
-    """
+    """正文结尾是否是冒号(中文或英文)。"""
     if not content:
         return False
     return content.rstrip().endswith(":") or content.rstrip().endswith("：")
+
 
 # 触发子目录 CLAUDE.md 按需加载的工具 → 文件路径参数名
 _CLAUDE_MD_PATH_ARGS = {
@@ -121,7 +121,7 @@ def _claude_md_trusted_roots(config: AppConfig) -> list[Path]:
     # 与代码库一致:root_dir 走 config.root_dir 便捷属性, 底层再取 current_agent.session.root_dir
     if config.current_agent and config.current_agent.session.root_dir:
         roots.append(Path(config.current_agent.session.root_dir).resolve())
-    for d in (config.workspace or []):
+    for d in config.workspace or []:
         if not d:
             continue
         try:
@@ -217,6 +217,7 @@ def _maybe_load_subdir_claude_md(
         injected.append(msg)
     return injected
 
+
 # 输出被截断的停止原因(OpenAI "length" / Anthropic "max_tokens")
 _TRUNCATED_FINISH_REASONS = {"length", "max_tokens"}
 
@@ -240,6 +241,8 @@ def _is_loop_shutdown_noise(e: BaseException) -> bool:
         or "winerror 995" in text
         or "由于线程退出或应用程序请求" in str(e)
     )
+
+
 from uniclaw.tools.multi_agent.sub_agent import AgentDefinition
 from uniclaw.tools.multi_agent.tools import (
     subagent_check_result,
@@ -1725,8 +1728,7 @@ class MultiAgent:
                 tools = [
                     t
                     for t in tools
-                    if t.name in allowed_names
-                    or t.name == subagent_send_to_parent.name
+                    if t.name in allowed_names or t.name == subagent_send_to_parent.name
                 ]
                 # 专用代理显式声明的扩展工具直接加载,避免通过 search_tools 绕过白名单。
                 loaded_names = {t.name for t in tools}

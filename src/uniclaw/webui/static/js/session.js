@@ -911,6 +911,7 @@ const SessionPanel = {
             // 非微信会话显示完整菜单
             menuHtml += `<div class="context-menu-sep"></div>`;
             menuHtml += `<div class="context-menu-item" onclick="SessionPanel._generateTitleQuick('${sessionId}')"><span class="ctx-icon">${icon('sparkles')}</span>生成标题</div>`;
+            menuHtml += `<div class="context-menu-item" onclick="SessionPanel._forkSession('${sessionId}')"><span class="ctx-icon">${icon('fork')}</span>分叉</div>`;
             menuHtml += `<div class="context-menu-sep"></div>`;
             if (this.archivedSessions.some(s => s.session_id === sessionId)) {
                 menuHtml += `<div class="context-menu-item" onclick="SessionPanel._unarchiveSession('${sessionId}')"><span class="ctx-icon">${icon('archiveRestore')}</span>恢复</div>`;
@@ -999,6 +1000,123 @@ const SessionPanel = {
                 this._refreshSessions();
             } else Utils.showToast('生成失败');
         } catch (_) { Utils.showToast('生成失败'); }
+    },
+
+    // ============================================================
+    //  会话分叉(等价于 /resume fork)
+    // ============================================================
+
+    /** 打开分叉对话框:拉取消息列表让用户选择分叉点 */
+    async _forkSession(sid) {
+        this._hideMenu();
+        let data;
+        try {
+            const r = await fetch(`/api/sessions/${sid}`);
+            if (!r.ok) {
+                const d = await r.json().catch(() => ({}));
+                throw new Error(d.detail || `HTTP ${r.status}`);
+            }
+            data = await r.json();
+        } catch (e) {
+            Utils.showError(`获取会话消息失败: ${e.message}`);
+            return;
+        }
+        // fork_session 截取的是磁盘文件里的 messages(即 _messages 活跃列表),
+        // 与 GET /api/sessions 返回的 messages 同源,索引对齐
+        const msgs = data.messages || [];
+        if (!msgs.length) {
+            Utils.showError('会话没有消息,无法分叉');
+            return;
+        }
+        this._showForkDialog(sid, msgs);
+    },
+
+    /** 分叉点选择对话框:列表展示每条消息的角色与内容预览,点选后确认 */
+    _showForkDialog(sid, messages) {
+        const old = document.getElementById('session-modal'); if (old) old.remove();
+        const modal = document.createElement('div');
+        modal.id = 'session-modal';
+        modal.className = 'modal-overlay';
+
+        const roleLabel = { user: '用户', assistant: 'AI', tool: '工具', system: '系统' };
+        let listHtml = '';
+        messages.forEach((m, i) => {
+            const role = roleLabel[m.role] || m.role;
+            const preview = this._forkPreview(m);
+            listHtml += `<div class="fork-msg-item" data-idx="${i}" onclick="SessionPanel._pickForkPoint(this)">`
+                + `<span class="fork-msg-idx">${i + 1}</span>`
+                + `<span class="fork-msg-role role-${m.role}">${role}</span>`
+                + `<span class="fork-msg-text">${Utils.escapeHtml(preview)}</span>`
+                + `</div>`;
+        });
+
+        modal.innerHTML = `<div class="modal-content" style="max-width:640px;">
+            <div class="modal-title">分叉会话</div>
+            <div class="modal-body">
+                <div style="font-size:13px;color:var(--text-2);margin-bottom:8px">选择分叉点:该消息及之前的历史保留到新会话,之后的丢弃,原会话不受影响。</div>
+                <div class="fork-msg-list">${listHtml}</div>
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" id="sm-cancel">取消</button>
+                <button class="btn btn-primary" id="sm-confirm" disabled>分叉</button>
+            </div></div>`;
+        document.body.appendChild(modal);
+
+        this._forkPick = { sid, idx: -1 };
+        document.getElementById('sm-cancel').onclick = () => { modal.remove(); this._forkPick = null; };
+        document.getElementById('sm-confirm').onclick = () => this._doFork(modal);
+    },
+
+    /** 消息内容预览:字符串或多模态文本块拼接,压缩空白后截断 */
+    _forkPreview(m) {
+        let text = '';
+        if (typeof m.content === 'string') text = m.content;
+        else if (Array.isArray(m.content)) text = m.content.filter(b => b.type === 'text').map(b => b.text).join(' ');
+        text = text.replace(/\s+/g, ' ').trim();
+        if (!text) text = m.role === 'tool' ? '(工具结果)' : '(无文本内容)';
+        return text.length > 80 ? text.slice(0, 80) + '…' : text;
+    },
+
+    /** 选中分叉点行,启用确认按钮 */
+    _pickForkPoint(el) {
+        document.querySelectorAll('#session-modal .fork-msg-item.selected').forEach(x => x.classList.remove('selected'));
+        el.classList.add('selected');
+        if (this._forkPick) {
+            this._forkPick.idx = parseInt(el.dataset.idx, 10);
+            const btn = document.getElementById('sm-confirm');
+            if (btn) btn.disabled = false;
+        }
+    },
+
+    /** 调用 fork API,成功后刷新列表并切换到新会话 */
+    async _doFork(modal) {
+        if (!this._forkPick) return;
+        const { sid, idx } = this._forkPick;
+        if (idx < 0) return;
+        const btn = document.getElementById('sm-confirm');
+        if (btn) { btn.disabled = true; btn.textContent = '分叉中...'; }
+        try {
+            const r = await fetch(`/api/sessions/${sid}/fork`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ message_idx: idx }),
+            });
+            if (!r.ok) {
+                const d = await r.json().catch(() => ({}));
+                throw new Error(d.detail || `HTTP ${r.status}`);
+            }
+            const d = await r.json();
+            modal.remove();
+            this._forkPick = null;
+            Utils.showSuccess('已分叉,已切换到新会话');
+            await this._refreshSessions();
+            // 用列表数据反查分组目录(free_chat/root_dir 为空的会话归 __free__ 组)
+            const found = this._findSession(d.session_id);
+            await this.selectSession(d.session_id, found ? found.rootDir : (d.root_dir || '__free__'));
+        } catch (e) {
+            Utils.showError(`分叉失败: ${e.message}`);
+            if (btn) { btn.disabled = false; btn.textContent = '分叉'; }
+        }
     },
 
     async _archiveSession(sid) {

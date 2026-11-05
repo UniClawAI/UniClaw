@@ -14,6 +14,7 @@ from uniclaw.webui.models import (
     PermissionRuleDelete,
     ProviderConfig,
     SessionCreate,
+    SessionFork,
     SessionRename,
     SettingsUpdate,
 )
@@ -66,6 +67,25 @@ class TestSessionRename:
         """标题超长报错。"""
         with pytest.raises(ValidationError):
             SessionRename(title="a" * 201)
+
+
+class TestSessionFork:
+    """SessionFork 测试。"""
+
+    def test_valid(self):
+        """合法分叉点。"""
+        f = SessionFork(message_idx=3)
+        assert f.message_idx == 3
+
+    def test_first_message(self):
+        """索引 0 合法(分叉到首条消息)。"""
+        f = SessionFork(message_idx=0)
+        assert f.message_idx == 0
+
+    def test_negative_rejected(self):
+        """负索引报错。"""
+        with pytest.raises(ValidationError):
+            SessionFork(message_idx=-1)
 
 
 class TestConfigUpdate:

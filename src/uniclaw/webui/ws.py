@@ -1553,6 +1553,22 @@ async def notify_session_archived(session_id: str, archived: bool):
     )
 
 
+async def notify_session_forked(session_id: str, root_dir: str = ""):
+    """广播分叉产生的新会话:所有标签页仅刷新列表,不切换当前会话。
+
+    切换由发起分叉的页面自行调用 selectSession 完成 — REST fork 没有发起
+    WS 连接,复用 notify_session_switched 会全量广播切换事件,劫持所有标签页。
+    """
+    await _broadcast(
+        {
+            "event": "session_created",
+            "session_id": session_id,
+            "root_dir": root_dir,
+            "notify_only": True,
+        }
+    )
+
+
 async def web_input(prompt: str, title: str = "输入", config=None) -> str:
     """WebUI 模式的输入便捷函数,注册到会话级注册表并等待回答。"""
     session_id = config.current_agent.session.id

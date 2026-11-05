@@ -22,6 +22,7 @@ from uniclaw.webui.models import (
     MessageDelete,
     PermissionRuleDelete,
     PromptOptimize,
+    SessionFork,
     SessionMove,
     SessionRename,
     SettingsUpdate,
@@ -29,7 +30,7 @@ from uniclaw.webui.models import (
     UserPromptOptimize,
     WechatBotCreate,
 )
-from uniclaw.webui.ws import get_or_load_session, session_cache
+from uniclaw.webui.ws import get_or_load_session, notify_session_forked, session_cache
 from uniclaw.tools.session.session_manager import SessionManager
 from uniclaw.utils.logger import get_logger
 
@@ -297,6 +298,42 @@ async def move_session(session_id: str, body: SessionMove):
     if session_id in session_cache:
         session_cache[session_id].current_agent.session.root_dir = Path(body.root_dir)
     return {"ok": True}
+
+
+@router.post("/sessions/{session_id}/fork")
+async def fork_session(session_id: str, body: SessionFork):
+    """分叉会话:从指定消息处截断创建新会话,原会话不受影响。
+
+    流程:保证磁盘上的会话文件是最新的(内存缓存中可能有未落盘的新消息) →
+    调用 SessionManager.fork_session 执行分叉 → 广播 session_created
+    (notify_only)让所有标签页刷新列表 → 返回新会话信息。
+
+    切换动作由发起请求的前端自行调用 selectSession 完成 — REST 调用没有
+    发起 WS 连接,若走 notify_session_switched 的全量广播会劫持所有标签页。
+    """
+    try:
+        config = await get_or_load_session(session_id)
+        # 内存缓存中可能有未落盘消息(新建未发消息 / 运行中),先落盘再分叉,
+        # 否则 fork_session 读磁盘读到的是旧数据,分叉结果缺新消息。
+        await SessionManager.save_session(config)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"保存会话失败: {e}")
+    try:
+        forked = await SessionManager.fork_session(session_id, body.message_idx, config)
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # 广播新会话已创建(仅刷新列表,不切换) — 发起页面在 fetch 回调里自行
+    # selectSession,其余页面只把新分叉的会话显示出来。
+    await notify_session_forked(forked.id, str(forked.root_dir) if forked.root_dir else "")
+    return {
+        "ok": True,
+        "session_id": forked.id,
+        "title": forked.title or forked.id,
+        "root_dir": str(forked.root_dir) if forked.root_dir else "",
+    }
 
 
 @router.post("/sessions/{session_id}/title/generate")
