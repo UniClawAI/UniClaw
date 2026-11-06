@@ -231,8 +231,6 @@ This lands you in the REPL (Read-Eval-Print Loop) interface:
 [UniClaw] 5% » hello, introduce yourself
 💭 [Thinking]
 I am an AI assistant...
-
-📝 [Reply]
 Hi! I am the UniClaw assistant...
 ```
 
@@ -271,7 +269,7 @@ See the [WeChat Bot Integration](#-wechat-bot-integration) section for details.
 - **/ commands**: Run built-in slash commands (e.g. `/clear`, `/model gpt-4o`)
 - **@ file completion**: Type `@` to auto-complete filenames, with multi-level subdirectory navigation
 - **Empty line**: Skip the current input
-- **Token indicator**: The right side shows current context usage (color-coded: green < 40%, yellow 40-70%, red > 70%)
+- **Token indicator**: The left of the input line shows current context usage (percentage)
 
 ### File completion
 
@@ -833,7 +831,7 @@ monitor_start("npm run dev", name="Dev server")
 Prefix a line with `!` to run a shell command directly from the REPL:
 
 ```
-D:\code\learn\UniClaw  5.23% » !python --version
+[UniClaw] 5% » !python --version
   $ python --version
 Python 3.14.0
 ```

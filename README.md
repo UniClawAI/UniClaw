@@ -229,10 +229,8 @@ uv run uniclaw
 
 ```
 [UniClaw] 5% » 你好,请介绍一下自己
-💭 [思考中]
+💭 [Thinking]
 我是一个AI助手...
-
-📝 [回复]
 你好！我是 UniClaw 助手...
 ```
 
@@ -271,7 +269,7 @@ uv run uniclaw --mode webui
 - **/ 命令**: 执行内置斜杠命令(例如 `/clear`、`/model gpt-4o`)
 - **@ 文件补全**: 输入 `@` 后自动补全文件名,支持多级子目录导航
 - **空行**: 跳过当前输入
-- **Token 提示**: 右侧显示当前上下文使用率(颜色指示：绿色<40%,黄色40-70%,红色>70%)
+- **Token 提示**: 输入行左侧显示当前上下文使用率(百分比)
 
 ### 文件补全功能
 
@@ -833,7 +831,7 @@ monitor_start("npm run dev", name="开发服务器")
 在 REPL 中输入 `!` 开头的命令可直接执行 Shell 命令：
 
 ```
-D:\code\learn\UniClaw  5.23% » !python --version
+[UniClaw] 5% » !python --version
   $ python --version
 Python 3.14.0
 ```
