@@ -772,7 +772,8 @@ const Settings = {
                 </div>
                 <div class="form-group" style="grid-column:1/-1">
                     <label>extra_body (JSON)</label>
-                    <textarea class="input settings-p-extra" rows="3" placeholder='{"key": "value"}' style="resize:none;font-family:monospace;font-size:var(--text-xs)">${this._esc(extraBodyRaw)}</textarea>
+                    <textarea class="input settings-p-extra" rows="3" placeholder='{"key": "value"}' style="resize:vertical;min-height:64px;font-family:monospace;font-size:var(--text-xs)">${this._esc(extraBodyRaw)}</textarea>
+                    <span class="settings-field-hint settings-p-extra-error" hidden></span>
                 </div>
             </div>
         `;
@@ -785,25 +786,30 @@ const Settings = {
         const summaryEl = card.querySelector('.settings-provider-summary');
         const toggleEdit = () => {
             if (card.classList.contains('editing')) {
+                // ── 收起:先校验 extra_body, 非法时阻止收起并标红提示
+                const extraRaw = card.querySelector('.settings-p-extra').value.trim();
+                const extraErr = this._validateExtraJson(extraRaw);
+                if (extraErr) {
+                    const extraEl = card.querySelector('.settings-p-extra');
+                    const extraErrEl = card.querySelector('.settings-p-extra-error');
+                    extraEl.classList.add('input-invalid');
+                    if (extraErrEl) {
+                        extraErrEl.textContent = 'JSON 格式错误: ' + extraErr;
+                        extraErrEl.hidden = false;
+                    }
+                    extraEl.focus();
+                    Utils.showError('extra_body 格式错误, 请修正后再收起: ' + extraErr);
+                    return;
+                }
                 // ── 收起:读本卡片表单值局部重建(不依赖 _providers, 避免改名冲突读错)
                 const finalName = card.querySelector('.settings-p-name').value.trim() || name;
-                const extraRaw = card.querySelector('.settings-p-extra').value.trim();
-                let extraBody = null;
-                if (extraRaw) {
-                    try {
-                        const parsed = JSON.parse(extraRaw);
-                        if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-                            extraBody = parsed;
-                        }
-                    } catch { /* 非法 JSON 在 save() 时拦截 */ }
-                }
                 const fresh = {
                     name: finalName,
                     protocol: card.querySelector('.settings-p-protocol').value,
                     api_key: card.querySelector('.settings-p-key').value,
                     base_url: card.querySelector('.settings-p-url').value.trim(),
                     proxy_url: card.querySelector('.settings-p-proxy').value.trim(),
-                    extra_body: extraBody,
+                    extra_body: extraRaw ? JSON.parse(extraRaw) : null,
                 };
                 // 同步到 this._providers, 保证后续全量重绘(如删除其他卡片)不丢本次编辑
                 this._syncProviders();
@@ -847,7 +853,38 @@ const Settings = {
             input.type = input.type === 'password' ? 'text' : 'password';
         });
 
+        // extra_body 实时 JSON 校验: 输入即检查, 错误显示红框 + 提示
+        const extraEl = card.querySelector('.settings-p-extra');
+        const extraErrEl = card.querySelector('.settings-p-extra-error');
+        extraEl.addEventListener('input', () => {
+            const err = this._validateExtraJson(extraEl.value);
+            extraEl.classList.toggle('input-invalid', !!err);
+            if (err) {
+                extraErrEl.textContent = 'JSON 格式错误: ' + err;
+                extraErrEl.hidden = false;
+            } else {
+                extraErrEl.hidden = true;
+            }
+        });
+
         return card;
+    },
+
+    /** 校验 extra_body JSON: 返回错误信息, 合法时返回 null。
+     *  仅接受非空 JSON 对象 (object), 空文本视为未配置(合法)。 */
+    _validateExtraJson(raw) {
+        const text = (raw || '').trim();
+        if (!text) return null; // 留空 = 未配置, 合法
+        let parsed;
+        try {
+            parsed = JSON.parse(text);
+        } catch (e) {
+            return e.message || '无法解析';
+        }
+        if (parsed === null || Array.isArray(parsed) || typeof parsed !== 'object') {
+            return '必须是 JSON 对象 (dict), 不支持数组或标量';
+        }
+        return null;
     },
 
     _addProvider() {
@@ -903,20 +940,24 @@ const Settings = {
             const proxyUrl = card.querySelector('.settings-p-proxy').value.trim();
 
             // extra_body 必须是合法 JSON 对象(留空视为未配置)
-            const extraRaw = card.querySelector('.settings-p-extra').value.trim();
+            const extraEl = card.querySelector('.settings-p-extra');
+            const extraRaw = extraEl.value.trim();
+            const extraErr = this._validateExtraJson(extraRaw);
             let extraBody = null;
-            if (extraRaw) {
-                try {
-                    const parsed = JSON.parse(extraRaw);
-                    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-                        Utils.showError(`Provider "${newName}" 的 extra_body 必须是 JSON 对象`);
-                        return;
-                    }
-                    extraBody = parsed;
-                } catch (e) {
-                    Utils.showError(`Provider "${newName}" 的 extra_body 不是合法 JSON: ${e.message}`);
-                    return;
+            if (extraErr) {
+                // 同时在输入框与提示上标红, 让用户直接看到是哪张卡片出错
+                extraEl.classList.add('input-invalid');
+                const hintEl = card.querySelector('.settings-p-extra-error');
+                if (hintEl) {
+                    hintEl.textContent = 'JSON 格式错误: ' + extraErr;
+                    hintEl.hidden = false;
                 }
+                extraEl.focus();
+                Utils.showError(`Provider "${newName}" 的 extra_body 格式错误: ${extraErr}`);
+                return;
+            }
+            if (extraRaw) {
+                extraBody = JSON.parse(extraRaw);
             }
 
             if (!newName) {

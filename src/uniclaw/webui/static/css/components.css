@@ -1212,6 +1212,22 @@ textarea.input {
     margin-top: 2px;
 }
 
+/* 输入框非法状态(textarea/input 通用) */
+.input-invalid {
+    border-color: var(--red) !important;
+    box-shadow: 0 0 0 1px var(--red-dim);
+}
+
+/* extra_body JSON 校验错误提示 */
+.settings-p-extra-error {
+    color: var(--red);
+    font-family: var(--font-mono);
+}
+
+.settings-p-extra-error[hidden] {
+    display: none;
+}
+
 /* Provider 卡片 */
 .settings-provider-card {
     background: var(--bg-2);
