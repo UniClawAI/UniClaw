@@ -265,8 +265,11 @@ def stream(
     extra_body = build_extra_body(
         p["openai_api_base"], enable_thinking, thinking, _session_prefix(messages)
     )
+    # provider profile 自定义 extra_body 并入, 同名键以 profile 为准(显式配置优先)
+    if p.get("extra_body"):
+        extra_body = {**(extra_body or {}), **p["extra_body"]}
     if asr_options:
-        extra_body["asr_options"] = asr_options
+        extra_body = {**(extra_body or {}), "asr_options": asr_options}
     from uniclaw.tools.base import should_explain
 
     openai_tools = (
@@ -440,8 +443,11 @@ async def astream(
     extra_body = build_extra_body(
         p["openai_api_base"], enable_thinking, thinking, _session_prefix(messages)
     )
+    # provider profile 自定义 extra_body 并入, 同名键以 profile 为准(显式配置优先)
+    if p.get("extra_body"):
+        extra_body = {**(extra_body or {}), **p["extra_body"]}
     if asr_options:
-        extra_body["asr_options"] = asr_options
+        extra_body = {**(extra_body or {}), "asr_options": asr_options}
     from uniclaw.tools.base import should_explain
 
     openai_tools = (
@@ -634,8 +640,11 @@ def chat(
     extra_body = build_extra_body(
         p["openai_api_base"], enable_thinking, thinking, _session_prefix(messages)
     )
+    # provider profile 自定义 extra_body 并入, 同名键以 profile 为准(显式配置优先)
+    if p.get("extra_body"):
+        extra_body = {**(extra_body or {}), **p["extra_body"]}
     if asr_options:
-        extra_body["asr_options"] = asr_options
+        extra_body = {**(extra_body or {}), "asr_options": asr_options}
     openai_tools = [t.to_openai_schema(model_name=p["model_name"]) for t in tools] if tools else None
 
     # 清理消息中的孤立代理码点,避免 OpenAI SDK JSON 序列化失败
@@ -739,8 +748,11 @@ async def achat(
     extra_body = build_extra_body(
         p["openai_api_base"], enable_thinking, thinking, _session_prefix(messages)
     )
+    # provider profile 自定义 extra_body 并入, 同名键以 profile 为准(显式配置优先)
+    if p.get("extra_body"):
+        extra_body = {**(extra_body or {}), **p["extra_body"]}
     if asr_options:
-        extra_body["asr_options"] = asr_options
+        extra_body = {**(extra_body or {}), "asr_options": asr_options}
     openai_tools = [t.to_openai_schema(model_name=p["model_name"]) for t in tools] if tools else None
 
     # 清理消息中的孤立代理码点,避免 OpenAI SDK JSON 序列化失败

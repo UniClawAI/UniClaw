@@ -56,6 +56,7 @@ class ProviderProfile:
     api_key: str
     base_url: str
     proxy_url: str = ""
+    extra_body: dict | None = None  # 请求级自定义 extra_body(JSON 对象),合并进每次调用的 body
 
 
 @dataclass
@@ -444,6 +445,23 @@ async def run_setup_wizard() -> AppConfig:
     return config
 
 
+def _normalize_extra_body(extra_body: Any) -> dict | None:
+    """归一化 extra_body: 仅接受 JSON 对象 (dict), 其他形态视为未配置。
+
+    手动编辑 settings.json 时可能把 extra_body 填成字符串或数组,
+    这里统一收敛为 None, 避免下游合并请求体时抛 TypeError。
+
+    Args:
+        extra_body: settings.json 中 provider.extra_body 的原始值。
+
+    Returns:
+        非空 dict 原样返回, 空或非法形态返回 None。
+    """
+    if not isinstance(extra_body, dict) or not extra_body:
+        return None
+    return extra_body
+
+
 def _normalize_proxy_url(proxy_url: str) -> str:
     """归一化代理地址: 补上缺失的 http:// 前缀。
 
@@ -469,6 +487,7 @@ def _create_config_from_data(data: dict[str, Any]) -> AppConfig:
             api_key=p.get("api_key", ""),
             base_url=p.get("base_url", ""),
             proxy_url=_normalize_proxy_url(p.get("proxy_url", "")),
+            extra_body=_normalize_extra_body(p.get("extra_body")),
         )
     return AppConfig(
         model_name=data.get("model_name", []),
@@ -630,6 +649,7 @@ def load_config(
             api_key=p.get("api_key", ""),
             base_url=p.get("base_url", ""),
             proxy_url=_normalize_proxy_url(p.get("proxy_url", "")),
+            extra_body=_normalize_extra_body(p.get("extra_body")),
         )
 
     return AppConfig(
@@ -720,6 +740,7 @@ def save_config(config: AppConfig) -> None:
             "api_key": p.api_key,
             "base_url": p.base_url,
             **({"proxy_url": p.proxy_url} if p.proxy_url else {}),
+            **({"extra_body": p.extra_body} if p.extra_body else {}),
         }
         for name, p in config.providers.items()
     }

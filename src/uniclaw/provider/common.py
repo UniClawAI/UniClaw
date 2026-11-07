@@ -182,6 +182,8 @@ def resolve_params(config: AppConfig | None = None, **kwargs):
                 kwargs["openai_api_base"] = profile.base_url
             if profile.proxy_url:
                 kwargs["proxy_url"] = profile.proxy_url
+            if profile.extra_body:
+                kwargs["extra_body"] = profile.extra_body
 
     # 兜底:保证返回的 dict 始终含 proxy_url 键(config 为 None 或调用方未传时),
     # 无自有代理则保持空串(直连),避免下游 p["proxy_url"] 读取时 KeyError。

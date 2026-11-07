@@ -696,64 +696,158 @@ const Settings = {
         }
 
         for (const name of names) {
-            const p = this._providers[name];
-            const card = document.createElement('div');
-            card.className = 'settings-provider-card';
-            card.dataset.name = name;
-
-            card.innerHTML = `
-                <div class="settings-provider-header">
-                    <span class="settings-provider-name">${this._esc(name)}</span>
-                    <button class="btn-icon settings-provider-delete" title="删除此 Provider">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="var(--red)" stroke-width="2" width="14" height="14"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
-                    </button>
-                </div>
-                <div class="settings-provider-fields">
-                    <div class="form-group">
-                        <label>名称</label>
-                        <input type="text" class="input settings-p-name" value="${this._esc(p.name || name)}" placeholder="provider 名称" />
-                    </div>
-                    <div class="form-group">
-                        <label>协议</label>
-                        <select class="input settings-p-protocol">
-                            <option value="openai" ${p.protocol === 'openai' ? 'selected' : ''}>OpenAI</option>
-                            <option value="anthropic" ${p.protocol === 'anthropic' ? 'selected' : ''}>Anthropic</option>
-                        </select>
-                    </div>
-                    <div class="form-group" style="grid-column:1/-1">
-                        <label>API Key</label>
-                        <div class="settings-key-input-wrap">
-                            <input type="password" class="input settings-p-key" value="${this._esc(p.api_key || '')}" placeholder="sk-..." />
-                            <button class="btn-icon settings-eye-btn" title="显示/隐藏">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
-                            </button>
-                        </div>
-                    </div>
-                    <div class="form-group" style="grid-column:1/-1">
-                        <label>Base URL</label>
-                        <input type="text" class="input settings-p-url" value="${this._esc(p.base_url || '')}" placeholder="https://api.openai.com/v1" />
-                    </div>
-                    <div class="form-group" style="grid-column:1/-1">
-                        <label>代理 (proxy_url)</label>
-                        <input type="text" class="input settings-p-proxy" value="${this._esc(p.proxy_url || '')}" placeholder="留空则直连(不使用代理)" />
-                    </div>
-                </div>
-            `;
-
-            // 删除按钮
-            card.querySelector('.settings-provider-delete').addEventListener('click', () => {
-                delete this._providers[name];
-                this._renderProviders();
-            });
-
-            // 眼睛按钮
-            card.querySelector('.settings-eye-btn').addEventListener('click', () => {
-                const input = card.querySelector('.settings-p-key');
-                input.type = input.type === 'password' ? 'text' : 'password';
-            });
-
-            container.appendChild(card);
+            container.appendChild(this._buildProviderCard(this._providers[name], name));
         }
+    },
+
+    /** 构建单张 provider 卡片(非编辑态紧凑摘要行 + 编辑态表单)。
+     *  独立函数供收起时局部重建卡片,避免全量重绘丢失其他卡片的编辑态。
+     */
+    _buildProviderCard(p, name, { editing = false } = {}) {
+        const card = document.createElement('div');
+        card.className = 'settings-provider-card';
+        card.dataset.name = name;
+        // extra_body 按 JSON 字符串展示(未配置显示空)
+        const extraBodyRaw = (p.extra_body && typeof p.extra_body === 'object')
+            ? JSON.stringify(p.extra_body, null, 2)
+            : '';
+
+        // 非编辑态摘要行:名称 + 协议徽章 + Base URL + 代理 + 配置状态
+        const baseShort = (p.base_url || '').replace(/^https?:\/\//, '');
+        const summaryUrl = baseShort
+            ? `<span class="settings-provider-url" title="${this._esc(p.base_url)}">${this._esc(baseShort)}</span>`
+            : '<span class="settings-provider-url settings-provider-url-empty">未配置 Base URL</span>';
+        const proxyShort = (p.proxy_url || '').replace(/^https?:\/\//, '');
+        const summaryProxy = proxyShort
+            ? `<span class="settings-provider-proxy" title="${this._esc(p.proxy_url)}">${this._esc(proxyShort)}</span>`
+            : '<span class="settings-provider-proxy settings-provider-proxy-empty">直连</span>';
+        const keyOn = !!(p.api_key && String(p.api_key).trim());
+        const extraOn = !!(p.extra_body && typeof p.extra_body === 'object' && Object.keys(p.extra_body).length);
+
+        card.innerHTML = `
+            <div class="settings-provider-header">
+                <div class="settings-provider-summary" role="button" tabindex="0" title="展开/收起">
+                    <svg class="settings-provider-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+                    <span class="settings-provider-name">${this._esc(name)}</span>
+                    <span class="settings-provider-protocol ${p.protocol === 'anthropic' ? 'proto-anthropic' : ''}">${p.protocol === 'anthropic' ? 'Anthropic' : 'OpenAI'}</span>
+                    ${summaryUrl}
+                    ${summaryProxy}
+                    <span class="settings-provider-meta">
+                        <span class="settings-meta-item ${keyOn ? 'on' : ''}" title="API Key 是否已配置"><i class="meta-dot"></i>Key</span>
+                        <span class="settings-meta-item ${extraOn ? 'on' : ''}" title="extra_body 是否已配置"><i class="meta-dot"></i>extra_body</span>
+                    </span>
+                </div>
+                <button class="btn-icon settings-provider-delete" title="删除此 Provider">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="var(--red)" stroke-width="2" width="14" height="14"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+                </button>
+            </div>
+            <div class="settings-provider-fields">
+                <div class="form-group">
+                    <label>名称</label>
+                    <input type="text" class="input settings-p-name" value="${this._esc(p.name || name)}" placeholder="provider 名称" />
+                </div>
+                <div class="form-group">
+                    <label>协议</label>
+                    <select class="input settings-p-protocol">
+                        <option value="openai" ${p.protocol === 'openai' ? 'selected' : ''}>OpenAI</option>
+                        <option value="anthropic" ${p.protocol === 'anthropic' ? 'selected' : ''}>Anthropic</option>
+                    </select>
+                </div>
+                <div class="form-group" style="grid-column:1/-1">
+                    <label>API Key</label>
+                    <div class="settings-key-input-wrap">
+                        <input type="password" class="input settings-p-key" value="${this._esc(p.api_key || '')}" placeholder="sk-..." />
+                        <button class="btn-icon settings-eye-btn" title="显示/隐藏">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+                        </button>
+                    </div>
+                </div>
+                <div class="form-group" style="grid-column:1/-1">
+                    <label>Base URL</label>
+                    <input type="text" class="input settings-p-url" value="${this._esc(p.base_url || '')}" placeholder="https://api.openai.com/v1" />
+                </div>
+                <div class="form-group" style="grid-column:1/-1">
+                    <label>代理 (proxy_url)</label>
+                    <input type="text" class="input settings-p-proxy" value="${this._esc(p.proxy_url || '')}" placeholder="留空则直连(不使用代理)" />
+                </div>
+                <div class="form-group" style="grid-column:1/-1">
+                    <label>extra_body (JSON)</label>
+                    <textarea class="input settings-p-extra" rows="3" placeholder='{"key": "value"}' style="resize:none;font-family:monospace;font-size:var(--text-xs)">${this._esc(extraBodyRaw)}</textarea>
+                </div>
+            </div>
+        `;
+
+        if (editing) {
+            card.classList.add('editing');
+        }
+
+        // 摘要行点击/回车 → 切换展开:收起时同步表单值并重建摘要行
+        const summaryEl = card.querySelector('.settings-provider-summary');
+        const toggleEdit = () => {
+            if (card.classList.contains('editing')) {
+                // ── 收起:读本卡片表单值局部重建(不依赖 _providers, 避免改名冲突读错)
+                const finalName = card.querySelector('.settings-p-name').value.trim() || name;
+                const extraRaw = card.querySelector('.settings-p-extra').value.trim();
+                let extraBody = null;
+                if (extraRaw) {
+                    try {
+                        const parsed = JSON.parse(extraRaw);
+                        if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+                            extraBody = parsed;
+                        }
+                    } catch { /* 非法 JSON 在 save() 时拦截 */ }
+                }
+                const fresh = {
+                    name: finalName,
+                    protocol: card.querySelector('.settings-p-protocol').value,
+                    api_key: card.querySelector('.settings-p-key').value,
+                    base_url: card.querySelector('.settings-p-url').value.trim(),
+                    proxy_url: card.querySelector('.settings-p-proxy').value.trim(),
+                    extra_body: extraBody,
+                };
+                // 同步到 this._providers, 保证后续全量重绘(如删除其他卡片)不丢本次编辑
+                this._syncProviders();
+                // 若改名, 清理 _syncProviders 遗留的旧名条目(避免残留)
+                if (finalName !== name && Object.prototype.hasOwnProperty.call(this._providers, name)) {
+                    delete this._providers[name];
+                }
+                card.replaceWith(this._buildProviderCard(fresh, finalName));
+            } else {
+                // ── 展开:进入编辑模式,聚焦名称输入框
+                card.classList.add('editing');
+                const nameInput = card.querySelector('.settings-p-name');
+                if (nameInput) {
+                    nameInput.focus();
+                    nameInput.select();
+                }
+            }
+        };
+        summaryEl.addEventListener('click', (e) => {
+            e.stopPropagation();
+            toggleEdit();
+        });
+        summaryEl.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                toggleEdit();
+            }
+        });
+
+        // 删除按钮:先同步(避免其他卡片未完成的编辑被重绘丢弃),再按最终名称删除
+        card.querySelector('.settings-provider-delete').addEventListener('click', () => {
+            this._syncProviders();
+            const finalName = card.querySelector('.settings-p-name').value.trim() || name;
+            delete this._providers[finalName];
+            this._renderProviders();
+        });
+
+        // 眼睛按钮
+        card.querySelector('.settings-eye-btn').addEventListener('click', () => {
+            const input = card.querySelector('.settings-p-key');
+            input.type = input.type === 'password' ? 'text' : 'password';
+        });
+
+        return card;
     },
 
     _addProvider() {
@@ -771,18 +865,22 @@ const Settings = {
             api_key: '',
             base_url: '',
             proxy_url: '',
+            extra_body: null,
         };
-        this._renderProviders();
 
+        // 新卡片直接以编辑态插入, 名称输入框立即可见并聚焦
         const container = document.getElementById('settings-providers');
-        const lastCard = container.lastElementChild;
-        if (lastCard) {
-            lastCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-            const nameInput = lastCard.querySelector('.settings-p-name');
-            if (nameInput) {
-                nameInput.focus();
-                nameInput.select();
-            }
+        // 空列表时容器内是"暂无提供商"提示(非卡片), 先清掉避免共存
+        if (!container.querySelector('.settings-provider-card')) {
+            container.innerHTML = '';
+        }
+        const card = this._buildProviderCard(this._providers[name], name, { editing: true });
+        container.appendChild(card);
+        card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        const nameInput = card.querySelector('.settings-p-name');
+        if (nameInput) {
+            nameInput.focus();
+            nameInput.select();
         }
     },
 
@@ -804,6 +902,23 @@ const Settings = {
             const baseUrl = card.querySelector('.settings-p-url').value.trim();
             const proxyUrl = card.querySelector('.settings-p-proxy').value.trim();
 
+            // extra_body 必须是合法 JSON 对象(留空视为未配置)
+            const extraRaw = card.querySelector('.settings-p-extra').value.trim();
+            let extraBody = null;
+            if (extraRaw) {
+                try {
+                    const parsed = JSON.parse(extraRaw);
+                    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+                        Utils.showError(`Provider "${newName}" 的 extra_body 必须是 JSON 对象`);
+                        return;
+                    }
+                    extraBody = parsed;
+                } catch (e) {
+                    Utils.showError(`Provider "${newName}" 的 extra_body 不是合法 JSON: ${e.message}`);
+                    return;
+                }
+            }
+
             if (!newName) {
                 Utils.showError('Provider 名称不能为空');
                 return;
@@ -824,6 +939,7 @@ const Settings = {
                 api_key: apiKey,
                 base_url: baseUrl,
                 proxy_url: proxyUrl,
+                extra_body: extraBody,
             };
         }
 
@@ -979,12 +1095,24 @@ const Settings = {
         for (const card of cards) {
             const name = card.querySelector('.settings-p-name').value.trim();
             if (!name) continue;
+            // extra_body 仅做状态同步, 刷新模型列表不校验其合法性
+            const extraRaw = card.querySelector('.settings-p-extra').value.trim();
+            let extraBody = null;
+            if (extraRaw) {
+                try {
+                    const parsed = JSON.parse(extraRaw);
+                    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+                        extraBody = parsed;
+                    }
+                } catch { /* 非法 JSON 在 save() 时才拦截 */ }
+            }
             providers[name] = {
                 name,
                 protocol: card.querySelector('.settings-p-protocol').value,
                 api_key: card.querySelector('.settings-p-key').value,
                 base_url: card.querySelector('.settings-p-url').value.trim(),
                 proxy_url: card.querySelector('.settings-p-proxy').value.trim(),
+                extra_body: extraBody,
             };
         }
         this._providers = providers;

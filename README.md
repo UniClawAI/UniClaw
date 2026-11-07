@@ -440,7 +440,8 @@ docker run -d --name uniclaw \
       "name": "default",
       "protocol": "openai",
       "api_key": "sk-xxx",
-      "base_url": "https://api.openai.com/v1"
+      "base_url": "https://api.openai.com/v1",
+      "extra_body": {"enable_thinking": false}
     },
     "anthropic": {
       "name": "anthropic",
@@ -453,6 +454,8 @@ docker run -d --name uniclaw \
 ```
 
 > 💡 `protocol` 支持 `"openai"` 和 `"anthropic"` 两种协议。系统会根据 model_name 中的 provider 前缀(如 `default/`、`anthropic/`)自动路由到对应的 provider。
+>
+> 💡 `extra_body` 为可选字段,内容必须是 JSON 对象。它会合并进每次 LLM 请求的 body,同名键以 `extra_body` 为准(可覆盖系统自动生成的 `enable_thinking`、`thinking` 等参数)。留空或省略表示未配置。
 
 **超时配置**:
 - `timeout`: 连接超时时间(秒),默认根据协议类型自动设置

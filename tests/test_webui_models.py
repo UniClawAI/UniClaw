@@ -275,6 +275,27 @@ class TestProviderConfig:
         with pytest.raises(ValidationError):
             ProviderConfig(name="x", protocol="bogus")
 
+    def test_extra_body_default_none(self):
+        """extra_body 默认为 None。"""
+        c = ProviderConfig(name="x")
+        assert c.extra_body is None
+
+    def test_extra_body_valid_dict(self):
+        """合法 JSON 对象。"""
+        c = ProviderConfig(name="x", extra_body={"enable_thinking": False})
+        assert c.extra_body == {"enable_thinking": False}
+
+    def test_extra_body_empty_string_treated_as_none(self):
+        """空字符串视为未配置。"""
+        c = ProviderConfig(name="x", extra_body="")
+        assert c.extra_body is None
+
+    def test_extra_body_invalid_types_rejected(self):
+        """非 JSON 对象(字符串/列表/数字)报错。"""
+        for bad in ["not-json", [1, 2], 42]:
+            with pytest.raises(ValidationError):
+                ProviderConfig(name="x", extra_body=bad)
+
 
 class TestSettingsUpdate:
     """SettingsUpdate 测试。"""

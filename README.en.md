@@ -440,7 +440,8 @@ docker run -d --name uniclaw \
       "name": "default",
       "protocol": "openai",
       "api_key": "sk-xxx",
-      "base_url": "https://api.openai.com/v1"
+      "base_url": "https://api.openai.com/v1",
+      "extra_body": {"enable_thinking": false}
     },
     "anthropic": {
       "name": "anthropic",
@@ -453,6 +454,8 @@ docker run -d --name uniclaw \
 ```
 
 > 💡 `protocol` supports both `"openai"` and `"anthropic"`. The system routes to the matching provider automatically based on the provider prefix in the model name (e.g. `default/`, `anthropic/`).
+>
+> 💡 `extra_body` is optional and must be a JSON object. It is merged into the body of every LLM request, and on key conflicts the `extra_body` value wins (it can override system-generated params like `enable_thinking`, `thinking`). Omit it or leave it empty when not configured.
 
 **Timeouts:**
 - `timeout`: connection timeout (seconds), auto-set per protocol type by default

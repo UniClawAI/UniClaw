@@ -279,6 +279,9 @@ def stream(
 
     # OpenRouter 粘性路由: 相同系统提示词 → 相同 session_id → 同一上游共享缓存
     session_extra = _openrouter_session_extra(base_url, system_prompt)
+    # provider profile 自定义 extra_body 并入, 同名键以 profile 为准(显式配置优先)
+    if p.get("extra_body"):
+        session_extra = {**(session_extra or {}), **p["extra_body"]}
     if session_extra:
         kwargs["extra_body"] = session_extra
 
@@ -441,6 +444,9 @@ async def astream(
 
     # OpenRouter 粘性路由: 相同系统提示词 → 相同 session_id → 同一上游共享缓存
     session_extra = _openrouter_session_extra(base_url, system_prompt)
+    # provider profile 自定义 extra_body 并入, 同名键以 profile 为准(显式配置优先)
+    if p.get("extra_body"):
+        session_extra = {**(session_extra or {}), **p["extra_body"]}
     if session_extra:
         kwargs["extra_body"] = session_extra
 
@@ -604,6 +610,9 @@ def chat(
 
     # OpenRouter 粘性路由: 相同系统提示词 → 相同 session_id → 同一上游共享缓存
     session_extra = _openrouter_session_extra(base_url, system_prompt)
+    # provider profile 自定义 extra_body 并入, 同名键以 profile 为准(显式配置优先)
+    if p.get("extra_body"):
+        session_extra = {**(session_extra or {}), **p["extra_body"]}
     if session_extra:
         kwargs["extra_body"] = session_extra
     if timeout is not None:
@@ -705,6 +714,9 @@ async def achat(
 
     # OpenRouter 粘性路由: 相同系统提示词 → 相同 session_id → 同一上游共享缓存
     session_extra = _openrouter_session_extra(base_url, system_prompt)
+    # provider profile 自定义 extra_body 并入, 同名键以 profile 为准(显式配置优先)
+    if p.get("extra_body"):
+        session_extra = {**(session_extra or {}), **p["extra_body"]}
     if session_extra:
         kwargs["extra_body"] = session_extra
     if timeout is not None:

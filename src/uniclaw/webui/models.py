@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -265,12 +267,23 @@ class ProviderConfig(BaseModel):
     api_key: str = ""
     base_url: str = ""
     proxy_url: str = ""
+    extra_body: dict | None = None  # 请求级自定义 extra_body(JSON 对象)
 
     @field_validator("protocol")
     @classmethod
     def validate_protocol(cls, v: str) -> str:
         if v not in ("openai", "anthropic"):
             raise ValueError('协议必须是 "openai" 或 "anthropic"')
+        return v
+
+    @field_validator("extra_body", mode="before")
+    @classmethod
+    def validate_extra_body(cls, v: Any) -> dict | None:
+        """extra_body 必须是 JSON 对象(dict), 空值视为未配置。"""
+        if v is None or v == "":
+            return None
+        if not isinstance(v, dict):
+            raise ValueError("extra_body 必须是 JSON 对象(dict)")
         return v
 
 

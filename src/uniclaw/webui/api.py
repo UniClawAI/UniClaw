@@ -695,6 +695,8 @@ async def update_settings(body: SettingsUpdate):
         }
         if p.proxy_url:
             providers[name]["proxy_url"] = p.proxy_url
+        if p.extra_body:
+            providers[name]["extra_body"] = p.extra_body
 
     # 恢复脱敏的 token
     github_token = body.GITHUB_TOKEN
@@ -787,6 +789,7 @@ async def _update_session_settings(body: SettingsUpdate) -> dict:
                 api_key=api_key,
                 base_url=p.base_url,
                 proxy_url=p.proxy_url,
+                extra_body=p.extra_body,
             )
         config.providers = resolved_providers
 
