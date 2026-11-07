@@ -181,6 +181,25 @@ const Settings = {
         const dropdown = container.querySelector('.combo-dropdown');
         const selectedEl = container.querySelector('.combo-selected');
 
+        // provider 筛选下拉(仅执行一次创建; 每次初始化时重建选项)
+        let providerFilter = container.querySelector('.combo-provider-filter');
+        const inputWrap = container.querySelector('.combo-input-wrap');
+        if (!providerFilter && inputWrap) {
+            providerFilter = document.createElement('select');
+            providerFilter.className = 'combo-provider-filter';
+            providerFilter.title = '按提供商筛选模型';
+            inputWrap.insertBefore(providerFilter, input);
+            // 点击筛选不聚焦到搜索框, 切换后重建下拉
+            providerFilter.addEventListener('click', (e) => e.stopPropagation());
+            providerFilter.addEventListener('change', () => {
+                this._renderDropdown(container, input.value.trim());
+                dropdown.classList.add('open');
+            });
+        }
+        if (providerFilter) {
+            this._rebuildProviderFilter(container);
+        }
+
         // 清空(先清理旧标签绑定的 document 级拖拽监听,防止闭包残留)
         selectedEl.querySelectorAll('.combo-tag').forEach(t => {
             if (t._ptrCleanup) { t._ptrCleanup(); t._ptrCleanup = null; }
@@ -243,6 +262,40 @@ const Settings = {
         });
     },
 
+    /** 当前 combo 可用的 provider 列表(按该 combo 的可用模型集合推导) */
+    _getComboProviderNames(container) {
+        const names = new Set();
+        const src = container.id === 'settings-embedding-model' ? (this._embeddingModels || []) : (this._models || []);
+        for (const m of src) {
+            if (m && m.provider) names.add(m.provider);
+        }
+        // 补充已配置但列表里没有模型的 provider(如 allow_custom 的 Anthropic)
+        for (const name of Object.keys(this._providers || {})) {
+            names.add(name);
+        }
+        return names;
+    },
+
+    /** 重建 provider 筛选下拉的选项(每次 _initCombo 调用时刷新, 保留当前选中值) */
+    _rebuildProviderFilter(container) {
+        const select = container.querySelector('.combo-provider-filter');
+        if (!select) return;
+        const prev = select.value;
+        const providers = [...this._getComboProviderNames(container)].sort();
+        select.innerHTML = '';
+        const all = document.createElement('option');
+        all.value = '';
+        all.textContent = 'all';
+        select.appendChild(all);
+        for (const p of providers) {
+            const opt = document.createElement('option');
+            opt.value = p;
+            opt.textContent = p;
+            select.appendChild(opt);
+        }
+        if (prev && providers.includes(prev)) select.value = prev;
+    },
+
     /** 渲染下拉列表 */
     _renderDropdown(container, filter) {
         const dropdown = container.querySelector('.combo-dropdown');
@@ -265,6 +318,13 @@ const Settings = {
         } else if (isMultimodal) {
             // 只过滤明确不支持视觉的模型,未知的保留
             availableModels = this._models.filter(m => m.supports_vision !== false);
+        }
+
+        // provider 筛选: 选了具体 provider 时只在其中搜索
+        const providerSel = container.querySelector('.combo-provider-filter');
+        const providerVal = providerSel ? providerSel.value : '';
+        if (providerVal) {
+            availableModels = availableModels.filter(m => m.provider === providerVal);
         }
 
         // 过滤

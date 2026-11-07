@@ -1556,9 +1556,37 @@ textarea.input {
     position: relative;
     flex: 0 0 100%;
     min-width: 80px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+/* provider 筛选下拉(搜索框左侧) */
+.combo-provider-filter {
+    flex-shrink: 0;
+    max-width: 130px;
+    min-width: 70px;
+    border: none;
+    outline: none;
+    background: var(--bg-3);
+    color: var(--text-0);
+    font-size: var(--text-xs);
+    font-family: inherit;
+    padding: 3px 4px;
+    border-radius: var(--r-xs);
+    cursor: pointer;
+}
+
+.combo-provider-filter:hover {
+    background: var(--bg-2);
+}
+
+.combo-provider-filter:focus {
+    box-shadow: 0 0 0 2px var(--accent-dim);
 }
 
 .combo-input {
+    flex: 1;
     width: 100%;
     border: none;
     outline: none;
