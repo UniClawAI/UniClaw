@@ -6,7 +6,13 @@ import json
 import pytest
 from unittest.mock import patch
 from pathlib import Path
-from uniclaw.utils.usage import record_usage, get_stats, format_stats, _new_record
+from uniclaw.utils.usage import (
+    record_usage,
+    get_stats,
+    format_stats,
+    _new_record,
+    _normalize_model_name,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -62,6 +68,41 @@ class TestRecordUsage:
         # 直接读文件验证持久化
         data = json.loads(tmp_stats.read_text(encoding="utf-8"))
         assert data["total"]["input_tokens"] == 100
+
+
+class TestNormalizeModelName:
+    """模型名归一化测试(剥离 provider 前缀)"""
+
+    def test_clean_name(self):
+        assert _normalize_model_name("deepseek-v4-flash") == "deepseek-v4-flash"
+
+    def test_openai_compat_prefix(self):
+        # OpenAI 兼容自定义 provider: "deepseek/deepseek-v4-flash"
+        assert _normalize_model_name("deepseek/deepseek-v4-flash") == "deepseek-v4-flash"
+
+    def test_google_api_prefix(self):
+        # Google API: "models/gemini-3.5-flash-lite"
+        assert _normalize_model_name("models/gemini-3.5-flash-lite") == "gemini-3.5-flash-lite"
+
+    def test_multiple_slashes(self):
+        # "~deepseek/deepseek-v4-flash-latest" → 只取最后一个 "/" 之后的部分
+        assert _normalize_model_name("~deepseek/deepseek-v4-flash-latest") == "deepseek-v4-flash-latest"
+
+    def test_openrouter_full_id(self):
+        assert _normalize_model_name("openai/gpt-4o") == "gpt-4o"
+
+    def test_empty(self):
+        assert _normalize_model_name("") == ""
+
+    @pytest.mark.asyncio
+    async def test_record_usage_dedupes_prefix_variants(self):
+        """同一模型带不同 provider 前缀, 应归并到同一个 by_model key"""
+        await record_usage(input_tokens=100, output_tokens=50, model="deepseek/deepseek-v4-flash")
+        await record_usage(input_tokens=200, output_tokens=80, model="deepseek-v4-flash")
+        data = get_stats()
+        assert set(data["by_model"]) == {"deepseek-v4-flash"}
+        assert data["by_model"]["deepseek-v4-flash"]["api_calls"] == 2
+        assert data["by_model"]["deepseek-v4-flash"]["input_tokens"] == 300
 
 
 class TestGetStats:

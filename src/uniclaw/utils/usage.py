@@ -14,11 +14,36 @@ from uniclaw.context import get_app_dir, Scope
 logger = logging.getLogger("usage")
 
 
+def _normalize_model_name(model: str) -> str:
+    """剥离 provider 前缀, 返回裸模型名。
+
+    调用方传入的 model 来自上游 API 响应的 response.model, 不同上游格式各异:
+    - 干净模型名: "deepseek-v4-flash"
+    - OpenAI 兼容自定义 provider: "deepseek/deepseek-v4-flash"
+    - Google API 前缀: "models/gemini-3.5-flash-lite"
+    - 带版本映射: "~deepseek/deepseek-v4-flash-latest"
+
+    OpenRouter 的价格表与短名称索引都按裸模型名组织, 统一取最后一个 "/"
+    之后的部分作为 key, 避免同一个模型因前缀不同在 by_model 中分裂成多个
+    条目, 也让价格查询只依赖模型名本身。
+
+    Args:
+        model: 原始模型名, 可能为空。
+
+    Returns:
+        str: 剥去 provider 前缀后的裸模型名; 空串原样返回。
+    """
+    if not model:
+        return model
+    return model.rsplit("/", 1)[-1] if "/" in model else model
+
+
 async def _get_model_price(model: str) -> dict:
     """获取模型价格。返回 {"input": float, "output": float, "cache_read": float, "cache_write": float}。
     未找到时返回全零字典。
     价格单位: 美元/token。
     """
+    model = _normalize_model_name(model)
     try:
         from uniclaw.utils.model_info import get_model_info_provider
 
@@ -181,7 +206,8 @@ async def record_usage(
     ):
         return
     today = datetime.now().strftime("%Y-%m-%d")
-    model_key = model or "unknown"
+    # 统一剥去 provider 前缀, 用裸模型名归档, 避免同一模型分裂成多个 key
+    model_key = _normalize_model_name(model) or "unknown"
 
     # 查询价格并计算本次费用
     price = await _get_model_price(model_key)
