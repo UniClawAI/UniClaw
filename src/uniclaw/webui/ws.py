@@ -317,6 +317,11 @@ async def bridge_events(session_id: str, config: AppConfig):
             creator_tool_call_id = (
                 getattr(queued_task, "tool_call_id", "") if is_subagent else ""
             )
+            # 同步/异步子代理: notify_parent=True(wait=False) 为异步后台任务,
+            # False(wait=True) 为同步内联任务。前端据此切换嵌套/独立视图两种展示。
+            is_async = bool(
+                getattr(queued_task, "notify_parent", False) if is_subagent else False
+            )
         except Exception as e:
             get_logger("webui", Path.cwd()).error(
                 f"[{session_id}] bridge_events 异常: {e}"
@@ -341,6 +346,8 @@ async def bridge_events(session_id: str, config: AppConfig):
                     {
                         "event": "subagent_end",
                         "session_id": session_id,
+                        "is_subagent": True,
+                        "is_async": is_async,
                         "agent_name": agent_name,
                         "creator_tool_call_id": creator_tool_call_id,
                         "depth": event.depth,
@@ -431,6 +438,7 @@ async def bridge_events(session_id: str, config: AppConfig):
                     "event": "thinking_start",
                     "session_id": session_id,
                     "is_subagent": is_subagent,
+                    "is_async": is_async,
                     "agent_name": agent_name,
                     "creator_tool_call_id": creator_tool_call_id,
                 }
@@ -444,6 +452,7 @@ async def bridge_events(session_id: str, config: AppConfig):
                     "session_id": session_id,
                     "content": event.content,
                     "is_subagent": is_subagent,
+                    "is_async": is_async,
                     "agent_name": agent_name,
                     "creator_tool_call_id": creator_tool_call_id,
                 }
@@ -457,6 +466,7 @@ async def bridge_events(session_id: str, config: AppConfig):
                     "session_id": session_id,
                     "content": event.content,
                     "is_subagent": is_subagent,
+                    "is_async": is_async,
                     "agent_name": agent_name,
                     "creator_tool_call_id": creator_tool_call_id,
                 }
@@ -484,6 +494,7 @@ async def bridge_events(session_id: str, config: AppConfig):
                     "name": event.name,
                     "args": event.args,
                     "is_subagent": is_subagent,
+                    "is_async": is_async,
                     "agent_name": agent_name,
                     "creator_tool_call_id": creator_tool_call_id,
                 }
@@ -499,21 +510,23 @@ async def bridge_events(session_id: str, config: AppConfig):
 
         # === 批量事件 ===
         elif isinstance(event, UserEvent):
-            # subagent 的 UserEvent 不广播(已作为工具参数显示)
-            if not is_subagent:
-                msg = {
-                    "event": "user",
-                    "session_id": session_id,
-                    "content": event.content,
-                }
-                # 附带消息在后端列表中的索引,供前端删除功能使用
-                try:
-                    session = config.current_agent.session
-                    msg["msg_idx"] = len(session._messages) - 1
-                except Exception as e:
-                    get_logger("webui", Path.cwd()).debug(f"获取消息索引失败: {e}")
-                    pass
-                await _broadcast(msg)
+            msg = {
+                "event": "user",
+                "session_id": session_id,
+                "content": event.content,
+                "is_subagent": is_subagent,
+                "is_async": is_async,
+                "agent_name": agent_name,
+                "creator_tool_call_id": creator_tool_call_id,
+            }
+            # 附带消息在后端列表中的索引,供前端删除功能使用
+            try:
+                session = config.current_agent.session
+                msg["msg_idx"] = len(session._messages) - 1
+            except Exception as e:
+                get_logger("webui", Path.cwd()).debug(f"获取消息索引失败: {e}")
+                pass
+            await _broadcast(msg)
 
         elif isinstance(event, AssistantEvent):
             config.spinner.stop(wait_id=queued_task.id)
@@ -530,6 +543,7 @@ async def bridge_events(session_id: str, config: AppConfig):
                     "cache_write_tokens": event.cache_write_tokens,
                     "cache_discount": event.cache_discount,
                     "is_subagent": is_subagent,
+                    "is_async": is_async,
                     "agent_name": agent_name,
                     "creator_tool_call_id": creator_tool_call_id,
                     "created_at": event.created_at,
@@ -563,6 +577,7 @@ async def bridge_events(session_id: str, config: AppConfig):
                     "tool_call_id": event.tool_call_id,
                     "explain": event.explain,
                     "is_subagent": is_subagent,
+                    "is_async": is_async,
                     "agent_name": agent_name,
                     "creator_tool_call_id": creator_tool_call_id,
                 }
@@ -577,6 +592,10 @@ async def bridge_events(session_id: str, config: AppConfig):
                     "name": event.name,
                     "content": event.content,
                     "tool_call_id": event.tool_call_id,
+                    "is_subagent": is_subagent,
+                    "is_async": is_async,
+                    "agent_name": agent_name,
+                    "creator_tool_call_id": creator_tool_call_id,
                 }
             )
 
@@ -591,6 +610,7 @@ async def bridge_events(session_id: str, config: AppConfig):
                     "tool_call_id": event.tool_call_id,
                     "args": event.args,
                     "is_subagent": is_subagent,
+                    "is_async": is_async,
                     "agent_name": agent_name,
                     "creator_tool_call_id": creator_tool_call_id,
                 }
@@ -660,6 +680,10 @@ async def bridge_events(session_id: str, config: AppConfig):
                     "event": "interrupted",
                     "session_id": session_id,
                     "message": event.message,
+                    "is_subagent": is_subagent,
+                    "is_async": is_async,
+                    "agent_name": agent_name,
+                    "creator_tool_call_id": creator_tool_call_id,
                 }
             )
 

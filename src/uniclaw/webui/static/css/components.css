@@ -654,6 +654,11 @@ textarea.input {
     color: var(--text-0);
 }
 
+.context-menu-item.active {
+    color: var(--accent-bright);
+    font-weight: 600;
+}
+
 .context-menu-item.danger:hover {
     background: var(--red-dim);
     color: var(--red);

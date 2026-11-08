@@ -899,6 +899,7 @@ uniclaw --mode webui
 - ✅ **Sidebar tree** — conversations grouped by project, collapsible; empty project groups can be removed with one click (frontend only, disk sessions untouched)
 - ✅ **Login IP throttling** — rate limiting against brute-force login attacks
 - ✅ **Theme customization** — built-in `uniclaw-theme` skill for custom colors/styles
+- ✅ **Subagent view switching** — a "👥" status bar entry (visible only while subagents exist) opens a menu to toggle between the main agent and each subagent (async ones included) to watch them run; every subagent gets its own timeline, defaulting to the main agent. The `subagent_create` tool block has a "view process" shortcut, and subagent thinking/text/tool calls render live in the same style as the main agent
 - ✅ **Polished UI** — base CSS styling and animations for a better look
 
 ---

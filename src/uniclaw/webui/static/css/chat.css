@@ -90,6 +90,12 @@
 .chat-messages:not(.show-details) .msg-time {
     display: none;
 }
+/* subagent 独立视图: 跟随主容器的「用量与时间」开关(.agent-chat 未挂 show-details,
+ * 靠 :has() 从主容器状态继承, 切换视图时 token 显示保持一致) */
+#main-area:has(#chat-messages.show-details) .chat-messages.agent-chat .msg-tokens,
+#main-area:has(#chat-messages.show-details) .chat-messages.agent-chat .msg-time {
+    display: inline-block;
+}
 
 /* ---- 消息时间戳 ---- */
 .msg-time {
@@ -550,6 +556,41 @@ pre:hover .code-copy-btn {
     padding: 8px;
     border-radius: 4px;
     margin: 0;
+}
+
+/* ---- 菜单内"运行中"指示圆点(agent 切换菜单共用) ---- */
+.agent-tab-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--accent);
+    flex-shrink: 0;
+    animation: pulseDot 1.5s ease-in-out infinite;
+}
+
+/* subagent 独立视图容器(与主聊天区同一套 .chat-messages 样式) */
+.chat-messages.agent-chat {
+    border: none;
+}
+
+/* subagent_create 工具块上的"查看过程"入口 */
+.tool-view-subagent {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: 8px;
+    padding: 2px 8px;
+    border: 1px solid var(--accent);
+    border-radius: var(--r-sm);
+    background: var(--accent-dim);
+    color: var(--accent-bright);
+    font-size: var(--text-xs);
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: filter var(--duration-fast) var(--ease);
+}
+.tool-view-subagent:hover {
+    filter: brightness(1.15);
 }
 
 /* subagent 嵌套在 tool-block 内的样式 */

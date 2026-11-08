@@ -30,7 +30,7 @@ from uniclaw.utils.project_instruction import (
     get_subdir_project_instruction,
     is_subdir_claude_md_msg,
 )
-from uniclaw.config import Permissions, AppConfig
+from uniclaw.config import Permissions, AppConfig, RunMode
 from uniclaw.tools.ask import AskUserQuestion
 
 if TYPE_CHECKING:
@@ -607,16 +607,26 @@ class MultiAgent:
 
     async def send_event_to_user(self, event, config: AppConfig):
         """将事件放入队列。对于有 return_event 的事件,等待 UI 处理后返回内容。
-        普通事件:仅发送到 task 自己的队列;无队列则丢弃。
+
+        普通事件:发送到 task 自己的队列;无队列时路由到根主代理队列 ——
+        异步子代理(wait=False)不共享父队列,若不路由则 thinking/text/tool 等
+        过程事件被静默丢弃,WebUI 上完全看不到它们的运行过程。
         阻塞事件(带 return_event):队列查找链 → task 自身 → root_config → TUI 当前会话。"""
         task = config.current_agent
         queue = task.event_queue
-        if not queue and hasattr(event, "return_event"):
-            # root_config: 祖子代理场景的父级队列
-            if config.root_config:
-                queue = config.root_config.current_agent.event_queue
-            # TUI: 后台任务(如 scheduler)路由到当前活跃会话
-            if not queue:
+        if not queue:
+            # root_config: 祖子代理场景的父级队列。普通事件也路由过去,
+            # 否则异步子代理的运行过程在 WebUI 上完全不可见。
+            # 用 isinstance 防御: 测试环境中 config 可能是 MagicMock,
+            # 其 root_config.current_agent.event_queue 会解析成无意义的 MagicMock。
+            try:
+                _q = config.root_config.current_agent.event_queue
+                if isinstance(_q, asyncio.Queue):
+                    queue = _q
+            except Exception:
+                queue = None
+            # TUI: 后台任务(如 scheduler)路由到当前活跃会话(仅阻塞事件需要)
+            if not queue and hasattr(event, "return_event"):
                 try:
                     from uniclaw.console.run import TUIApp
 
@@ -659,6 +669,10 @@ class MultiAgent:
         """
         parent_config = config.parent_config
         if parent_config is None:
+            return
+        # WebUI: 异步子代理的完整过程(思考/文本/工具)以独立视图实时展示,
+        # 此处再发 info 摘要会有重复显示, 跳过以免刷屏。控制台/TUI 仍保留该摘要。
+        if config.run_mode == RunMode.WEBUI:
             return
         parts = []
         if content:
@@ -761,9 +775,8 @@ class MultiAgent:
             and parent_task.event_queue is not None
         ):
             # 仅同步子 agent(wait=True)共享父队列和 cancel_event(ESC 可直接取消)。
-            # 异步子 agent 不共享:thinking/text/tool 事件由 send_event_to_user
-            # 静默丢弃,中途进度改由 _notify_sub_agent_progress 以 info 展示给用户;
-            # 阻塞事件(权限请求)仍经 root_config 链路由到主队列。
+            # 异步子 agent 不共享:thinking/text/tool 事件经 send_event_to_user
+            # 路由到根主队列(WebUI),由 bridge 以 queued_task 区分后转发给前端。
             task.event_queue = parent_task.event_queue
             task.cancel_event = parent_task.cancel_event
         self.id2AgentTask[task.id] = task

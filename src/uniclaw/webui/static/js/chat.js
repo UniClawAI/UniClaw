@@ -17,10 +17,20 @@ const Chat = {
     _subagentName: "",            // 当前 subagent 名称(兜底显示用)
     _subagentStates: {},          // creatorToolCallId -> 该子代理的流式/思考状态
 
+    // agent 视图切换(主 Agent + 各 subagent 独立时间线)
+    _agentViews: {},              // key('main' | 'session:creatorToolCallId') -> 视图对象
+    _activeAgentKey: 'main',      // 当前显示视图
+
     init() {
         document.getElementById('history-toggle')?.addEventListener('click', () => {
             this._switchView(this._currentView === 'history' ? 'compact' : 'history');
         });
+        // 状态栏 agent 切换(主 Agent / 各 subagent 菜单)
+        const agEl = document.getElementById('status-agents');
+        if (agEl) agEl.onclick = (e) => { e.stopPropagation(); this._showAgentMenu(agEl); };
+        document.addEventListener('click', () => this._hideAgentMenu());
+        // 初始化主视图,保证视图状态中 'main' 始终有对应对象
+        this._agentViews['main'] = this._createAgentView('main', '主 Agent');
         WS.on('session_created', msg => this._onSessionCreated(msg));
         WS.on('user', msg => this._onUser(msg));
         WS.on('thinking_start', msg => this._onThinkingStart(msg));
@@ -58,6 +68,7 @@ const Chat = {
         const gen = this._loadGen = (this._loadGen || 0) + 1;
         this.currentSessionId = sessionId;
         this.toolBlocks = {};
+        this._resetAgentViews();
         this._historyData = null;
         this._compactData = null;
         try {
@@ -190,15 +201,15 @@ const Chat = {
         if (todo) todo.style.display = 'none';
     },
 
-    _appendSystemMessage(content) {
-        this._removeWelcomeScreen();
-        const c = document.getElementById('chat-messages');
-        this._saveScrollState();
+    _appendSystemMessage(content, container) {
+        if (container) this._removeWelcomeScreen(); // 子代理视图无欢迎页, 仅主视图需要清理
+        const c = container || document.getElementById('chat-messages');
+        this._saveScrollState(c);
         const el = document.createElement('div');
         el.className = 'system-message';
         el.innerHTML = `<div class="msg-content" style="background:transparent;border:none;padding:4px 12px;display:inline-block;font-size:var(--text-sm);color:var(--text-3)">${Utils.escapeHtml(content)}</div>`;
         c.appendChild(el);
-        this._scrollToBottom();
+        this._scrollToBottom(c);
         return el;
     },
 
@@ -354,9 +365,9 @@ const Chat = {
         input.dispatchEvent(new Event('input', { bubbles: true }));
     },
 
-    _appendUserMessage(content) {
-        const c = document.getElementById('chat-messages');
-        this._saveScrollState();
+    _appendUserMessage(content, container) {
+        const c = container || document.getElementById('chat-messages');
+        this._saveScrollState(c);
         const el = document.createElement('div');
         el.className = 'message user';
         el.dataset.rawContent = content;
@@ -367,7 +378,7 @@ const Chat = {
             </div>`;
         c.appendChild(el);
         Utils.addCopyButtons(el);
-        this._scrollToBottom();
+        this._scrollToBottom(c);
         return el;
     },
 
@@ -402,9 +413,9 @@ const Chat = {
     },
 
     /** 追加带多媒体附件的用户消息 */
-    _appendUserMessageWithMedia(content, images, videos, audio, files) {
-        const c = document.getElementById('chat-messages');
-        this._saveScrollState();
+    _appendUserMessageWithMedia(content, images, videos, audio, files, container) {
+        const c = container || document.getElementById('chat-messages');
+        this._saveScrollState(c);
         const el = document.createElement('div');
         el.className = 'message user';
         el.dataset.rawContent = content || '';
@@ -467,13 +478,13 @@ const Chat = {
 
         c.appendChild(el);
         Utils.addCopyButtons(el);
-        this._scrollToBottom();
+        this._scrollToBottom(c);
         return el;
     },
 
-    _appendAssistantMessage(content) {
-        const c = document.getElementById('chat-messages');
-        this._saveScrollState();
+    _appendAssistantMessage(content, container) {
+        const c = container || document.getElementById('chat-messages');
+        this._saveScrollState(c);
         const el = document.createElement('div');
         el.className = 'message assistant';
         const msgContent = document.createElement('div');
@@ -503,7 +514,7 @@ const Chat = {
         el.innerHTML = `<div class="msg-avatar assistant">${icon('lobster')}</div><div class="msg-body"></div>`;
         el.querySelector('.msg-body').appendChild(msgContent);
         c.appendChild(el);
-        this._scrollToBottom();
+        this._scrollToBottom(c);
         return msgContent;
     },
 
@@ -541,11 +552,23 @@ const Chat = {
         if (resultPreview) headerHtml += `<span class="tool-result-preview">→ ${Utils.escapeHtml(resultPreview)}</span>`;
         headerHtml += `</span>`;
         headerHtml += `<span class="tool-status ${statusClass}">${statusText}</span><span class="tool-chevron">${icon('chevronRight')}</span>`;
+        // subagent_create: 提供"查看运行过程"的显眼入口, 点击切换到对应子代理独立视图
+        const subViewKey = toolCallId ? `${this.currentSessionId || ''}:${toolCallId}` : '';
+        if (name === 'subagent_create' && subViewKey && this._agentViews[subViewKey]) {
+            headerHtml += `<button class="tool-view-subagent" title="查看 ${Utils.escapeHtml(this._agentViews[subViewKey].name || '子代理')} 的运行过程" data-view-key="${Utils.escapeHtml(subViewKey)}">${icon('play')} 查看过程</button>`;
+        }
 
         const header = document.createElement('div');
         header.className = 'tool-header';
         header.innerHTML = headerHtml;
-        header.onclick = () => block.classList.toggle('expanded');
+        header.onclick = (e) => {
+            if (e.target.closest('.tool-view-subagent')) return; // 查看按钮不触发展开/收起
+            block.classList.toggle('expanded');
+        };
+        header.querySelector('.tool-view-subagent')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this._switchAgentView(e.currentTarget.dataset.viewKey);
+        });
 
         const body = document.createElement('div');
         body.className = 'tool-body';
@@ -569,6 +592,11 @@ const Chat = {
         block.appendChild(header);
         block.appendChild(body);
         parentEl.appendChild(block);
+        // 工具块也是可见内容: 若父消息的复制按钮还是隐藏态(空消息创建), 恢复显示
+        if (parentEl && parentEl.classList && parentEl.classList.contains('msg-content')) {
+            const btn = parentEl.querySelector('.msg-copy-btn');
+            if (btn && btn.style.display === 'none') btn.style.display = '';
+        }
         return block;
     },
 
@@ -669,8 +697,176 @@ _showLightbox(url) {
         this._subagentStates = {};
     },
 
-    /** 解析子代理事件应挂载的父工具块 key(session_id:creator_tool_call_id)。
-     *  优先用后端精确携带的 creator id; 缺失时退化为旧的"最近 running 块"兜底。 */
+    // ============================================================
+    //  agent 视图管理(主 Agent + 各 subagent 独立时间线)
+    // ============================================================
+
+    /** 计算 subagent 事件归属的视图 key('main' 之外的子代理视图)。
+     *  解析逻辑与 _resolveSubagentBlockKey 一致: 优先后端 creator id, 缺失退化兜底。 */
+    _agentKeyForMsg(msg) {
+        if (!msg || !msg.is_subagent) return 'main';
+        let creatorId = msg.creator_tool_call_id || null;
+        if (!creatorId) {
+            if (!this._subagentToolId) {
+                const lastRunning = this._findLastRunningTool();
+                if (lastRunning) {
+                    this._subagentToolId = lastRunning.toolCallId;
+                    this._subagentName = msg.agent_name || '';
+                }
+            }
+            creatorId = this._subagentToolId;
+        }
+        if (!creatorId) return null; // 无法定位 → 不渲染(防止事件漂流进主视图)
+        return `${msg.session_id}:${creatorId}`;
+    },
+
+    /** 获取(或创建)某个 subagent 的独立视图。name 用于展示与标签。 */
+    _ensureAgentView(key, name) {
+        if (!key || key === 'main') return this._agentViews['main'] || (this._agentViews['main'] = this._createAgentView('main', '主 Agent'));
+        if (this._agentViews[key]) {
+            if (name) this._agentViews[key].name = name;
+            return this._agentViews[key];
+        }
+        const view = this._createAgentView(key, name || this._subagentName || '子代理');
+        this._updateAgentStatusBar();
+        return view;
+    },
+
+    /** 创建单个 agent 视图(容器 + 标签 + 该视图自己的流式状态)。
+     *  主视图(key='main')直接复用 #chat-messages,不创建额外容器。 */
+    _createAgentView(key, name) {
+        if (key === 'main') {
+            return {
+                key, name: '主 Agent',
+                el: document.getElementById('chat-messages'),
+                streamingEl: null, streamingContent: '', streamingBody: null,
+                thinkingEl: null, thinkingContent: '',
+                done: false,
+            };
+        }
+        const mainArea = document.getElementById('main-area');
+        const c = document.getElementById('chat-messages');
+        // 独立容器与主聊天区同构(同一套 .chat-messages 样式),插在主容器之前
+        const el = document.createElement('div');
+        el.className = 'chat-messages agent-chat';
+        el.id = `agent-chat-${key.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+        el.style.display = 'none'; // 默认显示主 agent
+        mainArea.insertBefore(el, c);
+        const view = {
+            key, name, el,
+            streamingEl: null, streamingContent: '', streamingBody: null,
+            thinkingEl: null, thinkingContent: '',
+            done: false,
+        };
+        this._agentViews[key] = view;
+        return view;
+    },
+
+    /** 更新状态栏 agent 切换项: 有子代理(含运行中的异步子代理)时显示, 否则隐藏 */
+    _updateAgentStatusBar() {
+        const el = document.getElementById('status-agents');
+        if (!el) return;
+        const subKeys = Object.keys(this._agentViews).filter(k => k !== 'main');
+        if (!subKeys.length) { el.style.display = 'none'; return; }
+        el.style.display = '';
+        const labelEl = el.querySelector('.status-agents-label');
+        const cur = this._agentViews[this._activeAgentKey];
+        if (labelEl) labelEl.textContent = cur?.name || '主 Agent';
+        // 有运行中的子代理时标题提示
+        const running = subKeys.some(k => this._agentViews[k] && !this._agentViews[k].done);
+        el.title = running ? '子代理运行中, 点击切换查看' : '点击切换查看 Agent / 子代理';
+    },
+
+    /** 切换当前显示的 agent 视图 */
+    _switchAgentView(key) {
+        if (!this._agentViews[key] && key !== 'main') {
+            this._ensureAgentView(key);
+        }
+        this._activeAgentKey = key;
+        const mainEl = document.getElementById('chat-messages');
+        // 主容器恢复默认(移除内联 display, 由 .chat-messages 样式决定), 子代理容器显隐切换
+        if (mainEl) mainEl.style.display = '';
+        for (const [k, v] of Object.entries(this._agentViews)) {
+            if (k === 'main') continue; // 主容器就是 #chat-messages
+            if (!v?.el) continue;
+            v.el.style.display = (k === key) ? '' : 'none';
+        }
+        if (key !== 'main') {
+            // 隐藏主容器, 显示目标子代理视图
+            if (mainEl) mainEl.style.display = 'none';
+        }
+        this._updateAgentStatusBar();
+        this._forceScrollToBottom();
+    },
+
+    /** 标记某个 agent 视图结束(subagent_end / 主 end) */
+    _markAgentDone(key) {
+        const v = key === 'main' ? this._agentViews['main'] : this._agentViews[key];
+        if (v) v.done = true;
+        this._updateAgentStatusBar();
+    },
+
+    /** 弹出 agent 切换菜单(status-permission 同款 context-menu) */
+    _showAgentMenu(anchorEl) {
+        this._hideAgentMenu();
+        const menu = document.createElement('div');
+        menu.id = 'agent-switch-menu';
+        menu.className = 'context-menu';
+        const rect = anchorEl.getBoundingClientRect();
+        menu.style.cssText = `position:fixed;bottom:${window.innerHeight - rect.top + 4}px;left:${rect.left}px;z-index:1000;min-width:150px`;
+        const keys = ['main', ...Object.keys(this._agentViews).filter(k => k !== 'main')];
+        keys.forEach(key => {
+            const v = this._agentViews[key];
+            const name = key === 'main' ? '主 Agent' : (v?.name || '子代理');
+            const item = document.createElement('div');
+            item.className = 'context-menu-item' + (key === this._activeAgentKey ? ' active' : '');
+            // 运行中的子代理: 名字旁加跳动圆点
+            const running = key !== 'main' && v && !v.done;
+            item.innerHTML = `${running ? '<span class="agent-tab-dot"></span>' : '<span class="ctx-icon"></span>'}<span>${Utils.escapeHtml(name)}</span>${key === this._activeAgentKey ? '<span style="margin-left:auto;color:var(--accent-bright)">✓</span>' : ''}`;
+            item.onclick = () => { this._switchAgentView(key); this._hideAgentMenu(); };
+            menu.appendChild(item);
+        });
+        document.body.appendChild(menu);
+        setTimeout(() => document.addEventListener('click', this._hideAgentMenu, { once: true }), 0);
+    },
+
+    _hideAgentMenu() {
+        const m = document.getElementById('agent-switch-menu');
+        if (m) m.remove();
+    },
+
+    /** 重置 agent 视图(会话切换/清空时),移除所有独立容器与标签 */
+    _resetAgentViews() {
+        Object.keys(this._agentViews).forEach(k => {
+            if (k === 'main') return;
+            this._agentViews[k].el?.remove();
+            delete this._agentViews[k];
+        });
+        this._agentViews['main'] = {
+            key: 'main', name: '主 Agent',
+            el: document.getElementById('chat-messages'),
+            streamingEl: null, streamingContent: '', streamingBody: null,
+            thinkingEl: null, thinkingContent: '',
+            done: false,
+        };
+        this._activeAgentKey = 'main';
+        const c = this._agentViews['main'].el;
+        if (c) c.style.display = '';
+        this._updateAgentStatusBar();
+    },
+
+    /** 获取(或创建)某个创建者工具块对应的子代理流式状态。
+     *  同步子代理(嵌套显示)复用此状态渲染 thinking/流式文本到创建它的工具块内。 */
+    _subagentState(key) {
+        return this._subagentStates[key] || (this._subagentStates[key] = {
+            name: '', streamingEl: null, streamingContent: '',
+            thinkingEl: null, thinkingContent: '',
+        });
+    },
+
+    /** 解析同步子代理事件应挂载的父工具块 key(session_id:creator_tool_call_id)。
+     *  优先后端精确携带的 creator id; 缺失时退化为旧的"最近 running 块"兜底。
+     *  仅同步子代理使用(异步子代理走 _agentKeyForMsg → 独立视图)。 */
     _resolveSubagentBlockKey(msg) {
         let creatorId = msg.creator_tool_call_id || null;
         if (!creatorId) {
@@ -688,15 +884,7 @@ _showLightbox(url) {
         return this.toolBlocks[key] ? key : null;
     },
 
-    /** 获取(或创建)某个父工具块对应的子代理流式状态 */
-    _subagentState(key) {
-        return this._subagentStates[key] || (this._subagentStates[key] = {
-            name: '', streamingEl: null, streamingContent: '',
-            thinkingEl: null, thinkingContent: '',
-        });
-    },
-
-    /** 按父工具块 key 获取 subagent 的 tool-block body 元素 */
+    /** 按父工具块 key 获取 subagent 的 tool-block body 元素(同步子代理嵌套渲染用) */
     _getSubagentToolBody(key) {
         if (!key) return null;
         const block = this.toolBlocks[key];
@@ -748,19 +936,32 @@ _showLightbox(url) {
         if (typeof str !== 'string') { try { return JSON.stringify(str, null, 2); } catch (_) { return String(str); } }
         try { return JSON.stringify(JSON.parse(str), null, 2); } catch (_) { return str; }
     },
-    _saveScrollState() {
-        const c = document.getElementById('chat-messages');
+    _activeChatContainer() {
+        // 返回当前应当滚动的聊天容器: 子代理视图激活时滚动其容器, 否则滚动主容器
+        if (this._activeAgentKey !== 'main') {
+            const v = this._agentViews[this._activeAgentKey];
+            if (v?.el) return v.el;
+        }
+        return document.getElementById('chat-messages');
+    },
+    /* 记录滚动状态。target 显式指定时基于该容器,否则基于当前激活容器。
+     * subagent 事件在后台(非激活视图)渲染时必须传入其 view.el ——
+     * 否则会读取主/激活容器的滚动位置,把可见视图的滚动条拉走。 */
+    _saveScrollState(target) {
+        const c = target || this._activeChatContainer();
         if (!c) return;
         const threshold = Math.max(100, c.clientHeight * 0.2);
         this._wasAtBottom = c.scrollHeight - c.scrollTop - c.clientHeight < threshold;
     },
-    _scrollToBottom() {
+    _scrollToBottom(target) {
         if (!this._wasAtBottom) return;
-        const c = document.getElementById('chat-messages');
+        const c = target || this._activeChatContainer();
+        if (!c) return;
         requestAnimationFrame(() => { c.scrollTop = c.scrollHeight; });
     },
-    _forceScrollToBottom() {
-        const c = document.getElementById('chat-messages');
+    _forceScrollToBottom(target) {
+        const c = target || this._activeChatContainer();
+        if (!c) return;
         requestAnimationFrame(() => { c.scrollTop = c.scrollHeight; });
     },
 
@@ -774,6 +975,7 @@ _showLightbox(url) {
         this.currentSessionId = msg.session_id;
         SessionPanel.activeSessionId = msg.session_id;
         this._resetStreamingState();
+        this._resetAgentViews();
         if (msg.root_dir) SessionPanel.activeProjectDir = msg.root_dir;
         WS.send({ type: 'set_active', session_id: msg.session_id });
         SessionPanel._updateStatusBar(SessionPanel.activeProjectDir, msg.session_id, true);
@@ -784,6 +986,47 @@ _showLightbox(url) {
 
     _onUser(msg) {
         if (!msg || !this.currentSessionId || msg.session_id !== this.currentSessionId) return;
+        // subagent 的 user 消息: 同步走老办法(不显示, 与旧行为一致), 异步渲染到其独立视图
+        if (msg.is_subagent) {
+            if (!msg.is_async) return;
+            const key = this._agentKeyForMsg(msg);
+            const view = key ? this._ensureAgentView(key, msg.agent_name) : null;
+            if (!view) return;
+            if (msg.agent_name) view.name = msg.agent_name;
+            let el = null;
+            if (Array.isArray(msg.content)) {
+                const text = this._extractText(msg.content);
+                const images = this._extractImages(msg.content);
+                const videos = this._extractVideos(msg.content);
+                const audio = this._extractAudio(msg.content);
+                const files = this._extractFiles(msg.content);
+                if (text.startsWith('[system]')) {
+                    if (text.includes('(用户执行Shell命令)')) return;
+                    if (images.length > 0) { el = this._appendSystemMessageWithImages(text, images, view.el); return; }
+                    el = this._appendSystemMessage(text, view.el);
+                    return;
+                }
+                // 清除 [附件: ...] 后缀,只保留纯文本
+                const cleanText = text.replace(/\n?\[附件: [^\]]+\]/g, '').trim();
+                if (images.length > 0 || videos.length > 0 || audio.length > 0 || files.length > 0) {
+                    el = this._appendUserMessageWithMedia(cleanText, images, videos, audio, files, view.el);
+                } else {
+                    el = this._appendUserMessage(cleanText || '(附件消息)', view.el);
+                }
+            } else if (typeof msg.content === 'string') {
+                const text = msg.content;
+                if (text.startsWith('[system]')) {
+                    if (text.includes('(用户执行Shell命令)')) return;
+                    el = this._appendSystemMessage(text, view.el);
+                } else {
+                    el = this._appendUserMessage(text, view.el);
+                }
+            }
+            // subagent 视图是实时过程展示(不映射主会话历史), 消息无删除/编辑意义, 移除删除按钮
+            if (el) el.querySelector('.msg-delete-btn')?.remove();
+            return;
+        }
+
         this._removeWelcomeScreen();
         // 收到用户消息确认,清空等待区
         if (typeof PendingMessages !== 'undefined') {
@@ -823,9 +1066,9 @@ _showLightbox(url) {
     },
 
     /** 追加带图片的系统消息 */
-    _appendSystemMessageWithImages(content, imageUrls) {
-        const c = document.getElementById('chat-messages');
-        this._saveScrollState();
+    _appendSystemMessageWithImages(content, imageUrls, container) {
+        const c = container || document.getElementById('chat-messages');
+        this._saveScrollState(c);
         const el = document.createElement('div');
         el.className = 'system-message';
         if (content) {
@@ -836,33 +1079,57 @@ _showLightbox(url) {
         }
         this._appendImageGrid(el, imageUrls);
         c.appendChild(el);
-        this._scrollToBottom();
+        this._scrollToBottom(c);
         return el;
     },
 
     _onThinkingStart(msg) {
         if (!msg || !this.currentSessionId || msg.session_id !== this.currentSessionId) return;
 
-        // subagent 的 thinking 渲染在 tool-block 内(按 creator id 分桶,支持并行子代理)
+        // subagent: 同步走老办法(嵌套在创建工具块内), 异步走独立视图
         if (msg.is_subagent) {
-            const key = this._resolveSubagentBlockKey(msg);
+            if (!msg.is_async) {
+                const key = this._resolveSubagentBlockKey(msg);
+                if (!key) return;
+                const body = this._getSubagentToolBody(key);
+                const st = this._subagentState(key);
+                if (msg.agent_name) st.name = msg.agent_name;
+                // 新思考阶段开始时,重置流式内容容器(与主 agent 的 _appendAssistantMessage 行为一致)
+                st.streamingEl = null;
+                st.streamingContent = '';
+                if (body && !st.thinkingEl) {
+                    const block = document.createElement('div');
+                    block.className = 'thinking-block';
+                    const agentLabel = msg.agent_name || st.name || 'subagent';
+                    block.innerHTML = `<div class="thinking-header">${icon('brain')} <span class="thinking-label">[${Utils.escapeHtml(agentLabel)}] 思考中...</span></div><div class="thinking-content"></div>`;
+                    block.querySelector('.thinking-header').onclick = () => block.classList.toggle('expanded');
+                    body.appendChild(block);
+                    st.thinkingEl = block;
+                    st.thinkingContent = '';
+                    this._scrollToBottom();
+                }
+                return;
+            }
+            const key = this._agentKeyForMsg(msg);
             if (!key) return;
-            const body = this._getSubagentToolBody(key);
-            const st = this._subagentState(key);
-            if (msg.agent_name) st.name = msg.agent_name;
-            // 新思考阶段开始时,重置流式内容容器(与主 agent 的 _appendAssistantMessage 行为一致)
-            st.streamingEl = null;
-            st.streamingContent = '';
-            if (body && !st.thinkingEl) {
+            const view = this._ensureAgentView(key, msg.agent_name);
+            if (msg.agent_name) view.name = msg.agent_name;
+            // 新思考阶段开始: 与主 agent 一致, 先建一条助手消息承载本轮回复
+            if (!view.streamingEl) {
+                view.streamingEl = this._appendAssistantMessage('', view.el);
+                view.streamingBody = view.streamingEl.querySelector('.markdown-body');
+                view.streamingContent = '';
+            }
+            if (!view.thinkingEl) {
                 const block = document.createElement('div');
                 block.className = 'thinking-block';
-                const agentLabel = msg.agent_name || st.name || 'subagent';
+                const agentLabel = msg.agent_name || view.name || '子代理';
                 block.innerHTML = `<div class="thinking-header">${icon('brain')} <span class="thinking-label">[${Utils.escapeHtml(agentLabel)}] 思考中...</span></div><div class="thinking-content"></div>`;
                 block.querySelector('.thinking-header').onclick = () => block.classList.toggle('expanded');
-                body.appendChild(block);
-                st.thinkingEl = block;
-                st.thinkingContent = '';
-                this._scrollToBottom();
+                view.streamingEl.insertBefore(block, view.streamingEl.firstChild);
+                view.thinkingEl = block;
+                view.thinkingContent = '';
+                this._scrollToBottom(view.el);
             }
             return;
         }
@@ -886,19 +1153,33 @@ _showLightbox(url) {
     _onThinking(msg) {
         if (!msg || msg.session_id !== this.currentSessionId) return;
 
-        // subagent 的 thinking 渲染在 tool-block 内
+        // subagent: 同步走老办法(嵌套), 异步走独立视图
         if (msg.is_subagent) {
-            const key = this._resolveSubagentBlockKey(msg);
-            const st = key ? this._subagentStates[key] : null;
-            if (!st || !st.thinkingEl) return;
-            this._saveScrollState();
-            st.thinkingContent += msg.content;
-            const content = st.thinkingEl.querySelector('.thinking-content');
-            if (content) content.textContent = st.thinkingContent;
-            const label = st.thinkingEl.querySelector('.thinking-label');
-            const agentLabel = msg.agent_name || st.name || 'subagent';
-            if (label) label.textContent = `[${agentLabel}] 思考中... (${st.thinkingContent.length}字)`;
-            this._scrollToBottom();
+            if (!msg.is_async) {
+                const key = this._resolveSubagentBlockKey(msg);
+                const st = key ? this._subagentStates[key] : null;
+                if (!st || !st.thinkingEl) return;
+                this._saveScrollState();
+                st.thinkingContent += msg.content;
+                const content = st.thinkingEl.querySelector('.thinking-content');
+                if (content) content.textContent = st.thinkingContent;
+                const label = st.thinkingEl.querySelector('.thinking-label');
+                const agentLabel = msg.agent_name || st.name || 'subagent';
+                if (label) label.textContent = `[${agentLabel}] 思考中... (${st.thinkingContent.length}字)`;
+                this._scrollToBottom();
+                return;
+            }
+            const key = this._agentKeyForMsg(msg);
+            const view = key ? this._ensureAgentView(key, msg.agent_name) : null;
+            if (!view || !view.thinkingEl) return;
+            this._saveScrollState(view.el);
+            view.thinkingContent += msg.content;
+            const content = view.thinkingEl.querySelector('.thinking-content');
+            if (content) content.textContent = view.thinkingContent;
+            const label = view.thinkingEl.querySelector('.thinking-label');
+            const agentLabel = msg.agent_name || view.name || '子代理';
+            if (label) label.textContent = `[${agentLabel}] 思考中... (${view.thinkingContent.length}字)`;
+            this._scrollToBottom(view.el);
             return;
         }
 
@@ -932,30 +1213,57 @@ _showLightbox(url) {
     _onText(msg) {
         if (!msg || !this.currentSessionId || msg.session_id !== this.currentSessionId) return;
 
-        // subagent 的 text 渲染在 tool-block 内(按 creator id 分桶,支持并行子代理)
+        // subagent: 同步走老办法(嵌套在创建工具块内), 异步走独立视图
         if (msg.is_subagent) {
-            const key = this._resolveSubagentBlockKey(msg);
-            if (!key) return;
-            const body = this._getSubagentToolBody(key);
-            const st = this._subagentState(key);
-            if (msg.agent_name) st.name = msg.agent_name;
-            if (body) {
-                // 完成 thinking 显示
-                this._finalizeThinking(st, msg.agent_name || st.name || 'subagent');
-                // 创建或更新流式内容区域
-                if (!st.streamingEl) {
-                    const el = document.createElement('div');
-                    el.className = 'subagent-streaming markdown-body';
-                    body.appendChild(el);
-                    st.streamingEl = el;
-                    st.streamingContent = '';
+            if (!msg.is_async) {
+                const key = this._resolveSubagentBlockKey(msg);
+                if (!key) return;
+                const body = this._getSubagentToolBody(key);
+                const st = this._subagentState(key);
+                if (msg.agent_name) st.name = msg.agent_name;
+                if (body) {
+                    // 完成 thinking 显示
+                    this._finalizeThinking(st, msg.agent_name || st.name || 'subagent');
+                    // 创建或更新流式内容区域
+                    if (!st.streamingEl) {
+                        const el = document.createElement('div');
+                        el.className = 'subagent-streaming markdown-body';
+                        body.appendChild(el);
+                        st.streamingEl = el;
+                        st.streamingContent = '';
+                    }
+                    st.streamingContent += msg.content;
+                    st.streamingEl.innerHTML = Utils.renderMarkdown(st.streamingContent);
+                    // A2UI 仅主 agent 可用:子代理的 a2ui 代码块保持代码块显示
+                    Utils.addCopyButtons(st.streamingEl);
+                    this._scrollToBottom();
                 }
-                st.streamingContent += msg.content;
-                st.streamingEl.innerHTML = Utils.renderMarkdown(st.streamingContent);
-                // A2UI 仅主 agent 可用:子代理的 a2ui 代码块保持代码块显示
-                Utils.addCopyButtons(st.streamingEl);
-                this._scrollToBottom();
+                return;
             }
+            const key = this._agentKeyForMsg(msg);
+            if (!key) return;
+            const view = this._ensureAgentView(key, msg.agent_name);
+            if (msg.agent_name) view.name = msg.agent_name;
+            // 完成 thinking 显示
+            this._finalizeThinking(view, msg.agent_name || view.name || '子代理');
+            // 创建或更新助手消息
+            if (!view.streamingEl) {
+                view.streamingEl = this._appendAssistantMessage('', view.el);
+                view.streamingBody = view.streamingEl.querySelector('.markdown-body');
+                view.streamingContent = '';
+            }
+            if (!view.streamingBody) {
+                view.streamingBody = document.createElement('div');
+                view.streamingBody.className = 'markdown-body';
+                view.streamingEl.appendChild(view.streamingBody);
+            }
+            view.streamingContent += msg.content;
+            view.streamingBody.innerHTML = Utils.renderMarkdown(view.streamingContent);
+            // A2UI 仅主 agent 可用:子代理的 a2ui 代码块保持代码块显示
+            Utils.addCopyButtons(view.streamingBody);
+            const btn = view.streamingBody.parentElement?.querySelector('.msg-copy-btn');
+            if (btn && btn.style.display === 'none' && view.streamingContent.trim()) btn.style.display = '';
+            this._scrollToBottom(view.el);
             return;
         }
 
@@ -982,8 +1290,36 @@ _showLightbox(url) {
 
     _onAssistant(msg) {
         if (!msg || !this.currentSessionId || msg.session_id !== this.currentSessionId) return;
-        // subagent 的 assistant 事件不需要在主聊天区显示(流式内容已在 tool-block 内渲染)
-        if (msg.is_subagent) return;
+        // subagent: 同步走老办法(不做额外收束, 内容已在嵌套工具块内流式呈现), 异步收束独立视图
+        if (msg.is_subagent) {
+            if (!msg.is_async) return;
+            const key = this._agentKeyForMsg(msg);
+            const view = key ? this._ensureAgentView(key, msg.agent_name) : null;
+            if (!view) return;
+            if (msg.agent_name) view.name = msg.agent_name;
+            this._finalizeThinking(view, msg.agent_name || view.name || '子代理');
+            if (!view.streamingEl && (msg.content || msg.tool_calls?.length)) {
+                view.streamingEl = this._appendAssistantMessage('', view.el);
+                view.streamingBody = view.streamingEl.querySelector('.markdown-body');
+                view.streamingContent = '';
+            }
+            if (view.streamingBody && msg.content) {
+                view.streamingBody.innerHTML = Utils.renderMarkdown(msg.content);
+                Utils.addCopyButtons(view.streamingBody);
+                const btn = view.streamingBody.parentElement?.querySelector('.msg-copy-btn');
+                if (btn && btn.style.display === 'none' && msg.content.trim()) btn.style.display = '';
+            }
+            if (msg.tool_calls?.length && view.streamingEl) {
+                msg.tool_calls.forEach(tc => {
+                    const name = tc.function?.name || tc.name || 'tool';
+                    const args = tc.function?.arguments || tc.arguments || '{}';
+                    this._appendToolBlock(view.streamingEl, name, args, null, null, tc.id || '');
+                });
+            }
+            if (view.streamingEl) this._appendUsageInfo(view.streamingEl, msg.in_tokens, msg.out_tokens, msg.model_name, msg.cached_tokens, msg.cache_write_tokens, msg.created_at, msg.finish_reason);
+            view.streamingEl = null; view.streamingContent = ''; view.streamingBody = null;
+            return;
+        }
         // 会话级缓存统计(实时路径;subagent 不回放入主会话历史,故此处跳过以保持一致)
         this._finalizeThinking(this);
         if (!this.streamingEl && (msg.content || msg.tool_calls?.length)) {
@@ -1016,62 +1352,107 @@ _showLightbox(url) {
     _onToolStart(msg) {
         if (!msg || !this.currentSessionId || msg.session_id !== this.currentSessionId) return;
 
-        // 仅为 subagent_create 做两件事: 1) 从 args.name 提前初始化桶显示名(其他工具无 name 参数, 事件自带 agent_name);
+        // 仅为 subagent_create 做两件事: 1) 从 args.name 初始化子代理显示名;
         // 2) 维护单槽兜底 _subagentToolId(仅供缺 creator_tool_call_id 的事件使用)。
-        // 子代理事件定位不依赖这里 — investigate/ask_advisor/kg_extract 等的事件自带 creator id, 桶在下方惰性创建。
+        // 仅异步子代理(wait=false)提前创建独立视图; 同步子代理保持老办法(嵌套在工具块内)。
         if (!msg.is_subagent && msg.name === 'subagent_create') {
             let agentName = '';
+            let isWait = true;
             try {
                 const args = typeof msg.args === 'string' ? JSON.parse(msg.args) : msg.args;
                 agentName = args?.name || '';
+                isWait = args?.wait !== false;
             } catch (_) {}
             this._subagentToolId = msg.tool_call_id || null;
             this._subagentName = agentName;
             if (msg.tool_call_id) {
-                this._subagentState(`${msg.session_id}:${msg.tool_call_id}`).name = agentName;
+                const vkey = `${msg.session_id}:${msg.tool_call_id}`;
+                this._subagentState(vkey).name = agentName;
+                if (!isWait) this._ensureAgentView(vkey, agentName);
             }
         }
 
-        // subagent 的 tool 事件渲染在对应 tool-block 内(按 creator id 精确定位,支持并行子代理)
+        // subagent: 同步走老办法(嵌套在创建工具块内), 异步走独立视图
         if (msg.is_subagent) {
-            const parentKey = this._resolveSubagentBlockKey(msg);
-            if (!parentKey) return;
-            const st = this._subagentState(parentKey);
-            if (msg.agent_name) st.name = msg.agent_name;
-            // 完成本轮 thinking 显示(与主 agent 的 tool_start 行为一致)
-            this._finalizeThinking(st, msg.agent_name || st.name || 'subagent');
-            const body = this._getSubagentToolBody(parentKey);
-            if (body) {
-                // 用 tool_call_id 做唯一 key,和主工具一样存入 toolBlocks
-                const subKey = msg.tool_call_id ? `${msg.session_id}:${msg.tool_call_id}` : null;
-                if (subKey && this.toolBlocks[subKey]) {
-                    // 已存在(重复事件),更新状态
-                    const existing = this.toolBlocks[subKey];
-                    const status = existing.querySelector('.tool-header .tool-status');
-                    if (status) { status.className = 'tool-status running'; status.textContent = '执行中'; }
-                    return;
+            if (!msg.is_async) {
+                const parentKey = this._resolveSubagentBlockKey(msg);
+                if (!parentKey) return;
+                const st = this._subagentState(parentKey);
+                if (msg.agent_name) st.name = msg.agent_name;
+                // 完成本轮 thinking 显示(与主 agent 的 tool_start 行为一致)
+                this._finalizeThinking(st, msg.agent_name || st.name || 'subagent');
+                const body = this._getSubagentToolBody(parentKey);
+                if (body) {
+                    // 用 tool_call_id 做唯一 key,和主工具一样存入 toolBlocks
+                    const subKey = msg.tool_call_id ? `${msg.session_id}:${msg.tool_call_id}` : null;
+                    if (subKey && this.toolBlocks[subKey]) {
+                        // 已存在(重复事件),更新状态
+                        const existing = this.toolBlocks[subKey];
+                        const status = existing.querySelector('.tool-header .tool-status');
+                        if (status) { status.className = 'tool-status running'; status.textContent = '执行中'; }
+                        return;
+                    }
+                    const agentLabel = msg.agent_name || st.name || 'subagent';
+                    const el = document.createElement('div');
+                    el.className = 'tool-block subagent-tool';
+                    if (subKey) this.toolBlocks[subKey] = el;
+                    const header = document.createElement('div');
+                    header.className = 'tool-header';
+                    const argPreview = Utils.formatArgs(msg.args, 60);
+                    let headerHtml = `<span class="tool-icon">${icon('tool')}</span><span class="tool-text"><span class="tool-name">[${Utils.escapeHtml(agentLabel)}] ${Utils.escapeHtml(msg.name)}</span>`;
+                    if (argPreview) headerHtml += `<span class="tool-args-preview">(${Utils.escapeHtml(argPreview)})</span>`;
+                    headerHtml += `</span><span class="tool-status running">执行中</span><span class="tool-chevron">${icon('chevronRight')}</span>`;
+                    header.innerHTML = headerHtml;
+                    header.onclick = (e) => { e.stopPropagation(); el.classList.toggle('expanded'); };
+                    const toolBody = document.createElement('div');
+                    toolBody.className = 'tool-body';
+                    if (msg.args && Object.keys(msg.args).length) {
+                        toolBody.innerHTML = `<div class="tool-args"><div class="tool-args-label">参数</div><pre>${Utils.escapeHtml(this._formatJson(msg.args))}</pre></div>`;
+                    }
+                    el.appendChild(header);
+                    el.appendChild(toolBody);
+                    body.appendChild(el);
                 }
-                const agentLabel = msg.agent_name || st.name || 'subagent';
-                const el = document.createElement('div');
-                el.className = 'tool-block subagent-tool';
-                if (subKey) this.toolBlocks[subKey] = el;
-                const header = document.createElement('div');
-                header.className = 'tool-header';
-                const argPreview = Utils.formatArgs(msg.args, 60);
-                let headerHtml = `<span class="tool-icon">${icon('tool')}</span><span class="tool-text"><span class="tool-name">[${Utils.escapeHtml(agentLabel)}] ${Utils.escapeHtml(msg.name)}</span>`;
-                if (argPreview) headerHtml += `<span class="tool-args-preview">(${Utils.escapeHtml(argPreview)})</span>`;
-                headerHtml += `</span><span class="tool-status running">执行中</span><span class="tool-chevron">${icon('chevronRight')}</span>`;
-                header.innerHTML = headerHtml;
-                header.onclick = (e) => { e.stopPropagation(); el.classList.toggle('expanded'); };
-                const toolBody = document.createElement('div');
-                toolBody.className = 'tool-body';
-                if (msg.args && Object.keys(msg.args).length) {
-                    toolBody.innerHTML = `<div class="tool-args"><div class="tool-args-label">参数</div><pre>${Utils.escapeHtml(this._formatJson(msg.args))}</pre></div>`;
-                }
-                el.appendChild(header);
-                el.appendChild(toolBody);
-                body.appendChild(el);
+                return;
             }
+            const viewKey = this._agentKeyForMsg(msg);
+            if (!viewKey) return;
+            const view = this._ensureAgentView(viewKey, msg.agent_name);
+            if (msg.agent_name) view.name = msg.agent_name;
+            // 完成本轮 thinking 显示(与主 agent 的 tool_start 行为一致)
+            this._finalizeThinking(view, msg.agent_name || view.name || '子代理');
+            // 关键: 先查 toolBlocks — _onAssistant 已按 tool_calls 渲染过该工具块时,
+            // 只能更新状态, 不能重复创建(否则同一 tool_call_id 出现两块: 一块卡死"执行中")
+            const subKey = msg.tool_call_id ? `${msg.session_id}:${msg.tool_call_id}` : null;
+            const existingBlock = subKey ? this.toolBlocks[subKey] : null;
+            if (existingBlock) {
+                const status = existingBlock.querySelector('.tool-header .tool-status');
+                if (status) { status.className = 'tool-status running'; status.textContent = '执行中'; }
+                // 更新 explain(从 AssistantEvent 创建时没有,tool_start 才带过来, 与主 agent 一致)
+                if (msg.explain && !existingBlock.querySelector('.tool-explain')) {
+                    const toolText = existingBlock.querySelector('.tool-text');
+                    if (toolText) {
+                        const explainEl = document.createElement('span');
+                        explainEl.className = 'tool-explain';
+                        explainEl.textContent = msg.explain;
+                        const toolName = toolText.querySelector('.tool-name');
+                        if (toolName) toolText.insertBefore(explainEl, toolName);
+                        else toolText.appendChild(explainEl);
+                    }
+                }
+                return;
+            }
+            // 工具块挂到该视图当前助手消息下(与主 agent 相同结构);缺消息时先建一条
+            if (!view.streamingEl) {
+                view.streamingEl = this._appendAssistantMessage('', view.el);
+                view.streamingBody = view.streamingEl.querySelector('.markdown-body');
+                view.streamingContent = '';
+            }
+            const parent = view.streamingEl || view.el;
+            // 注意: content 传 null — 若传 '执行中...' 会在 tool-body 预置一个伪结果块,
+            // _onToolEnd 的 subagent 分支按"只追加一次"判断会被其挡住, 真实结果无法填充
+            this._appendToolBlock(parent, msg.name, msg.args, null, null, msg.tool_call_id, msg.explain);
+            this._scrollToBottom(view.el);
             return;
         }
 
@@ -1159,8 +1540,10 @@ _showLightbox(url) {
     _onToolEnd(msg) {
         if (!msg || !this.currentSessionId || msg.session_id !== this.currentSessionId) return;
 
-        // subagent 的 tool_end: 用 tool_call_id 精确匹配工具块
-        if (msg.is_subagent) {
+        // 仅同步 subagent(嵌套在创建工具块内)走此分支;
+        // 异步 subagent 的工具块与主 agent 同构(独立视图中), 直接复用下方主逻辑,
+        // 自动获得 send_file/Edit diff/上下文刷新等完整能力, 避免两份逻辑漂移。
+        if (msg.is_subagent && !msg.is_async) {
             const subKey = msg.tool_call_id ? `${msg.session_id}:${msg.tool_call_id}` : null;
             const toolBlock = subKey ? this.toolBlocks[subKey] : null;
             if (toolBlock) {
@@ -1188,6 +1571,7 @@ _showLightbox(url) {
             }
             return;
         }
+        // 异步 subagent 工具结果已进入模型上下文,由下方主逻辑统一刷新上下文用量
 
         // 主 agent 工具结束: 清除本工具块的子代理状态桶(覆盖 investigate/ask_advisor/kg_extract 等所有创建子代理的工具)
         if (!msg.is_subagent && msg.tool_call_id) {
@@ -1197,6 +1581,9 @@ _showLightbox(url) {
                 this._subagentToolId = null;
                 this._subagentName = '';
             }
+            // 注意: 不在这里移除 _agentViews 的子代理视图 — 同步子代理在工具内联等待完成时
+            // 会在 tool_end 到达前标记 done, 此时删除会让用户刚切换到一半就看不到过程;
+            // 视图统一在会话切换(_resetAgentViews)时清理, 运行中与完成后均可随时回看。
         }
 
         const key = msg.tool_call_id ? `${msg.session_id}:${msg.tool_call_id}` : null;
@@ -1382,18 +1769,54 @@ _showLightbox(url) {
 
     _onSubagentEnd(msg) {
         if (!msg || !this.currentSessionId || msg.session_id !== this.currentSessionId) return;
-        const key = this._resolveSubagentBlockKey(msg);
-        const st = key ? this._subagentStates[key] : null;
-        if (!st) return;
-        // 完成 subagent 的 thinking 显示
-        this._finalizeThinking(st, msg.agent_name || st.name || 'subagent');
-        // 清理 subagent 流式状态(但保留 _subagentToolId 以便后续 tool_end 清理)
-        st.streamingEl = null;
-        st.streamingContent = '';
+        // 同步子代理: 老办法, 收尾嵌套在创建工具块内的流式状态
+        if (!msg.is_async) {
+            const key = this._resolveSubagentBlockKey(msg);
+            const st = key ? this._subagentStates[key] : null;
+            if (!st) return;
+            this._finalizeThinking(st, msg.agent_name || st.name || 'subagent');
+            st.streamingEl = null;
+            st.streamingContent = '';
+            return;
+        }
+        // 异步子代理: 收尾独立视图流式状态(保留视图与标签,供用户回看;会话切换时才清理)
+        const key = this._agentKeyForMsg(msg);
+        const view = key ? this._agentViews[key] : null;
+        if (!view) return;
+        this._finalizeThinking(view, msg.agent_name || view.name || '子代理');
+        view.streamingEl = null;
+        view.streamingContent = '';
+        view.streamingBody = null;
+        this._markAgentDone(key);
     },
     // 协议错误(如缺 root_dir/session_id)不带 session_id,需放行才能显示
     _onError(msg) { if (!msg || (msg.session_id && msg.session_id !== this.currentSessionId)) return; this._appendSystemMessage(`❌ ${msg.message}`); },
-    _onInterrupted(msg) { if (!msg || (msg.session_id && msg.session_id !== this.currentSessionId)) return; this._resetStreamingState(); this._appendSystemMessage(`⏹️ ${msg.message || '已中断'}`); },
+    _onInterrupted(msg) {
+        if (!msg || (msg.session_id && msg.session_id !== this.currentSessionId)) return;
+        // subagent 被中断: 同步走老办法(嵌套收尾), 异步渲染到独立视图
+        if (msg.is_subagent) {
+            if (!msg.is_async) {
+                const key = this._resolveSubagentBlockKey(msg);
+                const st = key ? this._subagentStates[key] : null;
+                if (st) {
+                    this._finalizeThinking(st, msg.agent_name || st.name || 'subagent');
+                    st.streamingEl = null;
+                    st.streamingContent = '';
+                }
+                return;
+            }
+            const key = this._agentKeyForMsg(msg);
+            const view = key ? this._agentViews[key] : null;
+            if (view) {
+                this._finalizeThinking(view, msg.agent_name || view.name || '子代理');
+                this._appendSystemMessage(`⏹️ ${msg.message || '已中断'}`, view.el);
+                view.streamingEl = null; view.streamingContent = ''; view.streamingBody = null;
+                this._markAgentDone(key);
+            }
+            return;
+        }
+        this._resetStreamingState(); this._appendSystemMessage(`⏹️ ${msg.message || '已中断'}`);
+    },
 
     // agent 运行期间用户 !cmd:后端先发 shell_running 再发 shell_result,
     // 执行期插入占位行,结果到达后原位替换,避免长时间命令看似界面卡死

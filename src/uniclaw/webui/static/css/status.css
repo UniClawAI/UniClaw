@@ -128,6 +128,34 @@
                 color var(--duration-fast) var(--ease);
 }
 
+/* Agent / 子代理切换(有异步 subagent 时显示) */
+.status-agents {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: var(--r-full);
+    background: var(--accent-dim);
+    color: var(--accent-bright);
+    cursor: pointer;
+    max-width: 160px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    transition: background var(--duration-fast) var(--ease),
+                color var(--duration-fast) var(--ease),
+                filter var(--duration-fast) var(--ease);
+}
+.status-agents .status-agents-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.status-agents:hover {
+    filter: brightness(1.2);
+}
+
 /* 上下文使用率 */
 .context-usage-bar {
     display: flex;
