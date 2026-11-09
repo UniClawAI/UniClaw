@@ -807,6 +807,19 @@ _showLightbox(url) {
         this._updateAgentStatusBar();
     },
 
+    /** 标记某个 agent 视图恢复运行(子代理重新被唤醒跑新一轮时调用)。
+     *  幂等: 仅当上一轮已收尾(done=true)时重置, 避免每个流式 chunk 都触发 UI 更新。
+     *  closed 状态不重置 —— 被 subagent_close 关闭的任务无法被重新唤醒。
+     *  否则上轮结束时 done=true/status=completed 会残留, 菜单一直显示"完成"
+     *  而不会回到"运行中"。 */
+    _markAgentActive(key) {
+        const v = key === 'main' ? this._agentViews['main'] : this._agentViews[key];
+        if (!v || !v.done || v.status === 'closed') return;
+        v.done = false;
+        v.status = 'running';
+        this._updateAgentStatusBar();
+    },
+
     /** 弹出 agent 切换菜单(status-permission 同款 context-menu) */
     _showAgentMenu(anchorEl) {
         this._hideAgentMenu();
@@ -1010,6 +1023,8 @@ _showLightbox(url) {
             const view = key ? this._ensureAgentView(key, msg.agent_name) : null;
             if (!view) return;
             if (msg.agent_name) view.name = msg.agent_name;
+            // 子代理重新唤醒时收到新用户消息(任务提示): 标记回到"运行中"
+            this._markAgentActive(key);
             let el = null;
             if (Array.isArray(msg.content)) {
                 const text = this._extractText(msg.content);
@@ -1131,6 +1146,8 @@ _showLightbox(url) {
             if (!key) return;
             const view = this._ensureAgentView(key, msg.agent_name);
             if (msg.agent_name) view.name = msg.agent_name;
+            // 新一轮开始: 重置为"运行中"(幂等, 上轮结束态才真正触发)
+            this._markAgentActive(key);
             // 新思考阶段开始: 与主 agent 一致, 先建一条助手消息承载本轮回复
             if (!view.streamingEl) {
                 view.streamingEl = this._appendAssistantMessage('', view.el);
@@ -1261,6 +1278,8 @@ _showLightbox(url) {
             if (!key) return;
             const view = this._ensureAgentView(key, msg.agent_name);
             if (msg.agent_name) view.name = msg.agent_name;
+            // 新一轮文本: 若上轮已结束, 标记回到"运行中"
+            this._markAgentActive(key);
             // 完成 thinking 显示
             this._finalizeThinking(view, msg.agent_name || view.name || '子代理');
             // 创建或更新助手消息
@@ -1314,6 +1333,8 @@ _showLightbox(url) {
             const view = key ? this._ensureAgentView(key, msg.agent_name) : null;
             if (!view) return;
             if (msg.agent_name) view.name = msg.agent_name;
+            // 新一轮 assistant: 若上轮已结束, 标记回到"运行中"(下轮 subagent_end 再收尾)
+            this._markAgentActive(key);
             this._finalizeThinking(view, msg.agent_name || view.name || '子代理');
             if (!view.streamingEl && (msg.content || msg.tool_calls?.length)) {
                 view.streamingEl = this._appendAssistantMessage('', view.el);
@@ -1436,6 +1457,8 @@ _showLightbox(url) {
             if (!viewKey) return;
             const view = this._ensureAgentView(viewKey, msg.agent_name);
             if (msg.agent_name) view.name = msg.agent_name;
+            // 新一轮工具调用: 若上轮已结束, 标记回到"运行中"
+            this._markAgentActive(viewKey);
             // 完成本轮 thinking 显示(与主 agent 的 tool_start 行为一致)
             this._finalizeThinking(view, msg.agent_name || view.name || '子代理');
             // 关键: 先查 toolBlocks — _onAssistant 已按 tool_calls 渲染过该工具块时,
