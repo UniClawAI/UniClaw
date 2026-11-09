@@ -1,5 +1,7 @@
 """多 Agent 工具测试 — 覆盖 subagent_* 工具的调用逻辑。"""
 
+import asyncio
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -1313,6 +1315,262 @@ class TestFailedResultPreserved:
         assert started.status == AgentStatus.FAILED
         # 关键: 失败原因保留,不会被空 assistant 输出抹成 "" 导致 "(无输出 — 状态: failed)"
         assert started.result and "最大嵌套深度" in started.result
+
+
+class TestClosedResidentSubagentEmitsEndEvent:
+    """subagent_close 关闭"驻留等待中的 keep_alive 子代理"时,必须补发 EndEvent(depth>0)。
+
+    背景: keep_alive 子代理回合结束后驻留在 _run_proc 循环中等待新消息,
+    被 subagent_close 关闭时 close_agent 只 set cancel_event, 循环直接退出,
+    期间没有经过 run() 的收尾(不会广播 EndEvent)。父 agent 仍在 RUNNING
+    (它在等 subagent_close 工具返回),桥接无法收到 subagent_end —— 前端状态
+    卡在"运行中"。_run_proc finally 需为这种"被关闭且未经过 run 收尾"的子代理
+    补发 EndEvent(depth>0)。
+    """
+
+    @pytest.mark.asyncio
+    async def test_resident_closed_subagent_emits_end_event(self):
+        from uniclaw.agent import MultiAgent
+        from uniclaw.agent.multi_agent import EndEvent
+        from uniclaw.agent.types import AgentTask
+        from uniclaw.tools.session.session import Session
+
+        mgr = MultiAgent()
+        events: list = []
+        mgr.send_event_to_user = AsyncMock(side_effect=lambda evt, cfg: events.append(evt))
+
+        sub_session = Session(root_dir=None)
+        task = AgentTask(name="resident", prompt="hello", session=sub_session)
+        task.notify_parent = True  # 异步子代理
+        task.keep_alive = True
+        task.event_queue = None
+
+        config = MagicMock()
+        config.current_agent = task
+        config.depth = 1
+        config.parent_config = None
+        config.is_sub = True
+        config.root_dir = None
+        config.writable_dirs = []
+        config.model_name = ["test-model"]
+        config.run_mode = MagicMock()
+
+        # run() 被 mock: 执行一轮后返回(相当于子代理完成一回合进入驻留等待)。
+        # 注意 patch.object(MultiAgent, "run", new=_fake_run) 是类级替换,
+        # self.run(...) 会把 self 作为第一个位置参数传入, 签名必须带 self。
+        async def _fake_run(self, msg, system_message=None, config=None, allowed_tools=None, *a, **k):
+            task.status = AgentStatus.COMPLETED
+            task.result = "ok"
+            return None
+
+        with (
+            patch.object(MultiAgent, "run", new=_fake_run),
+            patch(
+                "uniclaw.agent.multi_agent.wake_agent",
+                new=AsyncMock(return_value=True),
+            ),
+            patch(
+                "uniclaw.agent.multi_agent.get_base_system_prompt",
+                return_value="base",
+            ),
+            patch(
+                "uniclaw.agent.multi_agent.get_env_system_prompt",
+                return_value="env",
+            ),
+            patch(
+                "uniclaw.tools.registry.get_registry_system_prompt",
+                new_callable=AsyncMock,
+                return_value="",
+            ),
+        ):
+            started = await mgr.start_sub_agent(
+                user_message="hello",
+                config=config,
+                system_prompt=None,
+                inherit_events=False,
+                notify_parent=True,
+                keep_alive=True,
+            )
+            # 子代理先用一轮真实 run 完成回合进入驻留(keep_alive 循环等待)
+            await asyncio.sleep(0.05)
+
+            # 模拟 subagent_close: 设 closed + 发取消信号
+            task.closed = True
+            task.cancel_event.set()
+
+            # 等待 _run_proc 结束(finally 执行补发)
+            await started.future
+
+        # 必须补发一次 EndEvent(depth>0) 让前端收到 subagent_end
+        sub_ends = [e for e in events if isinstance(e, EndEvent) and e.depth == config.depth]
+        assert sub_ends, "驻留被关闭的子代理未补发 EndEvent(depth>0)"
+
+    @pytest.mark.asyncio
+    async def test_running_closed_subagent_no_duplicate_end_event(self):
+        """运行中被关闭的子代理: run() 收尾已发 EndEvent, 不得重复补发。"""
+        from uniclaw.agent import MultiAgent
+        from uniclaw.agent.multi_agent import EndEvent
+        from uniclaw.agent.types import AgentTask
+        from uniclaw.tools.session.session import Session
+
+        mgr = MultiAgent()
+        events: list = []
+        mgr.send_event_to_user = AsyncMock(side_effect=lambda evt, cfg: events.append(evt))
+
+        sub_session = Session(root_dir=None)
+        task = AgentTask(name="running", prompt="hello", session=sub_session)
+        task.notify_parent = True
+        task.keep_alive = True
+        task.event_queue = None
+
+        config = MagicMock()
+        config.current_agent = task
+        config.depth = 1
+        config.parent_config = None
+        config.is_sub = True
+        config.root_dir = None
+        config.writable_dirs = []
+        config.model_name = ["test-model"]
+        config.run_mode = MagicMock()
+
+        end_events: list = []
+
+        async def _fake_run(self, msg, system_message=None, config=None, allowed_tools=None, *a, **k):
+            # 模拟运行中被取消: run() 收尾广播 EndEvent(depth>0)。
+            # 真实 run() 里广播 EndEvent 会经 send_event_to_user 自动置位
+            # end_event_sent=True, 故这里同步置位, 验证 finally 不重复补发。
+            task.status = AgentStatus.CANCELLED
+            task.result = "cancelled"
+            end_events.append(1)
+            task.end_event_sent = True
+            await mgr.send_event_to_user(EndEvent(depth=1), config)
+            return None
+
+        with (
+            patch.object(MultiAgent, "run", new=_fake_run),
+            patch(
+                "uniclaw.agent.multi_agent.wake_agent",
+                new=AsyncMock(return_value=True),
+            ),
+            patch(
+                "uniclaw.agent.multi_agent.get_base_system_prompt",
+                return_value="base",
+            ),
+            patch(
+                "uniclaw.agent.multi_agent.get_env_system_prompt",
+                return_value="env",
+            ),
+            patch(
+                "uniclaw.tools.registry.get_registry_system_prompt",
+                new_callable=AsyncMock,
+                return_value="",
+            ),
+        ):
+            started = await mgr.start_sub_agent(
+                user_message="hello",
+                config=config,
+                system_prompt=None,
+                inherit_events=False,
+                notify_parent=True,
+                keep_alive=True,
+            )
+            await asyncio.sleep(0.05)
+            # 触发取消(驻留等待中被关): 在 run 返回后、循环再次等待前设 cancel →
+            # 时机不同: 这里 run 已执行一次并广播 EndEvent, 然后循环继续等待。
+            # 设 closed+cancel 让驻留循环退出, 此时 end_event_sent 已 True,
+            # finally 不应重复补发。
+            task.closed = True
+            task.cancel_event.set()
+            await started.future
+
+        # run() 内部发了一次 EndEvent(side: fake_run), finally 补发逻辑见 end_event_sent=True,
+        # 不应再补 —— 但 fake_run 手动广播的 EndEvent 已计入 events。
+        sub_ends = [e for e in events if isinstance(e, EndEvent) and e.depth == config.depth]
+        # fake_run 的广播 + 可能的补发: 目标是不重复, 即 <=1 次来自 run 收尾,
+        # finally 补发不再增加。 由于 fake_run 里手动广播过, 期望恰好 1。
+        assert len(sub_ends) == 1, f"运行中关闭不应重复发 EndEvent: {len(sub_ends)}"
+
+    @pytest.mark.asyncio
+    async def test_second_round_after_end_resets_flag(self):
+        """多轮 keep_alive 子代理: 上一轮广播过 EndEvent(end_event_sent=True)后,
+        新一轮开始时必须重置为 False —— 否则新一轮在驻留等待中被关闭时,
+        finally 补发判断被上轮残留的 True 永久挡住, 前端状态又卡住。"""
+        from uniclaw.agent import MultiAgent
+        from uniclaw.agent.multi_agent import EndEvent
+        from uniclaw.agent.types import AgentTask
+        from uniclaw.tools.session.session import Session
+
+        mgr = MultiAgent()
+        events: list = []
+        mgr.send_event_to_user = AsyncMock(side_effect=lambda evt, cfg: events.append(evt))
+
+        sub_session = Session(root_dir=None)
+        task = AgentTask(name="multi-round", prompt="hello", session=sub_session)
+        task.notify_parent = True
+        task.keep_alive = True
+        task.event_queue = None
+        task.end_event_sent = True  # 模拟上一轮已广播过 EndEvent
+
+        config = MagicMock()
+        config.current_agent = task
+        config.depth = 1
+        config.parent_config = None
+        config.is_sub = True
+        config.root_dir = None
+        config.writable_dirs = []
+        config.model_name = ["test-model"]
+        config.run_mode = MagicMock()
+
+        async def _fake_run(self, msg, system_message=None, config=None, allowed_tools=None, *a, **k):
+            task.status = AgentStatus.COMPLETED
+            task.result = "ok"
+            return None
+
+        with (
+            patch.object(MultiAgent, "run", new=_fake_run),
+            patch(
+                "uniclaw.agent.multi_agent.wake_agent",
+                new=AsyncMock(return_value=True),
+            ),
+            patch(
+                "uniclaw.agent.multi_agent.get_base_system_prompt",
+                return_value="base",
+            ),
+            patch(
+                "uniclaw.agent.multi_agent.get_env_system_prompt",
+                return_value="env",
+            ),
+            patch(
+                "uniclaw.tools.registry.get_registry_system_prompt",
+                new_callable=AsyncMock,
+                return_value="",
+            ),
+        ):
+            started = await mgr.start_sub_agent(
+                user_message="hello",
+                config=config,
+                system_prompt=None,
+                inherit_events=False,
+                notify_parent=True,
+                keep_alive=True,
+            )
+            # 让第一轮执行并完成(循环重新回到等待下一条消息)。
+            # 此时第一轮的 run 已跑完;第二轮的"新一轮开始前重置"尚未发生
+            # (重置点在循环体顶部、收到下一条消息之后)。
+            await asyncio.sleep(0.05)
+            # 往 user_queue 投一条新消息唤醒第二轮 —— 触发循环体顶部的 end_event_sent 重置
+            started.user_queue.put_nowait("second round")
+            await asyncio.sleep(0.05)
+            # 第二轮开始前已把上轮残留的 True 重置为 False
+            assert started.end_event_sent is False, "新一轮开始前必须重置 end_event_sent"
+            # 第二轮"驻留等待中被关闭": 本轮未广播过 EndEvent
+            task.closed = True
+            task.cancel_event.set()
+            await started.future
+
+        # 必须补发一次 EndEvent(depth>0) —— 上轮残留的 True 不得影响本轮
+        sub_ends = [e for e in events if isinstance(e, EndEvent) and e.depth == config.depth]
+        assert len(sub_ends) >= 1, f"多轮第二轮被关闭应补发 EndEvent: {len(sub_ends)}"
 
 
 class TestStatusText:

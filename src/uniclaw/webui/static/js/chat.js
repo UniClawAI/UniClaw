@@ -733,7 +733,8 @@ _showLightbox(url) {
     },
 
     /** 创建单个 agent 视图(容器 + 标签 + 该视图自己的流式状态)。
-     *  主视图(key='main')直接复用 #chat-messages,不创建额外容器。 */
+     *  主视图(key='main')直接复用 #chat-messages,不创建额外容器。
+     *  status: 'running' | 'completed' | 'failed' | 'cancelled'(终态由 subagent_end 设置) */
     _createAgentView(key, name) {
         if (key === 'main') {
             return {
@@ -741,7 +742,7 @@ _showLightbox(url) {
                 el: document.getElementById('chat-messages'),
                 streamingEl: null, streamingContent: '', streamingBody: null,
                 thinkingEl: null, thinkingContent: '',
-                done: false,
+                done: false, status: 'running',
             };
         }
         const mainArea = document.getElementById('main-area');
@@ -756,7 +757,7 @@ _showLightbox(url) {
             key, name, el,
             streamingEl: null, streamingContent: '', streamingBody: null,
             thinkingEl: null, thinkingContent: '',
-            done: false,
+            done: false, status: 'running',
         };
         this._agentViews[key] = view;
         return view;
@@ -813,21 +814,37 @@ _showLightbox(url) {
         menu.id = 'agent-switch-menu';
         menu.className = 'context-menu';
         const rect = anchorEl.getBoundingClientRect();
-        menu.style.cssText = `position:fixed;bottom:${window.innerHeight - rect.top + 4}px;left:${rect.left}px;z-index:1000;min-width:150px`;
+        menu.style.cssText = `position:fixed;bottom:${window.innerHeight - rect.top + 4}px;left:${rect.left}px;z-index:1000;min-width:170px`;
         const keys = ['main', ...Object.keys(this._agentViews).filter(k => k !== 'main')];
         keys.forEach(key => {
             const v = this._agentViews[key];
             const name = key === 'main' ? '主 Agent' : (v?.name || '子代理');
             const item = document.createElement('div');
             item.className = 'context-menu-item' + (key === this._activeAgentKey ? ' active' : '');
-            // 运行中的子代理: 名字旁加跳动圆点
+            // 运行中的子代理: 名字旁加跳动圆点已经结束: 右侧标注状态徽标
             const running = key !== 'main' && v && !v.done;
-            item.innerHTML = `${running ? '<span class="agent-tab-dot"></span>' : '<span class="ctx-icon"></span>'}<span>${Utils.escapeHtml(name)}</span>${key === this._activeAgentKey ? '<span style="margin-left:auto;color:var(--accent-bright)">✓</span>' : ''}`;
+            if (running) {
+                item.innerHTML = `<span class="agent-tab-dot"></span><span>${Utils.escapeHtml(name)}</span><span style="margin-left:auto;color:var(--text-3);font-size:11px">运行中</span>`;
+            } else if (key !== 'main' && v) {
+                const badge = this._subagentStatusBadge(v.status);
+                item.innerHTML = `<span class="ctx-icon"></span><span>${Utils.escapeHtml(name)}</span><span style="margin-left:6px">${badge}</span>${key === this._activeAgentKey ? '<span style="margin-left:auto;color:var(--accent-bright)">✓</span>' : ''}`;
+            } else {
+                item.innerHTML = `<span class="ctx-icon"></span><span>${Utils.escapeHtml(name)}</span>${key === this._activeAgentKey ? '<span style="margin-left:auto;color:var(--accent-bright)">✓</span>' : ''}`;
+            }
             item.onclick = () => { this._switchAgentView(key); this._hideAgentMenu(); };
             menu.appendChild(item);
         });
         document.body.appendChild(menu);
         setTimeout(() => document.addEventListener('click', this._hideAgentMenu, { once: true }), 0);
+    },
+
+    /** 生成子代理状态徽标。主状态三态: 运行中 / ✓ 完成 / ⏻ 已关闭。
+     *  失败/取消归入"完成"主状态, 用子标注区分细节(不引入第五种主状态)。 */
+    _subagentStatusBadge(status) {
+        if (status === 'closed') return '<span class="agent-status-badge closed" title="已被 subagent_close 关闭">⏻ 已关闭</span>';
+        if (status === 'failed') return '<span class="agent-status-badge completed fail-mark" title="执行失败">✓ 完成(失败)</span>';
+        if (status === 'cancelled') return '<span class="agent-status-badge completed cancel-mark" title="已取消">✓ 完成(取消)</span>';
+        return '<span class="agent-status-badge completed" title="已完成">✓ 完成</span>';
     },
 
     _hideAgentMenu() {
@@ -1787,6 +1804,9 @@ _showLightbox(url) {
         view.streamingEl = null;
         view.streamingContent = '';
         view.streamingBody = null;
+        // 记录终态: 被 subagent_close 主动关闭 → "closed", 否则用后端携带的终态
+        // (默认 completed 兼容旧事件缺该字段)
+        view.status = msg.closed ? 'closed' : (msg.status || 'completed');
         this._markAgentDone(key);
     },
     // 协议错误(如缺 root_dir/session_id)不带 session_id,需放行才能显示
@@ -1811,6 +1831,7 @@ _showLightbox(url) {
                 this._finalizeThinking(view, msg.agent_name || view.name || '子代理');
                 this._appendSystemMessage(`⏹️ ${msg.message || '已中断'}`, view.el);
                 view.streamingEl = null; view.streamingContent = ''; view.streamingBody = null;
+                view.status = 'cancelled';
                 this._markAgentDone(key);
             }
             return;

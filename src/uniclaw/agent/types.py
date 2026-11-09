@@ -49,6 +49,7 @@ class AgentTask:
     cancel_event: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
     future: Optional[asyncio.Task] = field(default=None, repr=False)
     event_queue: Optional[asyncio.Queue] = field(default=None, repr=False)
+    end_event_sent: bool = False  # 是否已向 UI 广播过 EndEvent(depth>0);防重复/补发判断
     todolist: Optional[TodoList] = field(default=None, repr=False)
     goal_manager: GoalManager = field(default=None, repr=False)
     extended_mgr: ExtendedToolManager = field(

@@ -306,6 +306,19 @@ def test_live_async_subagent_view_switch(open_page, webui_server):
         assert "用户取消了子代理" in page.locator(".agent-chat").inner_text(), "subagent 中断提示未渲染到独立视图"
         assert "用户取消了子代理" not in page.locator("#chat-messages").inner_text(), "subagent 中断提示不应进入主视图"
 
+        # 5b) 中断后状态栏菜单: 子代理应标注"完成(取消)"(非"运行中")
+        page.click("#status-agents", timeout=5000)
+        page.wait_for_selector("#agent-switch-menu .context-menu-item", timeout=5000)
+        badged = page.evaluate(
+            "() => Array.from(document.querySelectorAll('#agent-switch-menu .context-menu-item')).map(el => el.textContent)"
+        )
+        assert any("调研助手" in t and "取消" in t for t in badged), f"菜单应标注取消: {badged}"
+        assert not any("调研助手" in t and "运行中" in t for t in badged), f"取消后不应再标运行中: {badged}"
+        # 关闭菜单(点击菜单外任意处触发 once listener)
+        page.mouse.click(5, 5)
+        _wait(100)
+        assert page.locator("#agent-switch-menu").count() == 0, "菜单应已关闭"
+
         # 6) 切回主视图:再次打开菜单,点击"主 Agent"
         page.click("#status-agents", timeout=5000)
         page.wait_for_selector("#agent-switch-menu .context-menu-item", timeout=5000)

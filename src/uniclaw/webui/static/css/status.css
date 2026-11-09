@@ -156,6 +156,39 @@
     filter: brightness(1.2);
 }
 
+/* agent 切换菜单里的子代理终态徽标 */
+.agent-status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: var(--r-full);
+    line-height: 1.4;
+}
+.agent-status-badge.completed {
+    background: var(--green-dim);
+    color: var(--green);
+}
+.agent-status-badge.completed.fail-mark {
+    color: var(--red);
+}
+.agent-status-badge.completed.cancel-mark {
+    color: var(--orange);
+}
+.agent-status-badge.failed {
+    background: var(--red-dim);
+    color: var(--red);
+}
+.agent-status-badge.cancelled {
+    background: var(--orange-dim);
+    color: var(--orange);
+}
+.agent-status-badge.closed {
+    background: var(--bg-3);
+    color: var(--text-2);
+}
+
 /* 上下文使用率 */
 .context-usage-bar {
     display: flex;

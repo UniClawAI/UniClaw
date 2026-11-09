@@ -22,6 +22,7 @@ from uniclaw.agent import (
     PermissionRequestEvent,
     ShellCommandEvent,
     SlashCommandEvent,
+    SubagentClosedEvent,
     TextChunkEvent,
     ThinkingChunkEvent,
     ThinkingStartEvent,
@@ -351,8 +352,30 @@ async def bridge_events(session_id: str, config: AppConfig):
                         "agent_name": agent_name,
                         "creator_tool_call_id": creator_tool_call_id,
                         "depth": event.depth,
+                        # 终态(COMPLETED/FAILED/CANCELLED),前端用于菜单里标注状态
+                        "status": getattr(queued_task, "status", ""),
+                        "closed": getattr(queued_task, "closed", False),
                     }
                 )
+            continue
+
+        # === 子代理被主动关闭(subagent_close 广播) ===
+        elif isinstance(event, SubagentClosedEvent):
+            config.spinner.stop(wait_id=queued_task.id)
+            await _broadcast(
+                {
+                    "event": "subagent_end",
+                    "session_id": session_id,
+                    "is_subagent": True,
+                    "is_async": is_async,
+                    "agent_name": agent_name,
+                    "creator_tool_call_id": creator_tool_call_id,
+                    "depth": event.depth,
+                    # 被主动关闭 ≠ 自然结束, 前端据此标"已关闭"
+                    "status": getattr(queued_task, "status", ""),
+                    "closed": True,
+                }
+            )
             continue
 
         # === 阻塞事件:需要等待前端响应 ===

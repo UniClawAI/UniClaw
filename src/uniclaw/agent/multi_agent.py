@@ -362,6 +362,18 @@ class EndEvent:
 
 
 @dataclass
+class SubagentClosedEvent:
+    """子代理被 subagent_close 主动关闭的通知(仅异步子代理)。
+
+    与 EndEvent(depth>0) 的区别: EndEvent 表示回合自然结束(完成/失败/取消),
+    SubagentClosedEvent 表示父 agent 显式关闭了任务 —— 前端据此把视图状态
+    标为"已关闭",而不是"完成/失败/已取消"。
+    """
+
+    depth: int
+
+
+@dataclass
 class InterruptedEvent:
     message: str = "已中断,等待您的补充指令..."
 
@@ -637,6 +649,10 @@ class MultiAgent:
                     await err(f"获取TUI实例失败: {e}", config, e)
         if queue:
             await queue.put((task, event))
+            # EndEvent(depth>0) 意味着子代理回合结束已通知 UI,
+            # 供 _run_proc finally 判定"被关闭但从未通知"的补发场景, 防重复广播。
+            if isinstance(event, EndEvent) and event.depth > 0:
+                task.end_event_sent = True
 
         if hasattr(event, "return_event"):
             if queue:
@@ -897,6 +913,11 @@ class MultiAgent:
                         if keep_alive:
                             continue
                         break
+                    # 新一轮开始: 重置"已广播结束"标记 —— 它是**本轮**是否通知过 UI 的标记,
+                    # 而非"历史上任何一轮"。否则子代理被关闭后重新起来(keep_alive
+                    # 下一轮/send_to_child 唤醒)时, 若上一轮已置 True, 本轮被关闭
+                    # 时 finally 的补发判断将永久失效, 前端状态又卡住。
+                    task.end_event_sent = False
                     await self.run(msg, system_prompt, config, allowed_tools)
                     if task.cancel_event.is_set():
                         task.result = "任务已取消。"
@@ -945,6 +966,24 @@ class MultiAgent:
                         await self.send_event_to_user(
                             EndEvent(depth=0), config.parent_config
                         )
+                # 被 subagent_close 主动关闭、但从未向 UI 广播过结束事件的异步子代理:
+                # 补发 EndEvent(depth>0)。end_event_sent 在 send_event_to_user 置位,
+                # 只要 run() 收尾发过就不会重复。否则 WebUI 前端收不到 subagent_end,
+                # 状态栏/独立视图状态卡在"运行中"。
+                if (
+                    task.closed
+                    and not task.end_event_sent
+                    and task.status
+                    in (
+                        AgentStatus.CANCELLED,
+                        AgentStatus.COMPLETED,
+                        AgentStatus.FAILED,
+                    )
+                ):
+                    try:
+                        await self.send_event_to_user(EndEvent(depth=config.depth), config)
+                    except Exception as e:
+                        await warn(f"补发子代理结束事件失败(子代理 {task.name}): {e}", config)
                 if task.worktree_path:
                     try:
                         await remove_worktree(

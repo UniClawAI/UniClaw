@@ -296,6 +296,17 @@ def subagent_close(task_id: str, tool_runtime: ToolRuntime = None) -> str:
     was_finished = task.is_finished
     status = mgr.close_agent(task)
     mgr.detach_sub_config(config, task)
+    # 通知 UI: 子代理已被主动关闭(前端把独立视图状态标为"已关闭")。
+    # 恢复正常结束(EndEvent)是"完成/失败/取消",关闭是独立语义 ——
+    # 若省略,已驻留结束的子代理被关闭后前端状态卡在旧值不变。
+    try:
+        from uniclaw.agent.multi_agent import SubagentClosedEvent
+
+        _q = config.current_agent.event_queue if config else None
+        if _q is not None:
+            _q.put_nowait((task, SubagentClosedEvent(depth=config.depth)))
+    except Exception:
+        pass
     if status == "already_closed":
         return f"子智能体 {name_id} 已关闭过,无需重复关闭。"
     if was_finished:
