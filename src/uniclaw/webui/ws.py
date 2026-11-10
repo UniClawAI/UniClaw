@@ -524,12 +524,15 @@ async def bridge_events(session_id: str, config: AppConfig):
             )
 
         elif isinstance(event, CheckpointStartEvent):
-            checkpoint_wait_id = config.spinner.start(
+            # wait_id 按 queued_task.id 稳定派生(与 console 一致),不用局部变量记录:
+            # 同一根队列可能承载多个代理(主 agent + keep_alive 子代理)的检查点,
+            # 局部变量会被后到的事件覆盖,导致 stop 停错行、孤儿 spinner 永久残留。
+            config.spinner.start(
                 "创建检查点...", wait_id=f"checkpoint_{queued_task.id}"
             )
 
         elif isinstance(event, CheckpointEndEvent):
-            config.spinner.stop(wait_id=checkpoint_wait_id)
+            config.spinner.stop(wait_id=f"checkpoint_{queued_task.id}")
 
         # === 批量事件 ===
         elif isinstance(event, UserEvent):

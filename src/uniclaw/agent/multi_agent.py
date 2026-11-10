@@ -1760,12 +1760,19 @@ class MultiAgent:
             await create_checkpoint(
                 task.session.root_dir, message=extract_text(user_message)
             )
+        except asyncio.CancelledError:
+            # 取消中断也要收尾: finally 补发 CheckpointEndEvent,
+            # 否则前端"创建检查点"spinner 行永久残留。
+            raise
         except Exception as e:
             if _is_loop_shutdown_noise(e):
                 await warn(f"创建检查点已跳过(进程正在关闭): {e}", config=config)
             else:
                 await err(f"创建检查点失败(已跳过): {e}", config=config, e=e)
-        await self.send_event_to_user(CheckpointEndEvent(), config)
+        finally:
+            # 正常/失败/被取消都必须发 CheckpointEndEvent,stop 前端 spinner。
+            # CheckpointEndEvent 无 return_event,经 put_nowait 入队,取消状态下也不会丢。
+            await self.send_event_to_user(CheckpointEndEvent(), config)
         if system_message is None:
             system_message = await build_system_prompt(config)
         # 使用核心工具(约 15 个)+ search_tools,扩展工具按需加载
