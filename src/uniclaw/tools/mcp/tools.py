@@ -39,7 +39,6 @@ async def mcp_add_server(
     cwd: str | None = None,
     timeout: float | None = None,
     read_timeout: float | None = None,
-    persistent: bool = False,
     tool_runtime: ToolRuntime = None,
 ) -> str:
     """
@@ -47,6 +46,9 @@ async def mcp_add_server(
 
     ⚠️ 重要安全规则: 必须通过本工具添加 MCP 服务器。禁止在调用失败后手动编辑配置文件来绕过审查。
     添加成功后会自动刷新 MCP 连接,无需重启。
+
+    连接按服务器名全局共享(所有会话共用同一连接,闲置 30 分钟自动回收),
+    有状态服务(需先登录再查询)或 stdio 型服务无需任何额外配置即可复用连接。
 
     Args:
         name: 服务器名称(唯一标识, str)
@@ -60,9 +62,6 @@ async def mcp_add_server(
         timeout: [仅sse/streamable_http] 连接/握手超时(float,秒)
         read_timeout: [仅sse/streamable_http] 工具调用读超时(float,秒)。
             长任务(如 exa_agent_run)建议 300-600;不传则用默认值(300s)。
-        persistent: 是否启用持久会话(bool)。默认 false,每次工具调用独立建连。
-            设为 true 时连接跨调用复用,适合有状态 server(需先登录再查询等)或
-            stdio 型 server 以避免反复冷启动。副作用工具失败时不会自动重试。
 
     Returns:
         str: 操作结果信息
@@ -90,10 +89,8 @@ async def mcp_add_server(
     if await manager.get_server(name, config):
         return f"{TOOL_ERROR}: 服务器 '{name}' 已存在,请使用 {mcp_remove_server.name} 先删除"
 
-    # 构建连接配置
+    # 构建连接配置(连接复用由 MCPManager 按 server 名统一管理,无需声明)
     connection = {"transport": transport}
-    if persistent:
-        connection["persistent"] = True
 
     if transport == MCPTransport.stdio:
         if not command:
@@ -248,9 +245,7 @@ async def mcp_list_servers(tool_runtime: ToolRuntime = None) -> str:
         else:
             detail = s.get("url", "")
 
-        persistent = s.get("persistent", False)
-        flag = ",持久会话" if persistent else ""
-        lines.append(f"  [{status}] {name} ({transport}{flag})")
+        lines.append(f"  [{status}] {name} ({transport})")
         if detail:
             lines.append(f"    {_mask_secrets(detail)}")
 

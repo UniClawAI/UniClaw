@@ -74,7 +74,7 @@
 - 🔨 **Tool plugin forge**: The `/tool-plugin-forge` skill generates tool plugins in one shot — capture intent → check collisions → generate code → actually load and verify; async wake mode for long-running tasks
 - 🎯 **Skill system**: Extensible skill mechanism with support for custom task templates and workflows
 - 🎨 **Theme customization**: Built-in `uniclaw-theme` skill for custom WebUI colors, fonts, and styles
-- 🔌 **MCP integration**: Model Context Protocol (mcp 2.x) with async command management, persistent session reuse, and multimodal results
+- 🔌 **MCP integration**: Model Context Protocol (mcp 2.x) with async command management, shared connection reuse, and multimodal results
 - 🌉 **A2A remote agents**: Agent2Agent protocol — call external A2A agents or expose UniClaw as an A2A endpoint for multi-agent collaboration
 - ⏱️ **Async wait**: The `sleep_timer` tool wakes the agent up later without blocking the main loop
 - 📸 **Git checkpoints**: Automatic git stash checkpoints with one-key rollback of AI file edits; .gitignore-aware and history-pollution-free; the file-snapshot mode in non-git directories fully supports Chinese/special filenames
@@ -1397,7 +1397,7 @@ User level (global):
 
 Connect external tool services via MCP (Model Context Protocol), supporting stdio, sse, and streamable_http (mcp 2.x SDK). MCP command management is async for better responsiveness.
 
-- **Persistent sessions**: with `"persistent": true`, connections are reused across tool calls — good for stateful services (login-then-query) or slow-cold-start stdio servers; idle connections are reclaimed after 30 minutes
+- **Connection reuse**: connections are automatically reused across tool calls per server — good for stateful services (login-then-query) or slow-cold-start stdio servers; idle connections are reclaimed after 30 minutes
 - **Multimodal results**: image/audio/video content blocks returned by MCP tools become multimodal messages for the AI to analyze directly; oversized media degrades to a text placeholder
 
 Manage MCP servers with `/mcp`:
@@ -2347,7 +2347,7 @@ Tools the AI calls directly, no slash command needed:
 | `mcp_toggle_server` | Enable/disable a server | `mcp_toggle_server(name="fs", enabled=False)` |
 | `mcp_list_servers` | List servers and their tools | `mcp_list_servers()` — tool counts and descriptions per server |
 
-`mcp_add_server` optional params: `env`/`cwd` (stdio env vars and working dir), `headers`/`timeout` (HTTP auth and timeout), `persistent` (persistent session, below).
+`mcp_add_server` optional params: `env`/`cwd` (stdio env vars and working dir), `headers`/`timeout` (HTTP auth and timeout). Connections are shared and reused per server automatically — see [Connection reuse](#connection-reuse-).
 
 **Example `mcp_list_servers` output:**
 
@@ -2382,7 +2382,6 @@ MCP config lives at `~/.UniClaw/mcp.json`:
       "transport": "stdio",
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-filesystem", "D:/code"],
-      "persistent": true,
       "enabled": true
     },
     "remote-api": {
@@ -2414,13 +2413,13 @@ HTTP transports pass auth via `headers`:
 }
 ```
 
-### Persistent sessions 🔁
+### Connection reuse 🔁
 
-By default every tool call connects, executes, and disconnects independently. For services that must stay logged in (e.g. `login` then `query`) or slow-cold-start stdio servers, set `"persistent": true`:
+All MCP connections are reused by default, with no configuration needed. Services that must stay logged in (e.g. `login` then `query`) or slow-cold-start stdio servers all work out of the box:
 
-- **Connection reuse**: connections are reused across tool calls in a conversation; the main agent and subagents share
-- **Session isolation**: different conversations are isolated, each holding its own connection
-- **Auto-reclaim**: connections are reclaimed after 30 minutes idle; deleting a session cleans up its persistent connections
+- **Connection reuse**: connections are reused across tool calls for the same server
+- **Globally shared**: one global connection per server, shared across all sessions (main agent / subagents / A2A); no per-session isolation
+- **Auto-reclaim**: connections are reclaimed after 30 minutes idle
 - **Note**: calls with side effects aren't auto-retried on failure, so side effects don't run twice
 
 ### Multimodal results
@@ -2436,6 +2435,27 @@ Media content blocks from MCP tools become UniClaw multimodal messages for direc
 | `resource_link` | text placeholder (name + MIME type) |
 
 > 💡 Media over the size limits (image 20MB / audio 25MB / video 100MB) degrade to a text placeholder so the context doesn't blow up.
+
+### Resources & prompts bridging 📦
+
+Besides tools, MCP servers can expose data and templates through **resources** and **prompts**. UniClaw auto-generates bridging tools for servers that declare these capabilities, so the AI can call them directly:
+
+| Capability | Bridge tool | Description |
+|------|---------|------|
+| resources | `{server}_list_resources` | List resources & resource templates (uri, name, mime type) |
+| resources | `{server}_read_resource` | Read resource content by uri (text/image/audio/video) |
+| prompts | `{server}_list_prompts` | List prompt templates and their arguments |
+| prompts | `{server}_get_prompt` | Get a prompt template's content by name |
+
+- **Auto-discovery**: servers that declare resources/prompts in `capabilities` get the bridging tools; lenient servers that don't declare but actually support the APIs are probed automatically
+- **Same mechanisms as tools**: bridging tools share the same connection reuse, timeout classification, and multimodal conversion
+- **Prompt media degradation**: images/audio inside prompts render as text placeholders so base64 never floods the context
+
+For example, after connecting a server that exposes document resources, the AI can:
+```
+srv_list_resources()          # see what resources exist
+srv_read_resource(uri="file:///docs/guide.md")   # read content
+```
 
 ### Command reference
 

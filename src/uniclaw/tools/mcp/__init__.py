@@ -7,7 +7,7 @@ import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from uniclaw.context import get_app_dir, Scope
 from uniclaw.console.ui import err, ok
@@ -90,6 +90,35 @@ def _build_httpx_timeout(connection: dict) -> httpx.Timeout:
     return httpx.Timeout(connect_t, read=read_t, write=connect_t, pool=connect_t)
 
 
+def _make_httpx_factory(
+    default_timeout: httpx.Timeout, proxy: str | None = None
+) -> Callable[..., httpx.AsyncClient]:
+    """构造给 fastmcp transport 的 httpx.AsyncClient 工厂。
+
+    sse / streamable_http 都通过 httpx_client_factory 自定义底层 HTTP 客户端,
+    这里统一注入长读超时(长任务不被 15s 掐断)与代理。
+    """
+
+    def _factory(
+        headers: dict | None = None,
+        timeout: httpx.Timeout | None = None,
+        auth=None,
+        **kwargs,
+    ) -> httpx.AsyncClient:
+        client_kwargs = dict(kwargs or {})
+        client_kwargs["timeout"] = timeout or default_timeout
+        client_kwargs["follow_redirects"] = True
+        if headers:
+            client_kwargs["headers"] = headers
+        if proxy:
+            client_kwargs["proxy"] = proxy
+        if auth is not None:
+            client_kwargs["auth"] = auth
+        return httpx.AsyncClient(**client_kwargs)
+
+    return _factory
+
+
 # runId 提取:优先 runId/run_id 字段;id 仅在 status=running 附近出现时才认
 _RUN_ID_RE = re.compile(r'"(?:runId|run_id)"\s*:\s*"([^"]+)"')
 _RUNNING_ID_RE = re.compile(
@@ -151,7 +180,16 @@ def _format_call_error(
     - call 阶段超时: 请求已发出,服务端可能已创建 run 但未返回 runId,
       无法续跑;给出加大 timeout 的建议
     非超时异常只压平原因,不编造 runId。
+
+    _ConnectError 标记建连失败(任务从未发出): 解包出原始建连异常,
+    并把 phase 强制还原为 "connect" —— 所有工具调用一律经 _McpConnection
+    后, 冷启动建连失败与调用失败从同一调用点抛出, 不还原会把"未发起"
+    误报成"run 可能已创建"。
     """
+    if isinstance(e, _ConnectError):
+        if e.__cause__ is not None:
+            e = e.__cause__
+        phase = "connect"
     reason = _flat_error(e)
     if not _is_timeout_error(e):
         return f"{TOOL_ERROR}: {reason}"
@@ -186,90 +224,107 @@ def _format_call_error(
 
 @asynccontextmanager
 async def _connect_mcp(connection: dict):
-    """根据 transport 类型建立 MCP 连接,统一返回 (read, write) 流。
+    """根据 transport 类型建立 MCP 连接,统一 yield 已初始化的 ClientSession。
 
-    基于 mcp 2.x:支持 stdio / sse / streamable_http 三种传输。
-    mcp 2.x 已移除 websocket 客户端,websocket 配置会直接报错。
+    基于 fastmcp(底层 mcp 2.x):支持 stdio / sse / streamable_http 三种传输,
+    websocket 客户端在 mcp 2.x 已移除,直接报错。
+    stdio 用 fastmcp 的 StdioTransport(自带 keep_alive 子进程保活);
+    sse / streamable_http 用 fastmcp transport,并通过 httpx_client_factory
+    注入超时与代理(与旧实现语义一致)。
     """
+    from fastmcp import Client
+    from fastmcp.client.transports import (
+        SSETransport,
+        StdioTransport,
+        StreamableHttpTransport,
+    )
+
     transport = connection.get("transport", "stdio")
 
     if transport == "stdio":
-        from mcp import StdioServerParameters
-        from mcp.client.stdio import stdio_client
-
-        server_params = StdioServerParameters(
+        client_transport = StdioTransport(
             command=connection.get("command", ""),
             args=connection.get("args", []),
             env=connection.get("env"),
-            cwd=connection.get("cwd"),  # 修复:传递cwd参数
+            cwd=connection.get("cwd"),
+            # 连接生命周期由 _McpConnection 持有:async with 区间即连接
+            # 存活区间,退出时才断开。不启用 fastmcp 自带 keep_alive,避免
+            # 两次回收之间子进程残留。
+            keep_alive=False,
         )
-        async with stdio_client(server_params) as (read, write):
-            yield read, write
-
     elif transport == "sse":
-        from mcp.client.sse import sse_client
-
-        # SSE 的 timeout 是连接建立超时;长读由 httpx 侧 read 超时兜底
-        try:
-            sse_timeout = float(connection.get("timeout", DEFAULT_CONNECT_TIMEOUT))
-        except (TypeError, ValueError):
-            sse_timeout = DEFAULT_CONNECT_TIMEOUT
-        async with sse_client(
+        # SSE 读超时与 streamable_http 对齐:连接短超时,读超时用 read_timeout
+        # 或默认值(长任务不被 15s 掐断)。sse_read_timeout 控制 SSE 事件流读取。
+        httpx_timeout = _build_httpx_timeout(connection)
+        client_transport = SSETransport(
             url=connection["url"],
             headers=connection.get("headers"),
-            timeout=sse_timeout,
-        ) as (read, write):
-            yield read, write
-
+            sse_read_timeout=httpx_timeout.read,
+            httpx_client_factory=_make_httpx_factory(httpx_timeout),
+        )
     elif transport == "streamable_http":
-        from mcp.client.streamable_http import streamable_http_client
-
         headers = connection.get("headers")
         proxy = connection.get("proxy")
 
         # 读超时单独放宽:exa_agent_run 等长任务需要收到 status=running + runId
-        client_kwargs = {"timeout": _build_httpx_timeout(connection)}
-        if headers:
-            client_kwargs["headers"] = headers
-        if proxy:
-            client_kwargs["proxy"] = proxy
-        async with httpx.AsyncClient(**client_kwargs) as http_client:
-            try:
-                async with streamable_http_client(
-                    url=connection["url"],
-                    http_client=http_client,
-                ) as (read, write):
-                    yield read, write
-            except RuntimeError as e:
-                # asyncio.run() 关闭期间, 存活的 async generator 会被强制 aclose,
-                # streamable_http_client 内部的 anyio cancel scope 跨任务退出会抛该异常;
-                # 此时进程即将结束, 连接由 OS 回收, 静默返回即可。
-                if "cancel scope in a different task" in str(e):
-                    return
-                raise
-
+        httpx_timeout = _build_httpx_timeout(connection)
+        client_transport = StreamableHttpTransport(
+            url=connection["url"],
+            headers=headers,
+            httpx_client_factory=_make_httpx_factory(httpx_timeout, proxy),
+        )
     elif transport == "websocket":
         raise RuntimeError(
             "websocket 传输不可用: mcp 2.x 已移除 websocket 客户端,"
             "请改用 sse 或 streamable_http"
         )
-
     else:
         raise ValueError(f"不支持的传输类型: {transport}")
+
+    # 连接/握手超时:对齐 connection["timeout"](或默认值)。
+    # fastmcp Client 的 init_timeout 控制握手(内部 normalize 成秒);
+    # timeout 参数期望的是 timedelta 语义, 传 float 秒会触发内部加法失败,
+    # 故只传 init_timeout —— 它才是"连接/握手多久算超时"的正确开关。
+    connect_timeout = _build_httpx_timeout(connection).connect
+
+    try:
+        async with Client(
+            client_transport,
+            init_timeout=connect_timeout,
+        ) as client:
+            yield client.session
+    except RuntimeError as e:
+        # asyncio.run() 关闭期间, 存活的 async generator 会被强制 aclose,
+        # Client 内部的 anyio cancel scope 跨任务退出会抛该异常;
+        # 此时进程即将结束, 连接由 OS 回收, 静默返回即可。
+        if "cancel scope in a different task" in str(e):
+            return
+        raise
 
 
 # 持久会话闲置回收阈值(秒):超过该时长无调用即回收连接。
 # 只按闲置判定,不查磁盘 — 会话可能尚未落盘(首轮未保存/A2A 内存态),
 # 按磁盘存在性判定会误杀活跃连接、丢失有状态 server 的登录态。
-# 会话显式删除由 SessionManager.delete_session 走 close_session_persistent_sessions。
-PERSISTENT_SESSION_IDLE_TIMEOUT = 1800
+# 连接按 server 名全局共享, 删除/切换会话不影响其他使用者的连接,
+# 因此会话删除无需联动关闭 MCP 连接(由闲置回收兜底)。
+CONNECTION_IDLE_TIMEOUT = 1800
 
 
-class _PersistentSession:
-    """持久化 MCP 会话:连接由独立后台任务持有,跨工具调用复用。
+class _ConnectError(RuntimeError):
+    """建连阶段失败标记:用于区分「连接未建立」与「调用阶段失败」。
 
-    仅当 mcp.json 中该 server 配置了 "persistent": true 时使用。
-    连接的建立/销毁都在同一个后台任务内完成,规避 anyio cancel scope 跨任务问题。
+    所有工具调用一律经 _McpConnection 后, 冷启动建连失败(如超时)与
+    工具调用失败会从同一调用点(call_tool)抛出。__cause__ 携带原始建连异常,
+    调用方据此把 phase 还原为 "connect", 避免把"任务从未发出"误报成
+    "run 可能已创建"。
+    """
+
+
+class _McpConnection:
+    """按 server 名共享的 MCP 持久连接:由独立后台任务持有,跨调用/跨会话复用。
+
+    所有 MCP 连接都经它管理 —— 连接的建立/销毁都在同一个后台任务内完成,
+    规避 anyio cancel scope 跨任务问题。
     """
 
     def __init__(self, server_name: str, connection: dict):
@@ -321,7 +376,7 @@ class _PersistentSession:
                 self._close_signal = asyncio.Event()
                 self._task = asyncio.create_task(
                     self._runner(ready),
-                    name=f"mcp-persistent-{self._server_name}",
+                    name=f"mcp-conn-{self._server_name}",
                 )
 
         await ready.wait()
@@ -334,16 +389,12 @@ class _PersistentSession:
 
     async def _runner(self, ready: asyncio.Event):
         """持有连接的后台任务:建连 -> 等待关闭信号 -> 在同一任务内销毁。"""
-        from mcp import ClientSession
-
         close_signal = self._close_signal
         try:
-            async with _connect_mcp(self._connection) as (read, write):
-                async with ClientSession(read, write) as session:
-                    await session.initialize()
-                    self._session = session
-                    ready.set()
-                    await close_signal.wait()
+            async with _connect_mcp(self._connection) as session:
+                self._session = session
+                ready.set()
+                await close_signal.wait()
         except Exception as e:
             self._init_error = e
         finally:
@@ -359,7 +410,14 @@ class _PersistentSession:
         self._in_flight += 1
         self._last_used = time.monotonic()
         try:
-            session = await self.get_session()
+            try:
+                session = await self.get_session()
+            except Exception as e:
+                # 建连阶段失败: 用 _ConnectError 标记, 调用方据此把 phase
+                # 还原为 "connect"(任务从未发出, 需重新发起而非续跑)。
+                raise _ConnectError(
+                    f"MCP 连接 '{self._server_name}' 建立失败: {_flat_error(e)}"
+                ) from e
             try:
                 return await session.call_tool(
                     tool_name,
@@ -482,22 +540,6 @@ def _mcp_blocks_to_content(blocks) -> str | list[dict]:
     return parts
 
 
-def _get_session_key(tool_runtime: ToolRuntime | None) -> str:
-    """从 tool_runtime 提取会话级 key:沿 parent_config 链取根会话 ID。
-
-    同一对话的主/子代理共享同一 key,跨对话隔离。
-    """
-    if tool_runtime is None or tool_runtime.config is None:
-        return "_default"
-    cfg = tool_runtime.config
-    while cfg.parent_config is not None:
-        cfg = cfg.parent_config
-    agent = cfg.current_agent
-    if agent is not None and agent.session.id:
-        return agent.session.id
-    return f"_cfg_{id(cfg)}"
-
-
 def _inject_timeout_param(schema: dict) -> tuple[dict, bool]:
     """在 MCP 工具 schema 注入调用侧 timeout 参数(不传给上游)。
 
@@ -527,57 +569,409 @@ def _make_mcp_caller(
 ):
     """创建 MCP 工具的异步调用闭包。
 
-    默认每次调用时建立连接、执行、断开。
-    当 connection 配置了 "persistent": true 时,复用持久会话(按会话隔离)。
+    所有工具调用统一经按 server 名全局共享的持久连接(_McpConnection),
+    不做每次调用独立建连 —— 有状态服务(登录后查询)与 stdio 冷启动服务
+    都能跨调用、跨会话复用连接。闲置 30 分钟由 sweep 回收。
 
     Args:
         owns_timeout_param: schema 是否由我们注入了 timeout 参数。
             为 True 时调用方传入的 timeout 被用作读超时,不会转发给上游。
     """
-    is_persistent = connection.get("persistent", False)
 
     async def _call(tool_runtime: ToolRuntime | None = None, **kwargs) -> str | list:
-        from mcp import ClientSession
-
         call_timeout_override = None
         if owns_timeout_param:
             call_timeout_override = kwargs.pop("timeout", None)
         call_timeout = _resolve_call_timeout(connection, call_timeout_override)
-        phase = "connect"
         try:
-            if is_persistent:
-                phase = "initialize"
-                session_key = _get_session_key(tool_runtime)
-                ps = MCPManager.get_instance().get_persistent_session(
-                    session_key, server_name, connection
-                )
-                phase = "call"
-                result = await ps.call_tool(
-                    tool_name,
-                    arguments=kwargs,
-                    read_timeout_seconds=call_timeout,
-                )
-            else:
-                async with _connect_mcp(connection) as (read, write):
-                    phase = "initialize"
-                    async with ClientSession(read, write) as session:
-                        await session.initialize()
-                        phase = "call"
-                        result = await session.call_tool(
-                            tool_name,
-                            arguments=kwargs,
-                            read_timeout_seconds=call_timeout,
-                        )
+            # 连接由 _McpConnection 持有:首次冷启动, 之后复用同一连接。
+            # 建连失败由 _ConnectError 标记, _format_call_error 还原为 connect 阶段。
+            ps = MCPManager.get_instance().get_connection(server_name, connection)
+            result = await ps.call_tool(
+                tool_name,
+                arguments=kwargs,
+                read_timeout_seconds=call_timeout,
+            )
             content = _mcp_blocks_to_content(result.content)
             return _annotate_run_id(content, server_name, tool_name)
         except Exception as e:
             return _format_call_error(
-                server_name, tool_name, e, phase, call_timeout
+                server_name, tool_name, e, "call", call_timeout
             )
 
     _call.__name__ = f"{server_name}_{tool_name}"
     _call.__qualname__ = _call.__name__
     return _call
+
+
+# ── resources / prompts 桥接(mcp 2.x) ───────────────────────
+#
+# MCP 服务器除了 tools 还能暴露 resources(数据资源)与 prompts(提示词模板)。
+# UniClaw 将两者各桥接为 2 个通用工具,让 LLM 能像调普通工具一样访问:
+#   resources → {server}_list_resources / {server}_read_resource
+#   prompts   → {server}_list_prompts   / {server}_get_prompt
+# 只在服务器 capabilities 声明了对应能力时生成,避免为不支持的服务器添噪音工具。
+
+_BRIDGE_DESCRIPTIONS: dict[str, str] = {
+    "list_resources": (
+        "列出该 MCP 服务器的所有资源(uri、名称、描述、mime 类型)与资源模板。"
+        "资源可按 uri 用 read_resource 读取;资源模板需先填充 {variable} 占位符生成 uri。"
+    ),
+    "read_resource": (
+        "按 uri 读取该 MCP 服务器的资源实际内容。"
+        "uri 来自 list_resources 的结果(可为资源模板填充后的 uri)。"
+    ),
+    "list_prompts": (
+        "列出该 MCP 服务器所有可用提示词模板(名称、描述、参数及是否必填)。"
+    ),
+    "get_prompt": (
+        "按名称获取该 MCP 服务器的提示词模板内容。"
+        "arguments 按 list_prompts 列出的参数填写,必填参数必须提供。"
+    ),
+}
+
+_BRIDGE_SCHEMAS: dict[str, dict] = {
+    "list_resources": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": False,
+    },
+    "read_resource": {
+        "type": "object",
+        "properties": {
+            "uri": {
+                "type": "string",
+                "description": "要读取的资源 URI,来自 list_resources 的结果"
+                "(资源模板填充 {variable} 后生成的 uri 也可)。",
+            }
+        },
+        "required": ["uri"],
+        "additionalProperties": False,
+    },
+    "list_prompts": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": False,
+    },
+    "get_prompt": {
+        "type": "object",
+        "properties": {
+            "name": {
+                "type": "string",
+                "description": "提示词名称,来自 list_prompts 的结果。",
+            },
+            "arguments": {
+                "type": "object",
+                "description": "提示词参数(参数名 -> 字符串值),按 list_prompts 列出的参数填写。"
+                "没有参数时可省略。",
+            },
+        },
+        "required": ["name"],
+        "additionalProperties": False,
+    },
+}
+
+# 桥接工具在 ToolRegistry 中的检索关键词(按名字后缀匹配)
+_BRIDGE_KEYWORDS: list[tuple[str, list[str]]] = [
+    (
+        "_list_resources",
+        ["资源", "资源列表", "列出资源", "resource", "list resources", "resources"],
+    ),
+    (
+        "_read_resource",
+        ["读取资源", "读资源", "资源内容", "resource", "read resource", "read_resource"],
+    ),
+    (
+        "_list_prompts",
+        ["提示词", "提示词列表", "列出提示词", "prompt", "list prompts", "prompts"],
+    ),
+    (
+        "_get_prompt",
+        [
+            "获取提示词",
+            "提示词模板",
+            "提示词内容",
+            "prompt",
+            "get prompt",
+            "prompt template",
+        ],
+    ),
+]
+
+
+def _bridge_keywords(tool_name: str) -> list[str]:
+    """按桥接工具名后缀返回注册表检索关键词(非桥接工具返回空列表)。"""
+    for suffix, kws in _BRIDGE_KEYWORDS:
+        if tool_name.endswith(suffix):
+            return kws
+    return []
+
+
+def _format_resources_list(result, server_name: str) -> str:
+    """格式化 ListResourcesResult:资源 + 资源模板。"""
+    resources = list(getattr(result, "resources", None) or [])
+    # mcp 2.x 字段是 resource_templates(snake_case), 旧版/部分实现用
+    # resourceTemplates(camelCase) — 两种都兼容。
+    templates = list(
+        getattr(result, "resource_templates", None)
+        or getattr(result, "resourceTemplates", None)
+        or []
+    )
+    lines = [f"服务器 '{server_name}' 资源(共 {len(resources)} 个):"]
+    if not resources:
+        lines.append("  (无)")
+    for r in resources:
+        name = getattr(r, "name", "") or ""
+        uri = getattr(r, "uri", "")
+        desc = getattr(r, "description", None) or ""
+        mime = getattr(r, "mime_type", None) or ""
+        line = f"  - {uri}"
+        if name:
+            line += f" [{name}]"
+        if desc:
+            line += f": {desc}"
+        if mime:
+            line += f" (mime: {mime})"
+        size = getattr(r, "size", None)
+        if size:
+            line += f" ({size} bytes)"
+        lines.append(line)
+    lines.append("资源模板(共 %d 个,填充 {variable} 后可作为 uri 读取):" % len(templates))
+    if not templates:
+        lines.append("  (无)")
+    for t in templates:
+        name = getattr(t, "name", "") or ""
+        template = getattr(t, "uri_template", "")
+        desc = getattr(t, "description", None) or ""
+        line = f"  - {template}"
+        if name:
+            line += f" [{name}]"
+        if desc:
+            line += f": {desc}"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+class _ResourceListResult:
+    """list_resources + list_resource_templates 的聚合结果容器。
+
+    mcp 协议把静态资源与资源模板分成两个方法返回, ListResourcesResult 是
+    pydantic 冻结模型无法扩展 —— 桥接层把它聚合成这个轻量容器交给
+    _format_resources_list 渲染(该函数只读 resources / resource_templates)。
+    """
+
+    def __init__(
+        self,
+        resources: list,
+        resource_templates: list | None = None,
+    ):
+        self.resources = resources or []
+        self.resource_templates = resource_templates or []
+
+
+def _resource_contents_to_content(contents, prefix: str = "") -> str | list[dict]:
+    """把 ReadResourceResult.contents 转成文本或多模态块。
+
+    TextResourceContents 直出文本;BlobResourceContents(图片/音频/视频)
+    走 _mcp_media_block 转多模态块(超限/不支持则降级为文本占位)。
+    """
+    texts: list[str] = []
+    media: list[dict] = []
+    for c in contents or ():
+        mime = getattr(c, "mime_type", "") or ""
+        text = getattr(c, "text", None)
+        if text is not None:
+            texts.append(text)
+            continue
+        blob = getattr(c, "blob", None)
+        if not blob:
+            texts.append("(空资源内容)")
+            continue
+        block = _mcp_media_block(mime, blob)
+        if block["type"] == "text":
+            texts.append(block["text"])
+        else:
+            media.append(block)
+    if media:
+        if prefix:
+            media.insert(0, {"type": "text", "text": prefix})
+        return media
+    body = "\n".join(t for t in texts if t and t != "(空资源内容)") or "(空资源内容)"
+    return f"{prefix}{body}"
+
+
+def _format_read_result(result, server_name: str) -> str | list[dict]:
+    """格式化 ReadResourceResult。"""
+    contents = list(getattr(result, "contents", None) or [])
+    return _resource_contents_to_content(contents, prefix=f"资源读取成功({server_name}):\n")
+
+
+def _prompt_msg_to_text(content) -> str:
+    """PromptMessage.content → 可读文本(媒体降级为占位,不展开 base64)。
+
+    当前模型非多模态,图片/音频渲染成占位说明;资源链接/内嵌资源只留
+    指向性信息,避免把 base64 或大段二进制倾泻进上下文。
+    """
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    ctype = getattr(content, "type", None)
+    if ctype == "text":
+        return getattr(content, "text", "")
+    if ctype == "image":
+        return f"[图片内容({getattr(content, 'mime_type', None) or 'unknown'}),需多模态模型查看]"
+    if ctype == "audio":
+        return f"[音频内容({getattr(content, 'mime_type', None) or 'unknown'}),需多模态模型播放]"
+    if ctype == "resource_link":
+        return f"[资源引用: {getattr(content, 'uri', '')}]"
+    if ctype == "resource":
+        res = getattr(content, "resource", None)
+        text = getattr(res, "text", None)
+        if text is not None:
+            return text
+        blob = getattr(res, "blob", None)
+        if blob:
+            return f"[资源内容(base64 {len(blob)} 字符,已省略)]"
+        return "[资源内容(空)]"
+    return f"[{ctype or 'unknown'}]"
+
+
+def _prompt_result_to_text(result) -> str:
+    """GetPromptResult.messages → 带 role 标注的对话文本。"""
+    lines = []
+    desc = getattr(result, "description", None) or ""
+    if desc:
+        lines.append(desc)
+    for msg in getattr(result, "messages", None) or ():
+        role = getattr(msg, "role", "user")
+        lines.append(f"[{role}]")
+        lines.append(_prompt_msg_to_text(getattr(msg, "content", None)))
+        lines.append(f"[/{role}]")
+    return "\n".join(lines)
+
+
+def _format_prompts_list(result, server_name: str) -> str:
+    """格式化 ListPromptsResult:名称、描述与参数。"""
+    prompts = list(getattr(result, "prompts", None) or [])
+    lines = [f"服务器 '{server_name}' 提示词(共 {len(prompts)} 个):"]
+    if not prompts:
+        lines.append("  (无)")
+    for p in prompts:
+        name = getattr(p, "name", "")
+        title = getattr(p, "title", None) or ""
+        desc = getattr(p, "description", None) or ""
+        head = f"  - {name}"
+        if title:
+            head += f" [{title}]"
+        if desc:
+            head += f": {desc}"
+        lines.append(head)
+        args = list(getattr(p, "arguments", None) or [])
+        if args:
+            # PromptArgument 是 pydantic 对象(mcp 2.x),不是 dict ——
+            # 用 getattr 同时兼容 dict 与对象两种形态。
+            arg_str = ", ".join(
+                f"{getattr(a, 'name', '') or (a.get('name') if isinstance(a, dict) else '')}"
+                f"{'*' if (getattr(a, 'required', False) or (a.get('required') if isinstance(a, dict) else False)) else ''}"
+                for a in args
+            )
+            lines.append(f"    参数: {arg_str}(* 为必填)")
+    return "\n".join(lines)
+
+
+def _format_prompt_result(result, server_name: str) -> str:
+    """格式化 GetPromptResult。"""
+    return f"提示词获取成功({server_name}):\n{_prompt_result_to_text(result)}"
+
+
+async def _run_bridge_op(session, op: str, kwargs: dict):
+    """把桥接工具的参数映射到 ClientSession 的 resources/prompts 方法。"""
+    if op == "list_resources":
+        # mcp 协议里静态资源(list_resources)与资源模板(list_resource_templates)
+        # 是两个独立方法 —— 模板资源(如 city://{city})只出现在后者。
+        # 合并两者返回, 让 list_resources 能同时看到静态资源与模板。
+        result = await session.list_resources()
+        resources = list(getattr(result, "resources", None) or [])
+        templates: list = []
+        try:
+            tpl = await session.list_resource_templates()
+            templates = list(
+                getattr(tpl, "resource_templates", None)
+                or getattr(tpl, "resourceTemplates", None)
+                or []
+            )
+        except Exception:
+            templates = []  # 服务器不支持模板接口,静默忽略
+        # ListResourcesResult 是 pydantic 冻结模型,不能 setattr ——
+        # 用轻量容器聚合, _format_resources_list 只读这两个属性。
+        return _ResourceListResult(resources=resources, resource_templates=templates)
+    if op == "list_prompts":
+        return await session.list_prompts()
+    if op == "read_resource":
+        return await session.read_resource(kwargs["uri"])
+    if op == "get_prompt":
+        return await session.get_prompt(
+            kwargs["name"], arguments=kwargs.get("arguments")
+        )
+    raise ValueError(f"未知 MCP 桥接操作: {op}")  # bug 级,兜底日志记录
+
+
+def _make_bridge_caller(
+    server_name: str, op: str, connection: dict
+):
+    """创建 resources/prompts 桥接工具调用闭包。
+
+    与普通 MCP 工具一致,统一经按 server 名全局共享的持久连接调用。
+    超时由连接层(httpx read 超时)兜底 —— ClientSession.read_resource /
+    get_prompt 没有 read_timeout_seconds 参数,注入调用侧 timeout 只会误导,
+    故桥接工具不注入 timeout。
+    """
+
+    async def _call(tool_runtime: ToolRuntime | None = None, **kwargs) -> str | list:
+        try:
+            ps = MCPManager.get_instance().get_connection(server_name, connection)
+            session = await ps.get_session()
+            result = await _run_bridge_op(session, op, kwargs)
+            if op == "list_resources":
+                return _format_resources_list(result, server_name)
+            if op == "read_resource":
+                return _format_read_result(result, server_name)
+            if op == "list_prompts":
+                return _format_prompts_list(result, server_name)
+            if op == "get_prompt":
+                return _format_prompt_result(result, server_name)
+            return str(result)  # 未知 op 已在 _run_bridge_op 拦截
+        except Exception as e:
+            # 桥接工具没有调用侧 timeout, 调用读超时只来自 read_timeout 配置
+            # (或默认值)。报错提示要反映真实值, 不能硬编码 DEFAULT_CALL_TIMEOUT
+            # —— 否则配置 60s 的用户会收到"当前读超时约 300s"的误导。
+            call_timeout = _resolve_call_timeout(connection, None)
+            return _format_call_error(server_name, op, e, "call", call_timeout)
+
+    _call.__name__ = f"{server_name}_{op}"
+    _call.__qualname__ = _call.__name__
+    return _call
+
+
+def _make_bridge_tools(server_name: str, connection: dict, kind: str) -> list[Tool]:
+    """为 resources / prompts 生成桥接工具(list + read/get)。"""
+    ops = (
+        ("list_resources", "read_resource")
+        if kind == "resources"
+        else ("list_prompts", "get_prompt")
+    )
+    return [
+        Tool(
+            name=f"{server_name}_{op}",
+            description=_BRIDGE_DESCRIPTIONS[op],
+            func=_make_bridge_caller(server_name, op, connection),
+            parameters=_BRIDGE_SCHEMAS[op],
+        )
+        for op in ops
+    ]
 
 
 def _ensure_exa_api_key(mcp_config: dict, config: AppConfig | None) -> None:
@@ -596,33 +990,66 @@ def _ensure_exa_api_key(mcp_config: dict, config: AppConfig | None) -> None:
 
 
 async def _discover_tools_async(server_name: str, connection: dict) -> list[Tool]:
-    """异步连接 MCP 服务器,发现工具并转换为 Tool 对象。"""
-    from mcp import ClientSession
+    """异步连接 MCP 服务器,发现工具并转换为 Tool 对象。
 
+    除 tools 外,还检查服务器 capabilities:
+    - 声明了 resources: 生成 {server}_list_resources / {server}_read_resource
+    - 声明了 prompts:   生成 {server}_list_prompts   / {server}_get_prompt
+    capabilities 里没有显式字段时仍尝试发现(兼容宽松实现),失败则跳过。
+    """
     tools = []
-    async with _connect_mcp(connection) as (read, write):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            tools_result = await session.list_tools()
-            for mcp_tool in tools_result.tools:
-                full_name = f"{server_name}_{mcp_tool.name}"
-                schema = getattr(mcp_tool, "input_schema", None) or {
-                    "type": "object",
-                    "properties": {},
-                }
-                schema, owns_timeout = _inject_timeout_param(schema)
-                caller = _make_mcp_caller(
-                    server_name, mcp_tool.name, connection, owns_timeout_param=owns_timeout
+    caps_provides = set()
+    async with _connect_mcp(connection) as session:
+        capabilities = getattr(session, "server_capabilities", None)
+        if capabilities is not None:
+            if capabilities.resources is not None:
+                caps_provides.add("resources")
+            if capabilities.prompts is not None:
+                caps_provides.add("prompts")
+
+        tools_result = await session.list_tools()
+        for mcp_tool in tools_result.tools:
+            full_name = f"{server_name}_{mcp_tool.name}"
+            schema = getattr(mcp_tool, "input_schema", None) or {
+                "type": "object",
+                "properties": {},
+            }
+            schema, owns_timeout = _inject_timeout_param(schema)
+            caller = _make_mcp_caller(
+                server_name, mcp_tool.name, connection, owns_timeout_param=owns_timeout
+            )
+            tools.append(
+                Tool(
+                    name=full_name,
+                    description=mcp_tool.description or "",
+                    func=caller,
+                    parameters=schema,
                 )
-                tools.append(
-                    Tool(
-                        name=full_name,
-                        description=mcp_tool.description or "",
-                        func=caller,
-                        parameters=schema,
-                    )
-                )
+            )
+
+        # resources / prompts 桥接:capabilities 未显式声明时在主连接上
+        # 轻量探测(list_resources/list_prompts),失败静默跳过 —— 宽松实现
+        # 可能不填 capabilities, 但资源/提示词接口实际可用。
+        for kind in ("resources", "prompts"):
+            if kind in caps_provides or await _session_probes_capability(session, kind):
+                tools.extend(_make_bridge_tools(server_name, connection, kind))
+                caps_provides.add(kind)
     return tools
+
+
+async def _session_probes_capability(session, kind: str) -> bool:
+    """在主连接上探测 resources/prompts 接口是否可用。
+
+    仅当 capabilities 未显式声明时调用。探测失败(未实现/协议错误)返回
+    False, 由调用方静默跳过 —— 不产生抛错噪音, 也不注册无用的桥接工具。
+    token 采样的副作用可忽略; 探测成功与否都会让主连接继续复用。
+    """
+    meth = "list_resources" if kind == "resources" else "list_prompts"
+    try:
+        result = await getattr(session, meth)()
+        return result is not None
+    except Exception:
+        return False
 
 
 class MCPManager:
@@ -640,7 +1067,7 @@ class MCPManager:
         self._registered_mcp_names: set[str] = (
             set()
         )  # 已注册到 ToolRegistry 的 MCP 工具名
-        self._persistent_sessions: dict[tuple[str, str], _PersistentSession] = {}
+        self._conn_pool: dict[str, _McpConnection] = {}
         self._last_orphan_sweep: float = 0.0
 
     @classmethod
@@ -727,7 +1154,7 @@ class MCPManager:
             return False
         del self._config["servers"][name]
         await self.save_config()
-        await self.close_server_persistent_sessions(name)
+        await self.close_server_connections(name)
         await self.refresh(config)
         return True
 
@@ -741,7 +1168,7 @@ class MCPManager:
         connection["enabled"] = old.get("enabled", True)
         self._config["servers"][name] = connection
         await self.save_config()
-        await self.close_server_persistent_sessions(name)  # 连接配置可能已变,强制重建
+        await self.close_server_connections(name)  # 连接配置可能已变,强制重建
         await self.refresh(config)
         return True
 
@@ -754,7 +1181,7 @@ class MCPManager:
         self._config["servers"][name]["enabled"] = enabled
         await self.save_config()
         if not enabled:
-            await self.close_server_persistent_sessions(name)
+            await self.close_server_connections(name)
         await self.refresh(config)
         return True
 
@@ -807,15 +1234,19 @@ class MCPManager:
         self._client = True
         return self._client
 
-    def get_persistent_session(
-        self, session_key: str, server_name: str, connection: dict
-    ) -> _PersistentSession:
-        """获取(或创建)指定 (会话, server) 的持久会话包装器。"""
+    def get_connection(
+        self, server_name: str, connection: dict
+    ) -> _McpConnection:
+        """获取(或创建)指定 server 的持久会话包装器。
+
+        所有会话(主代理/子代理/A2A)按 server 名共享同一连接 —— 不做会话隔离。
+        """
         self._schedule_orphan_sweep()
-        key = (session_key, server_name)
-        if key not in self._persistent_sessions:
-            self._persistent_sessions[key] = _PersistentSession(server_name, connection)
-        return self._persistent_sessions[key]
+        if server_name not in self._conn_pool:
+            self._conn_pool[server_name] = _McpConnection(
+                server_name, connection
+            )
+        return self._conn_pool[server_name]
 
     def _schedule_orphan_sweep(self):
         """节流调度闲置持久连接回收,不阻塞调用方。"""
@@ -825,47 +1256,41 @@ class MCPManager:
         self._last_orphan_sweep = now
         try:
             loop = asyncio.get_running_loop()
-            loop.create_task(self.sweep_orphaned_persistent_sessions())
+            loop.create_task(self.sweep_orphaned_connections())
         except RuntimeError:
             pass
 
-    async def sweep_orphaned_persistent_sessions(self):
-        """回收长期闲置的持久连接(兜底;会话显式删除由 delete_session 清理)。
+    async def sweep_orphaned_connections(self):
+        """回收长期闲置的持久连接(兜底)。
 
         只按闲置时间判定,不查磁盘:首轮会话尚未落盘、A2A 会话永不落盘,
         用 load_session 判存活会把仍在使用的连接当孤儿杀掉。
+        所有会话共享同一连接(按 server 名),因此闲置回收不会误伤其他会话 ——
+        只要还有任何调用在用它,idle_seconds 就会更新。
         """
-        if not self._persistent_sessions:
+        if not self._conn_pool:
             return
-        for key, ps in list(self._persistent_sessions.items()):
+        for name, ps in list(self._conn_pool.items()):
             try:
-                if ps.is_busy or ps.idle_seconds < PERSISTENT_SESSION_IDLE_TIMEOUT:
+                if ps.is_busy or ps.idle_seconds < CONNECTION_IDLE_TIMEOUT:
                     continue
-                if self._persistent_sessions.get(key) is not ps:
+                if self._conn_pool.get(name) is not ps:
                     continue
-                self._persistent_sessions.pop(key, None)
+                self._conn_pool.pop(name, None)
                 await ps.close()
             except Exception:
                 continue
 
-    async def close_server_persistent_sessions(self, server_name: str):
-        """关闭指定 server 在所有会话中的持久连接。"""
-        keys = [k for k in self._persistent_sessions if k[1] == server_name]
-        for key in keys:
-            ps = self._persistent_sessions.pop(key)
+    async def close_server_connections(self, server_name: str):
+        """关闭指定 server 的持久连接(配置变更/删除 server 时调用)。"""
+        ps = self._conn_pool.pop(server_name, None)
+        if ps is not None:
             await ps.close()
 
-    async def close_session_persistent_sessions(self, session_key: str):
-        """关闭指定会话的所有持久连接。"""
-        keys = [k for k in self._persistent_sessions if k[0] == session_key]
-        for key in keys:
-            ps = self._persistent_sessions.pop(key)
-            await ps.close()
-
-    async def close_all_persistent_sessions(self):
+    async def close_all_connections(self):
         """关闭所有持久会话。"""
-        for key in list(self._persistent_sessions.keys()):
-            ps = self._persistent_sessions.pop(key)
+        for key in list(self._conn_pool.keys()):
+            ps = self._conn_pool.pop(key)
             await ps.close()
 
     async def get_mcp_tools(self) -> list:
@@ -910,11 +1335,44 @@ class MCPManager:
 
     async def refresh(self, config: AppConfig | None = None):
         """重新初始化客户端以加载最新配置"""
-        await self.close_all_persistent_sessions()  # 配置可能已变,旧会话作废
+        await self.close_all_connections()  # 配置可能已变,旧会话作废
         await self.init_client(config)
+        # 重新注册前记录上一轮的 MCP 工具名(供同步允许集时移除被删/禁用的)
+        prev_registered = set(self._registered_mcp_names)
         # MCP 工具变更后,重新注册到 ToolRegistry 以更新 BM25 索引
         self._reregister_mcp_tools()
         self._initialized = True
+        # 同步会话允许集: 让会话中途新增的 MCP 工具立即可被 search_tools 加载,
+        # 被删除/禁用的工具从允许集移除。修复"添加后搜得到但不可用"。
+        self._sync_allowed_tools(config, prev_registered)
+
+    def _sync_allowed_tools(
+        self, config: AppConfig | None = None, prev_registered: set[str] | None = None
+    ):
+        """将当前 MCP 工具名同步进当前会话的 allowed_tools_set。
+
+        allowed_tools_set 在会话启动时由 get_tools() 一次性算出并冻结,
+        会话中途添加/删除 MCP 服务器不会自动更新,导致 search_tools
+        命中新工具却判为"不可用"。
+        """
+        if config is None:
+            return
+        task = getattr(config, "current_agent", None)
+        if task is None:
+            return
+        allowed = task.allowed_tools_set
+        # 尚未初始化(如 A2A/子代理虚任务)时跳过,主代理会话启动后必有值
+        if allowed is None:
+            return
+        current = set(self._registered_mcp_names)
+        # 移出已被删除/禁用的服务器工具(prev 中不再出现的 MCP 名)
+        if prev_registered:
+            removed = prev_registered - current
+            if removed:
+                allowed.difference_update(removed)
+        # 加入新增/现存的 MCP 工具
+        if current:
+            allowed.update(current)
 
     def _reregister_mcp_tools(self):
         """将 MCP 工具重新注册到 ToolRegistry。"""
@@ -929,7 +1387,10 @@ class MCPManager:
         self._registered_mcp_names = set()
         for tools in self.server2tools.values():
             for tool in tools:
-                registry.register(tool, [], "MCP工具", is_core=False)
+                # 桥接工具(resources/prompts 类)带检索关键词,便于 BM25 命中;
+                # 普通 MCP 工具保持空关键词(现状,靠工具名/描述命中)。
+                keywords = _bridge_keywords(tool.name)
+                registry.register(tool, keywords, "MCP工具", is_core=False)
                 self._registered_mcp_names.add(tool.name)
 
     def get_tools_info(self, server_name: str | None = None) -> list[dict]:

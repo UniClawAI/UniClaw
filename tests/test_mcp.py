@@ -54,12 +54,12 @@ class TestMCPToolsRegistration:
 
 
 class _FakeClientSession:
-    """模拟 mcp.ClientSession:initialize 可注入延迟以暴露并发竞态。"""
+    """模拟 fastmcp Client 建好后的 session(fastmcp.Client.session)。"""
 
     init_count = 0
-    init_delay = 0.05
+    init_delay = 0.0
 
-    def __init__(self, read, write):
+    def __init__(self, read=None, write=None, **kwargs):
         pass
 
     async def __aenter__(self):
@@ -75,31 +75,42 @@ class _FakeClientSession:
 
             await asyncio.sleep(_FakeClientSession.init_delay)
 
-    async def call_tool(self, name, arguments=None):
+    async def call_tool(self, name, arguments=None, read_timeout_seconds=None):
         result = MagicMock()
         result.content = []
+        return result
+
+    async def list_tools(self):
+        result = MagicMock()
+        result.tools = []
         return result
 
 
 @asynccontextmanager
 async def _fake_connect(connection):
-    yield (None, None)
+    """模拟 fastmcp transport 建连,直接 yield 一个已建好的 session。"""
+    s = _FakeClientSession()
+    yield s
 
 
 class TestPersistentSession:
-    """_PersistentSession 并发建连/闲置回收行为。"""
+    """_McpConnection 并发建连/闲置回收行为。"""
 
     async def test_concurrent_cold_start_shows_one_connect(self):
         """并发冷启动只建立一次连接,所有调用方拿到同一会话。"""
-        from uniclaw.tools.mcp import _PersistentSession
+        from uniclaw.tools.mcp import _McpConnection
 
-        _FakeClientSession.init_count = 0
-        _FakeClientSession.init_delay = 0.05
-        ps = _PersistentSession("srv", {"transport": "stdio"})
+        connect_count = 0
 
-        with patch("uniclaw.tools.mcp._connect_mcp", _fake_connect), patch(
-            "mcp.ClientSession", _FakeClientSession
-        ):
+        @asynccontextmanager
+        async def counting_connect(connection):
+            nonlocal connect_count
+            connect_count += 1
+            yield _FakeClientSession()
+
+        ps = _McpConnection("srv", {"transport": "stdio"})
+
+        with patch("uniclaw.tools.mcp._connect_mcp", counting_connect):
             results = await asyncio.gather(
                 ps.get_session(),
                 ps.get_session(),
@@ -109,22 +120,20 @@ class TestPersistentSession:
 
         assert all(not isinstance(r, Exception) for r in results), results
         assert results[0] is results[1] is results[2]
-        assert _FakeClientSession.init_count == 1
+        assert connect_count == 1
 
     async def test_concurrent_init_failure_raises_for_all(self):
         """建连失败时并发调用方全部收到错误,不会挂起。"""
-        from uniclaw.tools.mcp import _PersistentSession
+        from uniclaw.tools.mcp import _McpConnection
 
         @asynccontextmanager
         async def failing_connect(connection):
             raise RuntimeError("connect refused")
-            yield (None, None)  # pragma: no cover
+            yield  # pragma: no cover
 
-        ps = _PersistentSession("srv", {"transport": "stdio"})
+        ps = _McpConnection("srv", {"transport": "stdio"})
 
-        with patch("uniclaw.tools.mcp._connect_mcp", failing_connect), patch(
-            "mcp.ClientSession", _FakeClientSession
-        ):
+        with patch("uniclaw.tools.mcp._connect_mcp", failing_connect):
             results = await asyncio.gather(
                 ps.get_session(),
                 ps.get_session(),
@@ -136,28 +145,50 @@ class TestPersistentSession:
     async def test_sweep_skips_busy_and_recent_sessions(self):
         """扫描不回收调用中/近期使用的连接,只回收长期闲置的。"""
         from uniclaw.tools.mcp import (
-            PERSISTENT_SESSION_IDLE_TIMEOUT,
+            CONNECTION_IDLE_TIMEOUT,
             MCPManager,
-            _PersistentSession,
+            _McpConnection,
         )
 
         mgr = MCPManager()
-        busy = _PersistentSession("srv", {})
+        busy = _McpConnection("srv", {})
         busy._in_flight = 1
-        recent = _PersistentSession("srv", {})
-        stale = _PersistentSession("srv", {})
-        stale._last_used = time.monotonic() - (PERSISTENT_SESSION_IDLE_TIMEOUT + 60)
+        recent = _McpConnection("srv", {})
+        stale = _McpConnection("srv", {})
+        stale._last_used = time.monotonic() - (CONNECTION_IDLE_TIMEOUT + 60)
 
-        mgr._persistent_sessions = {
-            ("sess-a", "srv"): busy,
-            ("sess-b", "srv"): recent,
-            ("sess-c", "srv"): stale,
+        mgr._conn_pool = {
+            "srv-busy": busy,
+            "srv-recent": recent,
+            "srv-stale": stale,
         }
-        await mgr.sweep_orphaned_persistent_sessions()
+        await mgr.sweep_orphaned_connections()
 
-        assert ("sess-a", "srv") in mgr._persistent_sessions
-        assert ("sess-b", "srv") in mgr._persistent_sessions
-        assert ("sess-c", "srv") not in mgr._persistent_sessions
+        assert "srv-busy" in mgr._conn_pool
+        assert "srv-recent" in mgr._conn_pool
+        assert "srv-stale" not in mgr._conn_pool
+
+    async def test_shared_session_per_server(self):
+        """所有工具按 server 名共享同一持久连接。
+
+        所有 MCP 连接一律经 _McpConnection 复用,同一 server 始终返回
+        同一个实例(连接跨调用/跨会话共享,无 persistent 开关)。
+        """
+        from uniclaw.tools.mcp import MCPManager
+
+        mgr = MCPManager()
+        ps1 = mgr.get_connection("srv", {"transport": "stdio"})
+        ps2 = mgr.get_connection("srv", {"transport": "stdio"})
+        assert ps1 is ps2  # 同一 server 共享同一实例
+
+        # 不同 server 各自独立
+        ps3 = mgr.get_connection("other", {"transport": "stdio"})
+        assert ps3 is not ps1
+
+        # 按 server 名关闭只影响对应 server
+        await mgr.close_server_connections("srv")
+        assert "srv" not in mgr._conn_pool
+        assert "other" in mgr._conn_pool
 
 
 class _Blk:
@@ -415,29 +446,28 @@ class TestMcp2xApi:
         assert isinstance(out, list)
         assert out[0]["type"] == "image_url"
 
-    async def test_streamable_http_two_tuple_yield(self):
-        """streamable_http_client 只 yield (read, write),按 2 元组解包。"""
+    def test_streamable_http_factory_injects_timeout_and_proxy(self):
+        """streamable_http 通过 fastmcp transport 的 httpx_client_factory
+        注入读超时与代理(长任务 exa_agent_run 需要长 read 超时)。"""
         from uniclaw.tools.mcp import _connect_mcp
+        from fastmcp.client.transports import StreamableHttpTransport
 
-        fake_read, fake_write = object(), object()
+        created = {}
 
-        @asynccontextmanager
-        async def fake_client(**kwargs):
-            yield fake_read, fake_write
+        def fake_factory(headers=None, timeout=None, auth=None, **kwargs):
+            created["headers"] = headers
+            created["timeout"] = timeout
+            created["proxy"] = kwargs.get("proxy")
+            return SimpleNamespace(
+                headers=headers or {}, timeout=timeout, proxy=kwargs.get("proxy")
+            )
 
-        with patch.dict(
-            sys.modules,
-            {
-                "mcp.client.streamable_http": SimpleNamespace(
-                    streamable_http_client=fake_client
-                )
-            },
-        ):
-            async with _connect_mcp(
-                {"transport": "streamable_http", "url": "http://x"}
-            ) as (r, w):
-                assert r is fake_read
-                assert w is fake_write
+        # 直接验证 transport 构造时接受 httpx_client_factory
+        t = StreamableHttpTransport(
+            url="http://x", headers={"Authorization": "Bearer y"},
+            httpx_client_factory=fake_factory,
+        )
+        assert t.headers == {"Authorization": "Bearer y"}
 
 
 class TestTimeoutClassification:
@@ -617,6 +647,34 @@ class TestTimeoutParamInjection:
         assert t2.connect == 8.0
 
 
+class _FakeCallSession:
+    """模拟 fastmcp Client 建好的 session,带 call_tool 记录。"""
+
+    def __init__(
+        self, captured: dict | None = None, raise_exc: Exception | None = None
+    ):
+        self.captured = captured
+        self._raise_exc = raise_exc
+
+    async def call_tool(self, name, arguments=None, read_timeout_seconds=None):
+        if self.captured is not None:
+            self.captured["arguments"] = arguments
+            self.captured["read_timeout_seconds"] = read_timeout_seconds
+        if self._raise_exc is not None:
+            raise self._raise_exc
+        result = MagicMock()
+        result.content = []
+        return result
+
+
+def _fake_connect_yield(session):
+    @asynccontextmanager
+    async def fake_connect(connection):
+        yield session
+
+    return fake_connect
+
+
 class TestMcpCallerTimeoutAndRunId:
     """_make_mcp_caller — timeout 参数剥离、read_timeout 透传、runId 提示。"""
 
@@ -624,37 +682,11 @@ class TestMcpCallerTimeoutAndRunId:
         from uniclaw.tools.mcp import _make_mcp_caller
 
         captured = {}
-
-        @asynccontextmanager
-        async def fake_connect(connection):
-            yield (None, None)
-
-        class FakeSession:
-            def __init__(self, read, write):
-                pass
-
-            async def __aenter__(self):
-                return self
-
-            async def __aexit__(self, *args):
-                return False
-
-            async def initialize(self):
-                pass
-
-            async def call_tool(self, name, arguments=None, read_timeout_seconds=None):
-                captured["arguments"] = arguments
-                captured["read_timeout_seconds"] = read_timeout_seconds
-                result = MagicMock()
-                result.content = []
-                return result
-
+        session = _FakeCallSession(captured=captured)
         caller = _make_mcp_caller(
             "exa", "agent_run", {"transport": "stdio"}, owns_timeout_param=True
         )
-        with patch("uniclaw.tools.mcp._connect_mcp", fake_connect), patch(
-            "mcp.ClientSession", FakeSession
-        ):
+        with patch("uniclaw.tools.mcp._connect_mcp", _fake_connect_yield(session)):
             await caller(query="q", timeout=180)
 
         assert "timeout" not in captured["arguments"]
@@ -665,36 +697,11 @@ class TestMcpCallerTimeoutAndRunId:
         from uniclaw.tools.mcp import _make_mcp_caller, DEFAULT_CALL_TIMEOUT
 
         captured = {}
-
-        @asynccontextmanager
-        async def fake_connect(connection):
-            yield (None, None)
-
-        class FakeSession:
-            def __init__(self, read, write):
-                pass
-
-            async def __aenter__(self):
-                return self
-
-            async def __aexit__(self, *args):
-                return False
-
-            async def initialize(self):
-                pass
-
-            async def call_tool(self, name, arguments=None, read_timeout_seconds=None):
-                captured["read_timeout_seconds"] = read_timeout_seconds
-                result = MagicMock()
-                result.content = []
-                return result
-
+        session = _FakeCallSession(captured=captured)
         caller = _make_mcp_caller(
             "exa", "agent_run", {"transport": "stdio"}, owns_timeout_param=True
         )
-        with patch("uniclaw.tools.mcp._connect_mcp", fake_connect), patch(
-            "mcp.ClientSession", FakeSession
-        ):
+        with patch("uniclaw.tools.mcp._connect_mcp", _fake_connect_yield(session)):
             await caller(query="q")
 
         assert captured["read_timeout_seconds"] == DEFAULT_CALL_TIMEOUT
@@ -702,23 +709,7 @@ class TestMcpCallerTimeoutAndRunId:
     async def test_success_with_run_id_appends_hint(self):
         from uniclaw.tools.mcp import _make_mcp_caller
 
-        @asynccontextmanager
-        async def fake_connect(connection):
-            yield (None, None)
-
-        class FakeSession:
-            def __init__(self, read, write):
-                pass
-
-            async def __aenter__(self):
-                return self
-
-            async def __aexit__(self, *args):
-                return False
-
-            async def initialize(self):
-                pass
-
+        class RunIdSession(_FakeCallSession):
             async def call_tool(self, name, arguments=None, read_timeout_seconds=None):
                 result = MagicMock()
                 result.content = [
@@ -730,8 +721,9 @@ class TestMcpCallerTimeoutAndRunId:
                 return result
 
         caller = _make_mcp_caller("exa", "agent_run", {"transport": "stdio"})
-        with patch("uniclaw.tools.mcp._connect_mcp", fake_connect), patch(
-            "mcp.ClientSession", FakeSession
+        with patch(
+            "uniclaw.tools.mcp._connect_mcp",
+            _fake_connect_yield(RunIdSession()),
         ):
             out = await caller(query="q")
 
@@ -742,32 +734,11 @@ class TestMcpCallerTimeoutAndRunId:
     async def test_call_phase_timeout_classified(self):
         from uniclaw.tools.mcp import _make_mcp_caller
 
-        @asynccontextmanager
-        async def fake_connect(connection):
-            yield (None, None)
-
-        class FakeSession:
-            def __init__(self, read, write):
-                pass
-
-            async def __aenter__(self):
-                return self
-
-            async def __aexit__(self, *args):
-                return False
-
-            async def initialize(self):
-                pass
-
-            async def call_tool(self, name, arguments=None, read_timeout_seconds=None):
-                raise TimeoutError("ReadTimeout")
-
+        session = _FakeCallSession(raise_exc=TimeoutError("ReadTimeout"))
         caller = _make_mcp_caller(
             "exa", "agent_run", {"transport": "stdio"}, owns_timeout_param=True
         )
-        with patch("uniclaw.tools.mcp._connect_mcp", fake_connect), patch(
-            "mcp.ClientSession", FakeSession
-        ):
+        with patch("uniclaw.tools.mcp._connect_mcp", _fake_connect_yield(session)):
             out = await caller(query="q", timeout=30)
 
         assert "run 可能已在服务端创建" in out

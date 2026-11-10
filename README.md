@@ -74,7 +74,7 @@
 - 🔨 **工具插件锻造**: `/tool-plugin-forge` 技能一键生成工具插件,自动捕获意图 → 检查重名 → 生成代码 → 真实加载验证,支持耗时任务异步唤醒模式
 - 🎯 **技能系统**: 可扩展的技能机制,支持自定义任务模板和工作流
 - 🎨 **主题定制**: 内置 uniclaw-theme 技能,支持自定义 WebUI 主题颜色、字体和样式
-- 🔌 **MCP 集成**: 支持 Model Context Protocol(mcp 2.x),异步命令管理,支持持久会话连接复用和多模态结果,可连接多种外部工具服务
+- 🔌 **MCP 集成**: 支持 Model Context Protocol(mcp 2.x),异步命令管理,连接跨调用自动复用和多模态结果,可连接多种外部工具服务
 - 🌉 **A2A 远程代理**: 支持 Agent2Agent 协议,可调用外部 A2A Agent 或将 UniClaw 暴露为 A2A 端点,实现多 Agent 协作
 - ⏱️ **异步等待**: sleep_timer 工具支持延时唤醒,不阻塞主线程
 - 📸 **Git 检查点**: 自动创建 git stash 检查点,支持一键回滚 AI 的文件编辑,智能处理 .gitignore,不污染 git 历史;非 git 目录的文件快照模式完整支持中文/特殊文件名
@@ -1410,7 +1410,7 @@ http_download(
 
 通过 MCP (Model Context Protocol) 连接外部工具服务,支持 stdio、sse、streamable_http 三种协议(基于 mcp 2.x SDK)。MCP 命令管理已转换为异步实现,提升响应性能。
 
-- **持久会话**: 服务器配置 `"persistent": true` 后连接跨工具调用复用,适合有状态服务(需先登录再查询)或 stdio 型服务以避免反复冷启动,闲置 30 分钟自动回收
+- **连接复用**: 连接按服务器名跨工具调用自动复用,适合有状态服务(需先登录再查询)或 stdio 型服务以避免反复冷启动,闲置 30 分钟自动回收
 - **多模态结果**: MCP 工具返回的图片/音频/视频内容块会自动转换为多模态消息供 AI 直接分析,超大媒体自动降级为文本占位
 
 使用 `/mcp` 命令管理 MCP 服务器：
@@ -2384,7 +2384,7 @@ AI 会自动调用 `mcp_add_server` 工具完成配置,并刷新工具列表。
 | `mcp_toggle_server` | 启用/禁用服务器 | `mcp_toggle_server(name="fs", enabled=False)` |
 | `mcp_list_servers` | 列出所有服务器及其工具 | `mcp_list_servers()` - 返回每个服务器的工具数量和工具描述 |
 
-`mcp_add_server` 可选参数:`env`/`cwd`(stdio 环境变量与工作目录)、`headers`/`timeout`(HTTP 类认证与超时)、`persistent`(是否启用持久会话,见下文)。
+`mcp_add_server` 可选参数:`env`/`cwd`(stdio 环境变量与工作目录)、`headers`/`timeout`(HTTP 类认证与超时)。连接按服务器名自动共享复用,见[连接复用](#连接复用-)。
 
 **mcp_list_servers 工具输出示例：**
 
@@ -2421,7 +2421,6 @@ MCP 配置存储在 `~/.UniClaw/mcp.json`：
       "transport": "stdio",
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-filesystem", "D:/code"],
-      "persistent": true,
       "enabled": true
     },
     "remote-api": {
@@ -2453,13 +2452,13 @@ HTTP 类协议通过 `headers` 传递认证信息：
 }
 ```
 
-### 持久会话 🔁
+### 连接复用 🔁
 
-默认情况下每次工具调用都会独立建连、执行、断开。对需要保持登录状态的服务(如先 `login` 再 `query`)或 stdio 型服务(冷启动慢),可在配置中设置 `"persistent": true` 启用持久会话：
+所有 MCP 连接默认复用,无需任何配置。对需要保持登录状态的服务(如先 `login` 再 `query`)或 stdio 型服务(冷启动慢)都能正常工作:
 
-- **连接复用**: 同一对话内跨工具调用复用同一连接,主代理与子代理共享
-- **会话隔离**: 不同对话之间相互隔离,各自持有独立连接
-- **自动回收**: 超过 30 分钟无调用自动回收连接;删除会话时同步清理对应持久连接
+- **连接复用**: 同一服务器跨工具调用复用同一连接
+- **全局共享**: 连接按服务器名全局共享,所有会话(主代理/子代理/A2A)共用同一连接,不做会话隔离
+- **自动回收**: 超过 30 分钟无调用自动回收连接
 - **注意**: 有副作用的工具调用失败时不会自动重试,以免重复执行副作用
 
 ### 多模态结果
@@ -2475,6 +2474,27 @@ MCP 工具返回的媒体内容块会被自动转换为 UniClaw 的多模态消�
 | `resource_link` | 文本占位(显示名称与 MIME 类型) |
 
 > 💡 超出尺寸上限的媒体(图片 20MB / 音频 25MB / 视频 100MB)会降级为文本占位,避免撑爆上下文。
+
+### 资源与提示词桥接 📦
+
+MCP 服务器除了工具,还能通过 **resources(资源)** 和 **prompts(提示词)** 暴露数据与模板。UniClaw 自动为声明了这些能力的服务器生成桥接工具,AI 可直接调用:
+
+| 能力 | 桥接工具 | 说明 |
+|------|---------|------|
+| resources | `{server}_list_resources` | 列出资源与资源模板(uri、名称、mime 类型) |
+| resources | `{server}_read_resource` | 按 uri 读取资源内容(文本/图片/音频/视频) |
+| prompts | `{server}_list_prompts` | 列出提示词模板及参数 |
+| prompts | `{server}_get_prompt` | 按名称获取提示词模板内容 |
+
+- **自动发现**: 服务器的 `capabilities` 声明了 resources/prompts 即生成对应工具;宽松实现未声明但接口可用时也会自动探测
+- **与工具一致**: 桥接工具遵循与普通 MCP 工具相同的机制(持久会话、超时分类、多模态转换)
+- **提示词媒体降级**: 提示词中的图片/音频渲染为文本占位说明,避免 base64 撑爆上下文
+
+例如接入一个暴露文档资源的服务器后,AI 可以:
+```
+srv_list_resources()          # 查看有哪些资源
+srv_read_resource(uri="file:///docs/guide.md")   # 读取内容
+```
 
 ### 命令参考
 
