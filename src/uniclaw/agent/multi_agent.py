@@ -528,6 +528,30 @@ def _tool_in_full_catalog(name: str) -> bool:
     return name in ToolRegistry.get_instance().get_all_entries()
 
 
+def _tool_is_parent_only(name: str) -> bool:
+    """工具是否为主 agent 专属(子代理不可用)。
+
+    这些工具(todolist/security/hooks/computer_use/restart 等)不在子代理的
+    get_tools(config) 里,但全量注册在注册表中 —— 子代理直接调用时 name2tool
+    找不到,若不区分会报"未启用"诱导尝试启用。由 get_parent_only_tool_names
+    汇总(tools/__init__.py 的 is_sub 排除分支是单一事实来源)。
+    """
+    from uniclaw.tools.registry import get_parent_only_tool_names
+
+    return name in get_parent_only_tool_names()
+
+
+def _whitelist_of(task: AgentTask) -> set[str] | None:
+    """取子代理的工具白名单(agent_def.tools 声明),非白名单返回 None。
+
+    白名单是 AgentTask 的显式字段,直接读取。
+    """
+    wl = task.tool_whitelist
+    if isinstance(wl, (set, frozenset, list, tuple)):
+        return set(wl)
+    return None
+
+
 def _permission_desc(tc: dict) -> str:
     """生成权限请求的美观描述信息
 
@@ -1357,13 +1381,39 @@ class MultiAgent:
             if _reason:
                 tool_resp_content = f"{TOOL_ERROR}: 工具 {tc_name} 未启用: {_reason}"
             elif task.allowed_tools_set and tc_name in task.allowed_tools_set:
+                # 扩展工具在可加载集合内但当前未加载(主 agent 与子代理通用)
                 tool_resp_content = (
                     f"{TOOL_ERROR}: '{tc_name}' 是扩展工具,当前未加载。"
                     f'请先使用 {search_tools.name} 搜索 "{tc_name}" 来加载该工具,然后重试。'
                 )
+            elif config.is_sub:
+                # 子代理专属判断: 主 agent 专属工具 / 白名单外工具
+                if _tool_is_parent_only(tc_name):
+                    # 子代理直接调用主 agent 专属工具(如 todolist/hook/computer_use):
+                    # 明确提示"主 agent 专属",而不是误导的"未启用"(会诱导尝试启用)
+                    tool_resp_content = (
+                        f"{TOOL_ERROR}: 工具 {tc_name} 是主 agent 专属工具,"
+                        f"子代理不可用,请交由父 agent 处理。"
+                    )
+                else:
+                    _wl = _whitelist_of(task)
+                    if _wl is not None and tc_name not in _wl:
+                        # 白名单子代理(如 kg-extract): 名单外明确提示白名单限制
+                        tool_resp_content = (
+                            f"{TOOL_ERROR}: 工具 {tc_name} 不在本子智能体声明的工具白名单内"
+                            f"(本子智能体仅允许: {', '.join(sorted(_wl))})。"
+                            f"请直接使用白名单内工具,或请父 agent 代为完成。"
+                        )
+                    elif _tool_in_full_catalog(tc_name):
+                        tool_resp_content = (
+                            f"{TOOL_ERROR}: 工具 {tc_name} 未启用: 当前环境未启用或未配置该工具"
+                            f"(可调用 {search_tools.name} 查询具体原因)"
+                        )
+                    else:
+                        tool_resp_content = f"{TOOL_ERROR}: 工具不存在: {tc_name}"
             elif _tool_in_full_catalog(tc_name):
-                # 在全量清单(get_all_tools)里但当前环境未启用/被裁剪:
-                # 措辞必须是"未启用",不能报"工具不存在"(会误导调用方去改工具名)
+                # 主 agent: 在全量清单(get_all_tools)里但当前环境未启用/被裁剪,
+                # 措辞必须"未启用",不报"工具不存在"(避免误导调用方改工具名)
                 tool_resp_content = (
                     f"{TOOL_ERROR}: 工具 {tc_name} 未启用: 当前环境未启用或未配置该工具"
                     f"(可调用 {search_tools.name} 查询具体原因)"
@@ -1777,6 +1827,8 @@ class MultiAgent:
             system_message = await build_system_prompt(config)
         # 使用核心工具(约 15 个)+ search_tools,扩展工具按需加载
         is_sub = config.is_sub
+        # 每次 _run 统一重置白名单记录; 只有白名单子代理才赋值
+        task.tool_whitelist = None
         tools = list(await get_core_tools(sub_agent=is_sub))
         if is_sub:
             # allowed_tools 非 None 时为白名单; 否则不限制(全集, 走 search_tools 按需加载)
@@ -1793,6 +1845,8 @@ class MultiAgent:
                 loaded_names = {t.name for t in tools}
                 tools.extend(t for t in allowed_tools if t.name not in loaded_names)
                 ext_names = allowed_names
+                # 记录白名单本身,供 search_tools 精确提示"不在白名单内"
+                task.tool_whitelist = allowed_names
             else:
                 ext_names = {t.name for t in await get_tools(config)}
             # 同步子代理(父代理阻塞等待最终结果)无法中途发消息,不加载该工具

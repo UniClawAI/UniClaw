@@ -2239,6 +2239,55 @@ def get_builtin_tool_names() -> set[str]:
     return set(CORE_TOOL_NAMES) | set(_build_extended_keywords().keys())
 
 
+# ── 主 agent 专属扩展工具(子代理不可用) ─────────────────────
+
+_parent_only_names: set[str] | None = None
+
+
+def get_parent_only_tool_names() -> set[str]:
+    """子代理不可用的"主 agent 专属"扩展工具名(全量)。
+
+    这些扩展工具在 ``tools/__init__.py`` 的 ``get_tools(config)`` 里仅对
+    主 agent(``not config.is_sub``)暴露,子代理一律不可见 —— 但它们仍全量
+    注册在注册表中,``search_tools`` 能搜到。子代理直接调用或搜索到它们时,
+    应提示"主 agent 专属工具",而不是误导性的"未启用/无权限"
+    (后者会让 LLM 误以为配置/权限问题,尝试去启用或要权限)。
+
+    从各模块的 ``get_all_tools()`` 动态汇总,避免硬编码工具名清单与
+    modules 定义漂移;与 ``tools/__init__.py`` 的 ``if not config.is_sub:``
+    分支保持单一事实来源。
+
+    Returns:
+        set[str]: 主 agent 专属扩展工具名集合(每次返回新集合,调用方可安全修改)。
+    """
+    global _parent_only_names
+    if _parent_only_names is None:
+        names: set[str] = set()
+        # 延迟导入:避免模块加载期循环依赖;运行时这些模块必然已加载
+        # (本身就是扩展工具注册来源),此处只是汇总工具名。
+        from .plan import get_all_tools as plan_all
+        from .todolist.tools import get_all_tools as todolist_all
+        from .security.tools import get_all_tools as security_all
+        from .hooks.tools import get_all_tools as hooks_all
+        from .computer_use import get_all_tools as computer_use_all
+        from .restart.tools import get_all_tools as restart_all
+
+        for get_all in (
+            plan_all,
+            todolist_all,
+            security_all,
+            hooks_all,
+            computer_use_all,
+            restart_all,
+        ):
+            for t in get_all():
+                # 工具都是 @tool 装饰的 Tool 对象,必有 name;
+                # _tool_name 对漏装饰的裸函数给出点名报错,而非静默跳过
+                names.add(_tool_name(t))
+        _parent_only_names = names
+    return set(_parent_only_names)
+
+
 # ── search_tools 元工具 ──────────────────────────────────────
 
 MAX_LOADED_EXTENDED = 25  # 扩展工具最大加载数量
@@ -2414,6 +2463,9 @@ async def search_tools(query: str, tool_runtime: ToolRuntime = None) -> str:
       跨轮调用时常需重新搜索加载先前用过的工具。
     - 因此"搜不到"不等于"工具不存在";大组工具未全部加载时直接调用会报
       "未启用/未加载",不是工具缺失 —— 先 search_tools 再调用,必要时多次搜索。
+    - 子代理(你作为子智能体时)注意: 部分工具是主 agent 专属(todolist、
+      hook、电脑操作 cu_*、重启等),搜索命中会提示"主 agent 专属工具,子代理
+      不可用"。这不是配置错误,不要尝试启用 —— 需要时把请求交回父 agent 处理。
 
     Args:
         query: 搜索关键词,优先传入工具名,其次用功能描述(如 "screenshot"、"截图"、"定时任务")
@@ -2440,12 +2492,40 @@ async def search_tools(query: str, tool_runtime: ToolRuntime = None) -> str:
     blocked = [e for e in results if e not in available]
     # 搜索命中但不可用的工具,附加各模块 get_tools 记录的原因(如未配置 embedding_model)
     unavailable_reasons = config.unavailable_tool_reasons or {}
+    # 子代理搜索到"主 agent 专属"工具(如 todolist/hook/computer_use):
+    # 它们不在子代理的 get_tools(config) 里,也不记录 unavailable_tool_reasons,
+    # 命中时应明确提示"主 agent 专属",而不是误导的"未启用/无权限"。
+    if config.is_sub and blocked:
+        parent_only = get_parent_only_tool_names()
+    else:
+        parent_only = set()
+    # 白名单子代理(agent_def.tools 声明的专用代理): 搜索到名单外的工具时
+    # 明确提示"不在白名单内",并列出发配的工具,避免 LLM 反复重试不可用工具。
+    # 无白名单(None)= 不限制(全集可用),不提示白名单限制 —— 这种子代理搜索到
+    # 的工具除父专属/配置原因外本应可加载,进 blocked 只可能是上述两类(已处理)。
+    raw_whitelist = task.tool_whitelist
+    if isinstance(raw_whitelist, (set, frozenset, list, tuple)):
+        whitelist: set[str] | None = set(raw_whitelist)
+    else:
+        whitelist = None
 
     def _format_blocked(entry) -> str:
-        """格式化不可用工具行:工具名 + 原因(若有)。"""
+        """格式化不可用工具行:优先给出最准确的不可用原因。
+
+        顺序:配置原因(unavailable_tool_reasons) > 主 agent 专属(仅子代理) >
+        子代理白名单外(含白名单列表,仅白名单子代理) > 兜底。
+        """
         reason = unavailable_reasons.get(entry.tool.name)
         if reason:
             return f"- {entry.tool.name}: {reason}"
+        if entry.tool.name in parent_only:
+            return f"- {entry.tool.name}: 主 agent 专属工具,子代理不可用(需使用请交由父 agent 处理)"
+        if whitelist is not None:
+            allowed_list = ", ".join(sorted(whitelist))
+            return (
+                f"- {entry.tool.name}: 不在本子智能体声明的工具白名单内"
+                f"(本子智能体仅允许: {allowed_list})"
+            )
         return f"- {entry.tool.name}"
     # 为本次搜索命中的已加载工具恢复能量
     matched_names = {e.tool.name for e in available}
@@ -2478,7 +2558,7 @@ async def search_tools(query: str, tool_runtime: ToolRuntime = None) -> str:
             if blocked:
                 # 命中了但全部不可用 —— 首行必须说"命中 N 个但不可用",
                 # 不能写"未找到匹配"(那会让 agent 误判为查询词没命中)
-                lines = [f"命中 {len(blocked)} 个工具,但当前均不可用(未启用或无权限):"]
+                lines = [f"命中 {len(blocked)} 个工具,但当前均不可用(具体原因见下):"]
                 for entry in blocked:
                     lines.append(_format_blocked(entry))
                 lines.append("尝试其他关键词,或先启用/配置上述工具。")
@@ -2521,7 +2601,7 @@ async def search_tools(query: str, tool_runtime: ToolRuntime = None) -> str:
             f"\n⚠️ 还有 {skipped_count} 个工具因上限({MAX_LOADED_EXTENDED})未加载,可通过再次搜索加载。"
         )
     if blocked:
-        lines.append(f"\n以下 {len(blocked)} 个工具当前不可用(未启用或无权限):")
+        lines.append(f"\n以下 {len(blocked)} 个工具当前不可用(具体原因见下):")
         for entry in blocked:
             lines.append(_format_blocked(entry))
     return "\n".join(lines)

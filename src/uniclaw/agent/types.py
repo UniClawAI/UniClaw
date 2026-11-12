@@ -56,6 +56,9 @@ class AgentTask:
         default_factory=ExtendedToolManager, repr=False
     )
     allowed_tools_set: Optional[set[str]] = field(default=None, repr=False)
+    tool_whitelist: Optional[set[str]] = field(
+        default=None, repr=False
+    )  # 子代理工具白名单(agent_def.tools 声明); None=不限制(全集)
 
     @property
     def id(self) -> str:

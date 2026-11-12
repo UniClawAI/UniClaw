@@ -297,8 +297,9 @@ class TestEditPermissionDiff:
 class TestExecuteSingleToolLookup:
     """_execute_single_tool 工具查找失败分支: 禁用工具要报根因而非"工具不存在"。"""
 
-    def _make_config(self, unavailable: dict) -> MagicMock:
+    def _make_config(self, unavailable: dict, is_sub: bool = False) -> MagicMock:
         config = MagicMock()
+        config.is_sub = is_sub
         task = MagicMock()
         task.allowed_tools_set = set()
         task.extended_mgr = MagicMock()
@@ -369,6 +370,169 @@ class TestExecuteSingleToolLookup:
             _, content = await self._call(config, name2tool={}, name="monitor_screen")
         assert "未启用" in content
         assert "缺少真实屏幕快照支持" in content
+
+    @pytest.mark.asyncio
+    async def test_subagent_calls_parent_only_tool(self):
+        """子代理直接调用主 agent 专属工具(todolist_create)→ 报"主 agent 专属",不报"未启用"。"""
+        from uniclaw.tools.registry import get_parent_only_tool_names
+
+        assert "todolist_create" in get_parent_only_tool_names()
+        config = self._make_config({}, is_sub=True)
+        _, content = await self._call(config, name2tool={}, name="todolist_create")
+        assert "主 agent 专属工具" in content
+        assert "子代理不可用" in content
+        assert "未启用" not in content
+        assert "工具不存在" not in content
+
+    @pytest.mark.asyncio
+    async def test_subagent_calls_unknown_still_not_found(self):
+        """子代理调用不属于任何目录的真未知工具 → 仍报"工具不存在"。"""
+        config = self._make_config({}, is_sub=True)
+        _, content = await self._call(config, name2tool={}, name="totally_unknown_xyz")
+        assert "工具不存在" in content
+
+    @pytest.mark.asyncio
+    async def test_main_agent_calls_parent_only_tool_unchanged(self):
+        """主 agent 直接调用 todolist_create(未加载)→ 还走扩展未加载路径,不误报"主 agent 专属"。"""
+        config = self._make_config({})
+        _, content = await self._call(config, name2tool={}, name="todolist_create")
+        # 主 agent 无 is_sub,不进 parent-only 分支
+        assert "主 agent 专属工具" not in content
+
+    @pytest.mark.asyncio
+    async def test_whitelisted_subagent_direct_call_outside_whitelist(self):
+        """带工具白名单子代理直接调用名单外工具(kg-extract 调 kg_search)→ 报"不在白名单内",不报"未启用"。"""
+        config = self._make_config({}, is_sub=True)
+        config.current_agent.tool_whitelist = {"Read", "Glob", "Grep"}
+        _, content = await self._call(config, name2tool={}, name="kg_search")
+        assert "工具不存在" not in content
+        assert "未启用" not in content
+        assert "白名单" in content
+        assert "不在本子智能体声明的工具白名单内" in content
+        assert "Read" in content and "Glob" in content and "Grep" in content
+
+    @pytest.mark.asyncio
+    async def test_whitelisted_subagent_whitelisted_ext_loaded_hint(self):
+        """白名单内但未加载的扩展工具仍优先提示"先搜索加载",不误报白名单限制。"""
+        config = self._make_config({}, is_sub=True)
+        config.current_agent.tool_whitelist = {"kg_search", "Read"}
+        task = config.current_agent
+        task.allowed_tools_set = {"kg_search", "Read"}  # 白名单内
+        _, content = await self._call(config, name2tool={}, name="kg_search")
+        assert "扩展工具" in content
+        assert "未加载" in content
+        assert "白名单" not in content
+
+    @pytest.mark.asyncio
+    async def test_whitelist_reason_wins_over_whitelist_hint(self):
+        """白名单子代理调用既有配置原因又名单外的工具 → 配置原因优先,不叠加白名单。"""
+        config = self._make_config(
+            {"kg_search": "未配置 embedding_model"}, is_sub=True
+        )
+        config.current_agent.tool_whitelist = {"Read", "Glob", "Grep"}
+        _, content = await self._call(config, name2tool={}, name="kg_search")
+        assert "未启用" in content
+        assert "未配置 embedding_model" in content
+        assert "白名单" not in content
+
+    @pytest.mark.asyncio
+    async def test_whitelisted_subagent_empty_whitelist(self):
+        """空白名单子代理(set())调用任何工具 → 名单外提示,空清单不炸。"""
+        config = self._make_config({}, is_sub=True)
+        config.current_agent.tool_whitelist = set()
+        _, content = await self._call(config, name2tool={}, name="kg_search")
+        assert "白名单" in content
+        assert "工具不存在" not in content
+
+    @pytest.mark.asyncio
+    async def test_main_agent_with_stray_whitelist_ignored(self):
+        """主 agent 即使 task.tool_whitelist 有残留值也会被 config.is_sub 挡住,不受影响。"""
+        # 防御: 主 agent 的 whitelist 字段理论上为 None,但即使残留也能正确忽略
+        config = self._make_config({}, is_sub=False)
+        config.current_agent.tool_whitelist = {"Read", "Glob", "Grep"}
+        _, content = await self._call(config, name2tool={}, name="kg_search")
+        assert "白名单" not in content
+
+    @pytest.mark.asyncio
+    async def test_whitelisted_subagent_in_whitelist_but_missing_from_catalog(self):
+        """白名单内但不在全量目录且未加载(理论残留)→ 落"工具不存在",不误报白名单。"""
+        config = self._make_config({}, is_sub=True)
+        config.current_agent.tool_whitelist = {"Read", "ghost_tool"}
+        task = config.current_agent
+        task.allowed_tools_set = set()
+        name2tool = {}
+        # ghost_tool 在白名单但 name2tool 没有(核心/扩展都没加载)且不在全量目录
+        _, content = await self._call(config, name2tool, name="ghost_tool")
+        assert "工具不存在" in content
+        assert "白名单" not in content
+
+    @pytest.mark.asyncio
+    async def test_unrestricted_subagent_catalog_fallback(self):
+        """无白名单子代理调用目录内未加载工具 → "未启用"兜底(原有行为)。"""
+        config = self._make_config({}, is_sub=True)
+        fake_registry = MagicMock()
+        fake_registry.get_all_entries.return_value = {"monitor_screen": object()}
+        with patch(
+            "uniclaw.tools.registry.ToolRegistry.get_instance",
+            return_value=fake_registry,
+        ):
+            _, content = await self._call(config, name2tool={}, name="monitor_screen")
+        assert "未启用" in content
+        assert "白名单" not in content
+        assert "工具不存在" not in content
+
+
+class TestWhitelistHelper:
+    """_whitelist_of 辅助函数: 各类型输入的统一处理。"""
+
+    def _task(self, whitelist):
+        task = MagicMock()
+        task.tool_whitelist = whitelist
+        return task
+
+    def _whitelist_of(self, task):
+        from uniclaw.agent.multi_agent import _whitelist_of
+
+        return _whitelist_of(task)
+
+    def test_none_returns_none(self):
+        """None(无白名单/全集)返回 None。"""
+        assert self._whitelist_of(self._task(None)) is None
+
+    def test_set_returns_same_content(self):
+        """set 原样返回副本。"""
+        wl = {"Read", "Glob"}
+        result = self._whitelist_of(self._task(wl))
+        assert result == {"Read", "Glob"}
+        # 返回的是副本,修改不影响原对象
+        result.add("Write")
+        assert wl == {"Read", "Glob"}
+
+    def test_frozenset_converted(self):
+        """frozenset → set。"""
+        result = self._whitelist_of(self._task(frozenset({"a", "b"})))
+        assert result == {"a", "b"}
+        assert isinstance(result, set)
+
+    def test_list_converted(self):
+        """list → set(去重)。"""
+        result = self._whitelist_of(self._task(["a", "b", "a"]))
+        assert result == {"a", "b"}
+
+    def test_tuple_converted(self):
+        """tuple → set。"""
+        result = self._whitelist_of(self._task(("a", "b")))
+        assert result == {"a", "b"}
+
+    def test_empty_set_returns_empty_set(self):
+        """空 set() 返回空 set — 与 None 区分(空白名单仍是白名单)。"""
+        result = self._whitelist_of(self._task(set()))
+        assert result == set()
+        assert result is not None
+
+    def test_non_collection_returns_none(self):
+        """非集合类型(如字符串)不被误认为白名单。"""
+        assert self._whitelist_of(self._task("Read")) is None
 
 
 class TestOutputTruncationDetect:

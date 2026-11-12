@@ -6,6 +6,8 @@
 
 from pathlib import Path
 
+import inspect
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -654,9 +656,20 @@ class TestKeywordsCategories:
 
 
 def _make_search_config(
-    registry: ToolRegistry, allowed: set, loaded: list[str] | None = None
+    registry: ToolRegistry,
+    allowed: set,
+    loaded: list[str] | None = None,
+    is_sub: bool = False,
 ):
-    """构造 search_tools 需要的 config。"""
+    """构造 search_tools 需要的 config。
+
+    Args:
+        registry: 搜索用的注册表。
+        allowed: allowed_tools_set(子代理白名单/主 agent 全集)。
+        loaded: 已加载的扩展工具名。
+        is_sub: 是否模拟子代理环境(只传递当前集合中的判断)。
+            MagicMock 的属性默认 truthy,不显式指定时 is_sub 会误判为子代理。
+    """
     from uniclaw.tools.registry import ExtendedToolManager
 
     agent = MagicMock()
@@ -665,6 +678,7 @@ def _make_search_config(
     for name in loaded or []:
         agent.extended_mgr.touch(name)
     config = MagicMock()
+    config.is_sub = is_sub
     config.current_agent = agent
     config.unavailable_tool_reasons = {}
     patch_get = patch(
@@ -772,6 +786,252 @@ class TestSearchToolsTool:
         with p:
             result = await search_tools("newword", tool_runtime=ToolRuntime(config=config))
         assert "已淘汰" in result
+
+
+class TestSearchToolsSubagentBlocked:
+    """子代理搜索到不可用工具的提示语: 不能误说成"未启用/无权限"。
+
+    主 agent 专属工具(todolist/hook/computer_use 等)对子代理按设计不可用,
+    白名单外的工具也不在子代理可用集合内 —— 提示必须区分纯配置缺失。
+    """
+
+    @pytest.mark.asyncio
+    async def test_parent_only_tool_hint(self):
+        """子代理搜索到主 agent 专属工具 → 明确提示"主 agent 专属""子代理不可用"。"""
+        from uniclaw.tools.registry import get_parent_only_tool_names
+
+        # 使用真实的 todolist_create,确保 parent_only 集合覆盖它
+        names = get_parent_only_tool_names()
+        assert "todolist_create" in names, "todolist_create 应在主 agent 专属工具集合内"
+
+        registry = _make_search_registry()
+        registry.register(_make_tool("todolist_create", "创建待办任务"), ["todolist"], "任务清单")
+        config, p = _make_search_config(
+            registry, {"tool_alpha", "tool_beta", "tool_gamma"}, is_sub=True
+        )
+        with p:
+            result = await search_tools("todolist", tool_runtime=ToolRuntime(config=config))
+        assert "主 agent 专属工具" in result
+        assert "子代理不可用" in result
+        assert "未启用" not in result
+
+    @pytest.mark.asyncio
+    async def test_unrestricted_subagent_no_whitelist_hint(self):
+        """无白名单(全集可用)的子代理: 不进 blocked 的普通工具不提示白名单限制。
+
+        无白名单 = 不限制,工具本应可加载;若仍出现在 blocked 里,说明属于
+        父专属/配置原因(已由其他分支给出根因),不能报"不在可用集合内"(自相矛盾)。
+        测试用不在 allowed 的外来工具模拟残留场景: 只报工具名,不加白名单误导。
+        """
+        registry = _make_search_registry()
+        registry.register(_make_tool("kg_search", "搜索知识图谱"), ["kgquery"], "知识图谱")
+        config, p = _make_search_config(
+            registry, {"tool_alpha", "tool_beta", "tool_gamma"}, is_sub=True
+        )
+        # tool_whitelist 未设置(None),config.current_agent 是 MagicMock,
+        # _make_search_config 不设该属性 → 无白名单
+        with p:
+            result = await search_tools("kgquery", tool_runtime=ToolRuntime(config=config))
+        assert "kg_search" in result
+        assert "白名单" not in result
+        assert "不在当前" not in result
+        assert "未启用" not in result
+
+    @pytest.mark.asyncio
+    async def test_whitelisted_subagent_hint(self):
+        """带工具白名单子代理(如 kg-extract)搜索白名单外工具 → 明确提示白名单限制,并列出发配清单。"""
+        registry = _make_search_registry()
+        registry.register(_make_tool("kg_search", "搜索知识图谱"), ["kgquery"], "知识图谱")
+        config, p = _make_search_config(
+            registry, {"tool_alpha", "tool_beta", "tool_gamma"}, is_sub=True
+        )
+        # 模拟 kg-extract: 白名单只有 Read/Glob/Grep
+        config.current_agent.tool_whitelist = {"Read", "Glob", "Grep"}
+        with p:
+            result = await search_tools("kgquery", tool_runtime=ToolRuntime(config=config))
+        assert "kg_search" in result
+        assert "白名单" in result
+        assert "Read" in result and "Glob" in result and "Grep" in result
+        assert "未启用" not in result
+
+    @pytest.mark.asyncio
+    async def test_main_agent_keeps_old_hint(self):
+        """主 agent 场景不受影响: 未配置工具仍然报原因,不致"未启用"字样混淆。"""
+        registry = _make_search_registry()
+        registry.register(
+            _make_tool("kg_search", "搜索知识图谱"), ["kgquery"], "知识图谱"
+        )
+        config, p = _make_search_config(
+            registry, {"tool_alpha", "tool_beta", "tool_gamma"}, is_sub=False
+        )
+        # 主 agent 时该工具未配置(不在 allowed_tools_set),走兜底不带说明
+        with p:
+            result = await search_tools("kgquery", tool_runtime=ToolRuntime(config=config))
+        assert "kg_search" in result
+        assert "主 agent 专属工具" not in result
+        assert "子代理" not in result
+
+    @pytest.mark.asyncio
+    async def test_parent_only_with_reason_shows_reason(self):
+        """父专属工具已有 unavailable_reasons → 配置原因优先于"主 agent 专属"提示。"""
+        from uniclaw.tools.registry import get_parent_only_tool_names
+
+        assert "todolist_create" in get_parent_only_tool_names()
+        registry = _make_search_registry()
+        registry.register(_make_tool("todolist_create", "创建待办"), ["todolist"], "任务清单")
+        config, p = _make_search_config(
+            registry, {"tool_alpha", "tool_beta", "tool_gamma"}, is_sub=True
+        )
+        config.unavailable_tool_reasons = {
+            "todolist_create": "当前环境未启用 TodoList 模块"
+        }
+        with p:
+            result = await search_tools("todolist", tool_runtime=ToolRuntime(config=config))
+        assert "当前环境未启用 TodoList 模块" in result
+        # 有根因时不叠加"主 agent 专属"提示,避免信息重复
+        assert "主 agent 专属工具" not in result
+
+    @pytest.mark.asyncio
+    async def test_whitelisted_subagent_reason_wins(self):
+        """白名单子代理: 名单外工具的配置原因优先于白名单提示。"""
+        registry = _make_search_registry()
+        registry.register(_make_tool("kg_search", "搜索知识图谱"), ["kgquery"], "知识图谱")
+        config, p = _make_search_config(
+            registry, {"tool_alpha", "tool_beta", "tool_gamma"}, is_sub=True
+        )
+        config.current_agent.tool_whitelist = {"Read", "Glob", "Grep"}
+        config.unavailable_tool_reasons = {"kg_search": "未配置 embedding_model"}
+        with p:
+            result = await search_tools("kgquery", tool_runtime=ToolRuntime(config=config))
+        assert "未配置 embedding_model" in result
+        assert "白名单" not in result
+
+    @pytest.mark.asyncio
+    async def test_whitelisted_subagent_search_whitelisted_tool_loads(self):
+        """白名单子代理搜索白名单内的工具 → 正常加载,不提示不可用。"""
+        registry = _make_search_registry()
+        registry.register(_make_tool("kg_search", "搜索知识图谱"), ["kgquery"], "知识图谱")
+        config, p = _make_search_config(
+            registry, {"kg_search", "tool_alpha"}, is_sub=True
+        )
+        config.current_agent.tool_whitelist = {"kg_search"}
+        with p:
+            result = await search_tools("kgquery", tool_runtime=ToolRuntime(config=config))
+        assert "找到" in result
+        assert "kg_search" in config.current_agent.extended_mgr.loaded
+        assert "不可用" not in result.split("\n")[0] if result else True
+
+    @pytest.mark.asyncio
+    async def test_whitelisted_subagent_plugin_always_available(self):
+        """插件工具(PLUGIN_CATEGORY)不受子代理白名单过滤,始终可用。"""
+        from uniclaw.tools.registry import PLUGIN_CATEGORY
+
+        registry = _make_search_registry()
+        registry.register(
+            _make_tool("my_plugin", "用户插件"), ["pluginkw"], PLUGIN_CATEGORY
+        )
+        config, p = _make_search_config(
+            registry, {"tool_alpha"}, is_sub=True
+        )
+        config.current_agent.tool_whitelist = {"tool_alpha"}
+        with p:
+            result = await search_tools("pluginkw", tool_runtime=ToolRuntime(config=config))
+        assert "my_plugin" in result
+        assert "白名单" not in result
+
+    @pytest.mark.asyncio
+    async def test_whitelist_accepts_list_form(self):
+        """tool_whitelist 为 list/frozenset 等序列形式也能正确提示。"""
+        registry = _make_search_registry()
+        registry.register(_make_tool("kg_search", "搜索知识图谱"), ["kgquery"], "知识图谱")
+        config, p = _make_search_config(
+            registry, {"tool_alpha", "tool_beta", "tool_gamma"}, is_sub=True
+        )
+        config.current_agent.tool_whitelist = ["Read", "Glob", "Grep"]
+        with p:
+            result = await search_tools("kgquery", tool_runtime=ToolRuntime(config=config))
+        assert "白名单" in result
+        assert "Read" in result and "Glob" in result and "Grep" in result
+
+    @pytest.mark.asyncio
+    async def test_empty_whitelist_hint(self):
+        """空白名单(set())： 白名单概念仍存在,搜索任何工具都名单外并给出空清单提示。"""
+        registry = _make_search_registry()
+        registry.register(_make_tool("kg_search", "搜索知识图谱"), ["kgquery"], "知识图谱")
+        config, p = _make_search_config(
+            registry, set(), is_sub=True
+        )
+        config.current_agent.tool_whitelist = set()
+        with p:
+            result = await search_tools("kgquery", tool_runtime=ToolRuntime(config=config))
+        assert "kg_search" in result
+        assert "白名单" in result
+
+    @pytest.mark.asyncio
+    async def test_unrestricted_subagent_catalog_blocked_stays_quiet(self):
+        """无白名单子代理被 blocked 的目录内工具只报名字,不渲染任何误导性说明。"""
+        registry = _make_search_registry()
+        registry.register(_make_tool("kg_search", "搜索知识图谱"), ["kgquery"], "知识图谱")
+        config, p = _make_search_config(
+            registry, {"tool_alpha", "tool_beta", "tool_gamma"}, is_sub=True
+        )
+        # 模拟 allowed_tools_set 不含 kg_search 的残留场景
+        with p:
+            result = await search_tools("kgquery", tool_runtime=ToolRuntime(config=config))
+        assert "kg_search" in result
+        assert "- kg_search" in result  # 仅裸工具名
+        assert "主 agent 专属" not in result
+        assert "白名单" not in result
+        assert "未启用" not in result
+
+
+class TestParentOnlyConsistency:
+    """主 agent 专属工具集合与 tools/__init__.py 的 is_sub 排除分支保持一致。
+
+    tools/__init__.py `get_tools(config)` 的 `if not config.is_sub:` 分支决定
+    哪些模块仅主 agent 可用;get_parent_only_tool_names 汇总这些模块的工具名。
+    若有人在排除分支里新增/移除模块却忘了同步 registry 汇总,子代理搜索提示
+    会漂移。此测试直接对照两边,防漂移。
+    """
+
+    @pytest.mark.asyncio
+    async def test_parent_only_matches_is_sub_exclusion_modules(self):
+        """parent_only 集合 == tools/__init__ 排除分支那 6 个模块的 get_all_tools 并集。"""
+        # 与 get_parent_only_tool_names 内部汇总路径保持一致(single source)
+        from uniclaw.tools.computer_use import get_all_tools as cu_all
+        from uniclaw.tools.hooks.tools import get_all_tools as hooks_all
+        from uniclaw.tools.plan import get_all_tools as plan_all
+        from uniclaw.tools.restart.tools import get_all_tools as restart_all
+        from uniclaw.tools.security.tools import get_all_tools as security_all
+        from uniclaw.tools.todolist.tools import get_all_tools as todolist_all
+        from uniclaw.tools.registry import get_parent_only_tool_names
+
+        async def _all_of(get_all) -> set:
+            raw = get_all()
+            if inspect.isawaitable(raw):
+                raw = await raw
+            return {t.name for t in raw}
+
+        expected = set()
+        for get_all in (plan_all, todolist_all, security_all, hooks_all, cu_all, restart_all):
+            expected |= await _all_of(get_all)
+
+        actual = get_parent_only_tool_names()
+        assert actual == expected, (
+            f"parent_only 与 is_sub 排除分支漂移!\n"
+            f"  parent_only 独有(移除或漏登记): {sorted(actual - expected)}\n"
+            f"  排除分支有但未登记: {sorted(expected - actual)}"
+        )
+
+    def test_parent_only_core_clash_only_plan(self):
+        """主 agent 专属集合与核心工具的重名只允许 plan 两工具(核心计划工具子代理已剔除)。"""
+        from uniclaw.tools.registry import get_parent_only_tool_names
+
+        parent_only = get_parent_only_tool_names()
+        common = parent_only & CORE_TOOL_NAMES
+        assert common <= {"enter_plan_mode", "exit_plan_mode"}, (
+            f"parent_only 与核心工具重名: {sorted(common)}"
+        )
 
 
 class TestRegistrySystemPrompt:
