@@ -3,6 +3,7 @@ from __future__ import annotations
 from uniclaw.tools.a2a.client import A2AClient
 from uniclaw.tools.a2a.manager import A2AManager
 from uniclaw.console.ui import err, info, ok, warn
+from uniclaw.webui.launcher import build_access_urls
 
 SUBCOMMANDS = ["start", "stop", "status", "list", "add", "remove", "test"]
 
@@ -28,6 +29,15 @@ async def cmd_a2a(args: str, config) -> bool:
             service = manager.enable_service(config, values[0] if values else "")
             await ok(
                 "A2A 端点已在当前 WebUI 服务中启用:/.well-known/agent-card.json 和 /a2a",
+                config,
+            )
+            access = build_access_urls()
+            urls = access.get("urls") or [f"http://127.0.0.1:{access.get('port', 8080)}"]
+            await info(
+                "A2A 访问地址:\n"
+                + "\n".join(f"  - {url}/a2a" for url in urls)
+                + "\n"
+                + "\n".join(f"  - {url}/.well-known/agent-card.json" for url in urls),
                 config,
             )
             await warn(f"Bearer Token(请安全保存):{service['token']}", config)

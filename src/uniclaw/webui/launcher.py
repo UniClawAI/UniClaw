@@ -38,6 +38,33 @@ _serve_done = True
 _SHUTDOWN_GRACE_SECONDS = 15.0
 
 
+def build_access_urls() -> dict:
+    """按当前启动参数生成可访问的 WebUI URL 列表。
+
+    供 /a2a start 等命令显示真实可访问地址 — 0.0.0.0(或 ::)监听时
+    返回本机访问 + 局域网访问两个 URL,否则只返回监听地址对应的一个。
+    """
+    kwargs = _LAUNCH_KWARGS
+    if not kwargs:
+        return {}
+    protocol = "https" if kwargs.get("ssl") else "http"
+    host = kwargs.get("host", "127.0.0.1")
+    port = kwargs.get("port", 8080)
+    urls: list[str] = []
+    if host in ("0.0.0.0", "::"):
+        urls.append(f"{protocol}://localhost:{port}")
+        local_ip = _get_local_ip(is_ipv6=_is_ipv6(host))
+        if local_ip:
+            ip_display = f"[{local_ip}]" if _is_ipv6(local_ip) else local_ip
+            urls.append(f"{protocol}://{ip_display}:{port}")
+        else:
+            urls.append(f"{protocol}://<本机IP>:{port}")
+    else:
+        host_display = f"[{host}]" if _is_ipv6(host) else host
+        urls.append(f"{protocol}://{host_display}:{port}")
+    return {"protocol": protocol, "port": port, "urls": urls}
+
+
 def request_shutdown() -> None:
     """请求 uvicorn 优雅关闭。
 
