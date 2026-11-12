@@ -146,13 +146,14 @@ class TestA2aFieldNormalization:
         assert task_id_of(None) == ""
 
     def test_task_state_variants(self):
-        from uniclaw.tools.a2a.client import task_state_of
+        from uniclaw.tools.a2a.client import TaskState, task_state_of
 
-        assert task_state_of({"status": {"state": "working"}}) == "working"
-        assert task_state_of({"state": "submitted"}) == "submitted"
-        assert task_state_of({"status": "canceled"}) == "canceled"
-        assert task_state_of({"task": {"status": {"state": "completed"}}}) == "completed"
-        assert task_state_of({}) == ""
+        assert task_state_of({"status": {"state": "working"}}) is TaskState.WORKING
+        assert task_state_of({"state": "submitted"}) is TaskState.SUBMITTED
+        assert task_state_of({"status": "canceled"}) is TaskState.CANCELED
+        assert task_state_of({"task": {"status": {"state": "completed"}}}) is TaskState.COMPLETED
+        # 提取不到不返回空串:空串不是合法枚举值,统一归为 UNKNOWN
+        assert task_state_of({}) is TaskState.UNKNOWN
 
     def test_extract_text_from_dict_parts(self):
         """parts 元素是 dict 时取 text/content,不再输出 dict repr。"""

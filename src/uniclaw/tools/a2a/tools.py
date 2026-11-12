@@ -8,11 +8,16 @@ import httpx
 from uniclaw.config import AppConfig
 from uniclaw.tools.base import tool, ToolRuntime
 from uniclaw.utils.constants import TOOL_ERROR
-from .client import A2AClient, extract_a2a_text, task_id_of, task_state_of
+from .client import A2AClient, TaskState, extract_a2a_text, task_id_of, task_state_of
 from .manager import A2AManager
 
 
-_TERMINAL_STATES = {"completed", "failed", "canceled", "rejected"}
+_TERMINAL_STATES = {
+    TaskState.COMPLETED,
+    TaskState.FAILED,
+    TaskState.CANCELED,
+    TaskState.REJECTED,
+}
 _watchers: dict[tuple[str, str, str], asyncio.Task] = {}
 
 
@@ -23,7 +28,7 @@ async def _watch_a2a_task(agent_name: str, task_id: str, context_id: str, client
         for _ in range(86_400):  # at most 24 hours, one request per second
             await asyncio.sleep(1)
             result = await client.get_task(task_id)
-            state = result.get("status", {}).get("state", "unknown")
+            state = task_state_of(result)
             if state not in _TERMINAL_STATES:
                 continue
             from uniclaw.utils.constants import SYSTEM_PREFIX
@@ -31,7 +36,7 @@ async def _watch_a2a_task(agent_name: str, task_id: str, context_id: str, client
 
             content = extract_a2a_text(result)
             await wake_agent(
-                f"{SYSTEM_PREFIX}[a2a] 远程任务已{state}\n"
+                f"{SYSTEM_PREFIX}[a2a] 远程任务已{state.value}\n"
                 f"agent: {agent_name}\ntask_id: {task_id}\ncontext_id: {context_id}\n结果:\n{content}",
                 config,
             )
@@ -85,11 +90,25 @@ async def a2a_send_task(agent_name: str, message: str, context_id: str = "") -> 
             return json.dumps({"context_id": ctx, "result": text}, ensure_ascii=False)
         for _ in range(120):
             result = await client.get_task(task_id)
-            if task_state_of(result) not in ("working", "submitted", "input-required"):
+            if task_state_of(result) not in (
+                TaskState.WORKING,
+                TaskState.SUBMITTED,
+                TaskState.INPUT_REQUIRED,
+            ):
                 text = extract_a2a_text(result)
                 return json.dumps({"task_id": task_id, "context_id": ctx, "result": text}, ensure_ascii=False)
             await asyncio.sleep(1)
-        return f"{TOOL_ERROR}: A2A 任务超时;可用 {a2a_get_task.name} 查询 task_id={task_id}"
+        # 超时不算错误:任务只是在 120 秒内没跑完,仍挂在远端;
+        # 返回正常结果,让 LLM 知道可以用 a2a_get_task 继续查询。
+        return json.dumps(
+            {
+                "task_id": task_id,
+                "context_id": ctx,
+                "state": TaskState.WORKING.value,
+                "note": f"等待 120 秒后仍未完成,任务可能仍在远端执行;可用 {a2a_get_task.name} 查询 task_id={task_id} 获取最新状态",
+            },
+            ensure_ascii=False,
+        )
     except (RuntimeError, httpx.HTTPError) as exc:
         return (
             f"{TOOL_ERROR}: A2A Agent '{agent_name}'(url={url}) 调用失败: "
@@ -182,27 +201,28 @@ async def a2a_submit_task(agent_name: str, message: str, context_id: str = "", t
         task_id = task_id_of(result)
         state = task_state_of(result)
         text = extract_a2a_text(result)
-        if not task_id and not state:
+        if not task_id and state is TaskState.UNKNOWN:
             # 服务器同步返回最终 Message(无异步 task): 结果就在响应里,
             # 不能丢掉更不能让调用方拿 null 的 task_id 去 get_task
             return json.dumps(
                 {
                     "task_id": None,
                     "context_id": result.get("contextId"),
-                    "state": "completed",
+                    "state": TaskState.COMPLETED.value,
                     "result": text,
                     "note": "远端同步返回了最终结果(未提供异步 task),可直接使用,无需 a2a_get_task",
                 },
                 ensure_ascii=False,
             )
-        if not state:
-            state = "submitted"  # 有 task 无状态: 按已提交处理
+        if state is TaskState.UNKNOWN:
+            # 有 task 无状态: 按已提交处理
+            state = TaskState.SUBMITTED
         if task_id and state not in _TERMINAL_STATES:
             _start_task_watcher(agent_name, result, client, config)
         out = {
             "task_id": task_id,
             "context_id": result.get("contextId"),
-            "state": state,
+            "state": state.value,
         }
         if state in _TERMINAL_STATES and text:
             out["result"] = text
@@ -240,7 +260,7 @@ async def a2a_get_task(agent_name: str, task_id: str) -> str:
             {
                 "task_id": task_id_of(result) or task_id,
                 "context_id": result.get("contextId"),
-                "state": task_state_of(result),
+                "state": task_state_of(result).value,
                 "result": extract_a2a_text(result),
             },
             ensure_ascii=False,
@@ -266,8 +286,8 @@ async def a2a_cancel_task(agent_name: str, task_id: str) -> str:
     url = remote["url"]  # 缺 url 是配置数据 bug,直接抛出
     try:
         result = await A2AClient(url, remote.get("token", "")).cancel_task(task_id)
-        state = task_state_of(result) or "unknown"
-        return f"A2A 任务 {task_id_of(result) or task_id} 状态:{state}"
+        state = task_state_of(result)
+        return f"A2A 任务 {task_id_of(result) or task_id} 状态:{state.value}"
     except (RuntimeError, httpx.HTTPError) as exc:
         return (
             f"{TOOL_ERROR}: A2A 任务取消失败(agent={agent_name}, task_id={task_id}, "

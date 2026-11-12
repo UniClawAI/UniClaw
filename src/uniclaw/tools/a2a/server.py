@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 
 from uniclaw.tools.session.session import SessionType
 
+from .client import TaskState
 from .manager import A2AManager
 
 
@@ -58,7 +59,7 @@ def mount_a2a_routes(app: FastAPI) -> None:
             context_id = task["contextId"]
             lock = context_locks.setdefault(context_id, asyncio.Lock())
             async with lock:
-                if task["status"].get("state") == "canceled":
+                if task["status"].get("state") == TaskState.CANCELED.value:
                     return
                 config = contexts.get(context_id)
                 if config is None:
@@ -66,14 +67,14 @@ def mount_a2a_routes(app: FastAPI) -> None:
                     config.permission_mode = context["permission_mode"]
                     contexts[context_id] = config
                 await MultiAgent.get_instance().run(text, config=config)
-                if task["status"].get("state") == "canceled":
+                if task["status"].get("state") == TaskState.CANCELED.value:
                     return
                 result = config.current_agent.result or config.current_agent.session.get_assistant_messages() or "任务已完成。"
-                task["status"] = {"state": "completed", "message": _message(result), "timestamp": datetime.now(timezone.utc).isoformat()}
+                task["status"] = {"state": TaskState.COMPLETED.value, "message": _message(result), "timestamp": datetime.now(timezone.utc).isoformat()}
                 task["artifacts"] = [{"artifactId": str(uuid.uuid4()), "parts": [{"kind": "text", "text": result}]}]
         except Exception as exc:
-            if task["status"].get("state") != "canceled":
-                task["status"] = {"state": "failed", "message": _message(f"A2A task failed: {exc}"), "timestamp": datetime.now(timezone.utc).isoformat()}
+            if task["status"].get("state") != TaskState.CANCELED.value:
+                task["status"] = {"state": TaskState.FAILED.value, "message": _message(f"A2A task failed: {exc}"), "timestamp": datetime.now(timezone.utc).isoformat()}
         finally:
             running.pop(task["id"], None)
 
@@ -100,7 +101,7 @@ def mount_a2a_routes(app: FastAPI) -> None:
             task = tasks.get(params.get("id") or params.get("taskId"))
             if not task:
                 return JSONResponse({"jsonrpc": "2.0", "id": request_id, "error": {"code": -32001, "message": "Task not found"}})
-            task["status"] = {"state": "canceled", "message": _message("Task canceled"), "timestamp": datetime.now(timezone.utc).isoformat()}
+            task["status"] = {"state": TaskState.CANCELED.value, "message": _message("Task canceled"), "timestamp": datetime.now(timezone.utc).isoformat()}
             config = contexts.get(task["contextId"])
             if config:
                 config.current_agent.cancel_event.set()
@@ -114,7 +115,7 @@ def mount_a2a_routes(app: FastAPI) -> None:
         if not text:
             return JSONResponse({"jsonrpc": "2.0", "id": request_id, "error": {"code": -32602, "message": "A text message is required"}})
         task_id = str(uuid.uuid4())
-        task = {"kind": "task", "id": task_id, "contextId": params.get("contextId") or str(uuid.uuid4()), "status": {"state": "working", "timestamp": datetime.now(timezone.utc).isoformat()}}
+        task = {"kind": "task", "id": task_id, "contextId": params.get("contextId") or str(uuid.uuid4()), "status": {"state": TaskState.WORKING.value, "timestamp": datetime.now(timezone.utc).isoformat()}}
         tasks[task_id] = task
         runner = asyncio.create_task(run_task(task, text, context))
         running[task_id] = runner

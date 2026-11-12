@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from enum import StrEnum
 from typing import Any
 
 import httpx
@@ -147,30 +148,57 @@ def task_id_of(result) -> str:
     return ""
 
 
-def task_state_of(result) -> str:
-    """从 A2A 响应归一化提取任务状态(state)。
+class TaskState(StrEnum):
+    """A2A 协议任务状态(标准取值;value 为线上传输的原字符串)。
 
-    兼容 status.state / 顶层 state / status 字符串 / task.* 嵌套。
+    用于取代散落的魔法字符串,保证 client / tools / server 三层的状态
+    判断一致。未知状态一律映射为 UNKNOWN,JSON 序列化时 value 即为
+    原始字符串,兼容下游按字符串比较的旧逻辑。
+    """
+
+    SUBMITTED = "submitted"
+    WORKING = "working"
+    INPUT_REQUIRED = "input-required"
+    COMPLETED = "completed"
+    CANCELED = "canceled"
+    FAILED = "failed"
+    REJECTED = "rejected"
+    UNKNOWN = "unknown"
+
+
+def task_state_of(result) -> "TaskState":
+    """从 A2A 响应归一化提取任务状态。
+
+    兼容 status.state / 顶层 state / status 字符串 / task.* 嵌套;
+    提取不到返回 UNKNOWN(而非空串,保证下游始终拿到合法枚举)。
     """
     if not isinstance(result, dict):
-        return ""
+        return TaskState.UNKNOWN
     status = result.get("status")
     if isinstance(status, dict):
         state = status.get("state")
         if isinstance(state, str) and state:
-            return state
+            return _to_task_state(state)
     elif isinstance(status, str) and status:
-        return status
+        return _to_task_state(status)
     state = result.get("state")
     if isinstance(state, str) and state:
-        return state
+        return _to_task_state(state)
     for inner_key in ("task", "result"):
         inner = result.get(inner_key)
         if isinstance(inner, dict):
             got = task_state_of(inner)
-            if got:
+            if got is not TaskState.UNKNOWN:
                 return got
-    return ""
+    return TaskState.UNKNOWN
+
+
+def _to_task_state(raw: str) -> TaskState:
+    """将线上原始字符串映射为 TaskState;无法识别时归为 UNKNOWN。"""
+    try:
+        return TaskState(raw)
+    except ValueError:
+        return TaskState.UNKNOWN
 
 
 def extract_a2a_text(result: dict) -> str:
