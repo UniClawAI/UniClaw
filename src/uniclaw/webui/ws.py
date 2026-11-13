@@ -314,6 +314,8 @@ async def bridge_events(session_id: str, config: AppConfig):
             queued_task, event = await task.event_queue.get()
             is_subagent = queued_task is not task
             agent_name = queued_task.name if is_subagent else ""
+            # spinner 文本前缀: subagent 的 spinner 行加上名字标识, 与 console 模式一致
+            agent_prefix = f"[{agent_name}] " if is_subagent else ""
             # 创建该子代理的工具调用 ID, 前端据此把事件精确挂回对应的工具块
             creator_tool_call_id = (
                 getattr(queued_task, "tool_call_id", "") if is_subagent else ""
@@ -455,7 +457,9 @@ async def bridge_events(session_id: str, config: AppConfig):
 
         # === 流式事件 ===
         elif isinstance(event, ThinkingStartEvent):
-            config.spinner.start("Thinking...", wait_id=queued_task.id)
+            config.spinner.start(
+                f"{agent_prefix}Thinking...", wait_id=queued_task.id
+            )
             await _broadcast(
                 {
                     "event": "thinking_start",
@@ -468,7 +472,9 @@ async def bridge_events(session_id: str, config: AppConfig):
             )
 
         elif isinstance(event, ThinkingChunkEvent):
-            config.spinner.start("Thinking...", wait_id=queued_task.id)
+            config.spinner.start(
+                f"{agent_prefix}Thinking...", wait_id=queued_task.id
+            )
             await _broadcast(
                 {
                     "event": "thinking",
@@ -508,7 +514,8 @@ async def bridge_events(session_id: str, config: AppConfig):
         elif isinstance(event, ToolPreparingEvent):
             args_display = format_args_for_display(event.args, max_length=30)
             config.spinner.start(
-                f"'{event.name}({args_display})'...", wait_id=queued_task.id
+                f"{agent_prefix}'{event.name}({args_display})'...",
+                wait_id=queued_task.id,
             )
             await _broadcast(
                 {
@@ -528,7 +535,7 @@ async def bridge_events(session_id: str, config: AppConfig):
             # 同一根队列可能承载多个代理(主 agent + keep_alive 子代理)的检查点,
             # 局部变量会被后到的事件覆盖,导致 stop 停错行、孤儿 spinner 永久残留。
             config.spinner.start(
-                "创建检查点...", wait_id=f"checkpoint_{queued_task.id}"
+                f"{agent_prefix}创建检查点...", wait_id=f"checkpoint_{queued_task.id}"
             )
 
         elif isinstance(event, CheckpointEndEvent):
@@ -592,7 +599,8 @@ async def bridge_events(session_id: str, config: AppConfig):
             config.spinner.stop(wait_id=queued_task.id)
             args_display = format_args_for_display(event.args, max_length=30)
             config.spinner.start(
-                f"'{event.name}({args_display})' 执行中...", wait_id=queued_task.id
+                f"{agent_prefix}'{event.name}({args_display})' 执行中...",
+                wait_id=queued_task.id,
             )
             await _broadcast(
                 {
