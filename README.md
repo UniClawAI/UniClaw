@@ -1578,8 +1578,9 @@ Hook 完整文档已改为内置 `hooks` 技能,可随时通过 `/hooks` 或让 
 基于向量数据库的文档检索增强生成(RAG)系统,支持文档导入、智能拆分和语义检索：
 
 - **rag_ingest** - 读取文件或目录,递归拆分为文档块,生成 embedding 后存入向量数据库
-  - 支持格式: txt/md/py/json/yaml/csv/html/pdf 等
-  - 可配置文档块大小(`chunk_size`)和重叠度(`chunk_overlap`)
+  - 支持格式: txt/md/json/yaml/csv/html/xml/配置类文本/pdf 等(只收录文档、数据、标记与配置类内容,**不含代码与样式源文件** —— 需要检索代码请用 Grep/Glob)
+  - 可配置文档块大小(`chunk_size`)、重叠度(`chunk_overlap`)与分块策略(`splitter`)
+  - 分块策略: `recursive`(递归,默认)、`fixed`(固定大小)、`sentence`(按句子)、`markdown`(按标题结构化)
   - 支持用户级/项目级双层作用域
   - 重复导入时跳过未变更块,并清理本次导入中内容已变更来源的旧块;目录中已删除文件对应的旧块不会自动清理
   - 自动遵守 `.gitignore` 规则,跳过被忽略的文件和目录
@@ -2260,7 +2261,7 @@ UniClaw 内置 RAG (Retrieval-Augmented Generation) 系统,支持文档导入、
 
 ### 核心特性
 
-- **多格式支持**: txt/md/py/json/yaml/csv/html/pdf 等常见文档格式
+- **多格式支持**: txt/md/json/yaml/csv/html/xml/配置类文本/pdf 等文档格式(不含代码源文件)
 - **智能拆分**: 可配置文档块大小和重叠度,保证语义连贯性
 - **向量嵌入**: 自动生成文档 embedding,支持语义相似度检索
 - **多集合管理**: 按主题或项目组织文档,每个集合独立管理
@@ -2274,8 +2275,8 @@ UniClaw 内置 RAG (Retrieval-Augmented Generation) 系统,支持文档导入、
 # 导入单个文件
 rag_ingest(path="docs/api.md", collection="api-docs")
 
-# 导入整个目录
-rag_ingest(path="src/", collection="source-code", chunk_size=500)
+# 导入整个目录(仅文档类文件,代码/样式源文件不会被读取)
+rag_ingest(path="docs/", collection="project-docs", chunk_size=500)
 
 # 用户级导入(跨项目共享)
 rag_ingest(path="./notes/", collection="my-notes", scope="user")

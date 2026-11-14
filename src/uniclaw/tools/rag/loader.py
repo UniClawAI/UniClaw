@@ -9,22 +9,34 @@ from uniclaw.utils.gitignore import get_not_ignored_files
 
 from uniclaw.utils.read_text import read_text_file
 
-# 支持的文本文件扩展名
+# 支持的文本文件扩展名(仅文档/数据/标记/配置类,不含编程语言源码)
+# 代码文件(如 .py/.js/.java/.go 等)语义依赖结构与调用关系,不适合做向量语义检索,
+# 因此不在此列 —— 需要检索代码时请使用 Grep / Glob 等源码工具。
 TEXT_EXTENSIONS = {
-    ".txt", ".md", ".py", ".json", ".yaml", ".yml", ".csv",
-    ".html", ".htm", ".xml", ".css", ".js", ".ts", ".jsx", ".tsx",
-    ".java", ".c", ".cpp", ".h", ".hpp", ".go", ".rs", ".rb",
-    ".sh", ".bash", ".zsh", ".fish", ".bat", ".cmd", ".ps1",
-    ".toml", ".ini", ".cfg", ".conf", ".env", ".gitignore",
-    ".dockerfile", ".makefile", ".sql", ".r", ".lua", ".swift",
-    ".kt", ".scala", ".hs", ".ex", ".exs", ".erl", ".clj",
-    ".vue", ".svelte", ".astro",
+    ".txt",
+    ".md",
+    ".json",
+    ".yaml",
+    ".yml",
+    ".csv",
+    ".html",
+    ".htm",
+    ".xml",
+    ".toml",
+    ".ini",
+    ".cfg",
+    ".conf",
+    ".env",
+    ".gitignore",
+    ".dockerfile",
+    ".makefile",
 }
 
 
 @dataclass
 class Document:
     """加载后的文档对象。"""
+
     content: str
     metadata: dict = field(default_factory=dict)
 
@@ -69,7 +81,10 @@ def load_directory(path: Path, recursive: bool = True) -> tuple[list[Document], 
     # 批量按 .gitignore 规则过滤(覆盖隐藏文件和依赖/构建目录)
     candidates = get_not_ignored_files(candidates)
     for file_path in candidates:
-        if file_path.suffix.lower() in TEXT_EXTENSIONS or file_path.suffix.lower() == ".pdf":
+        if (
+            file_path.suffix.lower() in TEXT_EXTENSIONS
+            or file_path.suffix.lower() == ".pdf"
+        ):
             try:
                 docs.extend(load_file(file_path))
             except Exception:
@@ -82,10 +97,16 @@ def _load_text(path: Path) -> list[Document]:
     content = read_text_file(path)
     if content is None:
         return []
-    return [Document(
-        content=content,
-        metadata={"source": str(path), "filename": path.name, "suffix": path.suffix},
-    )]
+    return [
+        Document(
+            content=content,
+            metadata={
+                "source": str(path),
+                "filename": path.name,
+                "suffix": path.suffix,
+            },
+        )
+    ]
 
 
 def _load_pdf(path: Path) -> list[Document]:
@@ -100,13 +121,15 @@ def _load_pdf(path: Path) -> list[Document]:
     for i, page in enumerate(reader.pages):
         text = page.extract_text()
         if text and text.strip():
-            docs.append(Document(
-                content=text.strip(),
-                metadata={
-                    "source": str(path),
-                    "filename": path.name,
-                    "suffix": ".pdf",
-                    "page": i + 1,
-                },
-            ))
+            docs.append(
+                Document(
+                    content=text.strip(),
+                    metadata={
+                        "source": str(path),
+                        "filename": path.name,
+                        "suffix": ".pdf",
+                        "page": i + 1,
+                    },
+                )
+            )
     return docs

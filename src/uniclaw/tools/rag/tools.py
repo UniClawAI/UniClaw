@@ -12,7 +12,7 @@ from uniclaw.utils.constants import TOOL_ERROR
 
 from .loader import load_directory, load_file
 from .rag import RAGManager
-from .splitter import split_documents
+from .splitter import SPLITTER_CHOICES, split_documents
 
 # collection 名称规则: 仅小写字母、数字、连字符和下划线
 _COLLECTION_NAME_RE = re.compile(r"^[a-z0-9_-]+$")
@@ -39,12 +39,15 @@ def validate_collection_name(collection: str) -> str | None:
     return None
 
 
-def _validate_chunk_params(chunk_size: int, chunk_overlap: int) -> None:
+def _validate_chunk_params(
+    chunk_size: int, chunk_overlap: int, splitter: str | None = None
+) -> None:
     """验证文档拆分参数。
 
     Args:
         chunk_size: 每个文档块的最大 token 数。
         chunk_overlap: 相邻文档块的重叠 token 数。
+        splitter: 分块策略名。
 
     Raises:
         ValueError: 参数无效。
@@ -60,6 +63,12 @@ def _validate_chunk_params(chunk_size: int, chunk_overlap: int) -> None:
         raise ValueError("chunk_overlap 不能为负数")
     if chunk_overlap >= chunk_size:
         raise ValueError("chunk_overlap 必须小于 chunk_size")
+    if splitter:
+        name = (splitter or "").strip().lower()
+        if name not in SPLITTER_CHOICES:
+            raise ValueError(
+                f"未知分块策略: {splitter!r}, 可选: {', '.join(SPLITTER_CHOICES)}"
+            )
 
 
 def _external_errors() -> tuple[type[BaseException], ...]:
@@ -110,7 +119,8 @@ async def rag_ingest(
     path: str,
     collection: str,
     chunk_size: int = 1000,
-    chunk_overlap: int = 200, 
+    chunk_overlap: int = 200,
+    splitter: str = "recursive",
     scope: Scope = Scope.PROJECT,
     contextual: bool = False,
     tool_runtime: ToolRuntime = None,
@@ -119,10 +129,13 @@ async def rag_ingest(
     读取文件或目录,递归拆分为文档块,生成 embedding 后存入向量数据库。
 
     Args:
-        path: 文件或目录路径。支持 txt/md/py/json/yaml/csv/html/pdf 等格式。
+        path: 文件或目录路径。支持 txt/md/json/yaml/csv/html/xml/配置类文本/pdf 等文档格式(不含代码/样式源文件)。
         collection: 目标集合名称(必填),用于隔离不同来源的文档。名称应与文档内容相关,便于后续检索时识别。仅允许小写字母、数字、连字符和下划线,不支持中文。
         chunk_size: 每个文档块的最大 token 数。默认为 1000。
         chunk_overlap: 相邻文档块的重叠 token 数。默认为 200。
+        splitter: 分块策略。可选: recursive(递归,默认,语义最完整)、fixed(固定大小,简单高效)、
+            sentence(按句子拆分,适合问答)、markdown(按标题层级结构化拆分,适合文档/README)。
+            默认为 recursive。
         scope: 存储级别,Scope.PROJECT(项目级) 或 Scope.USER(用户级)。
         contextual: 是否启用 Contextual Retrieval — 用 mini 模型为每个块生成情境上下文,
             拼接到块内容前再入库。能显著提升指代性/缩写类内容的召回率,但会增加导入耗时。
@@ -142,7 +155,7 @@ async def rag_ingest(
 
     try:
         # 验证参数
-        _validate_chunk_params(chunk_size, chunk_overlap)
+        _validate_chunk_params(chunk_size, chunk_overlap, splitter)
 
         # 验证路径
         target = Path(path)
@@ -167,8 +180,8 @@ async def rag_ingest(
             await tool_runtime.stream(f"⚠️  {skipped} 个文件读取失败已跳过\n")
 
         # 拆分文档
-        await tool_runtime.stream("✂️  正在拆分文档...\n")
-        chunks = split_documents(docs, chunk_size, chunk_overlap)
+        await tool_runtime.stream(f"✂️  正在拆分文档({splitter} 分块策略)...\n")
+        chunks = split_documents(docs, chunk_size, chunk_overlap, splitter=splitter)
         if not chunks:
             return f"{TOOL_ERROR}: 文档拆分后为空"
         await tool_runtime.stream(f"✅ 拆分完成,共 {len(chunks)} 个文档块\n")
@@ -205,9 +218,7 @@ async def rag_ingest(
 
         skipped_count = len(chunks) - len(new_chunks)
         if skipped_count:
-            await tool_runtime.stream(
-                f"⏭️  {skipped_count} 个块内容未变更,跳过\n"
-            )
+            await tool_runtime.stream(f"⏭️  {skipped_count} 个块内容未变更,跳过\n")
         if not new_chunks:
             info = manager.get_collection_info(collection)
             total = info["count"] if info else "原"
@@ -252,14 +263,17 @@ async def rag_ingest(
         for chunk, h in zip(new_chunks, new_hashes):
             chunk.metadata["content_hash"] = h
 
-        count = await manager.ingest(collection, new_chunks, progress_callback=_progress)
+        count = await manager.ingest(
+            collection, new_chunks, progress_callback=_progress
+        )
         await tool_runtime.stream("\n")
 
         info = manager.get_collection_info(collection)
     except ValueError as e:
         return (
             f"{TOOL_ERROR}: 参数或格式无效(path={path!r}, collection={collection!r}, "
-            f"chunk_size={chunk_size}, chunk_overlap={chunk_overlap}): {e}"
+            f"chunk_size={chunk_size}, chunk_overlap={chunk_overlap}, "
+            f"splitter={splitter!r}): {e}"
         )
     except _external_errors() as e:
         return (
@@ -374,9 +388,7 @@ async def rag_search(
             return f"{TOOL_ERROR}: 集合 '{collection}' 不存在。请先使用 {rag_ingest.name} 导入文档创建集合。"
         msg = f"{TOOL_ERROR}: 在集合 '{collection}' 中未找到与查询相关的结果"
         if errors:
-            msg += f"\n搜索过程中出现错误:\n" + "\n".join(
-                f"  - {e}" for e in errors
-            )
+            msg += f"\n搜索过程中出现错误:\n" + "\n".join(f"  - {e}" for e in errors)
         return msg
 
     # 按分数排序取 top_k
@@ -830,15 +842,27 @@ def get_tools(config=None) -> list:
     if not config or not config.embedding_model:
         if config:
             config.record_unavailable_tools(
-                [rag_ingest.name, rag_search.name, rag_list_collections.name,
-                 rag_set_desc.name, rag_delete_collection.name, rag_evaluate.name],
+                [
+                    rag_ingest.name,
+                    rag_search.name,
+                    rag_list_collections.name,
+                    rag_set_desc.name,
+                    rag_delete_collection.name,
+                    rag_evaluate.name,
+                ],
                 "未配置 embedding_model,在 settings.json 中配置后可启用 RAG 工具",
             )
         return []
     if config:
         config.clear_unavailable_tools(
-            [rag_ingest.name, rag_search.name, rag_list_collections.name,
-             rag_set_desc.name, rag_delete_collection.name, rag_evaluate.name],
+            [
+                rag_ingest.name,
+                rag_search.name,
+                rag_list_collections.name,
+                rag_set_desc.name,
+                rag_delete_collection.name,
+                rag_evaluate.name,
+            ],
         )
     return [
         rag_ingest,

@@ -132,13 +132,12 @@ class TestLoadFile:
         assert len(docs) == 1
         assert docs[0].content == content
 
-    def test_load_python_file(self, tmp_path):
-        """测试加载 Python 文件"""
+    def test_load_python_file_unsupported(self, tmp_path):
+        """代码文件(.py)不再支持导入 RAG"""
         content = "def hello():\n    return 'world'"
         file_path = _create_temp_file(tmp_path, "test.py", content)
-        docs = load_file(file_path)
-        assert len(docs) == 1
-        assert docs[0].content == content
+        with pytest.raises(ValueError, match="不支持的文件格式"):
+            load_file(file_path)
 
     def test_unsupported_format(self, tmp_path):
         """测试不支持的文件格式"""
@@ -209,19 +208,19 @@ class TestLoadText:
 
     def test_metadata_fields(self, tmp_path):
         """测试元数据字段完整性"""
-        file_path = _create_temp_file(tmp_path, "test.py", "print('hello')")
+        file_path = _create_temp_file(tmp_path, "test.md", "# 标题")
         docs = _load_text(file_path)
         metadata = docs[0].metadata
         assert metadata["source"] == str(file_path)
-        assert metadata["filename"] == "test.py"
-        assert metadata["suffix"] == ".py"
+        assert metadata["filename"] == "test.md"
+        assert metadata["suffix"] == ".md"
 
 
 class TestLoadDirectory:
     """load_directory 函数测试"""
 
     def test_load_recursive(self, tmp_path):
-        """测试递归加载目录"""
+        """测试递归加载目录(代码文件 .py 会被跳过)"""
         files = {
             "file1.txt": "content1",
             "file2.py": "content2",
@@ -233,11 +232,13 @@ class TestLoadDirectory:
         ((dir_path / "subdir") / "file3.md").write_text("content3")
 
         docs, skipped = load_directory(dir_path, recursive=True)
-        assert len(docs) == 3
+        assert len(docs) == 2  # file1.txt + file3.md,file2.py 被跳过
         assert skipped == 0
+        names = {d.metadata["filename"] for d in docs}
+        assert names == {"file1.txt", "file3.md"}
 
     def test_load_non_recursive(self, tmp_path):
-        """测试非递归加载目录"""
+        """测试非递归加载目录(代码文件 .py 会被跳过)"""
         files = {
             "file1.txt": "content1",
             "file2.py": "content2",
@@ -248,7 +249,7 @@ class TestLoadDirectory:
         ((dir_path / "subdir") / "file3.md").write_text("content3")
 
         docs, skipped = load_directory(dir_path, recursive=False)
-        assert len(docs) == 2
+        assert len(docs) == 1  # 仅 file1.txt,file2.py 被跳过
 
     def test_skip_hidden_files(self, tmp_path):
         """测试跳过隐藏文件"""
@@ -1279,27 +1280,23 @@ class TestTextExtensions:
     """TEXT_EXTENSIONS 常量测试"""
 
     def test_common_extensions_present(self):
-        """测试常见扩展名存在"""
+        """测试常见文档扩展名存在"""
         assert ".txt" in TEXT_EXTENSIONS
         assert ".md" in TEXT_EXTENSIONS
-        assert ".py" in TEXT_EXTENSIONS
         assert ".json" in TEXT_EXTENSIONS
         assert ".yaml" in TEXT_EXTENSIONS
         assert ".csv" in TEXT_EXTENSIONS
         assert ".html" in TEXT_EXTENSIONS
-        assert ".js" in TEXT_EXTENSIONS
-        assert ".ts" in TEXT_EXTENSIONS
 
-    def test_programming_languages(self):
-        """测试编程语言扩展名"""
-        assert ".java" in TEXT_EXTENSIONS
-        assert ".c" in TEXT_EXTENSIONS
-        assert ".cpp" in TEXT_EXTENSIONS
-        assert ".go" in TEXT_EXTENSIONS
-        assert ".rs" in TEXT_EXTENSIONS
-        assert ".rb" in TEXT_EXTENSIONS
-        assert ".swift" in TEXT_EXTENSIONS
-        assert ".kt" in TEXT_EXTENSIONS
+    def test_programming_languages_excluded(self):
+        """代码/源文件扩展名不应在 TEXT_EXTENSIONS 中(代码不适合语义检索)"""
+        for suffix in (
+            ".py", ".pyi", ".js", ".jsx", ".ts", ".tsx", ".java", ".c", ".cpp",
+            ".h", ".hpp", ".go", ".rs", ".rb", ".swift", ".kt", ".scala", ".lua",
+            ".r", ".sh", ".bash", ".zsh", ".fish", ".ps1", ".bat", ".cmd",
+            ".vue", ".svelte", ".astro", ".css", ".scss", ".less",
+        ):
+            assert suffix not in TEXT_EXTENSIONS, f"{suffix} 不应在 TEXT_EXTENSIONS 中"
 
     def test_config_files(self):
         """测试配置文件扩展名"""
@@ -1309,26 +1306,8 @@ class TestTextExtensions:
         assert ".conf" in TEXT_EXTENSIONS
         assert ".env" in TEXT_EXTENSIONS
 
-    def test_web_files(self):
-        """测试 Web 文件扩展名"""
-        assert ".vue" in TEXT_EXTENSIONS
-        assert ".svelte" in TEXT_EXTENSIONS
-        assert ".astro" in TEXT_EXTENSIONS
-        assert ".jsx" in TEXT_EXTENSIONS
-        assert ".tsx" in TEXT_EXTENSIONS
-
-    def test_shell_scripts(self):
-        """测试 Shell 脚本扩展名"""
-        assert ".sh" in TEXT_EXTENSIONS
-        assert ".bash" in TEXT_EXTENSIONS
-        assert ".zsh" in TEXT_EXTENSIONS
-        assert ".fish" in TEXT_EXTENSIONS
-        assert ".bat" in TEXT_EXTENSIONS
-        assert ".cmd" in TEXT_EXTENSIONS
-        assert ".ps1" in TEXT_EXTENSIONS
-
     def test_pdf_not_in_text_extensions(self):
-        """测试 PDF 不在文本扩展名中"""
+        """测试 PDF 不在文本扩展名中(单独经 pypdf 处理)"""
         assert ".pdf" not in TEXT_EXTENSIONS
 
 

@@ -1557,8 +1557,9 @@ A SQLite-based knowledge graph with entity/relation management, querying, and vi
 A vector-database RAG (Retrieval-Augmented Generation) system with document ingestion, smart chunking, and semantic retrieval:
 
 - **rag_ingest** — read a file or directory, recursively split into chunks, embed, and store
-  - Formats: txt/md/py/json/yaml/csv/html/pdf, etc.
-  - Configurable `chunk_size` and `chunk_overlap`
+  - Formats: txt/md/json/yaml/csv/html/xml/config-style text/pdf, etc. (documents, data, markup and config only — **no code or stylesheet sources**; use Grep/Glob to search code)
+  - Configurable `chunk_size`, `chunk_overlap`, and `splitter` strategy
+  - Splitting strategies: `recursive` (default), `fixed`, `sentence`, `markdown` (structurally by headings)
   - User/project dual scope
   - Re-imports skip unchanged chunks and clean stale blocks from sources whose content changed this run; old blocks for deleted files aren't auto-cleaned
   - Honors `.gitignore`
@@ -2223,7 +2224,7 @@ UniClaw ships an RAG (Retrieval-Augmented Generation) system with document inges
 
 ### Core features
 
-- **Multi-format**: txt/md/py/json/yaml/csv/html/pdf and more
+- **Multi-format**: txt/md/json/yaml/csv/html/xml/config-style text/pdf and more (no code source files)
 - **Smart chunking**: configurable chunk size and overlap for semantic coherence
 - **Vector embedding**: automatic document embeddings for semantic similarity search
 - **Multi-collection**: organize by topic or project; collections are independent
@@ -2237,8 +2238,8 @@ UniClaw ships an RAG (Retrieval-Augmented Generation) system with document inges
 # Single file
 rag_ingest(path="docs/api.md", collection="api-docs")
 
-# Whole directory
-rag_ingest(path="src/", collection="source-code", chunk_size=500)
+# Whole directory (document files only; code/stylesheet sources are not read)
+rag_ingest(path="docs/", collection="project-docs", chunk_size=500)
 
 # User-level (shared across projects)
 rag_ingest(path="./notes/", collection="my-notes", scope="user")

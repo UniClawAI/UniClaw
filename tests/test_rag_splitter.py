@@ -13,8 +13,8 @@ from uniclaw.tools.rag.splitter import (
 )
 from uniclaw.tools.rag.loader import Document
 
-
 # ── 辅助工具 ──────────────────────────────────────────────
+
 
 def _reconstruct_from_chunks(chunks: list[str], splitter: RecursiveSplitter) -> str:
     """从 chunk 列表重建原文(考虑 overlap)。
@@ -47,18 +47,18 @@ def _assert_chunks_cover_text(splitter, text: str):
     for c in chunks:
         chunk_tokens.extend(splitter.tokenizer.encode(c))
     # chunk token 序列应包含原文所有 token
-    assert len(chunk_tokens) >= len(original_tokens), (
-        f"chunk tokens ({len(chunk_tokens)}) < original tokens ({len(original_tokens)})"
-    )
+    assert len(chunk_tokens) >= len(
+        original_tokens
+    ), f"chunk tokens ({len(chunk_tokens)}) < original tokens ({len(original_tokens)})"
 
 
 def _assert_no_chunk_exceeds_size(splitter, chunks: list[str]):
     """断言所有 chunk 的 token 数不超过 chunk_size。"""
     for i, c in enumerate(chunks):
         tokens = splitter.count_tokens(c)
-        assert tokens <= splitter.chunk_size, (
-            f"chunk[{i}] exceeds chunk_size: {tokens} > {splitter.chunk_size}"
-        )
+        assert (
+            tokens <= splitter.chunk_size
+        ), f"chunk[{i}] exceeds chunk_size: {tokens} > {splitter.chunk_size}"
 
 
 def _tail_head_overlap(prev_tail: str, curr: str) -> int:
@@ -96,6 +96,7 @@ def _assert_overlap_present(splitter, chunks: list[str]):
 
 # ── TextSplitter 基类测试 ────────────────────────────────
 
+
 class TestTextSplitterBase:
     """TextSplitter 基类验证"""
 
@@ -108,17 +109,21 @@ class TestTextSplitterBase:
             RecursiveSplitter(chunk_overlap=-1)
 
     def test_overlap_must_be_less_than_size(self):
-        with pytest.raises(ValueError, match="chunk_overlap must be less than chunk_size"):
+        with pytest.raises(
+            ValueError, match="chunk_overlap must be less than chunk_size"
+        ):
             RecursiveSplitter(chunk_size=10, chunk_overlap=10)
 
     def test_split_text_not_implemented(self):
         from uniclaw.tools.rag.splitter import TextSplitter
+
         splitter = TextSplitter.__new__(TextSplitter)
         with pytest.raises(NotImplementedError):
             splitter.split_text("test")
 
 
 # ── FixedSizeSplitter 测试 ───────────────────────────────
+
 
 class TestFixedSizeSplitter:
     """FixedSizeSplitter 基本功能"""
@@ -169,8 +174,46 @@ class TestFixedSizeSplitter:
         assert chunks[1].metadata["chunk_index"] == 1
         assert chunks[0].metadata["total_chunks"] == 2
 
+    def test_content_not_lost(self):
+        """固定大小分块不丢内容(token 级拼接覆盖原文)"""
+        splitter = FixedSizeSplitter(chunk_size=8, chunk_overlap=2)
+        text = " ".join(["w"] * 30)
+        chunks = splitter.split_text(text)
+        _assert_no_chunk_exceeds_size(splitter, chunks)
+        chunk_tokens = sum(splitter.count_tokens(c) for c in chunks)
+        assert chunk_tokens >= splitter.count_tokens(text)
+
+    def test_exact_multiple(self):
+        """文本 token 数为 chunk_size 整数倍时无多余空块"""
+        splitter = FixedSizeSplitter(chunk_size=10, chunk_overlap=0)
+        text = " ".join(["w"] * 20)
+        chunks = splitter.split_text(text)
+        assert len(chunks) == 2
+        assert all(c for c in chunks)
+
+    def test_empty_line_docs(self):
+        """空白文档应产生空结果"""
+        splitter = FixedSizeSplitter(chunk_size=10, chunk_overlap=0)
+        docs = [Document(content="   ", metadata={"source": "x"})]
+        chunks = splitter.split_documents(docs)
+        assert chunks == []
+
+    def test_single_character(self):
+        """超短内容单个 chunk"""
+        splitter = FixedSizeSplitter(chunk_size=10, chunk_overlap=0)
+        assert splitter.split_text("a") == ["a"]
+
+    def test_step_window(self):
+        """重叠滑动窗口数量符合 step = chunk_size - chunk_overlap"""
+        splitter = FixedSizeSplitter(chunk_size=6, chunk_overlap=2)
+        text = "a b c d e f g h i j"
+        chunks = splitter.split_text(text)
+        assert len(chunks) == 3  # step=4, ceil(10/4)=3
+        _assert_no_chunk_exceeds_size(splitter, chunks)
+
 
 # ── RecursiveSplitter 基本测试 ───────────────────────────
+
 
 class TestRecursiveSplitterBasic:
     """RecursiveSplitter 基本功能"""
@@ -243,7 +286,79 @@ class TestRecursiveSplitterBasic:
         assert chunks[1].metadata["source"] == "b.txt"
 
 
+# ── RecursiveSplitter 补充边界测试 ───────────────────────
+
+
+class TestRecursiveSplitterEdge:
+    """RecursiveSplitter 补充边界行为(空白/粘连/字符兜底)"""
+
+    def test_empty_paragraphs_skipped(self):
+        """空段落/纯空白段落应被跳过,不产生空块"""
+        splitter = RecursiveSplitter(chunk_size=10, chunk_overlap=0)
+        text = "第一段。\n\n\n\n   \n\n第二段。"
+        chunks = splitter.split_text(text)
+        assert all(c.strip() for c in chunks), f"出现空块: {chunks!r}"
+        joined = "".join(chunks)
+        assert "第一段" in joined and "第二段" in joined
+
+    def test_english_words_keep_spaces_inside_chunk(self):
+        """块内英文单词间应保留空格,不得粘连(如 bazqux)"""
+        splitter = RecursiveSplitter(chunk_size=12, chunk_overlap=0)
+        text = "foo bar baz qux quux corge grault garply waldo plugh xyzzy"
+        chunks = splitter.split_text(text)
+        all_words = [w for c in chunks for w in c.split()]
+        # 原文所有单词都应出现(内容不丢)
+        for w in "foo bar baz qux corge waldo xyzzy".split():
+            assert w in all_words, f"单词丢失: {w}"
+        # 块内相邻词以单个空格分隔: 无粘连、无连续空格
+        for c in chunks:
+            assert c.split() == c.split(" "), f"块内单词粘连或空位异常: {c!r}"
+
+    def test_chinese_semicolon_and_exclamations(self):
+        """中文分号/感叹号/问号都是分割边界"""
+        splitter = RecursiveSplitter(chunk_size=6, chunk_overlap=0)
+        text = "第一句;第二句;第三句!第四句?第五句。第六句。第七句。第八句。"
+        chunks = splitter.split_text(text)
+        _assert_no_chunk_exceeds_size(splitter, chunks)
+        assert len(chunks) >= 3
+        assert "第一句" in chunks[0]
+
+    def test_decimal_numbers_kept_whole(self):
+        """chunk 内小数/版本号不在句点处切断,内容完整"""
+        splitter = RecursiveSplitter(chunk_size=100, chunk_overlap=0)
+        text = "圆周率约 3.14,自然对数底约 2.71828,黄金比例约 1.61803。"
+        chunks = splitter.split_text(text)
+        assert len(chunks) == 1
+        assert "3.14" in chunks[0] and "2.71828" in chunks[0] and "1.61803" in chunks[0]
+
+    def test_large_chunk_keeps_whole(self):
+        """chunk_size 大于全文 token 数时保持单块完整"""
+        splitter = RecursiveSplitter(chunk_size=500, chunk_overlap=0)
+        text = "第一段。第二段。" * 10
+        chunks = splitter.split_text(text)
+        assert len(chunks) == 1
+        assert chunks[0].strip() == text.strip()
+
+    def test_no_separator_splits_by_char(self):
+        """完全无分隔符的长串退化为字符级分割,不丢内容"""
+        splitter = RecursiveSplitter(chunk_size=8, chunk_overlap=0)
+        text = "ab" * 40  # 80 字符,无任何分隔符
+        chunks = splitter.split_text(text)
+        _assert_no_chunk_exceeds_size(splitter, chunks)
+        assert sum(len(c) for c in chunks) == len(text)
+
+    def test_content_not_lost_across_paragraphs(self):
+        """多段落递归拆分后拼接应覆盖原文所有 token(允许 overlap 冗余)"""
+        splitter = RecursiveSplitter(chunk_size=10, chunk_overlap=3)
+        text = "Word1. " * 8 + "\n\n" + "Word2. " * 8
+        chunks = splitter.split_text(text)
+        chunk_tokens = sum(splitter.count_tokens(c) for c in chunks)
+        original_tokens = splitter.count_tokens(text)
+        assert chunk_tokens >= original_tokens, "拆分后内容丢失"
+
+
 # ── RecursiveSplitter overlap 测试 ───────────────────────
+
 
 class TestRecursiveSplitterOverlap:
     """RecursiveSplitter overlap 行为"""
@@ -274,6 +389,7 @@ class TestRecursiveSplitterOverlap:
 
 
 # ── 递归分支 overlap 来源修复验证 ────────────────────────
+
 
 class TestRecursiveSplitterBugFix:
     """验证 _recursive_split 中递归分支的 overlap 来源修复
@@ -312,9 +428,9 @@ class TestRecursiveSplitterBugFix:
         original_tokens = splitter.tokenizer.encode(text)
 
         # chunk tokens 总数不应超过原文的2倍(合理的 overlap 开销)
-        assert len(all_tokens) < len(original_tokens) * 2, (
-            f"Excessive duplication: {len(all_tokens)} vs {len(original_tokens)}"
-        )
+        assert (
+            len(all_tokens) < len(original_tokens) * 2
+        ), f"Excessive duplication: {len(all_tokens)} vs {len(original_tokens)}"
 
     def test_recursive_branch_tail_matches_sub_chunks(self):
         """修复核心:递归拆分后的 tail 应取自 sub_chunks[-1]"""
@@ -383,6 +499,7 @@ class TestRecursiveSplitterBugFix:
 
 
 # ── split_documents 入口函数测试 ─────────────────────────
+
 
 class TestSplitDocuments:
     """split_documents 入口函数"""
