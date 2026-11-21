@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Optional
 
 from uniclaw.context import get_app_dir
+
+_MS_FACTOR = 1000  # 秒 → 毫秒换算因子
 from uniclaw.utils.git import (
     get_git_root,
     is_git_installed,
@@ -41,10 +43,15 @@ def _load_index(checkpoint_dir: Path) -> list:
 
     索引文件路径为 `<checkpoint_dir>/index.json`,每个条目结构:
         {
-            "id": str,      # 检查点唯一标识(时间戳)
-            "message": str, # 检查点描述信息
-            "time": str     # 创建时间(ISO 格式字符串)
+            "id": str,          # 检查点唯一标识(时间戳)
+            "message": str,     # 检查点描述信息
+            "time": str         # 创建时间("%Y-%m-%d %H:%M:%S" 字符串)
+            "created_at": int   # 整数毫秒(新数据),旧数据可能缺失
         }
+
+    排序:主键 created_at(整数毫秒),缺失时回退解析 time 字符串。
+    这让同一秒内的多个 checkpoint 按创建先后(新→旧)排列 —
+    仅按秒级 time 字符串倒序会保持文件插入序,同秒内旧的反而排前。
 
     文件不存在或解析失败时返回空列表,不抛异常。
 
@@ -52,15 +59,26 @@ def _load_index(checkpoint_dir: Path) -> list:
         checkpoint_dir: 检查点存储目录路径(由 _get_checkpoint_dir 返回)
 
     Returns:
-        list[dict]: 按 time 字段倒序排列的检查点列表,索引 0 为最新
+        list[dict]: 按创建时间倒序排列的检查点列表,索引 0 为最新
     """
     index_file = checkpoint_dir / "index.json"
     if index_file.exists():
         try:
             data = json.loads(index_file.read_text(encoding="utf-8"))
-            return sorted(data, key=lambda x: x.get("time", ""), reverse=True)
         except (json.JSONDecodeError, OSError):
-            pass
+            return []
+        # 统一换算为毫秒排序键:created_at 优先,缺失回退 time 字符串解析
+        def _sort_ms(e: dict) -> int:
+            ca = e.get("created_at")
+            if ca is not None:
+                return _norm_ms(int(ca))
+            try:
+                t = time.mktime(time.strptime(e.get("time", ""), "%Y-%m-%d %H:%M:%S"))
+            except (TypeError, ValueError):
+                return 0
+            return int(t * _MS_FACTOR)
+
+        return sorted(data, key=_sort_ms, reverse=True)
     return []
 
 
@@ -175,8 +193,14 @@ def _copy_files_sync(root_dir: Path, all_files: list[str], cp_path: Path) -> lis
     return copied_files
 
 
-async def _file_create_checkpoint(root_dir: Path, message: str = "") -> bool:
-    """文件快照模式:复制所有文件到检查点目录。"""
+async def _file_create_checkpoint(
+    root_dir: Path, message: str = "", created_at: int | None = None
+) -> bool:
+    """文件快照模式:复制所有文件到检查点目录。
+
+    created_at: 本次 turn 用户消息的入库时间戳(整数毫秒,与消息 created_at
+    同源,回退精确匹配);为 None 时用当前创建时刻。
+    """
     all_files = await _get_all_files(root_dir)
     if not all_files:
         return False
@@ -184,7 +208,13 @@ async def _file_create_checkpoint(root_dir: Path, message: str = "") -> bool:
     checkpoint_dir = _get_checkpoint_dir(root_dir)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
-    cp_id = f"cp_{time.strftime('%Y%m%d_%H%M%S')}"
+    # cp_id 用可读时间格式(%Y%m%d_%H%M%S_毫秒),避免同秒内多个
+    # checkpoint 的目录相互覆盖,且列表里一眼可读
+    _now = time.time()
+    cp_id = (
+        f"cp_{time.strftime('%Y%m%d_%H%M%S', time.localtime(_now))}"
+        f"_{int((_now % 1) * 1000):03d}"
+    )
     cp_path = checkpoint_dir / cp_id
 
     # 文件拷贝是同步 I/O,放到线程池避免阻塞事件循环
@@ -200,10 +230,17 @@ async def _file_create_checkpoint(root_dir: Path, message: str = "") -> bool:
         msg = msg.replace("\n", " ")[:50]
     else:
         msg = cp_id
+    # 关联时间戳统一为整数毫秒:优先用传入的 turn 消息入库时刻(与消息
+    # created_at 同源,整数直等匹配);缺省用当前创建时刻
+    now_ts = int(time.time() * 1000)
+    created = created_at if created_at is not None else now_ts
     meta = {
         "id": cp_id,
         "message": msg,
-        "time": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "time": time.strftime(
+            "%Y-%m-%d %H:%M:%S", time.localtime(now_ts / 1000)
+        ),
+        "created_at": created,  # 整数毫秒,供"删除并回退"精确匹配
         "files": copied_files,
         "mode": "file",
     }
@@ -212,14 +249,53 @@ async def _file_create_checkpoint(root_dir: Path, message: str = "") -> bool:
     )
 
     index = _load_index(checkpoint_dir)
-    index.append({"id": cp_id, "message": msg, "time": meta["time"]})
+    index.append({"id": cp_id, "message": msg, "time": meta["time"], "created_at": created})
     _save_index(checkpoint_dir, index)
 
     return True
 
 
+async def _file_create_anchor(
+    root_dir: Path, message: str = "", created_at: int | None = None
+) -> bool:
+    """文件快照模式:工作区无改动时记录一条时间锚点(轻量,不复制文件)。
+
+    该 turn 未修改文件 → 工作区状态与最近真实快照一致,回退该消息时刻时
+    定位到最近真实快照即可。锚点只入 index.json(标记 anchor=true),
+    保证 `find_checkpoint_index` 按 created_at 能命中该消息的时刻。
+    """
+    checkpoint_dir = _get_checkpoint_dir(root_dir)
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
+    if message:
+        msg = message.encode("utf-8", "surrogatepass").decode("utf-8", "replace")
+        msg = msg.replace("\n", " ")[:50]
+    else:
+        msg = "未修改文件"
+    now_ts = int(time.time() * 1000)
+    created = created_at if created_at is not None else now_ts
+
+    index = _load_index(checkpoint_dir)
+    index.append(
+        {
+            "id": f"anchor_{now_ts}",
+            "message": msg,
+            "time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now_ts / 1000)),
+            "created_at": created,
+            "anchor": True,
+        }
+    )
+    _save_index(checkpoint_dir, index)
+    return True
+
+
 def _file_restore_checkpoint(root_dir: Path, index: int = 0) -> tuple[bool, str]:
-    """文件快照模式:从检查点目录恢复文件。"""
+    """文件快照模式:从检查点目录恢复文件。
+
+    锚点条目(anchor=true)本身无文件快照,恢复时向前定位最近的真实快照,
+    与锚点时刻的工作区状态一致。若向前没有真实快照(全是锚点或空),
+    视为无需恢复(锚点前的文件状态即当前要回退到的状态)。
+    """
     checkpoint_dir = _get_checkpoint_dir(root_dir)
     if not checkpoint_dir.exists():
         return False, "没有检查点"
@@ -230,6 +306,16 @@ def _file_restore_checkpoint(root_dir: Path, index: int = 0) -> tuple[bool, str]
 
     if index < 0 or index >= len(cp_index):
         return False, f"检查点序号 {index} 不存在(共 {len(cp_index)} 个)"
+
+    # 锚点:向前找最近的真实快照
+    if cp_index[index].get("anchor") is True:
+        for j in range(index, len(cp_index)):
+            if cp_index[j].get("anchor") is not True:
+                index = j
+                break
+        else:
+            return True, "该时刻未修改文件,无需恢复(已是最初状态)"
+        # 继续按 index 指向的真实快照恢复
 
     cp_info = cp_index[index]
     cp_path = checkpoint_dir / cp_info["id"]
@@ -364,8 +450,28 @@ def _file_diff_two_dirs(
     return "\n".join(diffs) if diffs else empty_msg
 
 
+def _resolve_real_index(checkpoint_dir: Path, index: int) -> int:
+    """锚点条目解析:index 指向 anchor=true 时,向前找最近真实快照的序号。
+
+    锚点(未修改文件的 turn)自身无文件快照,其"文件状态"等于之前最近的
+    真实快照。返回真实快照序号;没有真实快照(全锚点/空)返回 -1。
+    """
+    cp_index = _load_index(checkpoint_dir)
+    if index < 0 or index >= len(cp_index):
+        return -1
+    if cp_index[index].get("anchor") is not True:
+        return index
+    for j in range(index, len(cp_index)):
+        if cp_index[j].get("anchor") is not True:
+            return j
+    return -1
+
+
 def _get_checkpoint_meta(checkpoint_dir: Path, index: int) -> tuple[dict, Path, str]:
     """获取检查点元数据和路径。
+
+    锚点条目(anchor=true)自动解析到最近的真实快照,命令行 diff/比较
+    看到的是该时刻对应的文件状态。
 
     Args:
         checkpoint_dir: 检查点目录
@@ -374,12 +480,12 @@ def _get_checkpoint_meta(checkpoint_dir: Path, index: int) -> tuple[dict, Path, 
     Returns:
         (meta, cp_path, error_msg) — 如果出错,meta 为空字典,error_msg 非空
     """
+    real = _resolve_real_index(checkpoint_dir, index)
+    if real < 0:
+        return {}, Path(), "检查点序号不存在或均为锚点"
+
     cp_index = _load_index(checkpoint_dir)
-
-    if index < 0 or index >= len(cp_index):
-        return {}, Path(), f"检查点序号 {index} 不存在"
-
-    cp_info = cp_index[index]
+    cp_info = cp_index[real]
     cp_path = checkpoint_dir / cp_info["id"]
     meta_file = cp_path / "meta.json"
 
@@ -492,19 +598,84 @@ def _file_diff_between(root_dir: Path, index_a: int, index_b: int) -> str:
     )
 
 
+def _norm_ms(value: int) -> int:
+    """将 created_at 归一化为毫秒:旧数据可能是秒级(< 1e12),乘 1000 对齐。
+
+    新数据一律整数毫秒(约 1.7e12);旧 checkpoint 的 created_at 是秒级
+    (约 1.7e9),统一为毫秒基准后参与比较。
+    """
+    return value * _MS_FACTOR if value < 1_000_000_000_000 else value
+
+
+def _find_exact(items: list[dict], timestamp: int) -> Optional[int]:
+    """精确匹配:created_at == timestamp(整数毫秒直等;旧秒级数据自动对齐)。"""
+    for i in range(len(items) - 1, -1, -1):
+        ca = items[i].get("created_at")
+        if ca is None:
+            continue
+        if _norm_ms(int(ca)) == timestamp:
+            return i
+    return None
+
+
 # ── 统一接口 ──────────────────────────────────────────────────────────────────
 
 
-async def create_checkpoint(root_dir: Path | None, message: str = "") -> bool:
-    """创建检查点(根据配置选择模式)。"""
-    # 文件模式:检查是否有变化,无差异则跳过创建
+async def find_checkpoint_index(root_dir: Path, timestamp: int) -> Optional[int]:
+    """按消息入库时刻定位 checkpoint 序号(0 = 最新,按时间倒序)。
+
+    语义:消息与 checkpoint 共享同一整数毫秒 turn_ts(create 与入库同一来源)。
+    给定被删消息的 created_at(整数毫秒),只做精确匹配(整数直等) —
+    找不到说明该消息时刻没有对应 checkpoint(如该 turn 工作区无差异跳过
+    创建,或数据时间错位),返回 None 由调用方明确提示,不做模糊兜底。
+
+    Args:
+        root_dir: 工作目录
+        timestamp: 被删消息的入库时间戳(整数毫秒)
+
+    Returns:
+        int: checkpoint 序号,找不到返回 None
+    """
+    if await has_git_commit(root_dir):
+        from uniclaw.utils.git import _merged_checkpoint_items, get_git_root
+
+        git_root = await get_git_root(root_dir)
+        if not git_root:
+            return None
+        items = await _merged_checkpoint_items(git_root)
+        return _find_exact(items, timestamp)
+
+    checkpoint_dir = _get_checkpoint_dir(root_dir)
+    index = _load_index(checkpoint_dir)  # 已按 time 倒序(新→旧)
+    return _find_exact(index, timestamp)
+
+
+async def create_checkpoint(
+    root_dir: Path | None,
+    message: str = "",
+    created_at: int | None = None,
+) -> bool:
+    """创建检查点(根据配置选择模式)。
+
+    有改动:文件模式复制文件快照 / git 模式 stash push;
+    无改动:文件模式记录**时间锚点**(无真实快照,恢复时定位到最近快照),
+    git 模式记 HEAD 锚点 — 保证每个 turn 都有 checkpoint 可回退,
+    即使该 turn 没有修改文件。
+
+    Args:
+        root_dir: 工作目录
+        message: 检查点描述(缺省用时间戳)
+        created_at: 本次 turn 用户消息的入库时间戳(整数毫秒)。
+            与消息 created_at 同源,保证回退整数直等匹配;为 None 时内部用创建时刻。
+    """
     if root_dir is None:
         return True
     if await has_git_commit(root_dir):
-        return await git_create_checkpoint(root_dir, message)
+        return await git_create_checkpoint(root_dir, message, created_at)
     if not await _file_has_diff(root_dir, 0):
-        return False
-    return await _file_create_checkpoint(root_dir, message)
+        # 无文件差异:落一条时间锚点,保证该消息时刻可回退
+        return await _file_create_anchor(root_dir, message, created_at)
+    return await _file_create_checkpoint(root_dir, message, created_at)
 
 
 async def pop_checkpoint(root_dir: Path, index: int = 0) -> tuple[bool, str]:

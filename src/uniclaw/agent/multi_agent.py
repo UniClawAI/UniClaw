@@ -1077,8 +1077,17 @@ class MultiAgent:
             sub for sub in owner_config.sub_configs if sub.current_agent is not task
         ]
 
-    async def _run_init(self, user_message, config: AppConfig) -> bool:
-        """初始化 run 环境:深度检查、钩子、消息。成功返回 True,失败返回 False。"""
+    async def _run_init(
+        self, user_message, config: AppConfig
+    ) -> Optional[int]:
+        """初始化 run 环境:深度检查、钩子、消息。
+
+        返回本次 turn 用户消息的入库时间戳(整数毫秒) —
+        该值显式用作消息 created_at,并由调用方传给 create_checkpoint,
+        保证"消息时间 == checkpoint 时间",回退时整数直等精确匹配。
+        毫秒精度:同秒内连续多个 turn 也能区分,不会命中同一 checkpoint。
+        失败(深度超限等)返回 None。
+        """
         task = config.current_agent
         # max_agent_depth = 最大子代理嵌套层数(root depth=0 不计):
         # depth > max 才算超限,因此 max=2 允许子代理 depth=1 和孙代理 depth=2。
@@ -1091,7 +1100,7 @@ class MultiAgent:
             )
             # 补发 EndEvent,否则 WebUI bridge 永不退出、事件无人消费
             await self.send_event_to_user(EndEvent(depth=config.depth), config)
-            return False
+            return None
         task.status = AgentStatus.RUNNING
         if not config.is_sub:
             await run_hooks(
@@ -1108,9 +1117,18 @@ class MultiAgent:
             if notice:
                 task.session.add_message(MessageRole.USER, notice)
                 await self.send_event_to_user(UserEvent(notice), config)
-        task.session.add_message(MessageRole.USER, user_message)
+        # 一次性生成本 turn 的时刻(整数毫秒),显式写入消息 created_at,
+        # 后续 checkpoint 使用同一时间戳(两者字面相等,回退整数直等精确命中)
+        from datetime import datetime
+
+        turn_ts = int(time.time() * 1000)
+        task.session.add_message(
+            MessageRole.USER,
+            user_message,
+            created_at=datetime.fromtimestamp(turn_ts / 1000),
+        )
         await self.send_event_to_user(UserEvent(user_message), config)
-        return True
+        return turn_ts
 
     async def _stream_response(
         self, task, system_message, config: AppConfig, tools, model_ref: str = ""
@@ -1801,14 +1819,19 @@ class MultiAgent:
         allowed_tools: list[Tool] | None = None,
     ):
         task = config.current_agent
-        if not await self._run_init(user_message, config):
+        turn_ts = await self._run_init(user_message, config)
+        if turn_ts is None:
             return
 
-        # 自动创建 Git 检查点(使用用户消息的文本部分作为描述)
+        # 自动创建 Git 检查点(使用用户消息的文本部分作为描述)。
+        # 传入 _run_init 返回的 turn 时间戳,使 checkpoint 时间 == 消息
+        # created_at(同一来源),回退"删除消息并跳回当时"精确命中。
         await self.send_event_to_user(CheckpointStartEvent(), config)
         try:
             await create_checkpoint(
-                task.session.root_dir, message=extract_text(user_message)
+                task.session.root_dir,
+                message=extract_text(user_message),
+                created_at=turn_ts,
             )
         except asyncio.CancelledError:
             # 取消中断也要收尾: finally 补发 CheckpointEndEvent,

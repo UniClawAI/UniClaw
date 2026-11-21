@@ -1227,8 +1227,8 @@ class TestDepthLimit:
         config, task = self._make_run_config(depth=2, max_depth=2)
         p1, p2 = self._patch_extras()
         with p1, p2:
-            ok = await mgr._run_init("hello", config)
-        assert ok is True
+            ts = await mgr._run_init("hello", config)
+        assert isinstance(ts, int)  # 返回 turn 毫秒时间戳
         assert task.status == "running"
 
     @pytest.mark.asyncio
@@ -1238,8 +1238,8 @@ class TestDepthLimit:
 
         mgr = MultiAgent.get_instance()
         config, task = self._make_run_config(depth=3, max_depth=2)
-        ok = await mgr._run_init("hello", config)
-        assert ok is False
+        ts = await mgr._run_init("hello", config)
+        assert ts is None  # 失败返回 None
         assert task.status == "failed"
         assert task.result and "最大嵌套深度" in task.result
 
@@ -1252,8 +1252,8 @@ class TestDepthLimit:
         config, task = self._make_run_config(depth=1, max_depth=1)
         p1, p2 = self._patch_extras()
         with p1, p2:
-            ok = await mgr._run_init("hello", config)
-        assert ok is True
+            ts = await mgr._run_init("hello", config)
+        assert isinstance(ts, int)  # 返回 turn 毫秒时间戳
 
 
 class TestFailedResultPreserved:

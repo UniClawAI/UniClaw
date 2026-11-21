@@ -496,6 +496,7 @@ textarea.input {
     display: flex;
     justify-content: flex-end;
     gap: 10px;
+    flex-wrap: wrap;
 }
 
 /* ============================================================

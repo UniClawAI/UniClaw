@@ -390,7 +390,12 @@ async def unarchive_session(session_id: str):
 
 @router.delete("/sessions/{session_id}/messages")
 async def delete_messages(session_id: str, body: MessageDelete):
-    """删除会话末尾指定数量的消息。"""
+    """删除会话末尾指定数量的消息。
+
+    当 body.restore_checkpoint 为 True 时,先定位并回退到该条消息时刻对应的
+    checkpoint(apply,保留 checkpoint),成功后才删除消息 —
+    避免"消息已删但文件未回退"造成的不一致状态。
+    """
     try:
         config = await get_or_load_session(session_id)
         session = config.current_agent.session
@@ -399,10 +404,64 @@ async def delete_messages(session_id: str, body: MessageDelete):
             session._messages if body.source == "messages" else session.history
         )
         count = len(source_list) - body.from_idx
+
+        # 回退到该消息时刻的 checkpoint(在删除消息前执行,失败则不删)
+        checkpoint_result = None
+        if body.restore_checkpoint:
+            root_dir = session.root_dir
+            if not root_dir:
+                checkpoint_result = {
+                    "ok": False,
+                    "message": "该会话没有工作目录,无法回退 checkpoint",
+                }
+            else:
+                from uniclaw.utils.checkpoint import (
+                    apply_checkpoint,
+                    find_checkpoint_index,
+                )
+
+                # 定位被删第一条消息的创建时间(用于 checkpoint 回退)
+                # 消息均为 BaseMessage 子类,created_at 是公共字段,直接访问
+                ts = None
+                if 0 <= body.from_idx < len(source_list):
+                    target_msg = source_list[body.from_idx]
+                    ca = target_msg.created_at
+                    if ca is not None:
+                        # datetime → 整数毫秒 timestamp,与 checkpoint 记录的
+                        # 整数毫秒 created_at 直等比较(创建与回退同一来源)
+                        ts = int(ca.timestamp() * 1000)
+                if ts is None:
+                    checkpoint_result = {
+                        "ok": False,
+                        "message": "无法定位该消息的创建时间",
+                    }
+                else:
+                    cp_idx = await find_checkpoint_index(root_dir, ts)
+                    if cp_idx is None:
+                        checkpoint_result = {
+                            "ok": False,
+                            "message": "未找到该消息时刻对应的 checkpoint",
+                        }
+                    else:
+                        ok, msg = await apply_checkpoint(root_dir, cp_idx)
+                        checkpoint_result = {
+                            "ok": ok,
+                            "index": cp_idx,
+                            "message": msg,
+                        }
+            # 回退失败则中止删除,避免消息已删但文件未回退的不一致
+            if not checkpoint_result.get("ok"):
+                return {
+                    "ok": False,
+                    "deleted": 0,
+                    "checkpoint": checkpoint_result,
+                }
+
         deleted = session.delete_messages(count, source=body.source)
         # 保存到文件
         await SessionManager.save_session(config)
-        return {"ok": True, "deleted": deleted}
+
+        return {"ok": True, "deleted": deleted, "checkpoint": checkpoint_result}
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:

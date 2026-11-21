@@ -5,12 +5,15 @@ from pathlib import Path
 import subprocess
 import tempfile
 import time
+from datetime import datetime
 from typing import Optional, Any
 import uuid
 
 from uniclaw.utils.process import run_command
 
 logger = logging.getLogger(__name__)
+
+_MS_FACTOR = 1000  # 秒 → 毫秒换算因子
 
 
 async def _run_git(
@@ -174,6 +177,46 @@ def _save_head_anchors(git_root: str, anchors: list[dict]) -> None:
     )
 
 
+def _stash_time_path(git_root: str) -> Path:
+    """stash 关联时间映射文件路径(.git 内)。
+
+    记录 stash commit hash → 该 turn 的整秒 created_at(与消息同源)。
+    git stash 不支持附加元数据,而 stash list 的 %ct 只有秒级;回退时需据此
+    精确定位"哪条消息创建了哪个 stash"。
+    """
+    return Path(git_root) / ".git" / "uniclaw-stash-times.json"
+
+
+def _load_stash_times(git_root: str) -> dict[str, int]:
+    """读取 stash → created_at 映射(缺失/损坏时返回空 dict)。"""
+    try:
+        data = json.loads(_stash_time_path(git_root).read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            return {str(k): int(v) for k, v in data.items()}
+    except (OSError, json.JSONDecodeError, ValueError):
+        pass
+    return {}
+
+
+def _save_stash_times(git_root: str, mapping: dict[str, int]) -> None:
+    _stash_time_path(git_root).write_text(
+        json.dumps(mapping, ensure_ascii=False), encoding="utf-8"
+    )
+
+
+async def _get_stash_hash(git_root: str, stash_index: int) -> str | None:
+    """取 stash@{i} 的 commit hash(git rev-parse stash@{i})。
+
+    git stash list 不接受各别 stash 参数,需用 rev-parse 单独解析。
+    """
+    result = await _run_git(
+        "git", "rev-parse", f"stash@{{{stash_index}}}", cwd=str(git_root)
+    )
+    if result.returncode != 0:
+        return None
+    return (result.stdout or "").strip() or None
+
+
 async def _merged_checkpoint_items(git_root: str) -> list[dict]:
     """合并 stash 条目与 HEAD 锚点,按时间倒序(新→旧)。
 
@@ -186,13 +229,28 @@ async def _merged_checkpoint_items(git_root: str) -> list[dict]:
     # stash 条目:默认输出提供序号与消息, --format=%ct 提供每行时间戳(顺序一致)
     stash_result = await _run_git("git", "stash", "list", cwd=str(git_root))
     ts_result = await _run_git("git", "stash", "list", "--format=%ct", cwd=str(git_root))
+    hash_result = await _run_git("git", "stash", "list", "--format=%H", cwd=str(git_root))
     stash_lines = (stash_result.stdout or "").splitlines()
     ts_lines = (ts_result.stdout or "").splitlines()
+    hash_lines = (hash_result.stdout or "").splitlines()
+    # stash 关联时间映射(hash → created_at 整数毫秒)
+    stash_times = _load_stash_times(git_root)
     for i, line in enumerate(stash_lines):
         ts = 0
         if i < len(ts_lines) and ts_lines[i].strip().isdigit():
             ts = int(ts_lines[i])
-        items.append({"kind": "stash", "stash_index": i, "text": line, "time": ts})
+        created_at = None
+        if i < len(hash_lines) and hash_lines[i].strip() in stash_times:
+            created_at = stash_times[hash_lines[i].strip()]
+        items.append(
+            {
+                "kind": "stash",
+                "stash_index": i,
+                "text": line,
+                "time": ts,
+                "created_at": created_at,
+            }
+        )
     # HEAD 锚点(ts 损坏时按 0 处理,避免整个列表崩溃)
     for i, a in enumerate(_load_head_anchors(git_root)):
         msg = a.get("message", "") or f"anchor-{i}"
@@ -200,21 +258,34 @@ async def _merged_checkpoint_items(git_root: str) -> list[dict]:
             ts = int(a.get("ts", 0))
         except (TypeError, ValueError):
             ts = 0
+        created_at = a.get("created_at")
         items.append(
             {
                 "kind": "head",
                 "anchor_index": i,
                 "text": f"[HEAD] {msg}",
                 "time": ts,
+                "created_at": created_at,
             }
         )
-    # 新→旧;同秒时 stash 排前(保持 stash 栈的相对顺序)
-    # 注意 reverse=True 时 key 大者在前,故 stash(1) > head(0)
-    items.sort(key=lambda x: (x["time"], 0 if x["kind"] == "head" else 1), reverse=True)
+    # 排序:主键用 created_at(毫秒,turn 真实创建序),缺失的旧条目
+    # 回退到 time 归一化(秒级×1000);倒序 = 新→旧。
+    # 不要用 HEAD 锚点的 ts(time) 排序 — ts 是锚点写入时刻,比 created_at
+    # 晚若干毫秒,会把本该更旧的锚点排到更前。
+    def _sort_ms(x: dict) -> int:
+        ca = x.get("created_at")
+        if ca is not None:
+            return int(ca)
+        t = x.get("time", 0)
+        return t * _MS_FACTOR if 0 < t < 1_000_000_000_000 else t
+
+    items.sort(key=lambda x: _sort_ms(x), reverse=True)
     return items
 
 
-async def git_create_checkpoint(root_dir: Path, message: str = "") -> bool:
+async def git_create_checkpoint(
+    root_dir: Path, message: str = "", created_at: int | None = None
+) -> bool:
     """创建检查点:git stash push + apply(有改动时);HEAD 锚点(无改动时)
 
     在 assistant turn 开始前调用,捕获当前工作目录状态。
@@ -227,6 +298,8 @@ async def git_create_checkpoint(root_dir: Path, message: str = "") -> bool:
     Args:
         root_dir: 仓库根目录路径
         message: 检查点描述,默认使用时间戳
+        created_at: 本次 turn 用户消息的入库时间戳(整数毫秒)。
+            与消息 created_at 同源,回退整数直等匹配;为 None 时用创建时刻。
 
     Returns:
         bool: 是否成功创建(不在 git 仓库 / HEAD 不可解析时返回 False)
@@ -238,7 +311,15 @@ async def git_create_checkpoint(root_dir: Path, message: str = "") -> bool:
     if message:
         msg = message.replace("\n", " ")[:50]
     else:
-        msg = f"checkpoint-{time.strftime('%Y%m%d-%H%M%S')}"
+        _now = time.time()
+        msg = (
+            f"checkpoint-{time.strftime('%Y%m%d-%H%M%S', time.localtime(_now))}"
+            f"-{int((_now % 1) * 1000):03d}"
+        )
+    # 关联时间戳统一为整数毫秒:优先用传入的 turn 消息入库时刻(与消息
+    # created_at 同源,整数直等匹配);缺省用当前创建时刻
+    now = int(time.time() * 1000)
+    anchor_ts = created_at if created_at is not None else now
     # 工作区无改动时 git stash 无法创建条目:记录 HEAD 锚点,
     # 保证每个聊天 turn 都有检查点可恢复(恢复锚点 = 丢弃未提交改动回到 HEAD)
     status_result = await _run_git(
@@ -248,7 +329,6 @@ async def git_create_checkpoint(root_dir: Path, message: str = "") -> bool:
         head_result = await _run_git("git", "rev-parse", "HEAD", cwd=str(git_root))
         if head_result.returncode != 0:
             return False
-        now = int(time.time())
         anchors = _load_head_anchors(git_root)
         anchors.append(
             {
@@ -256,7 +336,10 @@ async def git_create_checkpoint(root_dir: Path, message: str = "") -> bool:
                 "message": msg,
                 "head": head_result.stdout.strip(),
                 "ts": now,
-                "time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now)),
+                "created_at": anchor_ts,
+                "time": time.strftime(
+                    "%Y-%m-%d %H:%M:%S", time.localtime(now / 1000)
+                ),
             }
         )
         _save_head_anchors(git_root, anchors)
@@ -290,7 +373,28 @@ async def git_create_checkpoint(root_dir: Path, message: str = "") -> bool:
             "检查点已创建,但工作区还原失败(改动全部保留在 stash): %s",
             (result.stderr or "").strip(),
         )
+        # 即使 apply 失败,stash 已创建,也要记录精确时间
+    # 记录 stash commit hash → 精确创建时刻,供回退定位。
+    stash_hash = await _get_stash_hash(git_root, 0)
+    if stash_hash:
+        mapping = _load_stash_times(git_root)
+        mapping[stash_hash] = anchor_ts
+        # 清理已不在 stash 列表中的过期条目
+        current = set(await _load_stash_hashes(git_root))
+        if current:
+            mapping = {k: v for k, v in mapping.items() if k in current}
+        _save_stash_times(git_root, mapping)
     return True
+
+
+async def _load_stash_hashes(git_root: str) -> list[str]:
+    """读取当前所有 stash 的 commit hash(stash list --format=%H)。"""
+    result = await _run_git(
+        "git", "stash", "list", "--format=%H", cwd=str(git_root)
+    )
+    if result.returncode != 0:
+        return []
+    return [h for h in (result.stdout or "").splitlines() if h.strip()]
 
 
 async def _git_stash_restore(
@@ -600,8 +704,10 @@ async def git_list_checkpoints(root_dir: Path) -> str:
     lines = []
     for i, it in enumerate(items):
         ts = it.get("time", 0)
+        if 0 < ts < 1_000_000_000_000:
+            ts *= _MS_FACTOR  # 旧 stash %ct 为秒级,统一到毫秒展示
         ts_str = (
-            time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts))
+            time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts / 1000))
             if ts
             else "-"
         )

@@ -228,6 +228,10 @@ class MessageDelete(BaseModel):
         default=-1,
         description="起始索引(含)。后端自动计算 count = len - from_idx。-1 表示删除全部。",
     )
+    restore_checkpoint: bool = Field(
+        default=False,
+        description="删除消息后,是否将工作区回退到该条消息时刻对应的 checkpoint。",
+    )
 
 
 class AsrRequest(BaseModel):

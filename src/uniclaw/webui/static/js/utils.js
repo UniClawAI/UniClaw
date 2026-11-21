@@ -240,6 +240,39 @@ const Utils = {
         });
     },
 
+    /**
+     * 多选项确认对话框。返回选中选项的 value;取消返回 null。
+     *
+     * @param {string} message 提示文本
+     * @param {Array<{value: string, label: string, className?: string, danger?: boolean}>} choices 选项列表
+     * @returns {Promise<string|null>}
+     */
+    confirmChoice(message, choices) {
+        return new Promise(resolve => {
+            const overlay = document.createElement('div');
+            overlay.className = 'confirm-overlay';
+            const buttons = choices.map(c =>
+                `<button class="btn ${c.className || (c.danger ? 'btn-danger' : 'btn-primary')} confirm-choice" data-value="${this.escapeHtml(c.value)}">${this.escapeHtml(c.label)}</button>`
+            ).join('');
+            overlay.innerHTML = `
+                <div class="confirm-box">
+                    <div class="confirm-title">确认操作</div>
+                    <div class="confirm-message">${this.escapeHtml(message)}</div>
+                    <div class="confirm-actions">
+                        <button class="btn btn-secondary confirm-cancel">取消</button>
+                        ${buttons}
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(overlay);
+            const cleanup = (result) => { overlay.remove(); resolve(result); };
+            overlay.querySelector('.confirm-cancel').onclick = () => cleanup(null);
+            overlay.querySelectorAll('.confirm-choice').forEach(btn => {
+                btn.onclick = () => cleanup(btn.dataset.value);
+            });
+        });
+    },
+
     // ============================================================
     //  Diff 渲染
     // ============================================================

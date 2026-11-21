@@ -229,7 +229,8 @@ class TestGitCreateCheckpoint:
         ) as m:
             assert await git_create_checkpoint(Path("/x")) is True
         # status --porcelain + stash push + stash apply --index
-        assert m.await_count == 3
+        # 另有一次 stash 创建后的 rev-parse(取 hash 记时间映射,stdout 为空则跳过)
+        assert m.await_count == 4
 
     @pytest.mark.asyncio
     async def test_message_used(self):

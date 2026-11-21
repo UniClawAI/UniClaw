@@ -374,7 +374,7 @@ const Chat = {
         el.innerHTML = `
             <div class="msg-avatar user">${icon('send')}</div>
             <div class="msg-body">
-                <div class="msg-content"><button class="msg-delete-btn" onclick="Chat._onEditUserMessage(this)" title="删除并重新编辑">${icon('close')}</button><div class="msg-text-aligner"><div class="markdown-body">${Utils.renderMarkdown(content)}</div></div></div>
+                <div class="msg-content"><button class="msg-delete-btn" onclick="Chat._onEditUserMessage(this)" title="删除消息(可回退到当时的文件状态)">${icon('close')}</button><div class="msg-text-aligner"><div class="markdown-body">${Utils.renderMarkdown(content)}</div></div></div>
             </div>`;
         c.appendChild(el);
         Utils.addCopyButtons(el);
@@ -389,7 +389,7 @@ const Chat = {
         el.className = 'message user';
         el.dataset.rawContent = content || '';
         let html = `<div class="msg-avatar user">${icon('send')}</div><div class="msg-body">`;
-        if (content) html += `<div class="msg-content"><button class="msg-delete-btn" onclick="Chat._onEditUserMessage(this)" title="删除并重新编辑">${icon('close')}</button><div class="msg-text-aligner"><div class="markdown-body">${Utils.renderMarkdown(content)}</div></div></div>`;
+        if (content) html += `<div class="msg-content"><button class="msg-delete-btn" onclick="Chat._onEditUserMessage(this)" title="删除消息(可回退到当时的文件状态)">${icon('close')}</button><div class="msg-text-aligner"><div class="markdown-body">${Utils.renderMarkdown(content)}</div></div></div>`;
         html += '</div>';
         el.innerHTML = html;
         this._appendImageGrid(el.querySelector('.msg-body'), imageUrls);
@@ -420,7 +420,7 @@ const Chat = {
         el.className = 'message user';
         el.dataset.rawContent = content || '';
         let html = `<div class="msg-avatar user">${icon('send')}</div><div class="msg-body">`;
-        if (content) html += `<div class="msg-content"><button class="msg-delete-btn" onclick="Chat._onEditUserMessage(this)" title="删除并重新编辑">${icon('close')}</button><div class="msg-text-aligner"><div class="markdown-body">${Utils.renderMarkdown(content)}</div></div></div>`;
+        if (content) html += `<div class="msg-content"><button class="msg-delete-btn" onclick="Chat._onEditUserMessage(this)" title="删除消息(可回退到当时的文件状态)">${icon('close')}</button><div class="msg-text-aligner"><div class="markdown-body">${Utils.renderMarkdown(content)}</div></div></div>`;
 
         html += '</div>';
         el.innerHTML = html;
@@ -2016,24 +2016,51 @@ _showLightbox(url) {
 
         const msgIdx = parseInt(msgEl.dataset.msgIdx, 10);
         if (isNaN(msgIdx)) {
-            Utils.showToast('消息索引未知,请刷新页面后重试', 'warn');
+            Utils.showToast('消息索引未知,请刷新页面后重试');
             return;
         }
 
-        if (!confirm('将删除此消息及后续所有消息,确认？')) return;
+        // 让用户选择:仅删除,还是删除并回退到当时的文件状态(checkpoint)
+        const choice = await Utils.confirmChoice(
+            '将删除此消息及后续所有消息,确认？',
+            [
+                { value: 'delete', label: '仅删除消息', className: 'btn-primary' },
+                { value: 'restore', label: '删除并回退到当时', danger: true },
+            ]
+        );
+        if (!choice) return;
 
+        const restoreCheckpoint = choice === 'restore';
         const source = this._currentView === 'history' ? 'history' : 'messages';
 
         try {
             const resp = await fetch(`/api/sessions/${sid}/messages`, {
                 method: 'DELETE',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ from_idx: msgIdx, source }),
+                body: JSON.stringify({ from_idx: msgIdx, source, restore_checkpoint: restoreCheckpoint }),
             });
             if (!resp.ok) {
                 const err = await resp.json().catch(() => ({}));
-                Utils.showToast(err.detail || '删除失败', 'error');
+                Utils.showError(err.detail || '删除失败');
                 return;
+            }
+            const delData = await resp.json().catch(() => ({}));
+
+            // 回退 checkpoint 的结果提示
+            const cp = delData.checkpoint;
+            if (restoreCheckpoint && cp) {
+                if (cp.ok) {
+                    Utils.showSuccess('已回退到当时的文件状态');
+                } else {
+                    // 后端回退失败时未删除消息,中止后续处理
+                    Utils.showError(`无法回退: ${cp.message || '未知原因'}`);
+                    return;
+                }
+                // 回退改变了工作区,刷新右侧面板(文件树 / checkpoint 列表)
+                if (typeof Sidebar !== 'undefined') {
+                    Sidebar._loadFileTree?.();
+                    Sidebar._loadCheckpoints?.();
+                }
             }
 
             // 重新加载会话数据并刷新视图,确保前端与后端完全同步
@@ -2062,7 +2089,7 @@ _showLightbox(url) {
                 input.style.height = Math.min(input.scrollHeight, 150) + 'px';
             }
         } catch (e) {
-            Utils.showToast('删除失败: ' + e.message, 'error');
+            Utils.showError('删除失败: ' + e.message);
         }
     },
 };
