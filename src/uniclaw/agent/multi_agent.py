@@ -1906,6 +1906,11 @@ class MultiAgent:
                 resp = None
                 errors: list[str] = []
                 for i, model_ref in enumerate(model_list):
+                    if task.cancel_event.is_set():
+                        # 用户中断: 不再尝试后续 fallback 模型
+                        task.status = AgentStatus.CANCELLED
+                        await self.send_event_to_user(InterruptedEvent(), config)
+                        break
                     try:
                         resp = await self._stream_response(
                             task, system_message, config, tools, model_ref=model_ref
@@ -1914,6 +1919,13 @@ class MultiAgent:
                     except Exception as e:
                         err_msg = f"{model_ref or '(默认)'}: {e}"
                         errors.append(err_msg)
+                        if task.cancel_event.is_set():
+                            # 中断导致的失败: 不再 fallback, 也不必提示模型错误
+                            task.status = AgentStatus.CANCELLED
+                            await self.send_event_to_user(
+                                InterruptedEvent(), config
+                            )
+                            break
                         if i < len(model_list) - 1:
                             # 还有 fallback 模型,通知用户并继续
                             await warn(f"模型 {err_msg},尝试 fallback 模型...", config)
